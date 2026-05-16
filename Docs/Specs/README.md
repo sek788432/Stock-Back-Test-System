@@ -20,6 +20,7 @@ Read **`00_Overview.md` first**. It sets scope, draws the architecture diagram, 
 | [`09_Build_Distribution_Launcher.md`](09_Build_Distribution_Launcher.md) | CMake, vcpkg, CI matrix, per-OS packaging, **Launcher** |
 | [`10_CI_Dev_Flow.md`](10_CI_Dev_Flow.md) | PR gates, mandatory tests for every symbol, **anti-cheat audit**, mutation testing |
 | [`11_Stock_Screener_KLine_Product.md`](11_Stock_Screener_KLine_Product.md) | Product contract: **K-line replay**, **three strategy input modes**, **stock screener** (same modes + AND/OR) |
+| [`12_AI_Action_Router.md`](12_AI_Action_Router.md) | CLI skills + Chrome extension → action JSON → Qt parser. Realises Spec 11 §3 NL mode without LLM credentials. |
 
 ## Decisions baked in
 

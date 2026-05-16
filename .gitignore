@@ -77,6 +77,9 @@ vcpkg_installed/
 Testing/
 .cache/
 
+# Superpowers brainstorm visual companion (local-only mockups)
+.superpowers/
+
 # Shell scripts (untracked by default). Exception: root `RunTest.sh` is intended to be committed.
 *.sh
 !RunTest.sh
