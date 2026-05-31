@@ -28,7 +28,7 @@ The release manager:
 - [ ] Plugin SDK sample plugin builds on all three OSes.
 - [ ] If breaking the plugin ABI, `BTE_PLUGIN_ABI_MAJOR` was bumped in the PR that introduced the break, with an ADR.
 - [ ] If breaking the Lua API, `bte::apiVersion` was bumped, with an ADR.
-- [ ] Codesigning credentials available (macOS, Windows). Notarization tested at least once this quarter.
+- [ ] Codesigning credentials available if configured (optional; see ADR 0005). Linux GPG key available.
 
 ---
 
@@ -59,7 +59,7 @@ The release manager:
 4. **CI release workflow runs automatically** on the tag. It:
    - Re-runs the full matrix.
    - Builds packages on each OS (Specs/09 §3).
-   - Codesigns + notarizes (macOS), signs (Windows).
+   - Codesigns + notarizes (macOS) and signs (Windows) if credentials are configured in secrets; skipped otherwise.
    - Generates `release-manifest.json`.
    - Creates a draft GitHub Release with body sourced from `Docs/Governance/CHANGELOG.md`.
    - Uploads all artifacts (app + SDK).
@@ -108,7 +108,7 @@ Hotfix PRs go through the same review and CI gates. No "emergency override".
 If any of these is true, **do not publish** the release. Hold and fix.
 
 - [ ] Determinism fixture changed without a corresponding ADR.
-- [ ] Any platform's installer is unsigned.
+- [ ] Linux GPG signature is missing (macOS/Windows signing is optional per ADR 0005).
 - [ ] Plugin SDK release is missing for any platform (Launcher users can build but plugin authors can't).
 - [ ] `Docs/Governance/CHANGELOG.md` doesn't mention something user-visible that landed in this version.
 - [ ] No one on the team has launched the new version on real hardware (not just CI).
