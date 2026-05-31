@@ -51,7 +51,7 @@ repo skills (single spec)
 
 - Live brokerage execution.
 - Running a backtest from AI input (deferred to Scope 2; see §10).
-- Bidirectional AI ↔ app queries (deferred to Scope 3).
+- Bidirectional **push** Qt → AI (e.g., a fresh backtest result auto-appearing in the chat). Deferred to Scope 3. Read-only state **pull** via `GET /state` is part of MVP (see §4.4 and §5.7) — without it the AI cannot reason about modifications to already-loaded artifacts.
 - Multi-user / multi-Qt-instance coordination.
 - Chrome Web Store distribution (MVP is unpacked dev load).
 - Persistent pairing across Qt restarts.
@@ -74,10 +74,12 @@ Five layers, top to bottom:
 Owner 4's net-new code surface:
 
 1. `.cursor/skills/stockbt-actions/` — skill spec files (markdown + JSON Schema).
-2. `Src/Backend/AiActionRouter/` — Qt-side HTTP server, dispatcher, action implementations.
-3. `Extension/` — Chrome extension (Manifest V3, TypeScript).
+2. `Src/Backend/AiActionRouter/` — Qt-side HTTP server, dispatcher, **state provider**, action implementations.
+3. `Extension/` — Chrome extension (Manifest V3, TypeScript), including a **send-time state-prepend hook**.
 
 The only inter-owner contract is the set of Qt view-model methods invoked by the router. See §6.6.
+
+The five-layer flow above describes the **write path** (AI → app). The complementary **read path** (app → AI context) is the state-prepend mechanism: before each user message leaves the browser, the extension fetches a JSON snapshot of relevant app state from the router (`GET /state`) and prepends it as collapsible context to the outgoing message. This is what lets the AI reason about *modifications* to already-loaded artifacts ("change the RSI threshold to 25") rather than only fresh generation. See §4.4 for the state payload, §5.7 for the extension hook, and §6.2 for the endpoint.
 
 ---
 
@@ -230,12 +232,56 @@ Four actions, two semantic groups.
 | 413 | Payload exceeds the 500 KB envelope limit or 100 KB per-action `source` limit. |
 | 429 | Rate-limit exceeded (default 10 envelopes per token per second). |
 
-### 4.4 Versioning
+### 4.4 State snapshot (the read path)
+
+The companion of the action envelope. Returned by `GET /state` (§6.2) and consumed by the Chrome extension before each send (§5.7). It is read-only — no part of the snapshot ever triggers behaviour on the Qt side.
+
+```json
+{
+  "schemaVersion": "1",
+  "capturedAt": "2026-05-16T09:23:11Z",
+  "appVersion": "0.1.0",
+  "protocolVersion": "1",
+  "currentTab": "strategy_editor",
+  "loadedStrategy": {
+    "path": "/Users/me/.stockBacktester/strategies/rsi_30_70.py",
+    "name": "rsi_30_70",
+    "format": "python",
+    "source": "import bte\n\ndef on_bar(ctx, bar):\n    ...",
+    "mtime": "2026-05-16T09:20:04Z"
+  },
+  "loadedScreener": null,
+  "availableStrategies": [
+    { "name": "rsi_30_70", "path": "...", "format": "python", "mtime": "..." },
+    { "name": "ma_cross",  "path": "...", "format": "python", "mtime": "..." }
+  ],
+  "availableScreeners": [
+    { "name": "value_picks", "path": "...", "mtime": "..." }
+  ]
+}
+```
+
+| Field | Notes |
+|---|---|
+| `schemaVersion` | State-snapshot schema version. MVP = `"1"`. Independent of the action-envelope `version`. |
+| `capturedAt` | ISO-8601 UTC timestamp the snapshot was assembled. The extension can decide to discard a snapshot it considers stale (default policy: re-fetch on every send, no staleness window). |
+| `currentTab` | Enum: `strategy_editor`, `screener_editor`, `backtest`, `replay`. Helps the AI prioritise actions relevant to the current view. |
+| `loadedStrategy.source` | The **full** source text of whatever artifact is currently in the strategy editor. Required so the AI can perform diffs ("change 30 to 25") without re-asking. `null` if nothing is loaded. |
+| `loadedScreener` | Same shape; `rule` object instead of `source` for rule-JSON screeners. `null` if nothing loaded. |
+| `availableStrategies[]` / `availableScreeners[]` | Directory listing of `~/.stockBacktester/strategies/` and `~/.stockBacktester/screeners/`. **Name and metadata only — never `source`.** AI must emit a `load_*_by_path` first if it wants to modify a non-loaded file. |
+
+**Size budget.** The snapshot is bounded to 200 KB; if the loaded `source` alone would exceed this, the router truncates `source` and sets `loadedStrategy.truncated: true`. The Chrome extension's send-time hook adds the snapshot inside a collapsible `<details>` block, so the user's chat UI is not visually polluted.
+
+**Authentication.** `GET /state` requires the bearer token (same auth as `/skills` and `/actions`). It is rejected on origins outside the §6.2 CORS whitelist.
+
+### 4.5 Versioning
 
 | Change | How |
 |---|---|
 | Add a new action type (e.g., Scope 2 `open_replay`) | Keep `version: "1"`. Router responds with `{ok:false, error:"unsupported action type"}` if it does not recognise the type — clients fall back gracefully. |
-| Modify an existing action's schema | Bump `version` to `"2"`. Router supports `"1"` and `"2"` in parallel for at least one release cycle. |
+| Modify an existing action's schema | Bump action-envelope `version` to `"2"`. Router supports `"1"` and `"2"` in parallel for at least one release cycle. |
+| Add a field to the state snapshot | Additive change — extensions ignoring unknown fields. No `schemaVersion` bump. |
+| Remove or change semantics of a state-snapshot field | Bump `schemaVersion` to `"2"`. Router supports both for at least one release cycle. |
 | Skill `contract:` mismatches router's supported list | Extension warns the user "update the app" and refuses to inject the skill. |
 
 ---
@@ -250,7 +296,7 @@ Manifest V3. TypeScript source under `Extension/`. Built with esbuild / vite. MV
 |---|---|
 | `service-worker.ts` | Token storage, `POST /actions`, toast notifications, settings persistence in `chrome.storage.local`. |
 | `content-scripts/<platform>.ts` | DOM injection per platform — MutationObserver on the chat container, extracts `stockbt-action` blocks, injects the "Activate Stock-BT" button. |
-| `popup/popup.{html,ts}` | Toolbar popup — pairing UI (PIN entry), connection status, "Confirm each action" toggle, last-N action log. |
+| `popup/popup.{html,ts}` | Toolbar popup — pairing UI (PIN entry), connection status, "Confirm each action" toggle (off by default), "Prepend app state on send" toggle (on by default; see §5.7), last-N action log. |
 | `platform-adapters/` | `chatgpt.ts`, `gemini.ts` implementing a common adapter interface (`findCodeBlocks`, `injectActivationButton`, `prependToNextMessage`). New platforms = new adapter file. |
 
 ### 5.2 Permissions
@@ -304,6 +350,46 @@ A toggle in the popup, **off by default**, labelled "Confirm each action before 
 
 The toggle is hard-coded **on and immutable** for actions that destructive-affect engine state (Scope 2 and later — see §10).
 
+### 5.7 Send interception and state prepend
+
+Once a conversation is `stockbt-active` (§5.3), the content script intercepts every user send and augments the outgoing message with a fresh snapshot of app state. Without this the AI is effectively memory-less between turns and cannot reason about modifications to artifacts that are already loaded in Qt.
+
+**Trigger.** The content-script adapter hooks the platform's send action (button click and Enter key, per-platform). On each send:
+
+1. Adapter halts the default submission.
+2. Adapter messages the service worker requesting state.
+3. Service worker `GET http://127.0.0.1:<port>/state` with the bearer token.
+4. On success (within ~300 ms budget — see Failure modes below), the snapshot JSON is returned to the content script.
+5. Content script wraps the snapshot in a collapsible `<details>` block at the top of the user's message:
+
+   ```markdown
+   <details><summary>Stock-Backtest app state (auto-prepended)</summary>
+
+   ```json
+   { "schemaVersion": "1", "capturedAt": "...", "loadedStrategy": { ... }, ... }
+   ```
+
+   </details>
+
+   <user's actual prompt here>
+   ```
+
+6. Adapter triggers the platform's real submit on the augmented message.
+
+The user sees the collapsible block in their chat history; expanding it reveals the JSON. The AI receives the entire augmented message and uses the JSON when forming its reply.
+
+**Failure modes.**
+
+| Situation | Behaviour |
+|---|---|
+| Qt offline / `GET /state` times out (>300 ms) | Content script proceeds with the un-augmented message and shows a toast "App offline — sending without state context". User can still chat; AI just lacks context. |
+| Token expired | Same as above + popup shows "Re-pair needed" banner. Sending is not blocked. |
+| Snapshot exceeds the 200 KB limit | Router truncates `source` and sets `truncated: true`; content script forwards as-is. |
+| Conversation is not `stockbt-active` | No interception. The send proceeds normally. |
+| User explicitly disables state-prepend (popup toggle, on by default) | No interception even when active. Useful for very long sessions where the user wants to control context size. |
+
+**Why pull, not push.** A WebSocket / SSE push channel from Qt to extension was considered. Push is rejected for MVP because (a) it adds a long-lived connection per browser tab, (b) the AI does not consume state events directly — it only sees what is included in a user turn — so per-send pull is functionally equivalent, and (c) push is unavoidable for Scope 3 (the AI reacts to backtest completion events), so it can be added later without disrupting the pull mechanism.
+
 ---
 
 ## 6. Qt parser + localhost endpoint
@@ -316,6 +402,7 @@ Src/Backend/AiActionRouter/
 ├── ActionDispatcher.{h,cpp}  # dispatch table, schema validation
 ├── Authn.{h,cpp}             # PIN generation, token issuance, request authentication
 ├── SkillsLoader.{h,cpp}      # reads .cursor/skills/stockbt-actions/SKILL.md from repo
+├── StateProvider.{h,cpp}     # assembles GET /state snapshots — directory walk + VM queries
 └── Actions/
     ├── ApplyStrategyPython.{h,cpp}
     ├── ApplyScreenerRule.{h,cpp}
@@ -325,6 +412,7 @@ Tests/AiActionRouter/
 ├── UnitTest_Envelope.cpp
 ├── UnitTest_Authn.cpp
 ├── UnitTest_PathWhitelist.cpp
+├── UnitTest_StateProvider.cpp
 └── UnitTest_<each action>.cpp
 ```
 
@@ -335,6 +423,7 @@ Tests/AiActionRouter/
 | GET | `/health` | Liveness probe; returns `{ok, version, supportedActions[]}`. | none |
 | POST | `/pair` | Body `{pin}`. Returns `{token}` or 401. | PIN (single-use) |
 | GET | `/skills` | Returns raw SKILL.md content. | Bearer token |
+| GET | `/state` | Returns the state snapshot defined in §4.4. Cheap to serve (≤300 ms p99) — called on every chat send. | Bearer token |
 | POST | `/actions` | Body = envelope. Returns result envelope. | Bearer token |
 
 Bind only to `127.0.0.1`. `Access-Control-Allow-Origin` whitelist: `https://chatgpt.com`, `https://gemini.google.com`, and `chrome-extension://<extension-id>`.
@@ -383,8 +472,13 @@ This is acceptable for Scope 1 because all four actions are fast (a file write p
 |---|---|---|
 | `StrategyEditorVm::loadFromPath(QString path) → Result<void, Error>` | `ApplyStrategyPython`, `LoadStrategyByPath` | Implementation owns parsing the file; router only passes the path. |
 | `ScreenerEditorVm::loadFromPath(QString path) → Result<void, Error>` | `ApplyScreenerRule`, `LoadScreenerByPath` | Same shape. |
+| `StrategyEditorVm::currentlyLoaded() const → std::optional<LoadedArtifact>` | `StateProvider` | Returns `{path, name, format, source, mtime}` for the artifact currently in the editor, or `std::nullopt` if nothing is loaded. Called synchronously on the GUI thread; must be O(1) (no disk I/O — read in-memory editor buffer). |
+| `ScreenerEditorVm::currentlyLoaded() const → std::optional<LoadedArtifact>` | `StateProvider` | Same shape. `rule` object instead of `source` for rule-JSON screeners. |
+| `MainWindow::currentTab() const → QString` | `StateProvider` | Returns one of `strategy_editor`, `screener_editor`, `backtest`, `replay`. Lightweight property accessor; no side effects. |
 
-These method signatures are declared in `Src/Frontend/ViewModels/StrategyEditorVm.h` and `…/ScreenerEditorVm.h` (Owner 5's tree). Owner 5 implements them; Owner 4 calls them and tests with a fake implementation injected into the router for unit tests.
+These method signatures are declared in `Src/Frontend/ViewModels/StrategyEditorVm.h`, `…/ScreenerEditorVm.h`, and `Src/Frontend/MainWindow.h` (all Owner 5's tree). Owner 5 implements them; Owner 4 calls them through `StateProvider` and tests with fake implementations injected for unit tests.
+
+**Directory enumeration** (`availableStrategies` / `availableScreeners` in the snapshot) is performed inside `StateProvider` via `std::filesystem::directory_iterator` on the per-user data dirs — it does **not** require an Owner 5 method.
 
 ### 6.7 PIN and token
 
@@ -400,8 +494,9 @@ These method signatures are declared in `Src/Frontend/ViewModels/StrategyEditorV
 2. User opens the Chrome extension popup → enters `482913` → popup `POST /pair`. Token returned; popup displays `Paired ✓`. Extension calls `GET /skills` and caches the markdown.
 3. User opens `chatgpt.com` and starts a new chat. Content script renders the "🤖 Activate Stock-BT" floating button.
 4. User clicks Activate. Extension prepends the cached skill into the next outgoing user message (in a collapsible `<details>` block) and marks the conversation as stockbt-active.
-5. User types: "Please write an RSI 14 strategy — buy when RSI < 30, sell when RSI > 70."
-6. AI responds with prose plus the action block:
+5. User types: "Please write an RSI 14 strategy — buy when RSI < 30, sell when RSI > 70." and presses Enter.
+6. Content-script send-interceptor (§5.7) halts submission, asks service worker for state. Service worker `GET /state` → router → `StateProvider` walks the data dirs and queries view-models on the GUI thread → snapshot returned. Content script wraps the snapshot in a `<details>` block at the top of the user message and submits the augmented prompt.
+7. AI receives the augmented message and responds with prose plus the action block:
    ````
    ```stockbt-action
    {
@@ -414,14 +509,16 @@ These method signatures are declared in `Src/Frontend/ViewModels/StrategyEditorV
    }
    ```
    ````
-7. MutationObserver detects the new AI message. Adapter extracts the `stockbt-action` block. Service worker `POST /actions` to `http://127.0.0.1:<port>/actions` with the bearer token.
-8. Router authenticates, parses, dispatches `apply_strategy_python`:
+8. MutationObserver detects the new AI message. Adapter extracts the `stockbt-action` block. Service worker `POST /actions` to `http://127.0.0.1:<port>/actions` with the bearer token.
+9. Router authenticates, parses, dispatches `apply_strategy_python`:
    - Validates `name` (`rsi_30_70` matches `[a-zA-Z0-9_-]+`).
    - Writes `~/.stockBacktester/strategies/rsi_30_70.py` with the supplied `source`.
    - `invokeMethod(strategyEditorVm, "loadFromPath", path, Qt::BlockingQueuedConnection)`.
-9. View-model loads the file in the Qt editor; status bar shows `Loaded rsi_30_70.py`.
-10. Router serialises `{ok:true, results:[{index:0, ok:true, savedPath:"…"}]}` and replies 200.
-11. Service worker shows toast `✓ Applied: rsi_30_70.py`.
+10. View-model loads the file in the Qt editor; status bar shows `Loaded rsi_30_70.py`.
+11. Router serialises `{ok:true, results:[{index:0, ok:true, savedPath:"…"}]}` and replies 200.
+12. Service worker shows toast `✓ Applied: rsi_30_70.py`.
+
+**Follow-up turn** — user says "actually use 25/75 instead of 30/70". Send-interceptor re-fetches state; the snapshot now includes `loadedStrategy.source` with the just-applied Python. AI receives the modification request *with* the current source, emits a new `apply_strategy_python` with the edited code (overwriting the same file). Without the state-prepend step the AI would have to ask the user to paste the source back.
 
 ---
 
@@ -460,6 +557,8 @@ This deviation from the literal text of Spec 11 §3.2 is non-trivial and require
 |---|---|---|
 | Wire | Qt not running, port unreachable | Toast: "Qt app offline" |
 | Wire | Connection timeout | Toast: "Qt did not respond", retry button |
+| State | `GET /state` times out (>300 ms) during send | Toast: "App offline — sending without state context"; send proceeds un-augmented (see §5.7). |
+| State | `loadedStrategy.source` truncated to fit 200 KB budget | No toast — the snapshot includes `truncated: true` and the AI is expected to ask the user for more if needed. |
 | Auth | Token rejected (Qt restarted, token gone) | Popup: "Re-pair needed", prompts for new PIN |
 | Auth | PIN wrong on `/pair` | Popup: "Invalid PIN" |
 | Envelope | Malformed JSON / unsupported version | Toast: "AI emitted invalid JSON" + popup log entry |
@@ -474,12 +573,12 @@ All failure paths surface to the user via toast or popup. No silent failures.
 
 | Layer | Approach |
 |---|---|
-| Qt parser unit | GoogleTest under `Tests/AiActionRouter/`. Fake view-models; no GUI started. Covers envelope parsing, schema validation, authn, path whitelist, and each of the four actions individually. |
+| Qt parser unit | GoogleTest under `Tests/AiActionRouter/`. Fake view-models; no GUI started. Covers envelope parsing, schema validation, authn, path whitelist, `StateProvider` snapshot assembly (including truncation), and each of the four actions individually. |
 | Qt integration | Headless Qt (`-platform offscreen`), real router, `curl` against the endpoints. Verifies end-to-end JSON round-trip. |
 | Extension unit | Vitest for pure logic in `service-worker.ts` and the adapters' parsing functions. |
 | Extension DOM | Playwright against fixture HTML captured from real ChatGPT / Gemini DOMs. Re-record fixtures whenever a layout change breaks a test. |
 | Skill self-validation | CI step that validates every example in `SKILL.md` against `schema.json`. Prevents documentation drift. |
-| End-to-end | Manual. The 11-step happy path in §7 is the acceptance test. Record video and attach to PR for each Scope graduation. |
+| End-to-end | Manual. The 12-step happy path in §7 (plus the follow-up modification turn) is the acceptance test. Record video and attach to PR for each Scope graduation. |
 
 Every public symbol in `Src/Backend/AiActionRouter/` requires a test per `10_CI_Dev_Flow.md` §7. Mutation testing applies to this module the same as any other.
 
@@ -530,7 +629,7 @@ Tests/
 | Scope | New actions | Mechanisms required |
 |---|---|---|
 | **2** | `open_replay`, `open_backtest_tab`, `open_screener_tab`, `set_symbol`, `set_timeframe`, `set_date_range`, `set_initial_capital`, `run_backtest`, `run_screener`, `pause`, `resume`, `step`. | Asynchronous job pattern: `POST /actions` returns `{jobId}` for long-running actions; extension polls `GET /jobs/<id>` or opens an SSE stream. Confirmation toggle forced on for `run_*`. Protocol `version` remains `"1"`. |
-| **3** | `query_current_state`, `query_loaded_strategy`, `export_trade_log`, `export_equity_curve`, `compare_strategies`, `screenshot_chart`, `set_theme`. | Bidirectional channel: WebSocket from Qt to extension, or long-poll on `/events`. Envelope gains a `responseRequired` field. Protocol `version` bumps to `"2"`; Qt supports `"1"` and `"2"` concurrently. |
+| **3** | `export_trade_log`, `export_equity_curve`, `compare_strategies`, `screenshot_chart`, `set_theme`, plus reactive events (e.g., backtest completion). | Bidirectional **push** channel: WebSocket from Qt to extension, or long-poll on `/events`. Envelope gains a `responseRequired` field. Action-envelope `version` bumps to `"2"`; Qt supports `"1"` and `"2"` concurrently. State-snapshot `schemaVersion` may also bump if events introduce new fields. (Read-only state pull is already in MVP — see §4.4 / §5.7.) |
 
 Scope graduation criteria (each Scope ships when):
 
