@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Screener & Valuation Platform v11.0</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #020617; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+        .mode-tab { transition: all 0.15s; }
+        .mode-tab-active  { background: #1e3a5f; border-color: #3b82f6 !important; color: #60a5fa; }
+        .mode-tab-inactive { background: transparent; border-color: #1e293b; color: #475569; }
+        .mode-tab-inactive:hover { color: #94a3b8; border-color: #334155 !important; }
+        textarea.code-editor {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.6;
+            tab-size: 4;
+        }
+        /* Python editor — line-number gutter */
+        .py-editor-wrap { display:flex; background:#020617; border:1px solid #1e293b; border-radius:0.5rem; overflow:hidden; }
+        .py-line-nums   { padding:12px 8px 12px 10px; background:#0f172a; color:#334155; font-family:'JetBrains Mono',Consolas,monospace; font-size:11px; line-height:1.6; text-align:right; user-select:none; min-width:34px; border-right:1px solid #1e293b; overflow:hidden; white-space:pre; }
+        .py-editor-wrap textarea { flex:1; background:transparent; border:none; padding:12px; color:#e2e8f0; resize:none; outline:none; }
+        /* Lint */
+        .lint-err  { color:#f87171; } .lint-warn { color:#fbbf24; } .lint-ok { color:#34d399; }
+        /* NL Chat */
+        .chat-wrap { display:flex; flex-direction:column; gap:8px; overflow-y:auto; max-height:260px; padding:10px; background:#020617; border:1px solid #1e293b; border-radius:0.5rem; }
+        .chat-user { align-self:flex-end;  background:#1e1b4b; border:1px solid #312e81; border-radius:10px 10px 2px 10px; padding:7px 12px; max-width:85%; font-size:11px; color:#c4b5fd; white-space:pre-wrap; word-break:break-word; }
+        .chat-ai   { align-self:flex-start; background:#0f172a; border:1px solid #1e293b; border-radius:10px 10px 10px 2px; padding:10px 12px; max-width:92%; font-size:11px; }
+        .chat-ai.accepted { border-color:#065f46 !important; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 p-6 min-h-screen custom-scrollbar flex flex-col gap-6">
+
+    <!-- ── HEADER ─────────────────────────────────────────────────────────── -->
+    <div class="border-b border-slate-800 pb-3 flex justify-between items-center">
+        <h1 class="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+            <i class="fa-solid fa-server text-blue-500"></i>
+            Stock Screener &amp; Valuation Platform
+            <span class="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 font-mono">v11.0</span>
+        </h1>
+        <div class="text-xs text-slate-500 font-mono">Data EOD: 2026-05-30</div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+    <!-- SCREENER BLOCK                                                        -->
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl flex flex-col gap-5">
+
+        <!-- Section title -->
+        <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+            <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                <i class="fa-solid fa-filter text-blue-400"></i> Screener
+            </h2>
+            <span class="text-[10px] text-slate-700 font-mono">Spec 11 §2 — Universe Filtering</span>
+        </div>
+
+        <!-- Universe + As-of date + Cadence + Import -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+                <label class="block text-[10px] text-slate-500 mb-1">Stock Universe</label>
+                <select class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none">
+                    <option>S&amp;P 500 Index</option>
+                    <option>NASDAQ 100 Index</option>
+                    <option>NYSE All Listed</option>
+                    <option>Custom Watchlist</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-[10px] text-slate-500 mb-1">
+                    As-of Date Range
+                    <span class="text-amber-500 ml-1">(no lookahead)</span>
+                </label>
+                <div class="flex items-center gap-1.5">
+                    <input type="date" id="asof-start" value="2025-01-01"
+                        class="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none">
+                    <span class="text-slate-600 text-[10px] shrink-0">→</span>
+                    <input type="date" id="asof-end" value="2026-05-30"
+                        class="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none">
+                </div>
+            </div>
+            <div>
+                <label class="block text-[10px] text-slate-500 mb-1">Refresh Cadence</label>
+                <select class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none">
+                    <option>On Demand</option>
+                    <option>Daily (after market close)</option>
+                    <option>Weekly</option>
+                </select>
+            </div>
+            <div class="flex items-end">
+                <div onclick="alert('Universe data imported successfully.')"
+                    class="w-full border border-dashed border-slate-800 hover:border-slate-700 bg-slate-950/40 rounded-lg p-2 text-center cursor-pointer text-xs text-slate-500 transition">
+                    <i class="fa-solid fa-file-excel text-emerald-600 mr-1"></i> Import Custom Universe (XLSX / CSV)
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Mode Tabs ──────────────────────────────────────────────────── -->
+        <div class="flex flex-col gap-3">
+            <div class="flex gap-1.5">
+                <button id="tab-builtin" onclick="switchMode('builtin')"
+                    class="mode-tab mode-tab-active text-xs px-3 py-1.5 rounded border font-medium">
+                    <i class="fa-solid fa-sliders mr-1.5"></i>Built-in Conditions
+                </button>
+                <button id="tab-python" onclick="switchMode('python')"
+                    class="mode-tab mode-tab-inactive text-xs px-3 py-1.5 rounded border font-medium">
+                    <i class="fa-brands fa-python mr-1.5"></i>Python Script
+                </button>
+                <button id="tab-nl" onclick="switchMode('nl')"
+                    class="mode-tab mode-tab-inactive text-xs px-3 py-1.5 rounded border font-medium">
+                    <i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i>Natural Language (AI)
+                </button>
+            </div>
+
+            <!-- ·· Panel: Built-in ·········································· -->
+            <div id="panel-builtin" class="flex flex-col gap-3">
+                <!-- Presets + AND/OR toggle -->
+                <div class="flex flex-wrap justify-between items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-[10px] text-slate-500">Templates:</span>
+                        <button onclick="loadScreenerPreset('val')"
+                            class="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded hover:bg-blue-500/20 transition cursor-pointer font-medium">
+                            Buffett Value
+                        </button>
+                        <button onclick="loadScreenerPreset('mom')"
+                            class="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2.5 py-1 rounded hover:bg-amber-500/20 transition cursor-pointer font-medium">
+                            Momentum Breakout
+                        </button>
+                        <span id="user-templates-zone" class="flex gap-2"></span>
+                    </div>
+                    <!-- Logic toggle -->
+                    <div class="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 shrink-0">
+                        <span class="text-[10px] text-slate-500 mr-1">Logic:</span>
+                        <button id="logic-and" onclick="setLogic('AND')"
+                            class="text-[10px] font-bold px-2.5 py-0.5 rounded bg-emerald-600 text-white cursor-pointer">
+                            ALL (AND)
+                        </button>
+                        <button id="logic-or" onclick="setLogic('OR')"
+                            class="text-[10px] font-bold px-2.5 py-0.5 rounded text-slate-500 hover:text-slate-300 cursor-pointer">
+                            ANY (OR)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Condition shelf -->
+                <div>
+                    <label class="block text-[10px] text-slate-500 mb-1.5">
+                        Active Criteria —
+                        <span id="logic-label" class="text-emerald-400 font-bold">ALL conditions must pass (AND)</span>
+                    </label>
+                    <div id="screener-blocks-shelf"
+                        class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 min-h-[56px] max-h-[148px] overflow-y-auto custom-scrollbar p-2 bg-slate-950/40 rounded-lg border border-slate-800/60">
+                    </div>
+                </div>
+
+                <!-- Add factor + save template -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-[10px] text-slate-500">Add Factor:</span>
+                    <button onclick="addNewCustomBlock('Fundamental')"
+                        class="text-[10px] text-emerald-400 bg-emerald-500/5 border border-emerald-500/20 py-1 px-3 rounded hover:bg-emerald-500/10 cursor-pointer font-medium transition">
+                        <i class="fa-solid fa-plus mr-1"></i>Fundamental
+                    </button>
+                    <button onclick="addNewCustomBlock('Technical')"
+                        class="text-[10px] text-amber-400 bg-amber-500/5 border border-amber-500/20 py-1 px-3 rounded hover:bg-amber-500/10 cursor-pointer font-medium transition">
+                        <i class="fa-solid fa-plus mr-1"></i>Technical
+                    </button>
+                    <button onclick="saveCurrentStrategyTemplate()"
+                        class="text-[10px] text-purple-400 bg-purple-500/5 border border-purple-500/20 py-1 px-3 rounded hover:bg-purple-500/10 cursor-pointer font-medium transition">
+                        <i class="fa-solid fa-copy mr-1"></i>Save as Template
+                    </button>
+                </div>
+            </div>
+
+            <!-- ·· Panel: Python ············································ -->
+            <div id="panel-python" class="hidden flex-col gap-3">
+                <div class="text-[10px] text-slate-400 bg-slate-950/50 px-3 py-2 rounded border border-slate-800 leading-relaxed">
+                    <i class="fa-brands fa-python text-yellow-400 mr-1"></i>
+                    Script receives <code class="text-blue-300 bg-slate-900 px-1 rounded">symbol: str</code>,
+                    <code class="text-blue-300 bg-slate-900 px-1 rounded">bars: DataFrame</code>,
+                    <code class="text-blue-300 bg-slate-900 px-1 rounded">as_of: datetime</code>.
+                    Return <code class="text-emerald-300 bg-slate-900 px-1 rounded">True / float</code> to include, <code class="text-rose-300 bg-slate-900 px-1 rounded">False</code> to exclude.
+                    <span class="text-slate-600 ml-2">— No I/O, network, or filesystem access (sandboxed).</span>
+                </div>
+                <div class="py-editor-wrap" style="height:168px">
+                    <pre id="py-line-nums" class="py-line-nums">1</pre>
+                    <textarea id="python-editor" class="code-editor" spellcheck="false"
+                        oninput="syncLineNums(this)" onscroll="syncLineNumsScroll(this)"
+                        style="height:168px">def screen(symbol: str, bars, as_of) -> bool | float:
+    """Return True/float to include, False to exclude."""
+    roe         = bars['roe'].iloc[-1]
+    fcf_streak  = (bars['fcf'].tail(5) > 0).all()
+    debt_ratio  = bars['debt_equity'].iloc[-1]
+
+    return roe >= 0.15 and fcf_streak and debt_ratio <= 0.5</textarea>
+                </div>
+                <!-- Lint output panel -->
+                <div id="lint-panel" class="hidden text-[10px] font-mono bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 flex flex-col gap-0.5 max-h-[72px] overflow-y-auto custom-scrollbar"></div>
+                <div class="flex items-center gap-2">
+                    <button onclick="validatePythonScript()"
+                        class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-bold cursor-pointer transition">
+                        <i class="fa-solid fa-check-circle mr-1"></i>Validate
+                    </button>
+                    <button onclick="compilePythonScript()"
+                        class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-1.5 rounded-lg font-bold cursor-pointer transition">
+                        <i class="fa-solid fa-gear mr-1"></i>Compile
+                    </button>
+                    <span id="python-status" class="text-[10px] font-mono text-slate-600"></span>
+                </div>
+            </div>
+
+            <!-- ·· Panel: Natural Language / AI ····························· -->
+            <div id="panel-nl" class="hidden flex-col gap-3">
+                <!-- Safety warning -->
+                <div class="text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 px-3 py-2 rounded flex items-start gap-2">
+                    <i class="fa-solid fa-triangle-exclamation mt-0.5 shrink-0"></i>
+                    <span>
+                        AI-generated conditions require <strong>explicit user acceptance</strong> before execution.
+                        Originating prompt, model version, and source hash are stored for full audit traceability.
+                    </span>
+                </div>
+
+                <!-- Chat history -->
+                <div id="nl-chat-history" class="chat-wrap custom-scrollbar">
+                    <div class="text-[10px] text-slate-700 text-center py-2">
+                        Conversation starts here. Each AI response must be accepted before it runs.
+                    </div>
+                </div>
+
+                <!-- Input row -->
+                <div class="flex gap-2 items-end">
+                    <textarea id="nl-prompt" rows="2"
+                        class="flex-1 code-editor bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-700 focus:outline-none focus:border-purple-500/40 resize-none text-xs"
+                        placeholder="Describe your criteria… or refine the last suggestion (Shift+Enter = new line)"
+                        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendNLMessage();}"></textarea>
+                    <button onclick="sendNLMessage()"
+                        class="shrink-0 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-4 py-2 rounded-lg cursor-pointer transition flex flex-col items-center justify-center gap-0.5 h-[52px]">
+                        <i class="fa-solid fa-paper-plane text-sm"></i>
+                        <span class="text-[9px]">Send</span>
+                    </button>
+                </div>
+
+                <!-- Accepted global status -->
+                <div id="nl-accepted-status"
+                    class="hidden text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded flex items-center gap-2">
+                    <i class="fa-solid fa-circle-check"></i>
+                    Condition accepted &amp; compiled. Audit record saved — prompt hash + source snapshot stored.
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Run + Results ─────────────────────────────────────────────── -->
+        <div class="border-t border-slate-800 pt-4 flex flex-col gap-3">
+            <!-- Toolbar -->
+            <div class="flex justify-between items-center flex-wrap gap-2">
+                <div class="text-xs font-mono text-slate-400 flex items-center gap-2">
+                    <span>Status:</span>
+                    <b id="screener-status-text" class="text-slate-600">Ready</b>
+                    <span class="text-slate-700">·</span>
+                    <span id="screener-pass-count" class="text-emerald-400 font-bold">—</span>
+                    <span class="text-slate-600">matches</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="exportCSV()" id="btn-export-csv"
+                        class="hidden text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-lg cursor-pointer font-medium transition">
+                        <i class="fa-solid fa-file-csv mr-1 text-emerald-400"></i>Export CSV
+                    </button>
+                    <button onclick="copyToClipboard()" id="btn-copy"
+                        class="hidden text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-lg cursor-pointer font-medium transition">
+                        <i class="fa-solid fa-clipboard mr-1 text-blue-400"></i>Copy
+                    </button>
+                    <button onclick="runScreen()"
+                        class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-5 py-2 rounded-lg transition shadow-lg shadow-emerald-600/10 cursor-pointer">
+                        <i class="fa-solid fa-play mr-1.5"></i>Run Screen
+                    </button>
+                </div>
+            </div>
+
+            <!-- Screener Results Table (§2.4 minimum columns) -->
+            <div id="screener-results-wrap" class="hidden overflow-x-auto border border-slate-800 rounded-lg bg-slate-950 custom-scrollbar">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="bg-slate-900/80 text-slate-400 border-b border-slate-800 text-[10px] uppercase tracking-wide">
+                            <th class="p-2.5 text-center w-10">Rank</th>
+                            <th class="p-2.5 w-16 font-mono">Symbol</th>
+                            <th class="p-2.5">Company Name</th>
+                            <th class="p-2.5 text-right">Last Price</th>
+                            <th class="p-2.5 text-right">Change %</th>
+                            <th class="p-2.5 text-right">Market Cap</th>
+                            <th class="p-2.5">Sector</th>
+                            <th class="p-2.5 text-center w-24">Valuation</th>
+                        </tr>
+                    </thead>
+                    <tbody id="screener-results-tbody" class="divide-y divide-slate-900/80"></tbody>
+                </table>
+            </div>
+
+            <!-- Save to DB -->
+            <div id="save-to-db-row" class="hidden flex justify-end">
+                <button onclick="executeAndSaveToListDatabase()"
+                    class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 px-4 py-1.5 rounded-lg cursor-pointer font-medium transition">
+                    <i class="fa-solid fa-floppy-disk mr-1 text-purple-400"></i>Save List to Database
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+    <!-- VALUATION BLOCK (原版保留 + 微調)                                    -->
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl flex flex-col gap-5">
+
+        <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+            <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                <i class="fa-solid fa-chart-bar text-purple-400"></i> Valuation
+            </h2>
+            <span class="text-[10px] text-slate-700 font-mono">Cross-model composite scoring</span>
+        </div>
+
+        <!-- Source selectors -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
+            <div>
+                <label class="block text-[10px] mb-1 font-semibold text-purple-400">
+                    <i class="fa-solid fa-cloud-arrow-down mr-1"></i>Source A — Load Screener List From Database
+                </label>
+                <select id="valuation-list-selector" onchange="loadSavedListToMatrix()"
+                    class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 cursor-pointer focus:outline-none">
+                    <option value="NONE">-- Select Target List --</option>
+                    <option value="PRESET_1" selected>Default: Core Tech Universe (3 Tickers)</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-[10px] mb-1 font-semibold text-blue-400">
+                    <i class="fa-solid fa-keyboard mr-1"></i>Source B — Append Individual Ticker
+                </label>
+                <div class="flex gap-1.5">
+                    <input type="text" id="manual-ticker-input" placeholder="e.g. NVDA, TSLA"
+                        class="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold font-mono text-white uppercase focus:outline-none">
+                    <button onclick="appendManualTicker()"
+                        class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition cursor-pointer">
+                        Append
+                    </button>
+                </div>
+            </div>
+            <div class="flex flex-col justify-end">
+                <button onclick="alert('External data successfully structured and injected.')"
+                    class="w-full bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer h-[32px] flex items-center justify-center gap-1.5">
+                    <i class="fa-solid fa-file-excel text-emerald-500"></i>Source C — Direct Import (Excel / CSV)
+                </button>
+            </div>
+        </div>
+
+        <!-- Valuation threshold controls -->
+        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+            <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <i class="fa-solid fa-sliders text-purple-400"></i>Valuation Highlight Thresholds
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-[11px]">
+                <div class="bg-slate-900 p-2 rounded border border-slate-800 flex flex-col gap-1.5">
+                    <span class="text-slate-500 font-medium text-[10px]">1. PEG Target &lt;</span>
+                    <input type="number" id="th-peg" value="1.0" step="0.1" oninput="renderValuationMatrixTable()"
+                        class="w-full bg-slate-950 border border-slate-700 rounded text-center text-white py-0.5 font-bold font-mono focus:outline-none text-xs">
+                </div>
+                <div class="bg-slate-900 p-2 rounded border border-slate-800 flex flex-col gap-1.5">
+                    <span class="text-slate-500 font-medium text-[10px]">2. DCF Margin of Safety &gt;=</span>
+                    <div class="flex items-center gap-1">
+                        <input type="number" id="th-dcf" value="20" step="5" oninput="renderValuationMatrixTable()"
+                            class="w-full bg-slate-950 border border-slate-700 rounded text-center text-white py-0.5 font-bold font-mono focus:outline-none text-xs">
+                        <span class="text-slate-500 text-xs shrink-0">%</span>
+                    </div>
+                </div>
+                <div class="bg-slate-900 p-2 rounded border border-slate-800 flex flex-col gap-1.5">
+                    <span class="text-slate-500 font-medium text-[10px]">3. P/E Valuation Band</span>
+                    <select id="th-pe" onchange="renderValuationMatrixTable()"
+                        class="w-full bg-slate-950 border border-slate-700 rounded py-0.5 text-center text-white font-bold cursor-pointer text-xs">
+                        <option value="MID_LOW">Lower-Mid Band</option>
+                        <option value="LOW_TRACK">Bottom Track</option>
+                    </select>
+                </div>
+                <div class="bg-slate-900 p-2 rounded border border-slate-800 flex flex-col gap-1.5">
+                    <span class="text-slate-500 font-medium text-[10px]">4. P/B Valuation Band</span>
+                    <select id="th-pb" onchange="renderValuationMatrixTable()"
+                        class="w-full bg-slate-950 border border-slate-700 rounded py-0.5 text-center text-white font-bold cursor-pointer text-xs">
+                        <option value="LOW_TRACK">Bottom Track</option>
+                        <option value="NORMAL">Standard Band</option>
+                    </select>
+                </div>
+                <div class="bg-slate-900 p-2 rounded border border-slate-800 flex flex-col gap-1.5">
+                    <span class="text-slate-500 font-medium text-[10px]">5. DDM Yield &gt;=</span>
+                    <div class="flex items-center gap-1">
+                        <input type="number" id="th-yield" value="4.5" step="0.5" oninput="renderValuationMatrixTable()"
+                            class="w-full bg-slate-950 border border-slate-700 rounded text-center text-white py-0.5 font-bold font-mono focus:outline-none text-xs">
+                        <span class="text-slate-500 text-xs shrink-0">%</span>
+                    </div>
+                </div>
+                <div class="bg-slate-900 p-2 rounded border border-slate-800 flex flex-col gap-1.5">
+                    <span class="text-slate-500 font-medium text-[10px]">6. P/S Industry Level</span>
+                    <select id="th-ps" onchange="renderValuationMatrixTable()"
+                        class="w-full bg-slate-950 border border-slate-700 rounded py-0.5 text-center text-white font-bold cursor-pointer text-xs">
+                        <option value="UNDERVALUED">Undervalued</option>
+                        <option value="NORMAL">Median Level</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Valuation matrix table -->
+        <div class="overflow-x-auto border border-slate-800 rounded-lg bg-slate-950 custom-scrollbar flex-1">
+            <table class="w-full text-left border-collapse text-xs font-mono">
+                <thead>
+                    <tr class="bg-slate-900/80 text-slate-400 border-b border-slate-800 font-sans text-[10px] uppercase tracking-wide">
+                        <th class="p-3 text-center w-8"></th>
+                        <th class="p-3 w-20">Ticker</th>
+                        <th class="p-3 bg-blue-950/20">Composite Score</th>
+                        <th class="p-3">1. PEG Model</th>
+                        <th class="p-3">2. DCF (MoS)</th>
+                        <th class="p-3">3. P/E Band</th>
+                        <th class="p-3">4. P/B Band</th>
+                        <th class="p-3">5. DDM Yield</th>
+                        <th class="p-3">6. P/S Ratio</th>
+                        <th class="p-3 border-l border-slate-800">7. P/E vs Avg <span class="text-slate-600 normal-case font-sans">(below = cheap)</span></th>
+                        <th class="p-3">8. Yield vs Avg <span class="text-slate-600 normal-case font-sans">(above = cheap)</span></th>
+                        <th class="p-3 text-amber-400 bg-amber-950/10 border-l border-slate-900">Technical Timing Signal</th>
+                        <th class="p-3 text-center w-10"></th>
+                    </tr>
+                </thead>
+                <tbody id="valuation-matrix-tbody" class="divide-y divide-slate-900/80"></tbody>
+            </table>
+        </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+    <!-- SCRIPT                                                                -->
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+    <script>
+    // ── DATA ─────────────────────────────────────────────────────────────────
+    const screenerPresets = {
+        val: [
+            { cat: 'Stability', field: 'EPS_5Y_Trend',      val: 'Drop<=1Y' },
+            { cat: 'Moat',      field: 'ROE_3Y_Avg',         val: '>= 15%' },
+            { cat: 'Moat',      field: 'Gross_Margin_3Y_Avg',val: '>= 30%' },
+            { cat: 'Leverage',  field: 'Debt_to_Equity',     val: '<= 50%' },
+            { cat: 'Liquidity', field: 'FCF_5Y_Status',      val: 'Continuous_Pos' }
+        ],
+        mom: [
+            { cat: 'Breakout', field: 'Price_High_Bound', val: '60D_High' },
+            { cat: 'Volume',   field: 'Volume_Ratio',     val: '>= 2.5X' },
+            { cat: 'Trend',    field: 'MA_Alignment',     val: 'Bullish_Sequence' }
+        ]
+    };
+
+    const userTemplates = {};
+
+    const DB = {
+        //                                                                                                                                                         ← new fields →
+        //         symbol   name                         price    chg    cap      sector                      peg    dcf  mos  pe_band    pb_band      yield  ps    ps_s          pe    peAvg5Y peAvg10Y yieldAvg5Y yieldAvg10Y  timing
+        META:  { symbol:'META',  name:'Meta Platforms Inc.',   price:597.42,  chg:+2.18, cap:'1.52T', sector:'Communication Services',  peg:0.82, dcf:460, mos:22, pe_band:'MID_LOW', pb_band:'NORMAL',    yield:0.5, ps:3.2,  ps_s:'UNDERVALUED', pe:22.4, peAvg5Y:25.2, peAvg10Y:28.1, yieldAvg5Y:0.2, yieldAvg10Y:0.1, timing:'🟢 MA20_BREAKOUT (Volume Break)' },
+        AAPL:  { symbol:'AAPL',  name:'Apple Inc.',            price:189.30,  chg:-0.72, cap:'2.91T', sector:'Information Technology',   peg:1.65, dcf:185, mos:2,  pe_band:'HIGH',    pb_band:'HIGH',      yield:0.6, ps:7.1,  ps_s:'HIGH',        pe:30.5, peAvg5Y:27.3, peAvg10Y:22.1, yieldAvg5Y:0.8, yieldAvg10Y:0.9, timing:'🟡 HIGH_VOLATILITY (Consolidation Divergence)' },
+        O:     { symbol:'O',     name:'Realty Income Corp.',   price:54.89,   chg:+0.43, cap:'32.8B', sector:'Real Estate',              peg:2.10, dcf:62,  mos:12, pe_band:'NORMAL',  pb_band:'LOW_TRACK', yield:5.8, ps:2.4,  ps_s:'NORMAL',      pe:45.0, peAvg5Y:48.2, peAvg10Y:52.3, yieldAvg5Y:4.9, yieldAvg10Y:4.6, timing:'🔴 BEAR_ALIGNMENT (Bearish MA Sequence)' },
+        NVDA:  { symbol:'NVDA',  name:'NVIDIA Corporation',    price:1087.21, chg:+3.54, cap:'2.67T', sector:'Information Technology',   peg:0.75, dcf:135, mos:32, pe_band:'MID_LOW', pb_band:'HIGH',      yield:0.2, ps:14.2, ps_s:'HIGH',        pe:55.0, peAvg5Y:62.1, peAvg10Y:45.2, yieldAvg5Y:0.1, yieldAvg10Y:0.1, timing:'🟢 MA5_SUPPORT (Pullback Defended)' },
+        TSLA:  { symbol:'TSLA',  name:'Tesla Inc.',            price:168.50,  chg:-1.30, cap:'536.9B',sector:'Consumer Discretionary',   peg:1.95, dcf:190, mos:5,  pe_band:'HIGH',    pb_band:'NORMAL',    yield:0.0, ps:5.8,  ps_s:'NORMAL',      pe:80.0, peAvg5Y:95.3, peAvg10Y:110.2,yieldAvg5Y:0.0, yieldAvg10Y:0.0, timing:'🟡 SIDE_TREND (Sideways Compression)' },
+        MSFT:  { symbol:'MSFT',  name:'Microsoft Corporation', price:424.68,  chg:+1.10, cap:'3.15T', sector:'Information Technology',   peg:1.20, dcf:390, mos:18, pe_band:'MID_LOW', pb_band:'HIGH',      yield:0.7, ps:12.1, ps_s:'HIGH',        pe:34.0, peAvg5Y:30.2, peAvg10Y:25.1, yieldAvg5Y:1.2, yieldAvg10Y:1.5, timing:'🟢 TREND_UP (Steady Bull Channel)' },
+        JNJ:   { symbol:'JNJ',   name:'Johnson & Johnson',     price:162.45,  chg:+0.28, cap:'390.7B',sector:'Health Care',              peg:1.80, dcf:155, mos:10, pe_band:'NORMAL',  pb_band:'LOW_TRACK', yield:3.1, ps:4.1,  ps_s:'NORMAL',      pe:22.0, peAvg5Y:26.5, peAvg10Y:17.3, yieldAvg5Y:2.8, yieldAvg10Y:2.5, timing:'🟡 NEUTRAL (Range Bound)' }
+    };
+
+    const listDB = { PRESET_1: ['META','AAPL','O'] };
+    let activeValList  = [];
+    let screenResults  = [];
+    let currentLogic   = 'AND';
+    let currentMode    = 'builtin';
+
+    // ── INIT ──────────────────────────────────────────────────────────────────
+    window.onload = () => {
+        loadScreenerPreset('val');
+        loadSavedListToMatrix();
+    };
+
+    // ── MODE SWITCH ───────────────────────────────────────────────────────────
+    function switchMode(mode) {
+        currentMode = mode;
+        ['builtin','python','nl'].forEach(m => {
+            const panel = document.getElementById('panel-' + m);
+            const tab   = document.getElementById('tab-' + m);
+            if (m === mode) {
+                panel.classList.remove('hidden');
+                panel.classList.add('flex');
+                tab.classList.replace('mode-tab-inactive','mode-tab-active');
+            } else {
+                panel.classList.add('hidden');
+                panel.classList.remove('flex');
+                tab.classList.replace('mode-tab-active','mode-tab-inactive');
+            }
+        });
+    }
+
+    // ── AND / OR TOGGLE ───────────────────────────────────────────────────────
+    function setLogic(l) {
+        currentLogic = l;
+        const andBtn = document.getElementById('logic-and');
+        const orBtn  = document.getElementById('logic-or');
+        const lbl    = document.getElementById('logic-label');
+        if (l === 'AND') {
+            andBtn.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded bg-emerald-600 text-white cursor-pointer';
+            orBtn.className  = 'text-[10px] font-bold px-2.5 py-0.5 rounded text-slate-500 hover:text-slate-300 cursor-pointer';
+            lbl.textContent  = 'ALL conditions must pass (AND)';
+            lbl.className    = 'text-emerald-400 font-bold';
+        } else {
+            orBtn.className  = 'text-[10px] font-bold px-2.5 py-0.5 rounded bg-amber-600 text-white cursor-pointer';
+            andBtn.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded text-slate-500 hover:text-slate-300 cursor-pointer';
+            lbl.textContent  = 'ANY one condition passes (OR)';
+            lbl.className    = 'text-amber-400 font-bold';
+        }
+    }
+
+    // ── CONDITION BLOCKS ──────────────────────────────────────────────────────
+    function loadScreenerPreset(key) {
+        const shelf = document.getElementById('screener-blocks-shelf');
+        shelf.innerHTML = '';
+        const conds = screenerPresets[key] || userTemplates[key] || [];
+        conds.forEach(b => appendConditionBlock(shelf, b));
+    }
+
+    function appendConditionBlock(shelf, b) {
+        const tech = ['Breakout','Volume','Trend','Technical'].includes(b.cat);
+        const div  = document.createElement('div');
+        div.className = 'condition-block-item flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-800 text-[10px]';
+        div.dataset.cat   = b.cat;
+        div.dataset.field = b.field;
+        div.dataset.val   = b.val;
+        div.innerHTML = `
+            <div class="flex gap-1.5 items-center min-w-0">
+                <span class="shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold border
+                    ${tech ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'}">
+                    ${b.cat}
+                </span>
+                <span class="text-slate-300 font-mono truncate">${b.field}</span>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0 pl-2">
+                <span class="text-blue-400 font-mono font-bold">${b.val}</span>
+                <i class="fa-solid fa-xmark text-slate-700 hover:text-rose-400 cursor-pointer transition"
+                   onclick="this.closest('.condition-block-item').remove()"></i>
+            </div>`;
+        shelf.appendChild(div);
+    }
+
+    function addNewCustomBlock(dim) {
+        const shelf = document.getElementById('screener-blocks-shelf');
+        if (dim === 'Fundamental') {
+            appendConditionBlock(shelf, { cat:'Fundamental', field:'Dividend_Yield',   val:'>= 4.0%' });
+        } else {
+            appendConditionBlock(shelf, { cat:'Technical',   field:'Price > 200D_MA',  val:'ABOVE_MA200' });
+        }
+    }
+
+    function saveCurrentStrategyTemplate() {
+        const blocks = [...document.getElementsByClassName('condition-block-item')];
+        if (!blocks.length) { alert('No conditions configured.'); return; }
+        const name = prompt('Enter template name:');
+        if (!name) return;
+        const key = 'user_' + Date.now();
+        userTemplates[key] = blocks.map(b => ({ cat:b.dataset.cat, field:b.dataset.field, val:b.dataset.val }));
+        screenerPresets[key] = userTemplates[key];
+        const zone = document.getElementById('user-templates-zone');
+        const btn  = document.createElement('button');
+        btn.onclick = () => loadScreenerPreset(key);
+        btn.className = 'text-xs bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2.5 py-1 rounded hover:bg-purple-500/20 transition cursor-pointer font-bold';
+        btn.innerHTML = `<i class="fa-solid fa-user-gear mr-1"></i>${name}`;
+        zone.appendChild(btn);
+        alert(`Template "${name}" saved.`);
+    }
+
+    // ── PYTHON MODE — line numbers + lint ────────────────────────────────────
+    function syncLineNums(ta) {
+        const pre   = document.getElementById('py-line-nums');
+        const count = ta.value.split('\n').length;
+        pre.textContent = Array.from({ length: count }, (_, i) => i + 1).join('\n');
+        pre.scrollTop   = ta.scrollTop;
+    }
+
+    function syncLineNumsScroll(ta) {
+        document.getElementById('py-line-nums').scrollTop = ta.scrollTop;
+    }
+
+    function validatePythonScript() {
+        const s     = document.getElementById('python-status');
+        const panel = document.getElementById('lint-panel');
+        s.textContent = '⏳ Linting…';
+        s.className   = 'text-[10px] font-mono text-slate-500';
+        panel.classList.remove('hidden');
+        panel.innerHTML = '<span class="text-slate-600">Analysing…</span>';
+        setTimeout(() => {
+            panel.innerHTML = `
+                <div class="lint-ok">✓  No syntax errors detected</div>
+                <div class="lint-warn">W001  Line 2: docstring could include param types</div>
+                <div class="lint-ok">✓  All code paths return bool or float</div>
+                <div class="lint-ok">✓  No forbidden I/O or network calls</div>`;
+            s.textContent = '✅ Lint passed (1 warning)';
+            s.className   = 'text-[10px] font-mono text-emerald-400';
+        }, 700);
+    }
+
+    function compilePythonScript() {
+        const s = document.getElementById('python-status');
+        s.textContent = '⏳ Compiling…';
+        s.className   = 'text-[10px] font-mono text-slate-500';
+        setTimeout(() => {
+            s.textContent = '✅ Compiled. Ready to run.';
+            s.className   = 'text-[10px] font-mono text-emerald-400';
+        }, 900);
+    }
+
+    // Initialise line numbers on load
+    window.addEventListener('load', () => {
+        const ta = document.getElementById('python-editor');
+        if (ta) syncLineNums(ta);
+    });
+
+    // ── NL / AI MODE — chat-style refinement ─────────────────────────────────
+    let nlTurnCounter = 0;
+
+    function sendNLMessage() {
+        const inp = document.getElementById('nl-prompt');
+        const msg = inp.value.trim();
+        if (!msg) return;
+        inp.value = '';
+        inp.style.height = '';
+
+        // User bubble
+        const hist = document.getElementById('nl-chat-history');
+        const userDiv = document.createElement('div');
+        userDiv.className = 'chat-user';
+        userDiv.textContent = msg;
+        hist.appendChild(userDiv);
+        hist.scrollTop = hist.scrollHeight;
+
+        // AI thinking bubble
+        const turnId = ++nlTurnCounter;
+        const aiDiv  = document.createElement('div');
+        aiDiv.className = 'chat-ai';
+        aiDiv.id        = 'nl-turn-' + turnId;
+        aiDiv.innerHTML = '<span class="text-slate-600 text-[10px]">⏳ Generating…</span>';
+        hist.appendChild(aiDiv);
+        hist.scrollTop = hist.scrollHeight;
+
+        setTimeout(() => renderAITurn(turnId, msg), 900);
+    }
+
+    function renderAITurn(turnId, prompt) {
+        const hash = Math.random().toString(36).slice(2, 10);
+        const code = buildMockCode(prompt, turnId);
+        const div  = document.getElementById('nl-turn-' + turnId);
+        div.dataset.turnId = turnId;
+        div.innerHTML = `
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[9px] text-purple-400 font-medium"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>AI Draft</span>
+                <span class="text-[9px] font-mono text-slate-600">claude-sonnet-4-6 · ${hash}</span>
+            </div>
+            <pre class="text-emerald-300/85 text-[10px] leading-relaxed overflow-x-auto custom-scrollbar pb-1 whitespace-pre">${escHtml(code)}</pre>
+            <div class="flex gap-1.5 mt-2 pt-2 border-t border-slate-800/60" id="nl-actions-${turnId}">
+                <button onclick="acceptNLTurn(${turnId})"
+                    class="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-0.5 rounded font-bold cursor-pointer transition">
+                    <i class="fa-solid fa-circle-check mr-1"></i>Accept &amp; Compile
+                </button>
+                <button onclick="rejectNLTurn(${turnId})"
+                    class="text-[10px] bg-rose-900/40 hover:bg-rose-800/60 text-rose-400 px-3 py-0.5 rounded font-bold cursor-pointer transition border border-rose-500/20">
+                    <i class="fa-solid fa-xmark mr-1"></i>Reject
+                </button>
+            </div>`;
+        document.getElementById('nl-chat-history').scrollTop = 9999;
+    }
+
+    function acceptNLTurn(turnId) {
+        // Disable actions on all other AI turns
+        document.querySelectorAll('[data-turn-id]').forEach(el => {
+            if (parseInt(el.dataset.turnId) !== turnId) {
+                const a = document.getElementById('nl-actions-' + el.dataset.turnId);
+                if (a) a.innerHTML = '<span class="text-[9px] text-slate-700">— superseded —</span>';
+            }
+        });
+        const actions = document.getElementById('nl-actions-' + turnId);
+        if (actions) actions.innerHTML =
+            '<span class="text-[10px] text-emerald-400"><i class="fa-solid fa-circle-check mr-1"></i>Accepted — audit record saved</span>';
+        document.getElementById('nl-turn-' + turnId).classList.add('accepted');
+        document.getElementById('nl-accepted-status').classList.remove('hidden');
+    }
+
+    function rejectNLTurn(turnId) {
+        const actions = document.getElementById('nl-actions-' + turnId);
+        if (actions) actions.innerHTML =
+            '<span class="text-[10px] text-rose-400"><i class="fa-solid fa-xmark mr-1"></i>Rejected — send a new message to refine</span>';
+    }
+
+    function buildMockCode(prompt, turn) {
+        return `def screen(symbol: str, bars, as_of) -> bool | float:
+    """Generated from: "${prompt.slice(0, 52)}…" (turn ${turn})"""
+    roe        = bars['roe'].iloc[-1]
+    fcf_streak = (bars['fcf'].tail(5) > 0).all()
+    pe_ratio   = bars['pe'].iloc[-1]
+    sector_pe  = bars['sector_avg_pe'].iloc[-1]
+    mom_3m     = bars['close'].iloc[-1] / bars['close'].iloc[-63] - 1
+
+    return (
+        roe >= 0.15
+        and fcf_streak
+        and pe_ratio < sector_pe
+        and mom_3m > 0.05
+    )`;
+    }
+
+    function escHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── RUN SCREEN ────────────────────────────────────────────────────────────
+    function runScreen() {
+        const statusEl = document.getElementById('screener-status-text');
+        statusEl.textContent = 'Running…';
+        statusEl.className   = 'text-amber-400 font-bold';
+
+        setTimeout(() => {
+            // Simulate: filter on mos >= 10 for built-in/python, different set for nl
+            screenResults = Object.values(DB)
+                .filter(s => currentMode === 'mom'
+                    ? s.chg > 1
+                    : s.mos >= (currentLogic === 'OR' ? 5 : 10))
+                .map(s => s.symbol);
+
+            statusEl.textContent = 'Complete';
+            statusEl.className   = 'text-emerald-400 font-bold';
+            document.getElementById('screener-pass-count').textContent = screenResults.length;
+
+            renderScreenerResults();
+
+            document.getElementById('screener-results-wrap').classList.remove('hidden');
+            document.getElementById('save-to-db-row').classList.remove('hidden');
+            document.getElementById('btn-export-csv').classList.remove('hidden');
+            document.getElementById('btn-copy').classList.remove('hidden');
+        }, 600);
+    }
+
+    function renderScreenerResults() {
+        const tbody = document.getElementById('screener-results-tbody');
+        tbody.innerHTML = '';
+        screenResults.forEach((tk, i) => {
+            const s = DB[tk]; if (!s) return;
+            const pos   = s.chg >= 0;
+            const chgCl = pos ? 'text-emerald-400' : 'text-rose-400';
+            const chgTx = (pos ? '+' : '') + s.chg.toFixed(2) + '%';
+            tbody.innerHTML += `
+                <tr class="hover:bg-slate-900/30 transition text-xs">
+                    <td class="p-2.5 text-center text-slate-400 font-bold font-mono">${i + 1}</td>
+                    <td class="p-2.5 font-bold text-white font-mono">${s.symbol}</td>
+                    <td class="p-2.5 text-slate-300">${s.name}</td>
+                    <td class="p-2.5 text-right text-slate-200 font-mono">$${s.price.toFixed(2)}</td>
+                    <td class="p-2.5 text-right font-bold font-mono ${chgCl}">${chgTx}</td>
+                    <td class="p-2.5 text-right text-slate-400 font-mono">${s.cap}</td>
+                    <td class="p-2.5 text-slate-400 text-[10px]">${s.sector}</td>
+                    <td class="p-2.5 text-center">
+                        <button onclick="addToValuation('${tk}')"
+                            class="text-[10px] text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded hover:bg-blue-500/10 cursor-pointer transition font-medium">
+                            + Add
+                        </button>
+                    </td>
+                </tr>`;
+        });
+    }
+
+    function addToValuation(ticker) {
+        if (!activeValList.includes(ticker)) {
+            activeValList.push(ticker);
+            renderValuationMatrixTable();
+        }
+    }
+
+    // ── EXPORT ────────────────────────────────────────────────────────────────
+    function exportCSV() {
+        const rows = [['Rank','Symbol','Company Name','Last Price','Change %','Market Cap','Sector']];
+        screenResults.forEach((tk, i) => {
+            const s = DB[tk];
+            if (s) rows.push([i+1, s.symbol, s.name, s.price, (s.chg>=0?'+':'')+s.chg+'%', s.cap, s.sector]);
+        });
+        const csv  = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+        const blob = new Blob([csv], { type:'text/csv' });
+        const a    = document.createElement('a');
+        a.href     = URL.createObjectURL(blob);
+        a.download = 'screener_results.csv';
+        a.click();
+    }
+
+    function copyToClipboard() {
+        const lines = ['Rank\tSymbol\tCompany Name\tLast Price\tChange %\tMarket Cap\tSector'];
+        screenResults.forEach((tk, i) => {
+            const s = DB[tk];
+            if (s) lines.push(`${i+1}\t${s.symbol}\t${s.name}\t${s.price}\t${(s.chg>=0?'+':'')+s.chg}%\t${s.cap}\t${s.sector}`);
+        });
+        navigator.clipboard.writeText(lines.join('\n'))
+            .then(() => alert('Results copied to clipboard.'));
+    }
+
+    // ── SAVE SCREENER LIST TO DB ──────────────────────────────────────────────
+    function executeAndSaveToListDatabase() {
+        if (!screenResults.length) { alert('Run the screen first.'); return; }
+        const name = prompt('Enter list name:', 'Custom_Screen_List');
+        if (!name) return;
+        const id    = 'db_' + Date.now();
+        listDB[id]  = [...screenResults];
+        const sel   = document.getElementById('valuation-list-selector');
+        const opt   = document.createElement('option');
+        opt.value   = id;
+        opt.innerText = `DB: ${name} (${screenResults.length} tickers)`;
+        sel.appendChild(opt);
+        sel.value = id;
+        loadSavedListToMatrix();
+        alert(`List "${name}" saved and loaded into valuation matrix.`);
+    }
+
+    // ── VALUATION MATRIX ──────────────────────────────────────────────────────
+    function loadSavedListToMatrix() {
+        const id   = document.getElementById('valuation-list-selector').value;
+        activeValList = id === 'NONE' ? [] : [...(listDB[id] || [])];
+        renderValuationMatrixTable();
+    }
+
+    function appendManualTicker() {
+        const inp = document.getElementById('manual-ticker-input');
+        const tk  = inp.value.trim().toUpperCase();
+        if (!tk) return;
+        if (!DB[tk]) {
+            DB[tk] = { symbol:tk, name:tk+' Inc.', price:100, chg:0, cap:'N/A', sector:'N/A',
+                peg:1.1, dcf:100, mos:15, pe_band:'NORMAL', pb_band:'NORMAL',
+                yield:1.2, ps:2.5, ps_s:'NORMAL',
+                pe:20.0, peAvg5Y:20.0, peAvg10Y:20.0, yieldAvg5Y:1.2, yieldAvg10Y:1.2,
+                timing:'🟡 SIDE_TREND' };
+        }
+        if (!activeValList.includes(tk)) activeValList.push(tk);
+        renderValuationMatrixTable();
+        inp.value = '';
+    }
+
+    function renderValuationMatrixTable() {
+        const tbody = document.getElementById('valuation-matrix-tbody');
+        tbody.innerHTML = '';
+        if (!activeValList.length) {
+            tbody.innerHTML = `<tr><td colspan="13" class="p-5 text-center text-slate-600 text-xs font-sans">
+                No records loaded. Use Sources A / B / C above, or run the screener and click "+ Add".
+            </td></tr>`;
+            return;
+        }
+        const lPeg   = parseFloat(document.getElementById('th-peg').value)   || 1.0;
+        const lDcf   = parseFloat(document.getElementById('th-dcf').value)   || 20;
+        const lPe    = document.getElementById('th-pe').value;
+        const lPb    = document.getElementById('th-pb').value;
+        const lYield = parseFloat(document.getElementById('th-yield').value) || 4.5;
+        const lPs    = document.getElementById('th-ps').value;
+
+        activeValList.forEach(ticker => {
+            const s = DB[ticker]; if (!s) return;
+            let score = s.mos >= 30 ? 50 : s.mos >= 15 ? 35 : 10;
+            const pegH   = s.peg     <= lPeg;     if (pegH)   score += 10;
+            const dcfH   = s.mos     >= lDcf;
+            const peH    = s.pe_band === lPe;     if (peH)    score += 10;
+            const pbH    = s.pb_band === lPb;     if (pbH)    score += 10;
+            const ylH    = s.yield   >= lYield;   if (ylH)    score += 10;
+            const psH    = s.ps_s    === lPs;     if (psH)    score += 10;
+            // P/E below 5Y avg = stock cheaper than its own history (highlight)
+            const peAvgH = s.pe < s.peAvg5Y;      if (peAvgH) score += 10;
+            // Yield above 5Y avg = price fell relative to dividend = cheaper (highlight)
+            const ylAvgH = s.yield > s.yieldAvg5Y && s.yield > 0; if (ylAvgH) score += 10;
+            if (score > 120) score = 120;
+
+            const hi = (v, on) => on
+                ? `<td class="p-2.5"><span class="bg-emerald-500/20 text-emerald-400 font-bold px-1.5 py-0.5 rounded border border-emerald-500/30 text-[10px] font-mono">${v}</span></td>`
+                : `<td class="p-2.5 text-slate-500 text-[10px] font-mono">${v}</td>`;
+
+            // P/E vs Avg cell: show current / 5Y / 10Y
+            const peAvgCell = `${s.pe}x / 5Y:${s.peAvg5Y}x / 10Y:${s.peAvg10Y}x`;
+            // Yield vs Avg cell: show current / 5Y / 10Y
+            const ylAvgCell = `${s.yield}% / 5Y:${s.yieldAvg5Y}% / 10Y:${s.yieldAvg10Y}%`;
+
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-900/30 transition';
+            tr.innerHTML = `
+                <td class="p-2.5 text-center text-slate-700"><i class="fa-solid fa-calculator text-[9px]"></i></td>
+                <td class="p-2.5 font-bold text-white text-xs font-mono">${s.symbol}</td>
+                <td class="p-2.5 bg-blue-950/10 font-bold text-blue-400 text-xs font-mono">${score} pts</td>
+                ${hi(s.peg + 'x', pegH)}
+                ${hi('$' + s.dcf + ' (' + s.mos + '%)', dcfH)}
+                ${hi(s.pe_band, peH)}
+                ${hi(s.pb_band, pbH)}
+                ${hi(s.yield + '%', ylH)}
+                ${hi(s.ps + 'x', psH)}
+                <td class="p-2.5 border-l border-slate-800/60">${peAvgH
+                    ? `<span class="bg-emerald-500/20 text-emerald-400 font-bold px-1.5 py-0.5 rounded border border-emerald-500/30 text-[10px] font-mono">${peAvgCell}</span>`
+                    : `<span class="text-slate-500 text-[10px] font-mono">${peAvgCell}</span>`}</td>
+                <td class="p-2.5">${ylAvgH
+                    ? `<span class="bg-emerald-500/20 text-emerald-400 font-bold px-1.5 py-0.5 rounded border border-emerald-500/30 text-[10px] font-mono">${ylAvgCell}</span>`
+                    : `<span class="text-slate-500 text-[10px] font-mono">${ylAvgCell}</span>`}</td>
+                <td class="p-2.5 text-amber-300 bg-amber-950/10 font-medium border-l border-slate-900 font-sans text-[10px]">${s.timing}</td>
+                <td class="p-2.5 text-center cursor-pointer"
+                    onclick="activeValList=activeValList.filter(t=>t!=='${s.symbol}');renderValuationMatrixTable();">
+                    <i class="fa-solid fa-trash-can text-slate-700 hover:text-rose-400 transition"></i>
+                </td>`;
+            tbody.appendChild(tr);
+        });
+    }
+    </script>
+</body>
+</html>
