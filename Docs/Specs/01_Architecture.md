@@ -43,7 +43,7 @@ Rules:
 - **Core** has zero internal deps. Only stdlib + `fmt`/`spdlog`.
 - **Frontend** never includes anything from `Engine` directly — only through **Bindings** (Qt-aware adapters that own a backend value and expose `Q_PROPERTY` / signals).
 - **Plugins** link only against **Core** + **Indicators** + **Strategy** public headers. They never see Engine internals.
-- **Launcher** is its own executable. It links **Core** only (for `Result`, logging, semver), nothing else.
+- **Launcher** is its own executable. It links **Core** (for `Result`, logging, semver) + **Qt6** (Core, Widgets, Network for UI and downloads). It does not link Engine, Data, Strategy, or other backend modules.
 
 ---
 
@@ -163,7 +163,7 @@ Src/Backend/Foo/
 
 | Preset | OS | Generator | Notes |
 |---|---|---|---|
-| `windows-msvc-x64` | Windows | Visual Studio 17 2022 | static MSVC runtime, /W4 /WX |
+| `windows-msvc-x64` | Windows | Visual Studio 17 2022 | dynamic (x64-windows triplet), /W4 /WX |
 | `macos-arm64` | macOS | Xcode | universal off; build arm64 + x64 separately |
 | `macos-x64` | macOS | Xcode | for older Intel Macs |
 | `linux-clang-x64` | Linux | Ninja | clang 17, libc++ optional |

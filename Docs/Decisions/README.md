@@ -53,6 +53,7 @@ ADRs are append-only. To change a decision, write a new ADR that supersedes it. 
 | 0002 | [C++ and Qt as the desktop stack](0002-cpp-and-qt-as-the-desktop-stack.md) | Accepted |
 | 0003 | [Hybrid rule + Lua strategy authoring](0003-hybrid-rule-and-lua-strategy-authoring.md) | Accepted |
 | 0004 | [Anti-cheat CI gate with mutation testing](0004-anti-cheat-ci-gate-with-mutation-testing.md) | Accepted |
+| 0005 | [Build, distribution, and launcher deployment decisions](0005-build-distribution-launcher-decisions.md) | Accepted |
 
 When you add an ADR, add a row here. Keep numbering monotonic — gaps are confusing, never reuse a number.
 
