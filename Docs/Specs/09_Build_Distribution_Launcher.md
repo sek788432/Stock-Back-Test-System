@@ -136,6 +136,7 @@ Each job uploads the built artifact and the SDK zip. A separate **release** work
    - `stockBacktester-<ver>-macos-arm64.dmg` and `.tgz`
    - `stockBacktester-<ver>-macos-x64.dmg` and `.tgz`
    - `stockBacktester-<ver>-linux-x64.AppImage` and `.tar.gz`
+   - `stockBacktester-<ver>-linux-x64.AppImage.sig` (GPG detached signature)
    - `stockBacktesterLauncher-<ver>-<os>-<arch>.zip` (Launcher binary)
    - `bte-plugin-sdk-<ver>-<os>-<arch>.zip` (for each OS/arch)
    - `release-manifest.json` (machine-readable index — see §4)
@@ -220,6 +221,33 @@ To make the Launcher's job trivial, every Release uploads a **`release-manifest.
     }
   ],
   "changelog": "https://github.com/<owner>/<repo>/releases/tag/v0.3.0"
+}
+```
+
+**Architecture normalization:** The manifest uses canonical short names (`x64`, `arm64`). The Launcher maps host values (`uname -m` returns `x86_64` on Intel macOS, `aarch64` on some Linux) to these canonical names before matching.
+
+**GPG signatures:** Linux assets have a corresponding `.sig` file uploaded as a separate release asset (e.g. `stockBacktester-0.3.0-linux-x64.AppImage.sig`). The Launcher downloads and verifies it when GPG verification is enabled.
+
+**Launcher assets:** The manifest also includes Launcher binaries so the self-update mechanism can discover, download, and verify them:
+
+```json
+{
+  "launcher": [
+    {
+      "platform": "windows",
+      "arch": "x64",
+      "url": ".../stockBacktesterLauncher-0.3.0-windows-x64.zip",
+      "size": 12345678,
+      "sha256": "..."
+    },
+    {
+      "platform": "macos",
+      "arch": "arm64",
+      "url": ".../stockBacktesterLauncher-0.3.0-macos-arm64.zip",
+      "size": 11234567,
+      "sha256": "..."
+    }
+  ]
 }
 ```
 
@@ -336,7 +364,7 @@ These **independent version tracks** are surfaced in **Help → About** (and the
 - **Windows**: EV or OV code-signing certificate ([SignPath](https://signpath.io/) offers free signing for verified OSS projects). Without signing, SmartScreen scares users for weeks.
 - **Linux**: AppImages signed with `gpg --detach-sign`; the Launcher verifies the GPG signature when configured to do so.
 
-Signing keys live in GitHub Actions secrets, never in the repo. CI steps are conditional (`if: secrets.APPLE_CERT != ''`) so builds succeed without credentials.
+Signing keys live in GitHub Actions secrets, never in the repo. CI steps map secret presence to `env` and gate with `if: env.APPLE_CERT != ''`-style conditions so builds succeed without credentials.
 
 **Current status (ADR 0005):** macOS and Windows signing are deferred — no budget. Linux GPG signing will be implemented (free). If the project gains sponsorship or SignPath approval, signing can be enabled without architectural changes.
 
@@ -445,7 +473,7 @@ A single `Cmake/Versioning.cmake` generates `version.h` from `git describe --tag
 
 ## 12. Timeline (3–5 hrs/week)
 
-Estimated schedule at ~4 hours/week. Issues reference `09_Issue_Plan.md`.
+Estimated schedule at ~4 hours/week. Issue letters (A–N) correspond to GitHub issues opened per the dependency plan.
 
 | Week | Hours | Issue | Deliverable |
 |------|-------|-------|-------------|

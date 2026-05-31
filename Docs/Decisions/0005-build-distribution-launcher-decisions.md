@@ -29,7 +29,7 @@ Build two independent binaries rather than a single fat Universal Binary.
 
 - CI matrix: `macos-14` (arm64 runner) and `macos-13` (x64 runner) in parallel.
 - `release-manifest.json` lists two macOS assets (one per arch).
-- Launcher detects host architecture (`uname -m`) to select the correct download.
+- Launcher detects host architecture (`uname -m`) and normalizes to canonical manifest names (`x86_64` → `x64`, `aarch64` → `arm64`) to select the correct download.
 
 ### 3. Launcher same repo, OTA-style updates
 
@@ -68,7 +68,7 @@ As an OSS project with no budget:
 **Mitigations:**
 
 - README and download page will include clear instructions for bypassing Gatekeeper/SmartScreen.
-- If the project gains sponsorship, codesigning can be added without architectural changes (CI steps are already stubbed with `if: secrets.APPLE_CERT != ''`).
+- If the project gains sponsorship, codesigning can be added without architectural changes (CI steps map secret presence to `env` and gate with `if: env.APPLE_CERT != ''`-style conditions).
 - Architecture detection is a single `uname -m` call; trivial to implement.
 
 ## Alternatives considered
@@ -76,7 +76,7 @@ As an OSS project with no budget:
 | Decision | Alternative | Why rejected |
 |----------|------------|--------------|
 | Qt licensing | Commercial license ($300+/mo) | OSS, no budget |
-| Qt licensing | Static linking under LGPL | Violates LGPL unless commercial |
+| Qt licensing | Static linking under LGPL | Requires relinkable object files and a more complex compliance process than dynamic linking |
 | Qt licensing | Custom triplet (Qt dynamic, others static) | Extra complexity for minimal benefit |
 | macOS builds | Universal Binary | Doubles CI time, larger binary, no clear user benefit |
 | Launcher repo | Separate repository | Adds release coordination overhead for no gain |
