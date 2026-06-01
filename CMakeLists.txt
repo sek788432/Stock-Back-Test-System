@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(BTE_BUILD_TESTS "Build GoogleTest-based unit tests" ON)
 option(BTE_SANITIZERS "Enable ASan/UBSan on Clang/GNU builds" OFF)
+option(BTE_BUILD_QT_APP "Build the Qt desktop app shell" OFF)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -19,6 +20,18 @@ include(CompilerWarnings)
 include(Sanitizers)
 
 add_subdirectory(Src/Backend/Core)
+
+if(BTE_BUILD_QT_APP)
+  set(BTE_QT_COMPONENTS Core Widgets)
+  if(BTE_BUILD_TESTS)
+    list(APPEND BTE_QT_COMPONENTS Test)
+  endif()
+  find_package(Qt6 6.8 REQUIRED COMPONENTS ${BTE_QT_COMPONENTS})
+  set(CMAKE_AUTOMOC ON)
+
+  add_subdirectory(Src/Frontend)
+  add_subdirectory(Src/App)
+endif()
 
 if(BTE_BUILD_TESTS)
   include(FetchContent)
