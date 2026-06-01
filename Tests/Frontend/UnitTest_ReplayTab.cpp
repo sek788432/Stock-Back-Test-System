@@ -1,5 +1,7 @@
 #include "Bte/Frontend/ReplayTab.h"
 
+#include "Bte/Frontend/QtChartsCandlestickView.h"
+
 #include <QComboBox>
 #include <QDateEdit>
 #include <QDoubleSpinBox>
@@ -53,7 +55,9 @@ void ReplayTabTest::exposesChartAndPortfolioPlaceholders() {
     const bte::frontend::ReplayTab tab;
 
     QVERIFY(tab.findChild<QWidget*>("replayChartPanel") != nullptr);
-    QVERIFY(tab.findChild<QLabel*>("replayChartPlaceholder") != nullptr);
+    const auto* chartView = tab.findChild<bte::frontend::QtChartsCandlestickView*>("replayCandlestickChartView");
+    QVERIFY(chartView != nullptr);
+    QCOMPARE(chartView->candleCount(), 5U);
     QVERIFY(tab.findChild<QLabel*>("replayVolumePlaceholder") != nullptr);
     QVERIFY(tab.findChild<QLabel*>("replayCashLabel") != nullptr);
     QVERIFY(tab.findChild<QLabel*>("replayPositionLabel") != nullptr);
