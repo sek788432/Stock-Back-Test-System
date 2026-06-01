@@ -7,11 +7,11 @@ class QTabWidget;
 namespace bte::app {
 
 class MainWindow final : public QMainWindow {
-public:
+  public:
     explicit MainWindow(QWidget* parent = nullptr);
 
-private:
+  private:
     QTabWidget* tabs_ = nullptr;
 };
 
-}  // namespace bte::app
+} // namespace bte::app

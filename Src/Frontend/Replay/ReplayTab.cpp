@@ -55,10 +55,9 @@ QToolButton* makeToolButton(QWidget* owner, QStyle::StandardPixmap icon, QString
     return button;
 }
 
-}  // namespace
+} // namespace
 
-ReplayTab::ReplayTab(QWidget* parent)
-    : QWidget(parent) {
+ReplayTab::ReplayTab(QWidget* parent) : QWidget(parent) {
     setObjectName("replayTab");
     setAccessibleName("K-line replay tab");
 
@@ -169,4 +168,4 @@ ReplayTab::ReplayTab(QWidget* parent)
     root->addWidget(portfolioBox);
 }
 
-}  // namespace bte::frontend
+} // namespace bte::frontend

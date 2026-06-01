@@ -5,8 +5,8 @@
 namespace bte::frontend {
 
 class ReplayTab final : public QWidget {
-public:
+  public:
     explicit ReplayTab(QWidget* parent = nullptr);
 };
 
-}  // namespace bte::frontend
+} // namespace bte::frontend

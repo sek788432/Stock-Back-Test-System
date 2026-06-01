@@ -9,7 +9,7 @@ target_link_libraries(
     GTest::gtest_main)
 
 include(GoogleTest)
-gtest_discover_tests(bte_core_tests)
+gtest_discover_tests(bte_core_tests DISCOVERY_TIMEOUT 30)
 
 if(BTE_BUILD_QT_APP)
   add_executable(

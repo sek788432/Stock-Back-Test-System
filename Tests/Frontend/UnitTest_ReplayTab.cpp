@@ -14,7 +14,7 @@ namespace {
 class ReplayTabTest final : public QObject {
     Q_OBJECT
 
-private slots:
+  private slots:
     void exposesReplaySetupControls();
     void exposesPlaybackControls();
     void exposesChartAndPortfolioPlaceholders();
@@ -61,7 +61,7 @@ void ReplayTabTest::exposesChartAndPortfolioPlaceholders() {
     QVERIFY(tab.findChild<QLabel*>("replayPnlLabel") != nullptr);
 }
 
-}  // namespace
+} // namespace
 
 QTEST_MAIN(ReplayTabTest)
 

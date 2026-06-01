@@ -21,10 +21,9 @@ QWidget* makePlaceholderTab(QString title) {
     return label;
 }
 
-}  // namespace
+} // namespace
 
-MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent) {
+MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setObjectName("mainWindow");
     setAccessibleName("Stock Backtester main window");
     setWindowTitle(tr("Stock Backtester"));
@@ -51,4 +50,4 @@ MainWindow::MainWindow(QWidget* parent)
     statusBar()->showMessage(tr("Ready"));
 }
 
-}  // namespace bte::app
+} // namespace bte::app
