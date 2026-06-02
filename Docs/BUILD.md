@@ -11,6 +11,7 @@ This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+*
 Optional:
 
 - **Git** (for FetchContent to download Google Test on first configure)
+- **Qt 6.8+** (Core, Widgets, Test) when configuring with `BTE_BUILD_QT_APP=ON`
 
 ## One-liner: `RunTest.sh`
 
@@ -60,6 +61,21 @@ cd Output && ctest --output-on-failure
 | ------------------ | ------- | -------------------------------------------- |
 | `BTE_BUILD_TESTS`  | `ON`    | Fetch Google Test and build `Tests/` targets |
 | `BTE_SANITIZERS`   | `OFF`   | ASan/UBSan on Clang/GNU when set to `ON`     |
+| `BTE_BUILD_QT_APP` | `OFF`   | Build the optional Qt desktop app shell and frontend smoke tests |
+
+## Optional Qt app shell
+
+The repository still builds backend core by default. To build the initial Qt app
+shell, install Qt 6.8+ and configure with:
+
+```bash
+cmake --preset qt-dev
+cmake --build --preset qt-dev
+ctest --preset qt-dev
+```
+
+If CMake cannot find Qt, set `CMAKE_PREFIX_PATH` to your Qt install prefix before
+configuring.
 
 ## Layout
 

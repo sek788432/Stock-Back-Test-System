@@ -24,6 +24,14 @@
       "description": "Debug build with tests. On Clang/GCC, pass -DBTE_SANITIZERS=ON for ASan/UBSan."
     },
     {
+      "name": "qt-dev",
+      "inherits": "dev",
+      "displayName": "Development + Qt app shell",
+      "cacheVariables": {
+        "BTE_BUILD_QT_APP": "ON"
+      }
+    },
+    {
       "name": "dev-sanitize",
       "inherits": "base",
       "displayName": "Development + sanitizers (Clang/GNU)",
@@ -47,6 +55,10 @@
       "configurePreset": "dev"
     },
     {
+      "name": "qt-dev",
+      "configurePreset": "qt-dev"
+    },
+    {
       "name": "dev-sanitize",
       "configurePreset": "dev-sanitize"
     },
@@ -59,6 +71,13 @@
     {
       "name": "dev",
       "configurePreset": "dev",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "qt-dev",
+      "configurePreset": "qt-dev",
       "output": {
         "outputOnFailure": true
       }
