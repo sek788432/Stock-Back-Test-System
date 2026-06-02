@@ -22,7 +22,7 @@ include(Sanitizers)
 add_subdirectory(Src/Backend/Core)
 
 if(BTE_BUILD_QT_APP)
-  set(BTE_QT_COMPONENTS Core Widgets)
+  set(BTE_QT_COMPONENTS Charts Core Widgets)
   if(BTE_BUILD_TESTS)
     list(APPEND BTE_QT_COMPONENTS Test)
   endif()

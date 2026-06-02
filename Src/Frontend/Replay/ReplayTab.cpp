@@ -1,5 +1,8 @@
 #include "Bte/Frontend/ReplayTab.h"
 
+#include "Bte/Core/Bar.h"
+#include "Bte/Frontend/QtChartsCandlestickView.h"
+
 #include <QComboBox>
 #include <QDate>
 #include <QDateEdit>
@@ -16,7 +19,9 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <chrono>
 #include <utility>
+#include <vector>
 
 namespace bte::frontend {
 namespace {
@@ -53,6 +58,21 @@ QToolButton* makeToolButton(QWidget* owner, QStyle::StandardPixmap icon, QString
     button->setToolTip(std::move(tooltip));
     button->setIcon(owner->style()->standardIcon(icon));
     return button;
+}
+
+bte::core::Timestamp makeTimestamp(const int day) {
+    using namespace std::chrono;
+    return bte::core::Timestamp{sys_days{year{2024} / 1 / day}};
+}
+
+std::vector<bte::core::Bar> makeFixtureBars() {
+    return {
+        {.ts = makeTimestamp(2), .open = 184.0, .high = 188.5, .low = 181.5, .close = 187.0, .volume = 42'000'000.0},
+        {.ts = makeTimestamp(3), .open = 187.0, .high = 189.2, .low = 183.8, .close = 184.5, .volume = 38'000'000.0},
+        {.ts = makeTimestamp(4), .open = 184.5, .high = 191.0, .low = 184.0, .close = 190.2, .volume = 45'000'000.0},
+        {.ts = makeTimestamp(5), .open = 190.2, .high = 193.0, .low = 188.6, .close = 189.4, .volume = 41'000'000.0},
+        {.ts = makeTimestamp(6), .open = 189.4, .high = 195.3, .low = 188.9, .close = 194.6, .volume = 48'000'000.0},
+    };
 }
 
 } // namespace
@@ -143,17 +163,16 @@ ReplayTab::ReplayTab(QWidget* parent) : QWidget(parent) {
 
     auto* chartPanel = makePanel("replayChartPanel");
     auto* chartLayout = new QVBoxLayout(chartPanel);
-    auto* chartPlaceholder = new QLabel(tr("Candlestick chart"), chartPanel);
-    chartPlaceholder->setObjectName("replayChartPlaceholder");
-    chartPlaceholder->setAccessibleName("Candlestick chart placeholder");
-    chartPlaceholder->setAlignment(Qt::AlignCenter);
-    chartPlaceholder->setMinimumHeight(260);
+    auto* chartView = new QtChartsCandlestickView(chartPanel);
+    chartView->setMinimumHeight(260);
+    chartView->setBarWindow(makeFixtureBars());
+
     auto* volumePlaceholder = new QLabel(tr("Volume"), chartPanel);
     volumePlaceholder->setObjectName("replayVolumePlaceholder");
     volumePlaceholder->setAccessibleName("Volume pane placeholder");
     volumePlaceholder->setAlignment(Qt::AlignCenter);
     volumePlaceholder->setMinimumHeight(80);
-    chartLayout->addWidget(chartPlaceholder, 4);
+    chartLayout->addWidget(chartView, 4);
     chartLayout->addWidget(volumePlaceholder, 1);
     root->addWidget(chartPanel, 1);
 

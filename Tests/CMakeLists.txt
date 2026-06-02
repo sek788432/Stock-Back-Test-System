@@ -28,4 +28,21 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_tests
     COMMAND bte_frontend_tests -platform offscreen)
+
+  add_executable(
+    bte_frontend_chart_tests
+    Frontend/UnitTest_QtChartsCandlestickView.cpp)
+
+  set_target_properties(bte_frontend_chart_tests PROPERTIES AUTOMOC ON)
+
+  target_link_libraries(
+    bte_frontend_chart_tests
+    PRIVATE
+      bte::frontend
+      Qt6::Test
+      Qt6::Widgets)
+
+  add_test(
+    NAME bte_frontend_chart_tests
+    COMMAND bte_frontend_chart_tests -platform offscreen)
 endif()
