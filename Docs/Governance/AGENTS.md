@@ -85,6 +85,17 @@ Squash-merge on landing; the squashed commit message is the conventional message
 
 PR title = top commit's conventional message. PR body = [`.github/PULL_REQUEST_TEMPLATE.md`](../../.github/PULL_REQUEST_TEMPLATE.md), **fully filled out**, including the Definition of Done section (no leaving boxes blank — explain N/A explicitly).
 
+For AI-authored PRs (Codex, Claude Code, Copilot Workspace, or similar), the PR
+body must follow the same template standard as human-authored PRs:
+
+- keep every template heading unless it is explicitly marked as deletable;
+- write `N/A — <reason>` instead of leaving placeholders blank;
+- for docs-only PRs, mark `docs — documentation only` and state `N/A — docs-only`
+  for build, test, lint, performance, and code-specific DoD sections;
+- include concrete reviewer focus points when the PR is a planning/spec PR;
+- do not open a PR with the raw template comments still acting as the only
+  content for a section.
+
 One concern per PR. If you found unrelated bugs while working, file issues; don't smuggle them in.
 
 ---

@@ -1,4 +1,5 @@
 ## Owner 1 — K - Line Replay  Front end first, then back end (Zoe)
+Roadmap: [K-Line Replay Roadmap](KLine_Replay_Roadmap.md)
 ## Owner 2 - Back Test Strategy  (Burger)
 ## Owner 3 - Stock Selection (Eric)
 ## Owner 4 - AI chat -> script / mainpulate front end (Louis)
