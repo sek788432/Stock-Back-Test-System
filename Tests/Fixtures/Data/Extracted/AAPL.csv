@@ -1,0 +1,4 @@
+symbol,ts,open,high,low,close,volume,source,schemaName,ingestedAt
+AAPL,2024-01-03 00:00:00+00:00,102,108,101,107,3000,test,ohlcv-1d,2024-01-05T00:00:00Z
+AAPL,2024-01-01 00:00:00+00:00,100,105,99,104,1000,test,ohlcv-1d,2024-01-05T00:00:00Z
+AAPL,2024-01-02 00:00:00+00:00,104,106,103,105,2000,test,ohlcv-1d,2024-01-05T00:00:00Z
