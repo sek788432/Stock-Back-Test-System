@@ -2,6 +2,7 @@
 
 #include "Bte/Core/Bar.h"
 #include "Bte/Frontend/QtChartsCandlestickView.h"
+#include "Bte/Frontend/ReplaySessionVm.h"
 
 #include <QComboBox>
 #include <QDate>
@@ -20,6 +21,7 @@
 #include <QVBoxLayout>
 
 #include <chrono>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -77,7 +79,7 @@ std::vector<bte::core::Bar> makeFixtureBars() {
 
 } // namespace
 
-ReplayTab::ReplayTab(QWidget* parent) : QWidget(parent) {
+ReplayTab::ReplayTab(QWidget* parent) : QWidget(parent), replayVm_(new ReplaySessionVm(this)) {
     setObjectName("replayTab");
     setAccessibleName("K-line replay tab");
 
@@ -137,7 +139,8 @@ ReplayTab::ReplayTab(QWidget* parent) : QWidget(parent) {
 
     auto* playbackRow = new QHBoxLayout();
     auto* stepBackButton = makeToolButton(this, QStyle::SP_MediaSkipBackward, "replayStepBackButton", tr("Step back"));
-    auto* playPauseButton = makeToolButton(this, QStyle::SP_MediaPlay, "replayPlayPauseButton", tr("Play or pause"));
+    stepBackButton->setEnabled(false);
+    playPauseButton_ = makeToolButton(this, QStyle::SP_MediaPlay, "replayPlayPauseButton", tr("Play or pause"));
     auto* stepForwardButton =
         makeToolButton(this, QStyle::SP_MediaSkipForward, "replayStepForwardButton", tr("Step forward"));
 
@@ -146,33 +149,33 @@ ReplayTab::ReplayTab(QWidget* parent) : QWidget(parent) {
     speedCombo->setAccessibleName("Replay speed");
     speedCombo->addItems({"1x", "5x", "10x", "max"});
 
-    auto* progress = new QProgressBar(this);
-    progress->setObjectName("replayProgressBar");
-    progress->setAccessibleName("Replay progress");
-    progress->setRange(0, 100);
-    progress->setValue(0);
+    progress_ = new QProgressBar(this);
+    progress_->setObjectName("replayProgressBar");
+    progress_->setAccessibleName("Replay progress");
+    progress_->setRange(0, 0);
+    progress_->setValue(0);
 
     playbackRow->addWidget(stepBackButton);
-    playbackRow->addWidget(playPauseButton);
+    playbackRow->addWidget(playPauseButton_);
     playbackRow->addWidget(stepForwardButton);
     playbackRow->addSpacing(12);
     playbackRow->addWidget(makeFormLabel(tr("Speed"), "replaySpeedLabel", this));
     playbackRow->addWidget(speedCombo);
-    playbackRow->addWidget(progress, 1);
+    playbackRow->addWidget(progress_, 1);
     root->addLayout(playbackRow);
 
     auto* chartPanel = makePanel("replayChartPanel");
     auto* chartLayout = new QVBoxLayout(chartPanel);
-    auto* chartView = new QtChartsCandlestickView(chartPanel);
-    chartView->setMinimumHeight(260);
-    chartView->setBarWindow(makeFixtureBars());
+    chartView_ = new QtChartsCandlestickView(chartPanel);
+    chartView_->setMinimumHeight(260);
+    chartView_->setBarWindow({});
 
     auto* volumePlaceholder = new QLabel(tr("Volume"), chartPanel);
     volumePlaceholder->setObjectName("replayVolumePlaceholder");
     volumePlaceholder->setAccessibleName("Volume pane placeholder");
     volumePlaceholder->setAlignment(Qt::AlignCenter);
     volumePlaceholder->setMinimumHeight(80);
-    chartLayout->addWidget(chartView, 4);
+    chartLayout->addWidget(chartView_, 4);
     chartLayout->addWidget(volumePlaceholder, 1);
     root->addWidget(chartPanel, 1);
 
@@ -185,6 +188,50 @@ ReplayTab::ReplayTab(QWidget* parent) : QWidget(parent) {
     portfolioLayout->addWidget(makeValueLabel(tr("Equity: --"), "replayEquityLabel"));
     portfolioLayout->addWidget(makeValueLabel(tr("PnL: --"), "replayPnlLabel"));
     root->addWidget(portfolioBox);
+
+    connect(loadButton, &QPushButton::clicked, this, [this] {
+        chartView_->setBarWindow({});
+        replayVm_->setBars(makeFixtureBars());
+    });
+    connect(stepForwardButton, &QToolButton::clicked, replayVm_, &ReplaySessionVm::step);
+    connect(playPauseButton_, &QToolButton::clicked, this, [this] {
+        if (replayVm_->isPlaying()) {
+            replayVm_->pause();
+        } else {
+            replayVm_->play();
+        }
+    });
+    connect(speedCombo, &QComboBox::currentIndexChanged, this, &ReplayTab::configureSpeed);
+    connect(replayVm_, &ReplaySessionVm::barAppended, chartView_, &QtChartsCandlestickView::appendBar);
+    connect(replayVm_, &ReplaySessionVm::progressChanged, this, [this](const int currentIndex, const int totalBars) {
+        progress_->setRange(0, totalBars);
+        progress_->setValue(currentIndex);
+    });
+    connect(replayVm_, &ReplaySessionVm::playbackStateChanged, this, &ReplayTab::updatePlaybackIcon);
+
+    configureSpeed(speedCombo->currentIndex());
+    replayVm_->setBars(makeFixtureBars());
+}
+
+void ReplayTab::configureSpeed(const int speedIndex) {
+    switch (speedIndex) {
+    case 1:
+        replayVm_->setSpeedMultiplier(5.0);
+        break;
+    case 2:
+        replayVm_->setSpeedMultiplier(10.0);
+        break;
+    case 3:
+        replayVm_->setSpeedMultiplier(std::numeric_limits<double>::infinity());
+        break;
+    default:
+        replayVm_->setSpeedMultiplier(1.0);
+        break;
+    }
+}
+
+void ReplayTab::updatePlaybackIcon(const bool playing) {
+    playPauseButton_->setIcon(style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
 }
 
 } // namespace bte::frontend

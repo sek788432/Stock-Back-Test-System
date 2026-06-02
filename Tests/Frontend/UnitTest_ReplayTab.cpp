@@ -20,6 +20,7 @@ class ReplayTabTest final : public QObject {
     void exposesReplaySetupControls();
     void exposesPlaybackControls();
     void exposesChartAndPortfolioPlaceholders();
+    void stepButtonAppendsOneCandle();
 };
 
 void ReplayTabTest::exposesReplaySetupControls() {
@@ -57,12 +58,24 @@ void ReplayTabTest::exposesChartAndPortfolioPlaceholders() {
     QVERIFY(tab.findChild<QWidget*>("replayChartPanel") != nullptr);
     const auto* chartView = tab.findChild<bte::frontend::QtChartsCandlestickView*>("replayCandlestickChartView");
     QVERIFY(chartView != nullptr);
-    QCOMPARE(chartView->candleCount(), 5U);
+    QCOMPARE(chartView->candleCount(), 0U);
     QVERIFY(tab.findChild<QLabel*>("replayVolumePlaceholder") != nullptr);
     QVERIFY(tab.findChild<QLabel*>("replayCashLabel") != nullptr);
     QVERIFY(tab.findChild<QLabel*>("replayPositionLabel") != nullptr);
     QVERIFY(tab.findChild<QLabel*>("replayEquityLabel") != nullptr);
     QVERIFY(tab.findChild<QLabel*>("replayPnlLabel") != nullptr);
+}
+
+void ReplayTabTest::stepButtonAppendsOneCandle() {
+    bte::frontend::ReplayTab tab;
+    auto* stepButton = tab.findChild<QToolButton*>("replayStepForwardButton");
+    auto* chartView = tab.findChild<bte::frontend::QtChartsCandlestickView*>("replayCandlestickChartView");
+    QVERIFY(stepButton != nullptr);
+    QVERIFY(chartView != nullptr);
+
+    QTest::mouseClick(stepButton, Qt::LeftButton);
+
+    QCOMPARE(chartView->candleCount(), 1U);
 }
 
 } // namespace

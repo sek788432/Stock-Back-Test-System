@@ -4,7 +4,9 @@ add_library(
     Include/Bte/Frontend/IChartView.h
     Include/Bte/Frontend/QtChartsCandlestickView.h
     Include/Bte/Frontend/ReplayTab.h
+    Include/Bte/Frontend/ReplaySessionVm.h
     Charts/QtChartsCandlestickView.cpp
+    Replay/ReplaySessionVm.cpp
     Replay/ReplayTab.cpp)
 
 add_library(bte::frontend ALIAS bte_frontend)
