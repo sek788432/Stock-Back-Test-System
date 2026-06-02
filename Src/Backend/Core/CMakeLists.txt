@@ -1,7 +1,12 @@
 add_library(
   bte_core
   STATIC
-    Private/Bar.cpp)
+    Include/Bte/Core/Bar.h
+    Include/Bte/Core/Result.h
+    Include/Bte/Core/Time.h
+    Private/Bar.cpp
+    Private/Result.cpp
+    Private/Time.cpp)
 
 add_library(bte::core ALIAS bte_core)
 

@@ -1,6 +1,8 @@
 add_executable(
   bte_core_tests
-  Unit/Core/UnitTest_Bar.cpp)
+  Unit/Core/UnitTest_Bar.cpp
+  Unit/Core/UnitTest_Result.cpp
+  Unit/Core/UnitTest_Time.cpp)
 
 target_link_libraries(
   bte_core_tests
@@ -10,6 +12,23 @@ target_link_libraries(
 
 include(GoogleTest)
 gtest_discover_tests(bte_core_tests DISCOVERY_TIMEOUT 30)
+
+add_executable(
+  bte_data_tests
+  Unit/Data/UnitTest_CsvBarStream.cpp)
+
+target_link_libraries(
+  bte_data_tests
+  PRIVATE
+    bte::data
+    GTest::gtest_main)
+
+target_compile_definitions(
+  bte_data_tests
+  PRIVATE
+    BTE_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Fixtures")
+
+gtest_discover_tests(bte_data_tests DISCOVERY_TIMEOUT 30)
 
 if(BTE_BUILD_QT_APP)
   add_executable(

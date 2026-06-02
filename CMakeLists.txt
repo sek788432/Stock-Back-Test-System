@@ -20,6 +20,7 @@ include(CompilerWarnings)
 include(Sanitizers)
 
 add_subdirectory(Src/Backend/Core)
+add_subdirectory(Src/Backend/Data)
 
 if(BTE_BUILD_QT_APP)
   set(BTE_QT_COMPONENTS Core Widgets)
