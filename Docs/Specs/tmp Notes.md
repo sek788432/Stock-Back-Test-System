@@ -14,3 +14,5 @@
 - Backend all use backtrader python library (SWIG : C++ to python)
 - AI prompt via front-end to python script (Only accept backtrader library)
 - Component based via back-end to python script (Only accept backtrader library)
+- Python script + use our data : (docs expose python library data API usage and example)
+
