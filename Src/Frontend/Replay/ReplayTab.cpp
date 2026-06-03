@@ -1,190 +1,237 @@
 #include "Bte/Frontend/ReplayTab.h"
 
-#include "Bte/Core/Bar.h"
+#include "Bte/Bindings/ReplayDataLoader.h"
+#include "Bte/Bindings/ReplaySessionVm.h"
 #include "Bte/Frontend/QtChartsCandlestickView.h"
 
+#include "ReplayTabSections.h"
+#include "ReplayTabStyle.h"
+
 #include <QComboBox>
-#include <QDate>
 #include <QDateEdit>
 #include <QDoubleSpinBox>
-#include <QFrame>
-#include <QGridLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QProgressBar>
+#include <QLocale>
 #include <QPushButton>
-#include <QSizePolicy>
-#include <QStyle>
+#include <QScrollArea>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
-#include <chrono>
-#include <utility>
-#include <vector>
+#include <memory>
 
 namespace bte::frontend {
+using bte::bindings::loadReplayBars;
+using bte::bindings::ReplaySessionVm;
+
 namespace {
 
-QLabel* makeValueLabel(QString text, QString objectName) {
-    auto* label = new QLabel(std::move(text));
-    label->setObjectName(std::move(objectName));
-    label->setAccessibleName(label->objectName());
-    label->setAlignment(Qt::AlignCenter);
-    label->setMinimumWidth(110);
-    return label;
+int timerIntervalForSpeed(const QString &speed) {
+  if (speed == "5x") {
+    return 200;
+  }
+  if (speed == "10x") {
+    return 100;
+  }
+  if (speed == "max") {
+    return 0;
+  }
+  return 1000;
 }
 
-QLabel* makeFormLabel(QString text, QString objectName, QWidget* parent) {
-    auto* label = new QLabel(std::move(text), parent);
-    label->setObjectName(std::move(objectName));
-    label->setAccessibleName(label->text());
-    return label;
+QString formatMoney(const double value) {
+  return QLocale{QLocale::English, QLocale::UnitedStates}.toCurrencyString(
+      value, "$");
 }
 
-QFrame* makePanel(QString objectName) {
-    auto* frame = new QFrame();
-    frame->setObjectName(std::move(objectName));
-    frame->setAccessibleName(frame->objectName());
-    frame->setFrameShape(QFrame::StyledPanel);
-    frame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    return frame;
-}
-
-QToolButton* makeToolButton(QWidget* owner, QStyle::StandardPixmap icon, QString name, QString tooltip) {
-    auto* button = new QToolButton(owner);
-    button->setObjectName(std::move(name));
-    button->setAccessibleName(button->objectName());
-    button->setToolTip(std::move(tooltip));
-    button->setIcon(owner->style()->standardIcon(icon));
-    return button;
-}
-
-bte::core::Timestamp makeTimestamp(const int day) {
-    using namespace std::chrono;
-    return bte::core::Timestamp{sys_days{year{2024} / 1 / day}};
-}
-
-std::vector<bte::core::Bar> makeFixtureBars() {
-    return {
-        {.ts = makeTimestamp(2), .open = 184.0, .high = 188.5, .low = 181.5, .close = 187.0, .volume = 42'000'000.0},
-        {.ts = makeTimestamp(3), .open = 187.0, .high = 189.2, .low = 183.8, .close = 184.5, .volume = 38'000'000.0},
-        {.ts = makeTimestamp(4), .open = 184.5, .high = 191.0, .low = 184.0, .close = 190.2, .volume = 45'000'000.0},
-        {.ts = makeTimestamp(5), .open = 190.2, .high = 193.0, .low = 188.6, .close = 189.4, .volume = 41'000'000.0},
-        {.ts = makeTimestamp(6), .open = 189.4, .high = 195.3, .low = 188.9, .close = 194.6, .volume = 48'000'000.0},
-    };
+QString formatPrice(const double value) {
+  return QString{"$%1"}.arg(value, 0, 'f', 2);
 }
 
 } // namespace
 
-ReplayTab::ReplayTab(QWidget* parent) : QWidget(parent) {
-    setObjectName("replayTab");
-    setAccessibleName("K-line replay tab");
+ReplayTab::ReplayTab(QWidget *parent) : QWidget(parent) {
+  setObjectName("replayTab");
+  setAccessibleName("K-line replay tab");
+  setStyleSheet(replayTabStyleSheet());
 
-    auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 12, 12, 12);
-    root->setSpacing(10);
+  auto *outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  outer->setSpacing(0);
 
-    auto* setupBox = new QGroupBox(tr("Replay setup"), this);
-    setupBox->setObjectName("replaySetupBox");
-    setupBox->setAccessibleName("Replay setup");
-    auto* setupLayout = new QGridLayout(setupBox);
+  auto *scrollArea = new QScrollArea(this);
+  scrollArea->setObjectName("replayScrollArea");
+  scrollArea->setAccessibleName("Replay scroll area");
+  scrollArea->setWidgetResizable(true);
+  scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  scrollArea->setFrameShape(QFrame::NoFrame);
 
-    auto* symbolCombo = new QComboBox(setupBox);
-    symbolCombo->setObjectName("replaySymbolCombo");
-    symbolCombo->setAccessibleName("Replay symbol");
-    symbolCombo->addItems({"AAPL", "MSFT", "NVDA"});
+  auto *content = new QWidget(scrollArea);
+  content->setObjectName("replayScrollContent");
+  content->setAccessibleName("Replay scroll content");
+  scrollArea->setWidget(content);
+  outer->addWidget(scrollArea);
 
-    auto* schemaCombo = new QComboBox(setupBox);
-    schemaCombo->setObjectName("replaySchemaCombo");
-    schemaCombo->setAccessibleName("Replay timeframe schema");
-    schemaCombo->addItems({"ohlcv-1d", "ohlcv-1h", "ohlcv-1m"});
+  auto *root = new QVBoxLayout(content);
+  root->setContentsMargins(14, 12, 14, 12);
+  root->setSpacing(8);
 
-    auto* startDate = new QDateEdit(QDate{2024, 1, 1}, setupBox);
-    startDate->setObjectName("replayStartDateEdit");
-    startDate->setAccessibleName("Replay start date");
-    startDate->setCalendarPopup(true);
+  auto *headerRow = new QHBoxLayout();
+  auto *headerText = new QVBoxLayout();
+  headerText->setSpacing(2);
+  auto *title = new QLabel(tr("K-line Replay"), this);
+  title->setObjectName("replayTitleLabel");
+  title->setAccessibleName("K-line Replay");
+  headerText->addWidget(title);
+  headerRow->addLayout(headerText);
+  headerRow->addStretch(1);
+  root->addLayout(headerRow);
 
-    auto* endDate = new QDateEdit(QDate{2024, 6, 30}, setupBox);
-    endDate->setObjectName("replayEndDateEdit");
-    endDate->setAccessibleName("Replay end date");
-    endDate->setCalendarPopup(true);
+  const auto setup = makeReplaySetupControls(this);
+  root->addWidget(setup.box);
 
-    auto* initialCapital = new QDoubleSpinBox(setupBox);
-    initialCapital->setObjectName("replayInitialCapitalSpinBox");
-    initialCapital->setAccessibleName("Replay initial capital");
-    initialCapital->setRange(1.0, 1'000'000'000.0);
-    initialCapital->setDecimals(2);
-    initialCapital->setPrefix("$");
-    initialCapital->setValue(100'000.0);
+  const auto playback = makeReplayPlaybackControls(this);
+  root->addWidget(playback.bar);
 
-    auto* loadButton = new QPushButton(tr("Load"), setupBox);
-    loadButton->setObjectName("replayLoadButton");
-    loadButton->setAccessibleName("Load replay data");
+  const auto chart = makeReplayChartSection(this);
+  root->addWidget(chart.panel, 1);
 
-    setupLayout->addWidget(makeFormLabel(tr("Symbol"), "replaySymbolLabel", setupBox), 0, 0);
-    setupLayout->addWidget(symbolCombo, 0, 1);
-    setupLayout->addWidget(makeFormLabel(tr("Timeframe"), "replaySchemaLabel", setupBox), 0, 2);
-    setupLayout->addWidget(schemaCombo, 0, 3);
-    setupLayout->addWidget(makeFormLabel(tr("Start"), "replayStartDateLabel", setupBox), 1, 0);
-    setupLayout->addWidget(startDate, 1, 1);
-    setupLayout->addWidget(makeFormLabel(tr("End"), "replayEndDateLabel", setupBox), 1, 2);
-    setupLayout->addWidget(endDate, 1, 3);
-    setupLayout->addWidget(makeFormLabel(tr("Initial capital"), "replayInitialCapitalLabel", setupBox), 1, 4);
-    setupLayout->addWidget(initialCapital, 1, 5);
-    setupLayout->addWidget(loadButton, 0, 5);
-    root->addWidget(setupBox);
+  const auto portfolio = makeReplayPortfolioSection(this);
+  root->addWidget(portfolio.box);
 
-    auto* playbackRow = new QHBoxLayout();
-    auto* stepBackButton = makeToolButton(this, QStyle::SP_MediaSkipBackward, "replayStepBackButton", tr("Step back"));
-    auto* playPauseButton = makeToolButton(this, QStyle::SP_MediaPlay, "replayPlayPauseButton", tr("Play or pause"));
-    auto* stepForwardButton =
-        makeToolButton(this, QStyle::SP_MediaSkipForward, "replayStepForwardButton", tr("Step forward"));
+  const auto tradeLog = makeReplayTradeLogSection(this);
+  root->addWidget(tradeLog.panel);
 
-    auto* speedCombo = new QComboBox(this);
-    speedCombo->setObjectName("replaySpeedCombo");
-    speedCombo->setAccessibleName("Replay speed");
-    speedCombo->addItems({"1x", "5x", "10x", "max"});
+  auto replaySession = std::make_shared<ReplaySessionVm>();
+  auto *replayTimer = new QTimer(this);
+  replayTimer->setObjectName("replayPlaybackTimer");
+  replayTimer->setTimerType(Qt::PreciseTimer);
+  replayTimer->setInterval(
+      timerIntervalForSpeed(playback.speedCombo->currentText()));
 
-    auto* progress = new QProgressBar(this);
-    progress->setObjectName("replayProgressBar");
-    progress->setAccessibleName("Replay progress");
-    progress->setRange(0, 100);
-    progress->setValue(0);
+  const auto updatePortfolioSnapshot = [=]() {
+    const auto snapshot = replaySession->portfolioSnapshot();
+    portfolio.cashLabel->setText(
+        tr("Cash: %1").arg(formatMoney(snapshot.cash)));
+    portfolio.positionLabel->setText(
+        tr("Position: %1").arg(snapshot.position, 0, 'f', 0));
+    portfolio.marketValueLabel->setText(
+        tr("Market: %1").arg(formatMoney(snapshot.marketValue)));
+    portfolio.equityLabel->setText(
+        tr("Equity: %1").arg(formatMoney(snapshot.equity)));
+    portfolio.pnlLabel->setText(tr("PnL: %1").arg(formatMoney(snapshot.pnl)));
+    portfolio.lastPriceLabel->setText(
+        snapshot.hasLastPrice
+            ? tr("Last: %1").arg(formatPrice(snapshot.lastPrice))
+            : tr("Last: --"));
+    portfolio.barIndexLabel->setText(tr("Bar: %1/%2")
+                                         .arg(replaySession->currentIndex())
+                                         .arg(replaySession->totalBars()));
+  };
 
-    playbackRow->addWidget(stepBackButton);
-    playbackRow->addWidget(playPauseButton);
-    playbackRow->addWidget(stepForwardButton);
-    playbackRow->addSpacing(12);
-    playbackRow->addWidget(makeFormLabel(tr("Speed"), "replaySpeedLabel", this));
-    playbackRow->addWidget(speedCombo);
-    playbackRow->addWidget(progress, 1);
-    root->addLayout(playbackRow);
+  const auto updateProgress = [=]() {
+    playback.progress->setValue(replaySession->progressPercent());
+  };
 
-    auto* chartPanel = makePanel("replayChartPanel");
-    auto* chartLayout = new QVBoxLayout(chartPanel);
-    auto* chartView = new QtChartsCandlestickView(chartPanel);
-    chartView->setMinimumHeight(260);
-    chartView->setBarWindow(makeFixtureBars());
+  const auto setPlaying = [=](const bool isPlaying) {
+    playback.playPauseButton->setText(isPlaying ? tr("Pause") : tr("Play"));
+  };
 
-    auto* volumePlaceholder = new QLabel(tr("Volume"), chartPanel);
-    volumePlaceholder->setObjectName("replayVolumePlaceholder");
-    volumePlaceholder->setAccessibleName("Volume pane placeholder");
-    volumePlaceholder->setAlignment(Qt::AlignCenter);
-    volumePlaceholder->setMinimumHeight(80);
-    chartLayout->addWidget(chartView, 4);
-    chartLayout->addWidget(volumePlaceholder, 1);
-    root->addWidget(chartPanel, 1);
+  const auto resetVisibleReplay = [=]() {
+    chart.chartView->setBarWindow(replaySession->visibleBars());
+    updateProgress();
+    updatePortfolioSnapshot();
+  };
 
-    auto* portfolioBox = new QGroupBox(tr("Portfolio status"), this);
-    portfolioBox->setObjectName("replayPortfolioBox");
-    portfolioBox->setAccessibleName("Portfolio status");
-    auto* portfolioLayout = new QHBoxLayout(portfolioBox);
-    portfolioLayout->addWidget(makeValueLabel(tr("Cash: --"), "replayCashLabel"));
-    portfolioLayout->addWidget(makeValueLabel(tr("Position: --"), "replayPositionLabel"));
-    portfolioLayout->addWidget(makeValueLabel(tr("Equity: --"), "replayEquityLabel"));
-    portfolioLayout->addWidget(makeValueLabel(tr("PnL: --"), "replayPnlLabel"));
-    root->addWidget(portfolioBox);
+  const auto stopPlayback = [=]() {
+    replayTimer->stop();
+    setPlaying(false);
+  };
+
+  const auto advanceOneBar = [=]() {
+    if (!replaySession->stepForward()) {
+      stopPlayback();
+      return;
+    }
+
+    chart.chartView->appendBar(replaySession->visibleBars().back());
+    updateProgress();
+    updatePortfolioSnapshot();
+
+    if (replaySession->currentIndex() >= replaySession->totalBars()) {
+      stopPlayback();
+    }
+  };
+
+  const auto reloadBars = [=]() {
+    stopPlayback();
+    replaySession->setInitialCapital(setup.initialCapital->value());
+    replaySession->reset(loadReplayBars(
+        setup.symbolCombo->currentText(), setup.schemaCombo->currentText(),
+        setup.startDate->date(), setup.endDate->date()));
+    resetVisibleReplay();
+  };
+
+  QObject::connect(playback.stepForwardButton, &QToolButton::clicked, this,
+                   advanceOneBar);
+  QObject::connect(playback.stepBackButton, &QToolButton::clicked, this, [=]() {
+    stopPlayback();
+    if (!replaySession->stepBack()) {
+      return;
+    }
+    chart.chartView->setBarWindow(replaySession->visibleBars());
+    updateProgress();
+    updatePortfolioSnapshot();
+  });
+  QObject::connect(
+      playback.playPauseButton, &QToolButton::clicked, this, [=]() {
+        if (replayTimer->isActive()) {
+          stopPlayback();
+          return;
+        }
+        if (replaySession->totalBars() == 0U) {
+          return;
+        }
+        if (replaySession->currentIndex() >= replaySession->totalBars()) {
+          replaySession->reset(loadReplayBars(setup.symbolCombo->currentText(),
+                                              setup.schemaCombo->currentText(),
+                                              setup.startDate->date(),
+                                              setup.endDate->date()));
+          resetVisibleReplay();
+        }
+        setPlaying(true);
+        advanceOneBar();
+        if (replaySession->currentIndex() < replaySession->totalBars()) {
+          replayTimer->start(
+              timerIntervalForSpeed(playback.speedCombo->currentText()));
+        }
+      });
+  QObject::connect(replayTimer, &QTimer::timeout, this, advanceOneBar);
+  QObject::connect(playback.speedCombo, &QComboBox::currentTextChanged, this,
+                   [=](const QString &speed) {
+                     replayTimer->setInterval(timerIntervalForSpeed(speed));
+                   });
+  QObject::connect(setup.loadButton, &QPushButton::clicked, this, reloadBars);
+  QObject::connect(setup.symbolCombo, &QComboBox::currentTextChanged, this,
+                   reloadBars);
+  QObject::connect(setup.schemaCombo, &QComboBox::currentTextChanged, this,
+                   reloadBars);
+  QObject::connect(setup.startDate, &QDateEdit::dateChanged, this, reloadBars);
+  QObject::connect(setup.endDate, &QDateEdit::dateChanged, this, reloadBars);
+  QObject::connect(setup.initialCapital,
+                   qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                   [=](const double capital) {
+                     replaySession->setInitialCapital(capital);
+                     updatePortfolioSnapshot();
+                   });
+  QObject::connect(playback.zoomOutButton, &QToolButton::clicked,
+                   chart.chartView, &QtChartsCandlestickView::zoomOut);
+  QObject::connect(playback.zoomInButton, &QToolButton::clicked,
+                   chart.chartView, &QtChartsCandlestickView::zoomIn);
+  QObject::connect(playback.zoomResetButton, &QToolButton::clicked,
+                   chart.chartView, &QtChartsCandlestickView::resetZoom);
+  reloadBars();
 }
 
 } // namespace bte::frontend
