@@ -21,6 +21,7 @@ include(Sanitizers)
 
 add_subdirectory(Src/Backend/Core)
 add_subdirectory(Src/Backend/Data)
+add_subdirectory(Src/Backend/Engine)
 
 if(BTE_BUILD_QT_APP)
   set(BTE_QT_COMPONENTS Charts Core Widgets)
@@ -30,6 +31,7 @@ if(BTE_BUILD_QT_APP)
   find_package(Qt6 6.8 REQUIRED COMPONENTS ${BTE_QT_COMPONENTS})
   set(CMAKE_AUTOMOC ON)
 
+  add_subdirectory(Src/Bindings)
   add_subdirectory(Src/Frontend)
   add_subdirectory(Src/App)
 endif()

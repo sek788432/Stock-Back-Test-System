@@ -30,6 +30,19 @@ target_compile_definitions(
 
 gtest_discover_tests(bte_data_tests DISCOVERY_TIMEOUT 30)
 
+add_executable(
+  bte_engine_tests
+  Unit/Engine/UnitTest_Replay.cpp
+  Unit/Engine/UnitTest_ResultSnapshotStore.cpp)
+
+target_link_libraries(
+  bte_engine_tests
+  PRIVATE
+    bte::engine
+    GTest::gtest_main)
+
+gtest_discover_tests(bte_engine_tests DISCOVERY_TIMEOUT 30)
+
 if(BTE_BUILD_QT_APP)
   add_executable(
     bte_frontend_tests
@@ -47,6 +60,10 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_tests
     COMMAND bte_frontend_tests -platform offscreen)
+  set_tests_properties(
+    bte_frontend_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(
     bte_frontend_chart_tests
@@ -64,4 +81,28 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_chart_tests
     COMMAND bte_frontend_chart_tests -platform offscreen)
+  set_tests_properties(
+    bte_frontend_chart_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+  add_executable(
+    bte_frontend_vm_tests
+    Frontend/UnitTest_ReplaySessionVm.cpp)
+
+  set_target_properties(bte_frontend_vm_tests PROPERTIES AUTOMOC ON)
+
+  target_link_libraries(
+    bte_frontend_vm_tests
+    PRIVATE
+      bte::bindings
+      Qt6::Test)
+
+  add_test(
+    NAME bte_frontend_vm_tests
+    COMMAND bte_frontend_vm_tests)
+  set_tests_properties(
+    bte_frontend_vm_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()
