@@ -30,6 +30,18 @@ target_compile_definitions(
 
 gtest_discover_tests(bte_data_tests DISCOVERY_TIMEOUT 30)
 
+add_executable(
+  bte_engine_tests
+  Unit/Engine/UnitTest_Replay.cpp)
+
+target_link_libraries(
+  bte_engine_tests
+  PRIVATE
+    bte::engine
+    GTest::gtest_main)
+
+gtest_discover_tests(bte_engine_tests DISCOVERY_TIMEOUT 30)
+
 if(BTE_BUILD_QT_APP)
   add_executable(
     bte_frontend_tests
