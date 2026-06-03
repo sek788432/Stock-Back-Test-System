@@ -31,6 +31,7 @@ if(BTE_BUILD_QT_APP)
   find_package(Qt6 6.8 REQUIRED COMPONENTS ${BTE_QT_COMPONENTS})
   set(CMAKE_AUTOMOC ON)
 
+  add_subdirectory(Src/Bindings)
   add_subdirectory(Src/Frontend)
   add_subdirectory(Src/App)
 endif()
