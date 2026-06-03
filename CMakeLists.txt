@@ -21,6 +21,7 @@ include(Sanitizers)
 
 add_subdirectory(Src/Backend/Core)
 add_subdirectory(Src/Backend/Data)
+add_subdirectory(Src/Backend/Engine)
 
 if(BTE_BUILD_QT_APP)
   set(BTE_QT_COMPONENTS Charts Core Widgets)
