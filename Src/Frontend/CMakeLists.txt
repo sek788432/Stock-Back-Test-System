@@ -5,7 +5,9 @@ add_library(
     Include/Bte/Frontend/QtChartsCandlestickView.h
     Include/Bte/Frontend/ReplayTab.h
     Charts/QtChartsCandlestickView.cpp
-    Replay/ReplayTab.cpp)
+    Replay/ReplayTab.cpp
+    Replay/ReplayTabSections.cpp
+    Replay/ReplayTabStyle.cpp)
 
 add_library(bte::frontend ALIAS bte_frontend)
 
@@ -20,6 +22,7 @@ target_link_libraries(
   bte_frontend
   PUBLIC
     bte::core
+    bte::bindings
     Qt6::Charts
     Qt6::Widgets)
 

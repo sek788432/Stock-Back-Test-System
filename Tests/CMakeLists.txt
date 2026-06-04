@@ -59,6 +59,10 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_tests
     COMMAND bte_frontend_tests -platform offscreen)
+  set_tests_properties(
+    bte_frontend_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(
     bte_frontend_chart_tests
@@ -76,6 +80,10 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_chart_tests
     COMMAND bte_frontend_chart_tests -platform offscreen)
+  set_tests_properties(
+    bte_frontend_chart_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(
     bte_frontend_vm_tests
@@ -92,6 +100,10 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_vm_tests
     COMMAND bte_frontend_vm_tests)
+  set_tests_properties(
+    bte_frontend_vm_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(
     bte_frontend_data_loader_tests
