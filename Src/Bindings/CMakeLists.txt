@@ -4,6 +4,7 @@ add_library(
     Include/Bte/Bindings/ReplayDataLoader.h
     Include/Bte/Bindings/ReplaySessionVm.h
     Replay/ReplayDataLoader.cpp
+    Include/Bte/Bindings/ReplaySessionVm.h
     Replay/ReplaySessionVm.cpp)
 
 add_library(bte::bindings ALIAS bte_bindings)
