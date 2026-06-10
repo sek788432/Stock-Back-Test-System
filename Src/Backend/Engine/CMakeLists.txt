@@ -2,7 +2,6 @@ add_library(
   bte_engine
   STATIC
     Include/Bte/Engine/Replay.h
-    Private/Replay.cpp)
     Include/Bte/Engine/ResultSnapshotStore.h
     Private/Replay.cpp
     Private/ResultSnapshotStore.cpp)
