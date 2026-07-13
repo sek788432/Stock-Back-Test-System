@@ -1,5 +1,6 @@
 add_executable(
   stockBacktester
+  WIN32
     MainWindow.cpp
     main.cpp)
 

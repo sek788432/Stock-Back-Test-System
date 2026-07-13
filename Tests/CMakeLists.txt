@@ -60,6 +60,10 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_tests
     COMMAND bte_frontend_tests -platform offscreen)
+  set_tests_properties(
+    bte_frontend_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(
     bte_frontend_chart_tests
@@ -77,6 +81,10 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_chart_tests
     COMMAND bte_frontend_chart_tests -platform offscreen)
+  set_tests_properties(
+    bte_frontend_chart_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(
     bte_frontend_vm_tests
@@ -93,4 +101,24 @@ if(BTE_BUILD_QT_APP)
   add_test(
     NAME bte_frontend_vm_tests
     COMMAND bte_frontend_vm_tests)
+  set_tests_properties(
+    bte_frontend_vm_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+  add_executable(
+    bte_frontend_data_loader_tests
+    Frontend/UnitTest_ReplayDataLoader.cpp)
+
+  set_target_properties(bte_frontend_data_loader_tests PROPERTIES AUTOMOC ON)
+
+  target_link_libraries(
+    bte_frontend_data_loader_tests
+    PRIVATE
+      bte::bindings
+      Qt6::Test)
+
+  add_test(
+    NAME bte_frontend_data_loader_tests
+    COMMAND bte_frontend_data_loader_tests)
 endif()

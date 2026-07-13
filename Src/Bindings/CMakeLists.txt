@@ -1,6 +1,9 @@
 add_library(
   bte_bindings
   STATIC
+    Include/Bte/Bindings/ReplayDataLoader.h
+    Include/Bte/Bindings/ReplaySessionVm.h
+    Replay/ReplayDataLoader.cpp
     Include/Bte/Bindings/ReplaySessionVm.h
     Replay/ReplaySessionVm.cpp)
 
@@ -21,5 +24,10 @@ target_link_libraries(
   PRIVATE
     bte::data
     bte::engine)
+
+target_compile_definitions(
+  bte_bindings
+  PRIVATE
+    BTE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 target_compile_features(bte_bindings PUBLIC cxx_std_20)
