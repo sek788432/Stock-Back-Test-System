@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  unit-tests:
-    name: Unit tests (${{ matrix.os }})
+  all-tests:
+    name: All tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -26,19 +26,26 @@ jobs:
           - macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Configure unit tests
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          modules: qtcharts
+          cache: true
+
+      - name: Configure all tests
         run: >-
-          cmake --preset dev
+          cmake --preset qt-dev
           -DBTE_BUILD_TESTS=ON
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 
-      - name: Build unit tests
-        run: cmake --build --preset dev --parallel
+      - name: Build all tests
+        run: cmake --build --preset qt-dev --parallel
 
-      - name: Run unit tests
-        run: ctest --preset dev --no-tests=error
+      - name: Run every registered test
+        run: ctest --preset qt-dev --no-tests=error
 
   project-standards:
     name: Project standards review
@@ -46,7 +53,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout full history
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -60,15 +67,15 @@ jobs:
     if: always()
     needs:
       - project-standards
-      - unit-tests
+      - all-tests
     runs-on: ubuntu-latest
     steps:
       - name: Reject failed or cancelled checks
-        if: needs.unit-tests.result != 'success' || needs.project-standards.result != 'success'
+        if: needs.all-tests.result != 'success' || needs.project-standards.result != 'success'
         run: |
-          echo "Unit tests and project standards must pass before merge."
+          echo "Every registered test and the project standards review must pass before merge."
           exit 1
 
       - name: Approve successful checks
-        if: needs.unit-tests.result == 'success' && needs.project-standards.result == 'success'
-        run: echo "All required unit tests and project standards checks passed."
+        if: needs.all-tests.result == 'success' && needs.project-standards.result == 'success'
+        run: echo "Every registered test and the project standards review passed."

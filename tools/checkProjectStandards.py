@@ -221,6 +221,25 @@ def audit_new_modules(
     return violations
 
 
+def audit_test_registration(head_paths: set[Path], cmake_sources: dict[Path, str]) -> list[Violation]:
+    cmake_text = "\n".join(cmake_sources.values())
+    violations: list[Violation] = []
+    for path in sorted(head_paths):
+        if not path.is_relative_to(Path("Tests")) or not path.stem.startswith("UnitTest_"):
+            continue
+        if path.suffix.lower() == ".cpp":
+            registered = path.name in cmake_text
+        elif path.suffix.lower() == ".py":
+            registered = path.name in cmake_text or "UnitTest_*.py" in cmake_text
+        else:
+            continue
+        if not registered:
+            violations.append(
+                Violation(path, 1, "TEST004", "test file is not registered by CMake/CTest")
+            )
+    return violations
+
+
 def git_diff(base: str, head: str | None) -> str:
     command = ["git", "diff", "--unified=0", "--no-ext-diff", base]
     if head is not None:
@@ -275,7 +294,9 @@ def main() -> int:
         if args.head is not None:
             base_paths = git_tree_paths(args.base)
             head_paths = git_tree_paths(args.head)
-            violations.extend(audit_new_modules(base_paths, head_paths, git_cmake_sources(args.head, head_paths)))
+            cmake_sources = git_cmake_sources(args.head, head_paths)
+            violations.extend(audit_new_modules(base_paths, head_paths, cmake_sources))
+            violations.extend(audit_test_registration(head_paths, cmake_sources))
     except (subprocess.CalledProcessError, ValueError) as error:
         print(f"Standards audit could not inspect the diff: {error}", file=sys.stderr)
         return 2

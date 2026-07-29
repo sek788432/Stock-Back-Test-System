@@ -11,6 +11,7 @@ from checkProjectStandards import (  # noqa: E402
     AddedLine,
     audit_added_line,
     audit_new_modules,
+    audit_test_registration,
     parse_unified_diff,
 )
 
@@ -97,6 +98,32 @@ class AuditNewModulesTest(unittest.TestCase):
                 Path("Tests/CMakeLists.txt"),
             },
             cmake_sources={Path("Tests/CMakeLists.txt"): "UnitTest_Launcher.cpp"},
+        )
+
+        self.assertEqual(violations, [])
+
+
+class AuditTestRegistrationTest(unittest.TestCase):
+    def test_rejects_unregistered_cpp_test(self) -> None:
+        violations = audit_test_registration(
+            {Path("Tests/Integration/UnitTest_Database.cpp")},
+            {Path("Tests/CMakeLists.txt"): "add_test(NAME unrelated)"},
+        )
+
+        self.assertEqual([violation.rule for violation in violations], ["TEST004"])
+
+    def test_accepts_cpp_test_registered_by_cmake(self) -> None:
+        violations = audit_test_registration(
+            {Path("Tests/Integration/UnitTest_Database.cpp")},
+            {Path("Tests/CMakeLists.txt"): "UnitTest_Database.cpp"},
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_accepts_python_test_registered_by_discovery_pattern(self) -> None:
+        violations = audit_test_registration(
+            {Path("Tests/Tools/UnitTest_Checker.py")},
+            {Path("Tests/CMakeLists.txt"): "-p UnitTest_*.py"},
         )
 
         self.assertEqual(violations, [])

@@ -105,7 +105,9 @@ TEST(ResultComparisonTest,
      compareReplayResultSummaries_buildsSideBySideMetricRows) {
   const std::vector<bte::engine::ReplayResultSummary> summaries{
       {
+          .path = {},
           .symbol = "AAPL",
+          .schemaName = {},
           .strategyName = "Mean reversion",
           .totalReturn = 0.12,
           .maxDrawdown = -0.04,
@@ -114,7 +116,9 @@ TEST(ResultComparisonTest,
           .finalEquity = 112'000.0,
       },
       {
+          .path = {},
           .symbol = "AAPL",
+          .schemaName = {},
           .strategyName = "Momentum",
           .totalReturn = 0.2,
           .maxDrawdown = -0.08,
