@@ -43,6 +43,17 @@ target_link_libraries(
 
 gtest_discover_tests(bte_engine_tests DISCOVERY_TIMEOUT 30)
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(
+  NAME bte_project_standards_tests
+  COMMAND
+    ${Python3_EXECUTABLE} -m unittest discover
+    -s ${CMAKE_CURRENT_SOURCE_DIR}/Tools
+    -p UnitTest_*.py)
+set_tests_properties(
+  bte_project_standards_tests
+  PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+
 if(BTE_BUILD_QT_APP)
   add_executable(
     bte_frontend_tests

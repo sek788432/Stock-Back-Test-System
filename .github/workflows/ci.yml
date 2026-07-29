@@ -6,22 +6,69 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  cmake-dev:
-    name: CMake dev
-    runs-on: ubuntu-latest
+  unit-tests:
+    name: Unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure
-        run: cmake --preset dev
+      - name: Configure unit tests
+        run: >-
+          cmake --preset dev
+          -DBTE_BUILD_TESTS=ON
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 
-      - name: Build
+      - name: Build unit tests
         run: cmake --build --preset dev --parallel
 
-      - name: Test
-        run: ctest --preset dev
+      - name: Run unit tests
+        run: ctest --preset dev --no-tests=error
+
+  project-standards:
+    name: Project standards review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Review changed code against project standards
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tools/checkProjectStandards.py --base "$BASE_SHA" --head "$GITHUB_SHA"
+
+  merge-gate:
+    name: Merge gate (all required checks)
+    if: always()
+    needs:
+      - project-standards
+      - unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject failed or cancelled checks
+        if: needs.unit-tests.result != 'success' || needs.project-standards.result != 'success'
+        run: |
+          echo "Unit tests and project standards must pass before merge."
+          exit 1
+
+      - name: Approve successful checks
+        if: needs.unit-tests.result == 'success' && needs.project-standards.result == 'success'
+        run: echo "All required unit tests and project standards checks passed."

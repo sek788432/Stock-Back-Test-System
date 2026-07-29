@@ -1,0 +1,2 @@
+symbol,ts,open,high,low,close,volume,schemaName
+BADNUMERIC,2024-01-01 00:00:00+00:00,100oops,105,99,104,1000,ohlcv-1d
