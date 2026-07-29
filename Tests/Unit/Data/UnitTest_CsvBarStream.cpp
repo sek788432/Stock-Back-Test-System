@@ -108,6 +108,14 @@ TEST(CsvBarStreamTest, CsvBarStream_invalidOhlc_returnsError) {
     EXPECT_NE(stream.error().message.find("invalid OHLCV"), std::string::npos);
 }
 
+TEST(CsvBarStreamTest, CsvBarStream_numericValueWithTrailingText_returnsError) {
+    auto stream = bte::data::CsvBarStream::open(makeRequest("BADNUMERIC"));
+
+    ASSERT_FALSE(stream.ok());
+    EXPECT_EQ(stream.error().code, bte::core::ErrorCode::invalidArgument);
+    EXPECT_NE(stream.error().message.find("not numeric"), std::string::npos);
+}
+
 TEST(CsvBarStreamTest, CsvBarStream_missingFile_returnsNotFound) {
     auto stream = bte::data::CsvBarStream::open(makeRequest("MISSING"));
 

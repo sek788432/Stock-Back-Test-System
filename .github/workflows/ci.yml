@@ -6,22 +6,76 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  cmake-dev:
-    name: CMake dev
-    runs-on: ubuntu-latest
+  all-tests:
+    name: All tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Configure
-        run: cmake --preset dev
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.*'
+          modules: qtcharts
+          cache: true
 
-      - name: Build
-        run: cmake --build --preset dev --parallel
+      - name: Configure all tests
+        run: >-
+          cmake --preset qt-dev
+          -DBTE_BUILD_TESTS=ON
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 
-      - name: Test
-        run: ctest --preset dev
+      - name: Build all tests
+        run: cmake --build --preset qt-dev --parallel
+
+      - name: Run every registered test
+        run: ctest --preset qt-dev --no-tests=error
+
+  project-standards:
+    name: Project standards review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Review changed code against project standards
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tools/checkProjectStandards.py --base "$BASE_SHA" --head "$GITHUB_SHA"
+
+  merge-gate:
+    name: Merge gate (all required checks)
+    if: always()
+    needs:
+      - project-standards
+      - all-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject failed or cancelled checks
+        if: needs.all-tests.result != 'success' || needs.project-standards.result != 'success'
+        run: |
+          echo "Every registered test and the project standards review must pass before merge."
+          exit 1
+
+      - name: Approve successful checks
+        if: needs.all-tests.result == 'success' && needs.project-standards.result == 'success'
+        run: echo "Every registered test and the project standards review passed."

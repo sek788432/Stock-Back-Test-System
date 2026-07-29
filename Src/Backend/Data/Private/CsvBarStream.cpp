@@ -2,9 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
-#include <charconv>
 #include <chrono>
 #include <fstream>
+#include <locale>
 #include <ranges>
 #include <sstream>
 #include <string_view>
@@ -128,11 +128,12 @@ struct CsvColumns {
     }
 
     const auto text = trim(fields[static_cast<std::size_t>(column)]);
+    std::istringstream input{text};
+    input.imbue(std::locale::classic());
+
     double value = 0.0;
-    const auto* begin = text.data();
-    const auto* end = begin + text.size();
-    const auto result = std::from_chars(begin, end, value);
-    if (result.ec != std::errc{} || result.ptr != end) {
+    input >> std::noskipws >> value;
+    if (!input || input.peek() != std::char_traits<char>::eof()) {
         return core::makeError(core::ErrorCode::invalidArgument,
                                std::string{"CSV column '"} + name + "' is not numeric");
     }

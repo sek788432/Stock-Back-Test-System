@@ -44,6 +44,12 @@ if(BTE_BUILD_TESTS)
     GIT_TAG        v1.14.0)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(googletest)
+  set_target_properties(
+    gtest
+    gtest_main
+    gmock
+    gmock_main
+    PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
   enable_testing()
   add_subdirectory(Tests)
