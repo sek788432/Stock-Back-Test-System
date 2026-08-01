@@ -1,6 +1,6 @@
-# 12 — AI Action Router (CLI Skills + Chrome Extension)
+# 12 — AI Action Router (Agent Skills + Chrome Extension)
 
-This spec defines how the desktop app accepts natural-language-driven instructions originating from external AI surfaces — **Claude Code / Codex on the CLI side** and **ChatGPT / Gemini on the web side via a Chrome extension** — and turns them into concrete UI/state changes inside the Qt app.
+This spec defines how the desktop app accepts natural-language-driven instructions originating from external AI surfaces — **Codex and other `.agents/skills`-compatible hosts on the local-agent side** and **ChatGPT / Gemini on the web side via a Chrome extension** — and turns them into concrete UI/state changes inside the Qt app.
 
 It is the technical realization of Owner 4's pillar — "**AI chat → script / manipulate front end**" — and refines the **NL authoring mode** described in [`11_Stock_Screener_KLine_Product.md`](11_Stock_Screener_KLine_Product.md) §3.
 
@@ -15,7 +15,7 @@ When this document disagrees with `02_Frontend_Qt.md` or `11_Stock_Screener_KLin
 The product needs natural-language-driven authoring (Spec `11` §3) and front-end manipulation. Three concerns make a Qt-embedded chat panel a poor first step:
 
 1. **No LLM credentials.** The team does not want to ship, store, or proxy API keys. Users already pay for ChatGPT Plus / Gemini Advanced; we should ride along.
-2. **AI tooling moves fast.** Claude Code and Codex Desktop already have mature "skills" mechanisms. Re-implementing a chat host inside Qt duplicates that work.
+2. **AI tooling moves fast.** Codex and other compatible agents already support the open Agent Skills format. Re-implementing a chat host inside Qt duplicates that work.
 3. **Owner 4 should not be blocked on Owner 5's Qt UI timeline.** A thin contract layer between AI and Qt lets the AI side ship independently against a mock view-model.
 
 ### 1.2 Solution at a glance
@@ -24,7 +24,7 @@ A single **action JSON** contract carried from any AI surface to the Qt app:
 
 ```
 repo skills (single spec)
-   ├──► Claude Code / Codex      (native skill loading on CLI)
+   ├──► compatible local agents  (native `.agents/skills` loading)
    └──► ChatGPT / Gemini         (Chrome extension injects skills as system prompt)
                 │
                 ▼
@@ -65,15 +65,15 @@ Five layers, top to bottom:
 
 | # | Layer | Owner | Notes |
 |---|---|---|---|
-| 1 | **Skills** (spec layer) | Owner 4 | Markdown + frontmatter in `.cursor/skills/stockbt-actions/`. Single source of truth for what the app supports and how AI should emit JSON. |
-| 2 | **AI entry points** (two, parallel) | Existing tooling (CLI) + Owner 4 (web) | CLI: Claude Code / Codex load skills natively. Web: Chrome extension injects skill content into ChatGPT / Gemini conversations. |
+| 1 | **Skills** (spec layer) | Owner 4 | Markdown + frontmatter in `.agents/skills/stockbt-actions/`. Single source of truth for what the app supports and how AI should emit JSON. |
+| 2 | **AI entry points** (two, parallel) | Existing tooling (local agents) + Owner 4 (web) | Local: Codex and other `.agents/skills`-compatible hosts load skills natively. Web: Chrome extension injects skill content into ChatGPT / Gemini conversations. |
 | 3 | **Action JSON** (contract layer) | Owner 4 | Versioned envelope. Identical shape regardless of producer. |
 | 4 | **Qt parser + localhost endpoint** | Owner 4 | New module `Src/Backend/AiActionRouter/`. cpp-httplib server, dispatch table, auth. |
 | 5 | **Qt view-models** | Owner 5 | Existing MVVM layer (`02_Frontend_Qt.md`). Owner 4 calls; does not edit. |
 
 Owner 4's net-new code surface:
 
-1. `.cursor/skills/stockbt-actions/` — skill spec files (markdown + JSON Schema).
+1. `.agents/skills/stockbt-actions/` — skill spec files (markdown + JSON Schema).
 2. `Src/Backend/AiActionRouter/` — Qt-side HTTP server, dispatcher, **state provider**, action implementations.
 3. `Extension/` — Chrome extension (Manifest V3, TypeScript), including a **send-time state-prepend hook**.
 
@@ -88,14 +88,14 @@ The five-layer flow above describes the **write path** (AI → app). The complem
 ### 3.1 Location and granularity
 
 ```
-.cursor/skills/
+.agents/skills/
   stockbt-actions/
     SKILL.md          # main entry — markdown with frontmatter
     schema.json       # machine-readable JSON Schema for the envelope and actions
     examples.md       # optional, conversational worked examples
 ```
 
-**One master skill** for MVP — Scope 1 has only four actions; a single file keeps Claude Code, Codex, and the extension all reading the same artifact. If Scope 3 introduces many actions (~20+) the skill can be split per action; the path layout above accommodates that without breaking consumers.
+**One master skill** for MVP — Scope 1 has only four actions; a single file keeps compatible local agents and the extension reading the same artifact. If Scope 3 introduces many actions (~20+) the skill can be split per action; the path layout above accommodates that without breaking consumers.
 
 ### 3.2 SKILL.md shape
 
@@ -401,7 +401,7 @@ Src/Backend/AiActionRouter/
 ├── HttpServer.{h,cpp}        # cpp-httplib wrapper, bind 127.0.0.1
 ├── ActionDispatcher.{h,cpp}  # dispatch table, schema validation
 ├── Authn.{h,cpp}             # PIN generation, token issuance, request authentication
-├── SkillsLoader.{h,cpp}      # reads .cursor/skills/stockbt-actions/SKILL.md from repo
+├── SkillsLoader.{h,cpp}      # reads .agents/skills/stockbt-actions/SKILL.md from repo
 ├── StateProvider.{h,cpp}     # assembles GET /state snapshots — directory walk + VM queries
 └── Actions/
     ├── ApplyStrategyPython.{h,cpp}
@@ -591,7 +591,7 @@ The router itself has no engine state and emits no orders. It only loads/saves a
 ## 9. Repository layout impact
 
 ```
-.cursor/skills/
+.agents/skills/
   stockbt-actions/        # new — Owner 4
     SKILL.md
     schema.json
@@ -648,7 +648,7 @@ Scope graduation criteria (each Scope ships when):
 | `11_Stock_Screener_KLine_Product.md` | Add a note in §3 that the NL-mode user surface is now realised primarily via the Chrome extension defined here, retaining the §3.2 acceptance requirement (interpreted per §8.2). |
 | `10_CI_Dev_Flow.md` | Add CI jobs: `AiActionRouter` unit/integration test job, extension build + Vitest job, skill schema-validation job. |
 | `Decisions/dependencies.md` | Add `cpp-httplib`. |
-| `Governance/owner.md` and `Team_Ownership_And_Product_Pillars.md` | Update Owner 4's surface to explicitly include `AiActionRouter`, the Chrome extension, and the `.cursor/skills/stockbt-actions/` skill. |
+| `Governance/owner.md` and `Team_Ownership_And_Product_Pillars.md` | Update Owner 4's surface to explicitly include `AiActionRouter`, the Chrome extension, and the `.agents/skills/stockbt-actions/` skill. |
 
 ### 11.1 ADRs to file (before implementation)
 

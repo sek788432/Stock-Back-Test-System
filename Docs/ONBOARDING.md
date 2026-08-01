@@ -151,7 +151,7 @@ To contribute you should have:
 - [ ] At least one merged PR (any size, any kind).
 - [ ] Read every doc in `Docs/`.
 - [ ] Read the Specs that touch your area of work.
-- [ ] Skimmed the five [`.cursor/skills/`](../.cursor/skills/README.md) files so you know what they enforce.
+- [ ] Skimmed the five repository-specific C++ skills in [`.agents/skills/`](../.agents/skills/README.md) so you know what they enforce.
 
 If any are blocked, raise it in the next sync.
 

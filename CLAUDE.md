@@ -1,14 +1,8 @@
-# CLAUDE.md
+# Claude Code project instructions
 
-Claude Code follows the same repository playbook as every other AI coding agent.
+@Docs/Governance/AGENTS.md
 
-Read first:
-
-1. [`AGENTS.md`](AGENTS.md) — root pointer for all AI tools.
-2. [`Docs/Governance/AGENTS.md`](Docs/Governance/AGENTS.md) — canonical workflow, hard rules, PR conventions, and Definition of Done expectations.
-3. The relevant spec under [`Docs/Specs/`](Docs/Specs/) before changing code or docs.
-
-When opening a PR, use [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md)
-and fill every section. For docs-only PRs, write `N/A — docs-only` for code,
-test, lint, performance, and code-specific DoD sections instead of leaving
-template placeholders blank.
+The imported file is the canonical repository playbook. Project skills live
+only under `.agents/skills/`; follow the playbook's reading and activation
+rules. Keep this file as a thin Claude Code adapter and do not duplicate policy
+here.

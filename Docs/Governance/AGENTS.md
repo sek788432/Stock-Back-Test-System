@@ -2,7 +2,11 @@
 
 This file is read by AI agents (Cursor, Codex, Claude Code, GitHub Copilot Workspace, etc.) at the start of any task. **Read it before doing anything in this repo.**
 
-The repository root has a thin [`AGENTS.md`](../../AGENTS.md) pointer for tools that auto-discover; this file is the canonical playbook.
+The repository root has a thin [`AGENTS.md`](../../AGENTS.md) pointer for tools
+that auto-discover it. Host-specific adapters such as
+[`CLAUDE.md`](../../CLAUDE.md) import this file when a tool uses a different
+instruction entry point. Those adapters must remain thin and must not duplicate
+project rules. This file is the canonical playbook.
 
 Humans contributing to this repo: see [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`../ONBOARDING.md`](../ONBOARDING.md). Most of what's here applies to you too.
 
@@ -16,7 +20,7 @@ Whenever you start a task here, read these in order. Don't skip — every sectio
 2. **[`README.md`](../../README.md)** — what the project is.
 3. **[`Docs/Specs/00_Overview.md`](../Specs/00_Overview.md)** — system architecture and end-to-end flow.
 4. **The relevant `Docs/Specs/0X_*.md`** (numbers `01`–`11`) for the module you're touching — use **`11_Stock_Screener_KLine_Product.md`** when changing replay, authoring surfaces, or screener scope. Full index in [`Docs/Specs/README.md`](../Specs/README.md).
-5. **[`.cursor/skills/`](../../.cursor/skills/)** — five always-on coding rules (modern C++, thread safety, performance, OOP/design, static analysis). These auto-trigger from the agent host but you should know they exist so you can name them when needed.
+5. **[`.agents/skills/`](../../.agents/skills/)** — the repository's only project-skill directory, containing both repository-specific C++ rules and shared engineering and productivity workflows. Hosts that do not auto-discover this convention must still read a relevant `SKILL.md` when its description matches the task. Repository instructions take precedence over skill guidance.
 6. **[`Docs/DEFINITION_OF_DONE.md`](../DEFINITION_OF_DONE.md)** — what "done" means in this repo. **You do not declare a task done until every box on this checklist is true.**
 7. **[`Docs/Decisions/`](../Decisions/)** — Architecture Decision Records. Read the ADRs that touch your area before making design choices.
 
@@ -25,6 +29,12 @@ Whenever you start a task here, read these in order. Don't skip — every sectio
 ## 2. Hard rules (non-negotiable)
 
 These are repo-wide invariants. Violating any of them is a defect.
+
+This section is the authoritative source for hard requirements. Skills under
+`.agents/skills/` explain how to apply these requirements in specific tasks,
+but a skill may not weaken or override them. When guidance should become a new
+hard rule, promote it into this section and add mechanical CI enforcement where
+practical; do not rely on skill activation alone.
 
 | #   | Rule                                                                                                                                                                                                                                                                                                          |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -40,6 +50,10 @@ These are repo-wide invariants. Violating any of them is a defect.
 | H10 | Never disable a CI gate to land your change. Use the documented exemption mechanism (`Docs/Specs/10` §10) which requires a CODEOWNER review.                                                                                                                                                                  |
 | H11 | Never invent file paths, class names, or library APIs. If you're unsure something exists, search the repo or read the docs. Hallucinated symbols are caught by `cpp-modern-style` + `cpp-static-analysis` but waste reviewer time.                                                                            |
 | H12 | Never silently change indentation, line endings, or formatting outside your diff. Run `clang-format` / `ruff format` only on touched files.                                                                                                                                                                   |
+| H13 | Project-owned C++ headers use `#pragma once` and repository naming/layout. Do not use C arrays, `NULL`, `typedef`, unscoped enums, C stdio/string APIs, or output parameters in project-owned interfaces. Isolate and document narrow exceptions required by `main`, an external C ABI, or a framework boundary. |
+| H14 | Use `std::chrono` for time and `std::filesystem::path` for paths in project-owned C++ APIs. Mark fallible `Result`-returning APIs `[[nodiscard]]`; never use `errno` as a module error contract.                                                                                                                     |
+| H15 | Never use manual mutex `lock()`/`unlock()`, detached threads, or `volatile` for synchronization. Never call `QWidget` methods from a worker thread. Use scoped locks, `std::jthread` with cancellation, immutable/value snapshots, and queued Qt delivery.                                                        |
+| H16 | Static-analysis and sanitizer suppressions must be narrow, name the exact check, include a reason, and have CODEOWNER approval. Never blanket-disable a check or suppress a sanitizer finding merely to make a gate pass.                                                                                       |
 
 ---
 
@@ -213,6 +227,6 @@ Quick mental pass. If you can answer "yes" to all, you're ready:
 - [ ] I filled out the PR template completely (no blank fields).
 - [ ] I worked through the Definition of Done.
 - [ ] I added or updated an ADR if the change qualifies (§5).
-- [ ] I did not introduce any banned patterns from the skills in [`../../.cursor/skills/`](../../.cursor/skills/).
+- [ ] I followed the relevant project skills in [`../../.agents/skills/`](../../.agents/skills/) and did not introduce any banned patterns from the repository-specific C++ skills there.
 
 If yes, ship it.
