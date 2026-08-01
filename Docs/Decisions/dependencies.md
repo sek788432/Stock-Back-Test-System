@@ -17,6 +17,7 @@ Add a row when adopting a new dependency (per [`../Governance/AGENTS.md`](../Gov
 | nanobench | (vendored, single header) | MIT | Tests/Bench | Microbenchmarks for hot paths | — |
 | moodycamel `ReaderWriterQueue` | (vendored) | BSD-style | Backend/Data | Single-producer/single-consumer ring for prefetch | — |
 | pandas / lxml / databento / duckdb (Python) | per `requirements.txt` | various permissive | DataFetcher | Existing data pipeline | — (existing) |
+| Matt Pocock Skills | 1.1.0 (`2ab9580`) | MIT | AI agent workflows | Shared, project-scoped engineering and productivity skills | [0007](0007-vendor-shared-agent-skills.md) |
 
 Tooling-only (not linked into shipped binaries):
 

@@ -16,9 +16,10 @@ Whenever you start a task here, read these in order. Don't skip — every sectio
 2. **[`README.md`](../../README.md)** — what the project is.
 3. **[`Docs/Specs/00_Overview.md`](../Specs/00_Overview.md)** — system architecture and end-to-end flow.
 4. **The relevant `Docs/Specs/0X_*.md`** (numbers `01`–`11`) for the module you're touching — use **`11_Stock_Screener_KLine_Product.md`** when changing replay, authoring surfaces, or screener scope. Full index in [`Docs/Specs/README.md`](../Specs/README.md).
-5. **[`.cursor/skills/`](../../.cursor/skills/)** — five always-on coding rules (modern C++, thread safety, performance, OOP/design, static analysis). These auto-trigger from the agent host but you should know they exist so you can name them when needed.
-6. **[`Docs/DEFINITION_OF_DONE.md`](../DEFINITION_OF_DONE.md)** — what "done" means in this repo. **You do not declare a task done until every box on this checklist is true.**
-7. **[`Docs/Decisions/`](../Decisions/)** — Architecture Decision Records. Read the ADRs that touch your area before making design choices.
+5. **[`.agents/skills/`](../../.agents/skills/)** — shared project skills for engineering and productivity workflows. Agent hosts that do not auto-discover this convention must still read a relevant `SKILL.md` when its description matches the task. Repository instructions take precedence over vendored skill guidance.
+6. **[`.cursor/skills/`](../../.cursor/skills/)** — five repository-specific, always-on coding rules (modern C++, thread safety, performance, OOP/design, static analysis). These auto-trigger in Cursor; every other agent must treat the relevant rules as mandatory too.
+7. **[`Docs/DEFINITION_OF_DONE.md`](../DEFINITION_OF_DONE.md)** — what "done" means in this repo. **You do not declare a task done until every box on this checklist is true.**
+8. **[`Docs/Decisions/`](../Decisions/)** — Architecture Decision Records. Read the ADRs that touch your area before making design choices.
 
 ---
 
@@ -213,6 +214,6 @@ Quick mental pass. If you can answer "yes" to all, you're ready:
 - [ ] I filled out the PR template completely (no blank fields).
 - [ ] I worked through the Definition of Done.
 - [ ] I added or updated an ADR if the change qualifies (§5).
-- [ ] I did not introduce any banned patterns from the skills in [`../../.cursor/skills/`](../../.cursor/skills/).
+- [ ] I followed the relevant shared skills in [`../../.agents/skills/`](../../.agents/skills/) and did not introduce any banned patterns from the repository-specific skills in [`../../.cursor/skills/`](../../.cursor/skills/).
 
 If yes, ship it.

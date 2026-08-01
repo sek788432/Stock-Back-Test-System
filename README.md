@@ -26,6 +26,7 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 | [`Docs/Specs/`](Docs/Specs/README.md) | System architecture and module specs. |
 | [`Docs/Governance/`](Docs/Governance/) | `AGENTS.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `LICENSE`. |
 | [`Docs/Decisions/`](Docs/Decisions/) | Architecture Decision Records. |
+| [`.agents/skills/`](.agents/skills/README.md) | Shared project skills for Codex and other AI agents. |
 | [`.cursor/skills/`](.cursor/skills/README.md) | Auto-applied coding rules for AI agents. |
 | [`.github/`](.github/) | PR/issue templates, CODEOWNERS. |
 
