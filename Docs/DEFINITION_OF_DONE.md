@@ -94,6 +94,7 @@ Copy the checklist into your PR description and tick boxes as you verify each it
 ## CI / tooling (any change in `.github/`, `Cmake/`, `tools/`, `vcpkg.json`, `requirements.txt`)
 
 - [ ] **One platform at a time**: I ran the full PR pipeline at least once on a real branch (or via `gh workflow run`).
+- [ ] **Full-tree standards clean**: `checkProjectStandards.py --full-tree` reports zero violations for the commit.
 - [ ] **Cache keys updated** if dependency versions changed.
 - [ ] **Backwards compatible**: old contributor branches don't suddenly fail to configure.
 

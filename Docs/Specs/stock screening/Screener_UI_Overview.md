@@ -1,8 +1,8 @@
 # Stock Screener — UI Overview Spec
 
-**Live prototype:** [`screener_v2.html`](./screener_v2.html)  
-**Parent spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)  
-**Full index:** [`README.md`](./README.md)  
+**Live prototype:** [`screener_v2.html`](./screener_v2.html)
+**Parent spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)
+**Full index:** [`README.md`](./README.md)
 **Version:** v11.0
 
 ---
@@ -412,7 +412,7 @@ Per-model bonus (each model meeting its threshold adds +10 pts):
 Cap: 120 pts
 ```
 
-> **Note on columns 7 & 8:** These use the stock's own historical average as a benchmark,  
+> **Note on columns 7 & 8:** These use the stock's own historical average as a benchmark,
 > not a user-set threshold. The highlight fires automatically — there is no control in the Threshold panel for these two.
 
 #### Technical Signal Color Semantics

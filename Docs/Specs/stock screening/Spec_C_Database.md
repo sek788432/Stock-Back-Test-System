@@ -1,17 +1,17 @@
 # Spec C — Database Design
 
-**Part of:** Stock Screener sub-specs  
-**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md)  
-**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)  
-**Constraint source:** [`04_Data_Layer.md`](../04_Data_Layer.md)  
+**Part of:** Stock Screener sub-specs
+**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md)
+**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)
+**Constraint source:** [`04_Data_Layer.md`](../04_Data_Layer.md)
 **Referenced by:** `Spec_A_Screener_Engine.md`, `Spec_B_Valuation_Engine.md`, `Spec_D_NL_Python_Runtime.md`
 
 ---
 
 ## 1. Purpose
 
-This spec defines every table the screener feature reads from or writes to.  
-It is the **single source of truth** for column names, types, and constraints.  
+This spec defines every table the screener feature reads from or writes to.
+It is the **single source of truth** for column names, types, and constraints.
 All other specs reference this document — never define schema elsewhere.
 
 ---
@@ -67,7 +67,7 @@ All tables here are **written by Python, read by C++**. C++ never executes INSER
 
 ### 3.1 `hourlyBars` — OHLCV Price Data (existing table)
 
-> **Do not modify this table's existing columns.** The Python pipeline owns the schema.  
+> **Do not modify this table's existing columns.** The Python pipeline owns the schema.
 > C++ reads this via `BarStream` (Spec 04 §2). Do not query it directly in screener code.
 
 ```sql
@@ -215,7 +215,7 @@ JNJ    │ Johnson & Johnson        │ NYSE     │ US
 
 ### 3.4 `indexConstituents` — Universe Membership (Phase 2, not yet created)
 
-> **Phase 1:** `Spec_A::symbolsInUniverse()` returns all symbols with fundamentals data. The `universe` parameter is ignored.  
+> **Phase 1:** `Spec_A::symbolsInUniverse()` returns all symbols with fundamentals data. The `universe` parameter is ignored.
 > **Phase 2:** Add this table. Python pipeline writes it; C++ reads it to filter by named universe.
 
 ```sql
@@ -274,7 +274,7 @@ CREATE INDEX idx_fundamentals_sector_date
 
 ## 4. app.db (SQLite)
 
-All tables here are **owned by the C++ application**. Python never reads or writes this file.  
+All tables here are **owned by the C++ application**. Python never reads or writes this file.
 Location: `<userData>/screener/app.db`
 
 ---

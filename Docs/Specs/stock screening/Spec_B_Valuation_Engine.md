@@ -1,10 +1,10 @@
 # Spec B — Valuation Engine
 
-**Part of:** Stock Screener sub-specs  
-**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §B1–B3  
-**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md)  
-**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)  
-**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1  
+**Part of:** Stock Screener sub-specs
+**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §B1–B3
+**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md)
+**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)
+**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1
 **Consumes output of:** `Spec_A_Screener_Engine.md` (screenerResults → symbol lists)
 
 > **Scope note:** Block B (Valuation Matrix) is an **extended feature** not explicitly defined in Spec 11. Spec 11 §2 defines screening (Block A) only. Block B was added during sub-spec design as a companion analysis tool that consumes screener output. If Spec 11 is ever revisited, Block B should be promoted to a first-class section there.
@@ -37,7 +37,7 @@ Src/Backend/Valuation/
   ValuationEngine.h / .cpp            — engine implementation (8 models + score)
 ```
 
-All types live in `namespace bte::valuation`.  
+All types live in `namespace bte::valuation`.
 Conventions: same as `Spec_A §2` — `UpperCamelCase` types, `lowerCamelCase` members,
 private trailing `_`, `#pragma once`, no raw `new`/`delete`, `core::Result<T>`.
 
@@ -753,8 +753,8 @@ highlight = (dividendYield > yieldAvg5Y) AND (dividendYield > 0)
 display   = "5.8% / 5Y:4.9% / 10Y:4.6%"
 ```
 
-**Direction is inverted vs Model 7:**  
-Higher yield vs history means the **price fell** relative to the dividend.  
+**Direction is inverted vs Model 7:**
+Higher yield vs history means the **price fell** relative to the dividend.
 A rising yield = stock is getting cheaper. This is a buy signal for income investors.
 
 ```cpp
@@ -863,7 +863,7 @@ Per-model bonus — each highlighted model adds +10 pts:
 Cap: 120 pts
 ```
 
-Note: Model 2 (DCF) is the base score driver, not a flat +10 bonus.  
+Note: Model 2 (DCF) is the base score driver, not a flat +10 bonus.
 Technical Signal is explicitly excluded from the score.
 
 ```cpp

@@ -1,10 +1,10 @@
 # Spec A — Screener Engine
 
-**Part of:** Stock Screener sub-specs  
-**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §A1–A6  
-**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md)  
-**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md) §2  
-**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1  
+**Part of:** Stock Screener sub-specs
+**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §A1–A6
+**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md)
+**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md) §2
+**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1
 **Referenced by:** `Spec_B_Valuation_Engine.md`, `Spec_D_NL_Python_Runtime.md`
 
 ---
@@ -18,8 +18,8 @@ This spec defines the **logic layer** of Block A (Screener) as C++ code:
 - Concrete SQL patterns against `MarketData.duckdb` and `app.db`
 - How to call the engine from the Qt UI layer
 
-UI behaviour is in `Screener_UI_Overview.md`.  
-DB schema (column types, indexes) is in `Spec_C_Database.md`.  
+UI behaviour is in `Screener_UI_Overview.md`.
+DB schema (column types, indexes) is in `Spec_C_Database.md`.
 Python / NL execution is in `Spec_D_NL_Python_Runtime.md`.
 
 ---
@@ -39,7 +39,7 @@ Src/Backend/Screener/
   AppDb.h / .cpp            — app.db SQLite operations (Qt)
 ```
 
-All types live in `namespace bte::screener`.  
+All types live in `namespace bte::screener`.
 Conventions from `03_Backend_Core.md §1`:
 - Types → `UpperCamelCase`
 - Variables / methods → `lowerCamelCase`
@@ -185,7 +185,7 @@ struct ConditionBlock {
 }
 ```
 
-For `between`: `"value": [10.0, 25.0]`  
+For `between`: `"value": [10.0, 25.0]`
 For `in`: `"value": ["Information Technology", "Health Care"]`
 
 ---
@@ -686,7 +686,7 @@ bool ScreenerEngine::evaluateCondition(
 
 ### `checkConsecutivePositive` — N-Period Positivity Check
 
-Checks that a given field has been > 0 for the last N quarterly rows.  
+Checks that a given field has been > 0 for the last N quarterly rows.
 `cond.value` stores N as a double. Uses `repo_->historyBefore()` which is a member of `ScreenerEngine`.
 
 ```cpp
@@ -1003,7 +1003,7 @@ core::Result<int> AppDb::saveResult(const SavedResult& r)
 
 ## 11. Field Registry
 
-Maps condition `field` keys to `FundamentalsRow` members.  
+Maps condition `field` keys to `FundamentalsRow` members.
 This is the contract between the UI condition builder and the engine evaluator.
 
 ### `FieldRegistry.h`

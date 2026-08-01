@@ -219,7 +219,7 @@ struct CsvColumns {
 
 } // namespace
 
-CsvBarStream::CsvBarStream(std::string symbol, std::string schemaName, core::DateRange range,
+CsvBarStream::CsvBarStream(ConstructionKey, std::string symbol, std::string schemaName, core::DateRange range,
                            std::vector<core::Bar> bars)
     : symbol_(std::move(symbol)), schemaName_(std::move(schemaName)), range_(range), bars_(std::move(bars)) {}
 
@@ -276,8 +276,8 @@ core::Result<std::unique_ptr<CsvBarStream>> CsvBarStream::open(const StreamReque
         }
     }
 
-    return std::unique_ptr<CsvBarStream>{
-        new CsvBarStream{request.symbol, request.schemaName, resolvedRange, std::move(bars)}};
+    return std::make_unique<CsvBarStream>(ConstructionKey{}, request.symbol, request.schemaName, resolvedRange,
+                                          std::move(bars));
 }
 
 std::optional<core::Bar> CsvBarStream::next() {
