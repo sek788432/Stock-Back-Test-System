@@ -48,7 +48,7 @@ add_test(
   NAME bte_project_standards_tests
   COMMAND
     ${Python3_EXECUTABLE} -m unittest discover
-    -s ${CMAKE_CURRENT_SOURCE_DIR}/Tools
+    -s ${CMAKE_CURRENT_SOURCE_DIR}/Unit/Tools
     -p UnitTest_*.py)
 set_tests_properties(
   bte_project_standards_tests
@@ -57,7 +57,7 @@ set_tests_properties(
 if(BTE_BUILD_QT_APP)
   add_executable(
     bte_frontend_tests
-    Frontend/UnitTest_ReplayTab.cpp)
+    Unit/Frontend/UnitTest_ReplayTab.cpp)
 
   set_target_properties(bte_frontend_tests PROPERTIES AUTOMOC ON)
 
@@ -78,7 +78,7 @@ if(BTE_BUILD_QT_APP)
 
   add_executable(
     bte_frontend_chart_tests
-    Frontend/UnitTest_QtChartsCandlestickView.cpp)
+    Unit/Frontend/UnitTest_QtChartsCandlestickView.cpp)
 
   set_target_properties(bte_frontend_chart_tests PROPERTIES AUTOMOC ON)
 
@@ -99,7 +99,7 @@ if(BTE_BUILD_QT_APP)
 
   add_executable(
     bte_frontend_vm_tests
-    Frontend/UnitTest_ReplaySessionVm.cpp)
+    Unit/Frontend/UnitTest_ReplaySessionVm.cpp)
 
   set_target_properties(bte_frontend_vm_tests PROPERTIES AUTOMOC ON)
 
@@ -119,7 +119,7 @@ if(BTE_BUILD_QT_APP)
 
   add_executable(
     bte_frontend_data_loader_tests
-    Frontend/UnitTest_ReplayDataLoader.cpp)
+    Unit/Frontend/UnitTest_ReplayDataLoader.cpp)
 
   set_target_properties(bte_frontend_data_loader_tests PROPERTIES AUTOMOC ON)
 

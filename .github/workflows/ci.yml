@@ -61,7 +61,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: >-
-          python3 tools/checkProjectStandards.py
+          python3 Tools/CheckProjectStandards.py
           --full-tree
           --base "$BASE_SHA"
           --head "$GITHUB_SHA"

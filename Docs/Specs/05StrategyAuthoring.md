@@ -2,7 +2,7 @@
 
 How users describe a trading strategy and how the backend turns that description into **buy / sell / hold** actions per bar.
 
-We support **three product-facing authoring surfaces** (see also `11_Stock_Screener_KLine_Product.md` §3):
+We support **three product-facing authoring surfaces** (see also `11StockScreenerKLineProduct.md` §3):
 
 1. **Built-in (rule) mode** — a JSON-backed declarative language editable from the Qt form. Covers ~80% of common strategies (crossovers, thresholds, breakouts, % stops). Multiple condition rows compose with **AND** or **OR** at the outermost level (`conditionLogic`: `all` | `any`; nested groups remain future work and are specified in `11` §2.2).
 2. **Python script mode** — sandboxed Python implementing the same logical hook points as Lua (`§5`). This is the **primary code-first authoring path** described to end users (`00`, `02`, `11`).

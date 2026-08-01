@@ -28,8 +28,8 @@ Copy the checklist into your PR description and tick boxes as you verify each it
 - [ ] **Builds clean** on at least one OS locally (`cmake --build --preset dev`).
 - [ ] **All existing tests pass** (`ctest --preset dev`).
 - [ ] **No new compiler warnings** on touched files.
-- [ ] **No new clang-tidy warnings** on touched files (`tools/run-clang-tidy-diff.sh`).
-- [ ] **clang-format clean** (`tools/run-clang-format.sh --check`).
+- [ ] **No new clang-tidy warnings** on touched files (`Tools/RunClangTidyDiff.sh`).
+- [ ] **clang-format clean** (`Tools/RunClangFormat.sh --check`).
 - [ ] **Sanitizers clean**: ASan/UBSan/LSan reports are empty when running affected tests.
 - [ ] **Skills compliance**: change does not violate the repository-specific C++ rules in `.agents/skills/` — no banned C-style idioms, no raw `new`/`delete`, no `using namespace std;`, no exceptions across module boundaries, RAII for every resource.
 
@@ -91,10 +91,11 @@ Copy the checklist into your PR description and tick boxes as you verify each it
 - [ ] **No broken links**: relative paths resolve, anchors exist.
 - [ ] **Index updated**: `Docs/Specs/README.md`, `Docs/Decisions/README.md`, etc.
 
-## CI / tooling (any change in `.github/`, `Cmake/`, `tools/`, `vcpkg.json`, `requirements.txt`)
+## CI / tooling (any change in `.github/`, `CMake/`, `Tools/`, `vcpkg.json`, `requirements.txt`)
 
 - [ ] **One platform at a time**: I ran the full PR pipeline at least once on a real branch (or via `gh workflow run`).
-- [ ] **Full-tree standards clean**: `checkProjectStandards.py --full-tree` reports zero violations for the commit.
+- [ ] **Full-tree standards clean**: `Tools/CheckProjectStandards.py --full-tree` reports zero violations for the commit.
+- [ ] **Path layout clean**: project-owned path components use PascalCase and every unit suite is under `Tests/Unit/<Module>/`.
 - [ ] **Cache keys updated** if dependency versions changed.
 - [ ] **Backwards compatible**: old contributor branches don't suddenly fail to configure.
 

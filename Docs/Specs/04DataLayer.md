@@ -12,7 +12,7 @@ From `README.md` and `DataFetcher/`:
 
 - DuckDB file: `StockData/MarketData.duckdb`
 - Single table: `hourlyBars`
-- Columns (per `GetFromDB.py`):
+- Columns (per `GetFromDb.py`):
   - core: `symbol, ts, open, high, low, close, volume`
   - provenance: `source, schemaName, ingestedAt`
 - `ts` is `TIMESTAMPTZ`, UTC.

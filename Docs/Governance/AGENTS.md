@@ -8,7 +8,7 @@ that auto-discover it. Host-specific adapters such as
 instruction entry point. Those adapters must remain thin and must not duplicate
 project rules. This file is the canonical playbook.
 
-Humans contributing to this repo: see [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`../ONBOARDING.md`](../ONBOARDING.md). Most of what's here applies to you too.
+Humans contributing to this repo: see [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`../Onboarding.md`](../Onboarding.md). Most of what's here applies to you too.
 
 ---
 
@@ -18,10 +18,10 @@ Whenever you start a task here, read these in order. Don't skip — every sectio
 
 1. **This file** (you're reading it).
 2. **[`README.md`](../../README.md)** — what the project is.
-3. **[`Docs/Specs/00_Overview.md`](../Specs/00_Overview.md)** — system architecture and end-to-end flow.
-4. **The relevant `Docs/Specs/0X_*.md`** (numbers `01`–`11`) for the module you're touching — use **`11_Stock_Screener_KLine_Product.md`** when changing replay, authoring surfaces, or screener scope. Full index in [`Docs/Specs/README.md`](../Specs/README.md).
+3. **[`Docs/Specs/00Overview.md`](../Specs/00Overview.md)** — system architecture and end-to-end flow.
+4. **The relevant `Docs/Specs/0X_*.md`** (numbers `01`–`11`) for the module you're touching — use **`11StockScreenerKLineProduct.md`** when changing replay, authoring surfaces, or screener scope. Full index in [`Docs/Specs/README.md`](../Specs/README.md).
 5. **[`.agents/skills/`](../../.agents/skills/)** — the repository's only project-skill directory, containing both repository-specific C++ rules and shared engineering and productivity workflows. Hosts that do not auto-discover this convention must still read a relevant `SKILL.md` when its description matches the task. Repository instructions take precedence over skill guidance.
-6. **[`Docs/DEFINITION_OF_DONE.md`](../DEFINITION_OF_DONE.md)** — what "done" means in this repo. **You do not declare a task done until every box on this checklist is true.**
+6. **[`Docs/DefinitionOfDone.md`](../DefinitionOfDone.md)** — what "done" means in this repo. **You do not declare a task done until every box on this checklist is true.**
 7. **[`Docs/Decisions/`](../Decisions/)** — Architecture Decision Records. Read the ADRs that touch your area before making design choices.
 
 ---
@@ -45,7 +45,7 @@ practical; do not rely on skill activation alone.
 | H5  | Never throw exceptions across module boundaries. Return `bte::core::Result<T, Error>` (`Docs/Specs/03` §6).                                                                                                                                                                                                   |
 | H6  | Never use `using namespace std;` anywhere. Never use C-style casts in C++ (`(int)x`). See skill `cpp-modern-style`.                                                                                                                                                                                           |
 | H7  | Never write a test that passes trivially. The CI's anti-cheat audit (`Docs/Specs/10` §5) will reject `EXPECT_TRUE(true)`, `EXPECT_EQ(x, x)`, empty test bodies, tautologies, mocking the unit under test, and silent skips. Don't try to satisfy the gate; satisfy the underlying intent (test the behavior). |
-| H8  | Never claim a task is done until the Definition of Done passes ([`../DEFINITION_OF_DONE.md`](../DEFINITION_OF_DONE.md)). "I think it works" is not done.                                                                                                                                                      |
+| H8  | Never claim a task is done until the Definition of Done passes ([`../DefinitionOfDone.md`](../DefinitionOfDone.md)). "I think it works" is not done.                                                                                                                                                      |
 | H9  | Never add a dependency without justifying it in the PR description, naming the package and version, and confirming its license is compatible (see §6 below).                                                                                                                                                  |
 | H10 | Never disable a CI gate to land your change. Use the documented exemption mechanism (`Docs/Specs/10` §10) which requires a CODEOWNER review.                                                                                                                                                                  |
 | H11 | Never invent file paths, class names, or library APIs. If you're unsure something exists, search the repo or read the docs. Hallucinated symbols are caught by `cpp-modern-style` + `cpp-static-analysis` but waste reviewer time.                                                                            |
@@ -54,6 +54,7 @@ practical; do not rely on skill activation alone.
 | H14 | Use `std::chrono` for time and `std::filesystem::path` for paths in project-owned C++ APIs. Mark fallible `Result`-returning APIs `[[nodiscard]]`; never use `errno` as a module error contract.                                                                                                                     |
 | H15 | Never use manual mutex `lock()`/`unlock()`, detached threads, or `volatile` for synchronization. Never call `QWidget` methods from a worker thread. Use scoped locks, `std::jthread` with cancellation, immutable/value snapshots, and queued Qt delivery.                                                        |
 | H16 | Static-analysis and sanitizer suppressions must be narrow, name the exact check, include a reason, and have CODEOWNER approval. Never blanket-disable a check or suppress a sanitizer finding merely to make a gate pass.                                                                                       |
+| H17 | Project-owned directory names and file stems use PascalCase. Exact external-tool conventions, numbered ADR slugs, `UnitTest_<Thing>` files, entrypoints, and domain-data identifiers are the only exceptions documented by ADR 0010. Every unit-test suite lives under `Tests/Unit/<Module>/`.             |
 
 ---
 
@@ -143,13 +144,13 @@ If you must:
    - **Allowed**: MIT, BSD (2/3-clause), Apache-2.0, MPL-2.0, ISC, Boost, zlib, LGPL (dynamically linked only).
    - **Forbidden without an explicit team decision**: GPL-2.0, GPL-3.0, AGPL, SSPL, custom "non-commercial" licenses.
 3. Add to `vcpkg.json` (C++) or `requirements.txt` (Python), pinning to an exact version.
-4. Add a one-line entry in [`../Decisions/dependencies.md`](../Decisions/dependencies.md) (`name | version | license | reason`).
+4. Add a one-line entry in [`../Decisions/Dependencies.md`](../Decisions/Dependencies.md) (`name | version | license | reason`).
 
 ---
 
 ## 7. Testing rules (the anti-cheat policy in plain language)
 
-[`../Specs/10_CI_Dev_Flow.md`](../Specs/10_CI_Dev_Flow.md) §5 has the formal definitions. The short version: **a test must be able to fail when the code is wrong**. Mechanical ways to violate that, all rejected:
+[`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md) §5 has the formal definitions. The short version: **a test must be able to fail when the code is wrong**. Mechanical ways to violate that, all rejected:
 
 ```cpp
 EXPECT_TRUE(true);                          // (a) trivial
@@ -175,7 +176,7 @@ Default to the safer choice:
 - Don't know if a function should be in `Core` or `Data`? → put it where its dependencies live (`Docs/Specs/01` §1 graph).
 - Don't know whether to write a test? → write one. The bar is "every public symbol has a test" (`Docs/Specs/10` §7).
 - Don't know if a change needs an ADR? → write a short one. ADRs are cheap.
-- Don't know what "done" looks like? → re-read [`../DEFINITION_OF_DONE.md`](../DEFINITION_OF_DONE.md).
+- Don't know what "done" looks like? → re-read [`../DefinitionOfDone.md`](../DefinitionOfDone.md).
 
 If, after reading the relevant docs, you still don't know — **ask** in the PR description or as a draft PR. Don't guess and ship.
 

@@ -42,8 +42,8 @@ If you're an AI agent: this is mandatory, not optional. See Docs/Governance/AGEN
 
 - [ ] `cmake --build --preset dev` clean
 - [ ] `ctest --preset dev` passes (sanitizers clean)
-- [ ] `tools/run-clang-tidy-diff.sh` clean on touched files
-- [ ] `tools/run-clang-format.sh --check` clean
+- [ ] `Tools/RunClangTidyDiff.sh` clean on touched files
+- [ ] `Tools/RunClangFormat.sh --check` clean
 - [ ] If concurrency-touching: `ctest --preset dev-tsan` passes
 - [ ] If hot-path touching: nanobench numbers in section below
 
@@ -84,8 +84,8 @@ If you skipped tests, say why and reference the DoD section that allows it. -->
 
 ## Definition of Done
 
-<!-- Copy the relevant sections from Docs/DEFINITION_OF_DONE.md and tick boxes.
-See: https://github.com/your-org/Stock-Back-Test-System/blob/main/Docs/DEFINITION_OF_DONE.md
+<!-- Copy the relevant sections from Docs/DefinitionOfDone.md and tick boxes.
+See: https://github.com/your-org/Stock-Back-Test-System/blob/main/Docs/DefinitionOfDone.md
 Do NOT delete the section — leave the headings even if items are N/A. -->
 
 ### Universal
@@ -94,7 +94,7 @@ Do NOT delete the section — leave the headings even if items are N/A. -->
 - [ ] Branch name matches `feature|fix|docs|refactor|chore|perf/<short-name>`.
 - [ ] Commit messages are Conventional Commits.
 - [ ] No secrets committed; no commented-out code; no TODO without `ISSUE-NNN`.
-- [ ] Self-reviewed using `Docs/REVIEW_PLAYBOOK.md`.
+- [ ] Self-reviewed using `Docs/ReviewPlaybook.md`.
 
 ### Code (delete if PR is docs-only)
 

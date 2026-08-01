@@ -25,7 +25,7 @@ Constraints:
 - **Build**: CMake 3.24+ with `CMakePresets.json` and vcpkg manifest for dependency pinning.
 - **Backend code**: pure C++20, isolated from Qt; bridge classes (`bteBindings`) translate to `Q_OBJECT` view-models for the UI.
 
-Details and module breakdown are in [`../Specs/01_Architecture.md`](../Specs/01_Architecture.md) and [`../Specs/02_Frontend_Qt.md`](../Specs/02_Frontend_Qt.md).
+Details and module breakdown are in [`../Specs/01Architecture.md`](../Specs/01Architecture.md) and [`../Specs/02FrontendQt.md`](../Specs/02FrontendQt.md).
 
 ## Consequences
 
@@ -61,12 +61,12 @@ Details and module breakdown are in [`../Specs/01_Architecture.md`](../Specs/01_
 
 ## Charting library — sub-decision
 
-Within Qt, we picked **Qt Charts** over QCustomPlot or a custom QPainter renderer. The full reasoning is in [`../Specs/02_Frontend_Qt.md`](../Specs/02_Frontend_Qt.md) §1; the headline is licensing simplicity (no separate GPLv3 from QCustomPlot) and zero new third-party tracking.
+Within Qt, we picked **Qt Charts** over QCustomPlot or a custom QPainter renderer. The full reasoning is in [`../Specs/02FrontendQt.md`](../Specs/02FrontendQt.md) §1; the headline is licensing simplicity (no separate GPLv3 from QCustomPlot) and zero new third-party tracking.
 
 The chart layer is hidden behind `IChartView` (Specs/02 §4) so swapping to QCustomPlot or custom QPainter later is a contained change, should performance or styling demand it.
 
 ## References
 
-- [`../Specs/01_Architecture.md`](../Specs/01_Architecture.md)
-- [`../Specs/02_Frontend_Qt.md`](../Specs/02_Frontend_Qt.md)
-- [`../Specs/09_Build_Distribution_Launcher.md`](../Specs/09_Build_Distribution_Launcher.md)
+- [`../Specs/01Architecture.md`](../Specs/01Architecture.md)
+- [`../Specs/02FrontendQt.md`](../Specs/02FrontendQt.md)
+- [`../Specs/09BuildDistributionLauncher.md`](../Specs/09BuildDistributionLauncher.md)

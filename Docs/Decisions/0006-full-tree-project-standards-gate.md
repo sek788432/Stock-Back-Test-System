@@ -20,7 +20,7 @@ consistent standard across the repository.
 
 ## Decision
 
-Run `tools/checkProjectStandards.py --full-tree` as a required GitHub Actions job
+Run `Tools/CheckProjectStandards.py --full-tree` as a required GitHub Actions job
 on every pull request and every push to `main`. The audit reads every tracked
 UTF-8 text file from the exact Git commit under test. Binary files are ignored.
 
@@ -73,6 +73,6 @@ made fully compliant and kept that way.
 ## References
 
 - ISSUE-39
-- [`../Specs/10_CI_Dev_Flow.md`](../Specs/10_CI_Dev_Flow.md)
-- [`../../tools/checkProjectStandards.py`](../../tools/checkProjectStandards.py)
+- [`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md)
+- [`../../Tools/CheckProjectStandards.py`](../../Tools/CheckProjectStandards.py)
 - [ADR 0004](0004-anti-cheat-ci-gate-with-mutation-testing.md)

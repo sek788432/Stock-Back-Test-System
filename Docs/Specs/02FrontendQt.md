@@ -248,7 +248,7 @@ Wrap all user-visible strings in `tr(...)`. Keep a `Resources/i18n/stockBacktest
 
 ## 9. Tests
 
-- `Tests/Frontend/` uses Qt Test:
+- `Tests/Unit/Frontend/` uses Qt Test:
   - Smoke test: open each tab, ensure no crashes.
   - Replay state machine: simulate signals, assert UI labels update.
   - Strategy editor: invalid Lua or Python stub → underline + compile error surfaced in the diagnostics strip. **NL** smoke: **Run Backtest** stays disabled until the user **Accept**s generated text into an editor **and** `compile*` succeeds (`05` §6).

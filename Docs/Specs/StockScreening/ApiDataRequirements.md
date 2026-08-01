@@ -2,8 +2,8 @@
 
 **Part of:** Stock Screener sub-specs
 **Audience:** Python pipeline engineers — what to fetch, compute, and store in `MarketData.duckdb`
-**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md)
-**Referenced by:** `Spec_B_Valuation_Engine.md` (model inputs), `Spec_D_NL_Python_Runtime.md` (bars DataFrame)
+**DB schema:** [`SpecCDatabase.md`](./SpecCDatabase.md)
+**Referenced by:** `SpecBValuationEngine.md` (model inputs), `SpecDNlPythonRuntime.md` (bars DataFrame)
 
 ---
 

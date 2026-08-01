@@ -61,5 +61,5 @@ Plugin authors can add a third mode (native C++ `IStrategy` impls) via the plugi
 
 ## References
 
-- [`../Specs/05_Strategy_Authoring.md`](../Specs/05_Strategy_Authoring.md)
-- [`../Specs/08_Plugin_System.md`](../Specs/08_Plugin_System.md)
+- [`../Specs/05StrategyAuthoring.md`](../Specs/05StrategyAuthoring.md)
+- [`../Specs/08PluginSystem.md`](../Specs/08PluginSystem.md)

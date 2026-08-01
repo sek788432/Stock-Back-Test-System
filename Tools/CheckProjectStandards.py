@@ -22,6 +22,24 @@ HASH_COMMENT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+CONVENTIONAL_FILE_NAMES = {
+    "AGENTS.md",
+    "BUILD.md",
+    "CHANGELOG.md",
+    "CLAUDE.md",
+    "CMakeLists.txt",
+    "CMakePresets.json",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "SKILL.md",
+    "main.cpp",
+    "requirements.txt",
+}
+PASCAL_CASE_NAME = re.compile(r"[A-Z][A-Za-z0-9]*")
+NUMBERED_PASCAL_CASE_NAME = re.compile(r"\d{2}[A-Z][A-Za-z0-9]*")
+ADR_FILE_NAME = re.compile(r"\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
+UNIT_TEST_FILE_NAME = re.compile(r"UnitTest_[A-Z][A-Za-z0-9]*\.(?:cpp|py)")
 
 
 @dataclass(frozen=True)
@@ -207,12 +225,76 @@ def audit_text_sources(sources: dict[Path, str]) -> tuple[list[Violation], int]:
     return violations, line_count
 
 
+def is_domain_data_file(path: Path) -> bool:
+    data_roots = (
+        Path("StockData", "Extracted"),
+        Path("Tests", "Fixtures"),
+    )
+    return any(path.is_relative_to(root) for root in data_roots)
+
+
+def is_conventional_file(path: Path) -> bool:
+    if path.name.startswith(".") or path.name in CONVENTIONAL_FILE_NAMES:
+        return True
+    if path.parts[0] in {".agents", ".github"}:
+        return True
+    if path.parent == Path("Docs", "Decisions") and ADR_FILE_NAME.fullmatch(path.name):
+        return True
+    if UNIT_TEST_FILE_NAME.fullmatch(path.name):
+        return True
+    if is_domain_data_file(path):
+        return True
+    return False
+
+
+def audit_path_conventions(paths: set[Path]) -> list[Violation]:
+    violations: list[Violation] = []
+    reported_directories: set[Path] = set()
+
+    for path in sorted(paths):
+        if path.parts[0] in {".agents", ".github"}:
+            continue
+
+        for parent in path.parents:
+            if parent == Path("."):
+                continue
+            if parent in reported_directories:
+                continue
+            if not PASCAL_CASE_NAME.fullmatch(parent.name):
+                violations.append(
+                    Violation(parent, 1, "PATH001", "project directory names must use PascalCase")
+                )
+                reported_directories.add(parent)
+
+        if path.parts[0] == "Tests" and path.stem.startswith("UnitTest_"):
+            if len(path.parts) < 3 or path.parts[1] != "Unit":
+                violations.append(
+                    Violation(path, 1, "TEST005", "unit tests must be under Tests/Unit/<Module>")
+                )
+                continue
+
+        if is_conventional_file(path):
+            continue
+
+        suffix_is_lowercase = path.suffix == path.suffix.lower()
+        stem_is_pascal_case = bool(
+            PASCAL_CASE_NAME.fullmatch(path.stem)
+            or NUMBERED_PASCAL_CASE_NAME.fullmatch(path.stem)
+        )
+        if not suffix_is_lowercase or not stem_is_pascal_case:
+            violations.append(
+                Violation(path, 1, "PATH001", "project file stems must use PascalCase")
+            )
+
+    return violations
+
+
 def module_and_test_roots(path: Path) -> tuple[Path, Path] | None:
     parts = path.parts
     if len(parts) >= 3 and parts[0:2] == ("Src", "Backend"):
         return Path(*parts[:3]), Path("Tests", "Unit", parts[2])
     if len(parts) >= 2 and parts[0] == "Src":
-        return Path(*parts[:2]), Path("Tests", parts[1])
+        return Path(*parts[:2]), Path("Tests", "Unit", parts[1])
     return None
 
 
@@ -380,6 +462,7 @@ def main() -> int:
             cmake_sources = git_cmake_sources(args.head, head_paths)
             violations.extend(audit_new_modules(base_paths, head_paths, cmake_sources))
             violations.extend(audit_test_registration(head_paths, cmake_sources))
+            violations.extend(audit_path_conventions(head_paths))
     except (subprocess.CalledProcessError, ValueError) as error:
         print(f"Standards audit could not inspect the diff: {error}", file=sys.stderr)
         return 2

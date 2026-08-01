@@ -1,11 +1,11 @@
 # Spec D — NL / Python Runtime
 
 **Part of:** Stock Screener sub-specs
-**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §A4 (Python), §A5 (NL/AI)
-**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md) §4.2, §4.5
-**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md) §3
-**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1
-**Screener engine:** [`Spec_A_Screener_Engine.md`](./Spec_A_Screener_Engine.md)
+**UI reference:** [`ScreenerUiOverview.md`](./ScreenerUiOverview.md) §A4 (Python), §A5 (NL/AI)
+**DB schema:** [`SpecCDatabase.md`](./SpecCDatabase.md) §4.2, §4.5
+**Parent product spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md) §3
+**Coding conventions:** [`03BackendCore.md`](../03BackendCore.md) §1
+**Screener engine:** [`SpecAScreenerEngine.md`](./SpecAScreenerEngine.md)
 
 ---
 
@@ -750,7 +750,7 @@ User types prompt → clicks Send
 
 ### Mode 2 — Python Script
 
-![Python Script mode — code editor with Validate / Compile / Run Screen](./frontend%20-%20python%20script.PNG)
+![Python Script mode — code editor with Validate / Compile / Run Screen](./FrontendPythonScript.png)
 
 ```cpp
 // ScreenerWidget.cpp
@@ -791,7 +791,7 @@ void ScreenerWidget::onRunScreenClicked()
 
 ### Mode 3 — Natural Language
 
-![Natural Language (AI) mode — chat UI with explicit Accept/Reject per response](./frontend%20-%20NL%20AI.PNG)
+![Natural Language (AI) mode — chat UI with explicit Accept/Reject per response](./FrontendNlAi.png)
 
 ```cpp
 // User clicks Send in NL chat
@@ -884,9 +884,9 @@ If any `E` diagnostic exists, **Compile is blocked** and Run Screen is disabled.
 |---|---|
 | §3.2 bars columns | `Spec_C §3.1` hourlyBars, `Spec_C §3.2` fundamentals |
 | §4 BarsView construction | `Spec_A §8` DuckDbFundamentalsRepository queries |
-| §6 Sandbox rules | `11_Stock_Screener_KLine_Product.md §3.1` safety posture |
+| §6 Sandbox rules | `11StockScreenerKLineProduct.md §3.1` safety posture |
 | §9 Audit write flow | `Spec_C §4.5` nlAuditLog, `Spec_C §8.4` NL flow diagram |
 | §9 Template save | `Spec_C §4.2` screenerTemplates, `Spec_A §7` template persistence |
 | §9 Result link | `Spec_C §4.3` screenerResults |
-| NL traceability | `11_Stock_Screener_KLine_Product.md §3.2` |
-| Qt threading | `02_Frontend_Qt.md §3` — never block UI thread |
+| NL traceability | `11StockScreenerKLineProduct.md §3.2` |
+| Qt threading | `02FrontendQt.md §3` — never block UI thread |

@@ -86,5 +86,5 @@ As an OSS project with no budget:
 
 ## References
 
-- [`../Specs/09_Build_Distribution_Launcher.md`](../Specs/09_Build_Distribution_Launcher.md) §1–§7
-- [`dependencies.md`](dependencies.md) — Qt 6 listed as LGPL-3
+- [`../Specs/09BuildDistributionLauncher.md`](../Specs/09BuildDistributionLauncher.md) §1–§7
+- [`Dependencies.md`](Dependencies.md) — Qt 6 listed as LGPL-3

@@ -1,7 +1,7 @@
 # Stock Screener — UI Overview Spec
 
-**Live prototype:** [`screener_v2.html`](./screener_v2.html)
-**Parent spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)
+**Live prototype:** [`ScreenerV2.html`](./ScreenerV2.html)
+**Parent spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md)
 **Full index:** [`README.md`](./README.md)
 **Version:** v11.0
 
@@ -9,7 +9,7 @@
 
 ## Frontend Screenshot
 
-![Stock Screener Frontend](./frontend.PNG)
+![Stock Screener Frontend](./Frontend.png)
 
 ---
 
@@ -53,7 +53,7 @@ A **Technical Signal** (moving-average alignment + volume ratio) is displayed se
 | `MarketData.duckdb` | Python pipeline | C++ (read-only) | `hourlyBars`, `fundamentals`, `stocks`, `indexConstituents` (Phase 2) |
 | `app.db` (SQLite) | C++ app | C++ app | `screenerTemplates`, `screenerResults`, `valuationLists`, `nlAuditLog` |
 
-C++ **never writes to DuckDB** — this is a hard constraint inherited from `04_Data_Layer.md`. Market data ownership stays with the Python pipeline; application state ownership stays with C++.
+C++ **never writes to DuckDB** — this is a hard constraint inherited from `04DataLayer.md`. Market data ownership stays with the Python pipeline; application state ownership stays with C++.
 
 ### NL Audit Trail
 
@@ -80,10 +80,10 @@ This document covers **UI behaviour only**. For logic and implementation details
 | I want to know... | Read |
 |---|---|
 | Every control, table column, and UI state | This document (below) |
-| C++ classes for condition blocks and AND/OR evaluation | [`Spec_A — Screener Engine`](./Spec_A_Screener_Engine.md) |
-| Valuation model formulas (PEG, DCF, P/E Band…) and Composite Score | [`Spec_B — Valuation Engine`](./Spec_B_Valuation_Engine.md) |
-| Database schema — which tables exist, which columns, who writes | [`Spec_C — Database`](./Spec_C_Database.md) |
-| Python `screen()` API, sandbox rules, NL/AI bridge | [`Spec_D — NL / Python Runtime`](./Spec_D_NL_Python_Runtime.md) |
+| C++ classes for condition blocks and AND/OR evaluation | [`Spec_A — Screener Engine`](./SpecAScreenerEngine.md) |
+| Valuation model formulas (PEG, DCF, P/E Band…) and Composite Score | [`Spec_B — Valuation Engine`](./SpecBValuationEngine.md) |
+| Database schema — which tables exist, which columns, who writes | [`Spec_C — Database`](./SpecCDatabase.md) |
+| Python `screen()` API, sandbox rules, NL/AI bridge | [`Spec_D — NL / Python Runtime`](./SpecDNlPythonRuntime.md) |
 
 ---
 
@@ -133,7 +133,7 @@ The screen is divided into two independent vertical blocks:
 
 ## BLOCK A — Screener
 
-![Block A — Screener (Built-in Conditions mode)](./frontend%20-%20block%20A.PNG)
+![Block A — Screener (Built-in Conditions mode)](./FrontendBlockA.png)
 
 ### A1 · Universe Controls Row
 
@@ -331,7 +331,7 @@ Status: Complete  ·  5 matches           [ Export CSV ]  [ Copy ]  [ Run Screen
 
 ## BLOCK B — Valuation
 
-![Block B — Valuation Matrix (composite scoring)](./frontend%20-%20blockB.PNG)
+![Block B — Valuation Matrix (composite scoring)](./FrontendBlockB.png)
 
 Independent of the Screener. Runs cross-model valuation scoring across a set of symbols.
 

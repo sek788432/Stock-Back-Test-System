@@ -94,7 +94,7 @@ The arrows in `data → indicators → strategy → engine → metrics` show the
 | **Languages**    | C++20 (backend, Qt UI), Lua 5.4 (embedded strategy scripting reference; `05`), **Python** (user-facing script strategies + screeners per `11`; host binding via ADR), Python 3.11+ (data pipeline), optional external/local **LLM** for NL authoring only (`11`).                                                                                  |
 | **UI framework** | Qt 6 LTS (Widgets + Qt Charts). Rationale in `02`.                                                                                                                                   |
 | **Build**        | CMake 3.24+, vcpkg or Conan for third-party deps. One `CMakeLists.txt` tree, presets per OS.                                                                                         |
-| **Naming**       | C++ identifiers: **lowerCamelCase** for variables, methods, free functions; **UpperCamelCase** for classes, structs, enums. **Files:** UpperCamelCase stems for new C++ headers/sources; unit tests `UnitTest_<Thing>.cpp`. **Dirs:** UpperCamelCase for repo roots (`Src/`, `Docs/`, `Docs/Governance/`, `Tests/`, `Output/` for CMake binaries). **`*.md`:** no prescribed naming. |
+| **Naming**       | C++ identifiers: **lowerCamelCase** for variables, methods, free functions; **UpperCamelCase** for classes, structs, enums. Project-owned file stems and directories use **PascalCase**; unit tests use `UnitTest_<Thing>` and live under `Tests/Unit/<Module>/`. Tool-discovery and domain-data exceptions are recorded in ADR 0010. |
 | **Testing**      | GoogleTest (C++), Qt Test (UI), pytest (Python). Every public symbol must have a test; PRs gate on diff coverage, anti-cheat audit, and mutation testing. See `10`.                  |
 | **Performance**  | Backtest 10 years of `ohlcv-1h` (~25k bars × 500 symbols) in < 30 s on a modern laptop. Replay can pump 60 bars/s without UI lag.                                                    |
 | **Memory**       | Streaming-first. Never load the full DuckDB into RAM; always windowed reads.                                                                                                         |
@@ -130,7 +130,7 @@ Stock-Back-Test-System/
 ├── Output/                   # CMake binary dir (gitignored); e.g. Output/dev, Output/release
 ├── ThirdParty/               # vendored single-header libs (or via vcpkg)
 ├── Resources/                # icons, QSS themes, default Lua scripts
-├── Cmake/                    # toolchain files, helper modules
+├── CMake/                    # toolchain files, helper modules
 ├── Packaging/                # NSIS, .desktop, Info.plist, AppImage recipe
 └── CMakeLists.txt
 ```
@@ -143,16 +143,16 @@ Read in order if you're new:
 
 | #   | File                                | What it answers                                                |
 | --- | ----------------------------------- | -------------------------------------------------------------- |
-| 01  | `01_Architecture.md`                | Module boundaries, dependency graph, threading model           |
-| 02  | `02_Frontend_Qt.md`                 | Qt UI: charts, replay (K-line), strategies, **screener**, MVVM  |
-| 03  | `03_Backend_Core.md`                | Core types (`Bar`, `Order`, `Trade`, `Portfolio`), error model |
-| 04  | `04_Data_Layer.md`                  | DuckDB / CSV adapters, `BarStream`, schema discovery           |
-| 05  | `05_Strategy_Authoring.md`          | Rule DSL, Lua/Python script hosts, NL → accepted artifact      |
-| 06  | `06_Indicators.md`                  | Streaming indicator API, full built-in catalog                 |
-| 07  | `07_Engine_Replay_PnL.md`           | Batch backtest + **K-line replay**, broker model, metrics      |
-| 08  | `08_Plugin_System.md`               | Native DLL plugins + **script files** (`05`); ABI / trust      |
-| 09  | `09_Build_Distribution_Launcher.md` | CMake, packaging per OS, the version-switching Launcher        |
-| 10  | `10_CI_Dev_Flow.md`                 | Automated PR pipeline, mandatory tests per symbol, anti-cheat  |
-| 11  | `11_Stock_Screener_KLine_Product.md` | K-line replay inputs, 3 strategy modes, stock screener contract   |
+| 01  | `01Architecture.md`                | Module boundaries, dependency graph, threading model           |
+| 02  | `02FrontendQt.md`                 | Qt UI: charts, replay (K-line), strategies, **screener**, MVVM  |
+| 03  | `03BackendCore.md`                | Core types (`Bar`, `Order`, `Trade`, `Portfolio`), error model |
+| 04  | `04DataLayer.md`                  | DuckDB / CSV adapters, `BarStream`, schema discovery           |
+| 05  | `05StrategyAuthoring.md`          | Rule DSL, Lua/Python script hosts, NL → accepted artifact      |
+| 06  | `06Indicators.md`                  | Streaming indicator API, full built-in catalog                 |
+| 07  | `07EngineReplayPnL.md`           | Batch backtest + **K-line replay**, broker model, metrics      |
+| 08  | `08PluginSystem.md`               | Native DLL plugins + **script files** (`05`); ABI / trust      |
+| 09  | `09BuildDistributionLauncher.md` | CMake, packaging per OS, the version-switching Launcher        |
+| 10  | `10CiDevFlow.md`                 | Automated PR pipeline, mandatory tests per symbol, anti-cheat  |
+| 11  | `11StockScreenerKLineProduct.md` | K-line replay inputs, 3 strategy modes, stock screener contract   |
 
 When in doubt about scope, this Overview wins; deeper docs refine, they don't override. **Product-facing surface area** for replay, authoring modes, and screening is additionally pinned in `11`.
