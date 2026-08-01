@@ -29,7 +29,7 @@ If you're a **human contributor**, read this file and [`../ONBOARDING.md`](../ON
 | Set up your dev environment | [`../ONBOARDING.md`](../ONBOARDING.md) |
 | Understand the architecture | [`../Specs/00_Overview.md`](../Specs/00_Overview.md) |
 | Find the spec for a module | [`../Specs/README.md`](../Specs/README.md) |
-| Know what coding rules apply | [`../../.cursor/skills/README.md`](../../.cursor/skills/README.md) |
+| Know what coding rules apply | [`../../.agents/skills/README.md`](../../.agents/skills/README.md) |
 | Know what "done" looks like | [`../DEFINITION_OF_DONE.md`](../DEFINITION_OF_DONE.md) |
 | Review someone's PR | [`../REVIEW_PLAYBOOK.md`](../REVIEW_PLAYBOOK.md) |
 | Cut a release | [`../RELEASE_PROCESS.md`](../RELEASE_PROCESS.md) |
@@ -73,7 +73,7 @@ Verified determinism fixture unchanged.
 
 The two binding sources are:
 
-1. The five auto-applied skills in [`../../.cursor/skills/`](../../.cursor/skills/README.md): modern C++, thread safety, performance, OOP/design, static analysis.
+1. The five repository-specific C++ skills in [`../../.agents/skills/`](../../.agents/skills/README.md): modern C++, thread safety, performance, OOP/design, static analysis.
 2. The repo's `.clang-format` and `.clang-tidy` (authoritative for any conflict).
 
 Naming (recap from `cpp-modern-style` and [`../Specs/03_Backend_Core.md`](../Specs/03_Backend_Core.md) §1):

@@ -1,12 +1,40 @@
-# Shared Agent Skills
+# Project Agent Skills
 
-This directory contains project-scoped skills shared by every AI agent working
-in this repository. Agent hosts that support the Agent Skills convention should
-discover these folders automatically. Other hosts must consult the relevant
-`SKILL.md` when its description matches the current task, as required by
+This is the repository's only project-skill directory. Agent hosts that support
+`.agents/skills` should discover these folders automatically. Every other AI
+agent must consult the relevant `SKILL.md` through the mandatory repository
+playbook in
 [`Docs/Governance/AGENTS.md`](../../Docs/Governance/AGENTS.md).
 
-## Vendored collection
+Repository instructions always take precedence over skill guidance.
+
+## Repository-specific C++ skills
+
+| Skill | Activates when | Enforces |
+|---|---|---|
+| [`cpp-modern-style`](cpp-modern-style/SKILL.md) | Editing or refactoring C++ and naming files or symbols | Modern C++20, project naming, and bans on C-style resource management and APIs |
+| [`cpp-thread-safety`](cpp-thread-safety/SKILL.md) | Working with threads, callbacks, mutexes, atomics, or cross-thread Qt calls | RAII, immutable or singly owned state, scoped locks, and `std::jthread` cancellation |
+| [`cpp-performance`](cpp-performance/SKILL.md) | Changing hot paths, indicators, engine loops, or replay ticks | Complexity, allocation, copying, dispatch, and benchmark discipline |
+| [`cpp-oop-design`](cpp-oop-design/SKILL.md) | Designing modules, classes, interfaces, seams, or refactors | SOLID, composition, narrow interfaces, and appropriate design patterns |
+| [`cpp-static-analysis`](cpp-static-analysis/SKILL.md) | Running or interpreting formatting, lint, analyzers, and sanitizers | The repository's complete static-analysis and sanitizer workflow |
+
+These five skills contain the repository's detailed C++ rules. The canonical
+hard requirements remain in `AGENTS.md` and `Docs/Governance/AGENTS.md` so they
+apply even when an agent host does not support skill discovery.
+
+## How the C++ skills layer with specs
+
+| Question | Primary source |
+|---|---|
+| How should this C++ loop or API be written? | `cpp-modern-style` |
+| Where does this module belong? | [`Docs/Specs/01_Architecture.md`](../../Docs/Specs/01_Architecture.md) |
+| How should this strategy type plug in? | [`Docs/Specs/05_Strategy_Authoring.md`](../../Docs/Specs/05_Strategy_Authoring.md) and `cpp-oop-design` |
+| What are the CI gates? | [`Docs/Specs/10_CI_Dev_Flow.md`](../../Docs/Specs/10_CI_Dev_Flow.md) |
+| Is this code thread-safe? | `cpp-thread-safety` |
+| Does this allocation matter? | `cpp-performance` |
+| What does this analyzer warning mean? | `cpp-static-analysis` |
+
+## Vendored Matt Pocock collection
 
 - Source: [mattpocock/skills](https://github.com/mattpocock/skills)
 - Upstream release: `1.1.0`
@@ -23,4 +51,15 @@ The `setup-matt-pocock-skills` skill is installed but has not been run. Invoke
 it explicitly if the repository should adopt the optional issue-tracker,
 triage-label, and domain-document configuration used by that collection.
 
-Repository instructions always take precedence over vendored skill guidance.
+Local adaptation: `setup-matt-pocock-skills` uses the repository's canonical
+`AGENTS.md` and never creates or edits host-specific instruction files.
+
+## Invocation and maintenance
+
+Each `SKILL.md` description controls automatic activation. Explicit-only skills
+must be named by the user. Skills should remain focused and under 500 lines;
+move detailed material into directly linked sibling references when needed.
+
+Add new project skills only under `.agents/skills/<skill-name>/`. Use
+`$skill-creator` to create or revise a skill, validate every changed skill, and
+update this catalog when the project-level set changes.

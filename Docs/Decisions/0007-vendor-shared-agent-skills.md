@@ -1,10 +1,10 @@
 # 0007 — Vendor shared agent skills
 
-- **Status**: Accepted
+- **Status**: Superseded by 0008
 - **Date**: 2026-08-01
 - **Deciders**: project maintainers
 - **Supersedes**: —
-- **Superseded by**: —
+- **Superseded by**: 0008
 
 ## Context
 

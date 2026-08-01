@@ -31,7 +31,7 @@ Copy the checklist into your PR description and tick boxes as you verify each it
 - [ ] **No new clang-tidy warnings** on touched files (`tools/run-clang-tidy-diff.sh`).
 - [ ] **clang-format clean** (`tools/run-clang-format.sh --check`).
 - [ ] **Sanitizers clean**: ASan/UBSan/LSan reports are empty when running affected tests.
-- [ ] **Skills compliance**: change does not violate `.cursor/skills/` rules — no banned C-style idioms, no raw `new`/`delete`, no `using namespace std;`, no exceptions across module boundaries, RAII for every resource.
+- [ ] **Skills compliance**: change does not violate the repository-specific C++ rules in `.agents/skills/` — no banned C-style idioms, no raw `new`/`delete`, no `using namespace std;`, no exceptions across module boundaries, RAII for every resource.
 
 ## Threading / concurrency (when touching threads, mutexes, atomics, callbacks)
 

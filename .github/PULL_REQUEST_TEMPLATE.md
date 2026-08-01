@@ -74,7 +74,7 @@ If you skipped tests, say why and reference the DoD section that allows it. -->
 
 ## Skills compliance
 
-<!-- The five .cursor/skills/* enforce these. Confirm you didn't violate them. -->
+<!-- The five repository-specific .agents/skills/cpp-* skills enforce these. Confirm you didn't violate them. -->
 
 - [ ] `cpp-modern-style` — no banned C-style idioms; naming follows lowerCamelCase / UpperCamelCase
 - [ ] `cpp-thread-safety` — RAII; no raw new/delete; cross-thread state is immutable or owned by one thread

@@ -55,7 +55,8 @@ ADRs are append-only. To change a decision, write a new ADR that supersedes it. 
 | 0004 | [Anti-cheat CI gate with mutation testing](0004-anti-cheat-ci-gate-with-mutation-testing.md) | Accepted |
 | 0005 | [Build, distribution, and launcher deployment decisions](0005-build-distribution-launcher-decisions.md) | Accepted |
 | 0006 | [Full-tree project standards gate](0006-full-tree-project-standards-gate.md) | Accepted |
-| 0007 | [Vendor shared agent skills](0007-vendor-shared-agent-skills.md) | Accepted |
+| 0007 | [Vendor shared agent skills](0007-vendor-shared-agent-skills.md) | Superseded by 0008 |
+| 0008 | [Standardize project agent skills](0008-standardize-project-agent-skills.md) | Accepted |
 
 When you add an ADR, add a row here. Keep numbering monotonic — gaps are confusing, never reuse a number.
 
