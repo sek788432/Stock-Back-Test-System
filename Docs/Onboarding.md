@@ -13,11 +13,11 @@ In this order:
 1. `README.md` — what this is.
 2. [`Governance/AGENTS.md`](Governance/AGENTS.md) — how to behave (applies to humans too).
 3. [`Governance/CONTRIBUTING.md`](Governance/CONTRIBUTING.md) — process.
-4. [`Specs/00_Overview.md`](Specs/00_Overview.md) and [`Specs/README.md`](Specs/README.md) — system design.
-5. [`Ops/Team_Ownership_And_Product_Pillars.md`](Ops/Team_Ownership_And_Product_Pillars.md) — seven topic owners and the three product pillars (organizational; optional on day one).
-6. `Docs/DEFINITION_OF_DONE.md` — what "done" means.
+4. [`Specs/00Overview.md`](Specs/00Overview.md) and [`Specs/README.md`](Specs/README.md) — system design.
+5. [`TeamOwnershipAndProductPillars.md`](TeamOwnershipAndProductPillars.md) — seven topic owners and the three product pillars (organizational; optional on day one).
+6. `Docs/DefinitionOfDone.md` — what "done" means.
 
-If you only have time to read three, read [`Governance/AGENTS.md`](Governance/AGENTS.md), [`Specs/00_Overview.md`](Specs/00_Overview.md), and [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md).
+If you only have time to read three, read [`Governance/AGENTS.md`](Governance/AGENTS.md), [`Specs/00Overview.md`](Specs/00Overview.md), and [`DefinitionOfDone.md`](DefinitionOfDone.md).
 
 ### Get access
 
@@ -123,7 +123,7 @@ Pick a task from the issue tracker labeled `good-first-issue`. If none, the lead
 Good first PRs (by category):
 
 - **Docs**: clarify a section in a spec, fix a typo, expand an example.
-- **Tests**: add tests for a public symbol that isn't yet covered. Run `tools/bteSymbolAudit.py` to find candidates.
+- **Tests**: add tests for a public symbol that isn't yet covered. Run `Tools/BteSymbolAudit.py` to find candidates.
 - **Tooling**: add a missing helper script, improve `pre-commit-config.yaml`.
 
 For your first PR, **prefer tests or docs** over production code. It's a low-risk way to learn the review process, the CI gates, and the team's review style.
@@ -139,7 +139,7 @@ git push -u origin HEAD
 gh pr create   # or use the GitHub UI
 ```
 
-Self-review using `Docs/REVIEW_PLAYBOOK.md` **before** requesting review.
+Self-review using `Docs/ReviewPlaybook.md` **before** requesting review.
 
 ---
 
@@ -163,7 +163,7 @@ If any are blocked, raise it in the next sync.
 | ----------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
 | `cmake --preset dev` not found                  | Old CMake                                  | Need 3.24+; `brew upgrade cmake` / install fresh                                 |
 | Sanitizer reports leak in third-party lib       | Suppression missing                        | Add narrow entry to `Tests/sanitizer-suppressions.txt`, get CODEOWNER review     |
-| `clang-tidy` flagging hundreds of legacy issues | Running on whole repo                      | Use `tools/run-clang-tidy-diff.sh` for changed files only                        |
+| `clang-tidy` flagging hundreds of legacy issues | Running on whole repo                      | Use `Tools/RunClangTidyDiff.sh` for changed files only                        |
 | Qt not found by CMake                           | Qt install path not on `CMAKE_PREFIX_PATH` | Set `CMAKE_PREFIX_PATH` env var or `-DCMAKE_PREFIX_PATH=...`                     |
 | Python pipeline can't find DuckDB               | Missing dep                                | `pip install -r requirements.txt` inside `.venv`                                 |
 | `pre-commit` slow on huge diffs                 | Auditing everything                        | It only runs on changed files; if you rebased, expect more work briefly          |

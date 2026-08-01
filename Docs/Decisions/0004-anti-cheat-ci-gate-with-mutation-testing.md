@@ -23,12 +23,12 @@ The CI pipeline needs gates that make the green check actually mean what it sugg
 
 Adopt a multi-layer test-quality gate enforced in CI on every PR:
 
-1. **Symbol-coverage parity (G4)**: every public C++ symbol declared in `Src/**/Include/**/*.h` and every public Python name in `DataFetcher/` must appear referenced from at least one test source. Tooling: `tools/bteSymbolAudit.py` (libclang-based). Exemptions live in `tools/symbolAudit.exemptions.yaml` with mandatory `until:` dates.
+1. **Symbol-coverage parity (G4)**: every public C++ symbol declared in `Src/**/Include/**/*.h` and every public Python name in `DataFetcher/` must appear referenced from at least one test source. Tooling: `Tools/BteSymbolAudit.py` (libclang-based). Exemptions live in `Tools/SymbolAuditExemptions.yaml` with mandatory `until:` dates.
 2. **Diff coverage (G5)**: ≥ 90% line coverage and ≥ 80% branch coverage on lines this PR adds or modifies. Computed by `diff-cover` over LCOV reports unified across LLVM, OpenCppCoverage, and `coverage.py`.
-3. **Anti-cheat audit (G3)**: a libclang-based linter (`tools/bteTestAudit.py`) walks test source ASTs and rejects seven concrete cheating patterns: trivial assertions, tautologies, empty test bodies, tests that don't reference their unit under test, mocking the unit under test, silent skips without `ISSUE-NNN` justification, and dead loops.
+3. **Anti-cheat audit (G3)**: a libclang-based linter (`Tools/BteTestAudit.py`) walks test source ASTs and rejects seven concrete cheating patterns: trivial assertions, tautologies, empty test bodies, tests that don't reference their unit under test, mocking the unit under test, silent skips without `ISSUE-NNN` justification, and dead loops.
 4. **Mutation testing (G6)**: `mull` (C++) and `mutmut` (Python) on changed files only, with a kill-rate threshold of ≥ 70%. Catches the *semantic* cheats that static rules can't: tests that run but don't actually verify anything.
 
-Full description in [`../Specs/10_CI_Dev_Flow.md`](../Specs/10_CI_Dev_Flow.md) §3–§7.
+Full description in [`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md) §3–§7.
 
 ## Consequences
 
@@ -44,13 +44,13 @@ Full description in [`../Specs/10_CI_Dev_Flow.md`](../Specs/10_CI_Dev_Flow.md) �
 - Higher CI time per PR (mutation testing is the expensive job).
 - Authors occasionally hit false-positive rejections (rare, escape hatches exist).
 - 70% mutation kill rate is a guess; will need calibration over the first month.
-- Three custom-built tools (`bteTestAudit`, `bteSymbolAudit`, the mull driver) become a maintenance surface.
+- Three custom-built tools (`BteTestAudit`, `BteSymbolAudit`, the mull driver) become a maintenance surface.
 
 **Mitigations:**
 
 - Mutation runs only on changed files, capped at 200 mutants per PR. Sampling beyond that.
 - Escape hatches are explicit (`// BTE-AUDIT: smoke`, `// BTE-AUDIT: skip-justified ISSUE-NNN`, exemption files with `until:` dates and CODEOWNER review) so legitimate cases land without long arguments.
-- Tools live in `tools/` with their own tests; treated as first-class production code.
+- Tools live in `Tools/` with their own tests; treated as first-class production code.
 - Re-evaluate the 70% threshold after one month of live PRs. Document the calibration in a follow-up ADR.
 
 ## Alternatives considered
@@ -64,8 +64,8 @@ Full description in [`../Specs/10_CI_Dev_Flow.md`](../Specs/10_CI_Dev_Flow.md) �
 
 ## References
 
-- [`../Specs/10_CI_Dev_Flow.md`](../Specs/10_CI_Dev_Flow.md)
-- `tools/bteTestAudit.py` (anti-cheat audit)
-- `tools/bteSymbolAudit.py` (symbol parity)
+- [`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md)
+- `Tools/BteTestAudit.py` (anti-cheat audit)
+- `Tools/BteSymbolAudit.py` (symbol parity)
 - [mull project](https://github.com/mull-project/mull)
 - [mutmut](https://github.com/boxed/mutmut)

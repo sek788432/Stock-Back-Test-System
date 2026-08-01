@@ -205,7 +205,7 @@ Other indicators follow the same skeleton.
 
 ## 9. Testing strategy
 
-- **Reference values**: each indicator has a CSV fixture (`Tests/Indicators/fixtures/rsi.csv`) generated once with `pandas-ta`. Tests assert `|c++ value - reference| < 1e-9` per bar.
+- **Reference values**: each indicator has a CSV fixture (`Tests/Unit/Indicators/Fixtures/Rsi.csv`) generated once with `pandas-ta`. Tests assert `|c++ value - reference| < 1e-9` per bar.
 - **Reset correctness**: feed N bars, snapshot value; reset; feed same N bars; assert value matches.
 - **Composition**: `BollingerBands` constructed with a custom SMA produces the same numbers as the default.
 - **Allocation**: `update()` must not allocate after first 4096 bars. Verified with a custom allocator counting calls.

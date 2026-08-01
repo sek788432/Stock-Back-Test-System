@@ -2,9 +2,9 @@
 
 This spec defines how the desktop app accepts natural-language-driven instructions originating from external AI surfaces — **Codex and other `.agents/skills`-compatible hosts on the local-agent side** and **ChatGPT / Gemini on the web side via a Chrome extension** — and turns them into concrete UI/state changes inside the Qt app.
 
-It is the technical realization of Owner 4's pillar — "**AI chat → script / manipulate front end**" — and refines the **NL authoring mode** described in [`11_Stock_Screener_KLine_Product.md`](11_Stock_Screener_KLine_Product.md) §3.
+It is the technical realization of Owner 4's pillar — "**AI chat → script / manipulate front end**" — and refines the **NL authoring mode** described in [`11StockScreenerKLineProduct.md`](11StockScreenerKLineProduct.md) §3.
 
-When this document disagrees with `02_Frontend_Qt.md` or `11_Stock_Screener_KLine_Product.md` on the placement of the NL authoring entry point, this file is the **implementation contract**; the older specs describe the in-app surface that this router augments (and may eventually replace for the AI-driven flows).
+When this document disagrees with `02FrontendQt.md` or `11StockScreenerKLineProduct.md` on the placement of the NL authoring entry point, this file is the **implementation contract**; the older specs describe the in-app surface that this router augments (and may eventually replace for the AI-driven flows).
 
 ---
 
@@ -43,9 +43,9 @@ repo skills (single spec)
 |---|---|---|
 | C1 | The router process MUST NOT call any external LLM API. No `OPENAI_API_KEY`, no Anthropic SDK in this module. | Team decision (no-API-key principle). |
 | C2 | The Qt app MUST NOT write to `StockData/MarketData.duckdb`. | `Governance/AGENTS.md` §2 H2. |
-| C3 | All engine-affecting behaviour MUST stay deterministic. | `07_Engine_Replay_PnL.md` §8. The router only loads/saves artifacts; it does not perturb engine state directly. |
-| C4 | NL → artifact requires explicit user acceptance before compile/run. | `11_Stock_Screener_KLine_Product.md` §3.2. This spec adapts the acceptance gate to the conversation level (see §8.2). |
-| C5 | New third-party deps require an ADR + entry in `Decisions/dependencies.md`. | `Governance/AGENTS.md` §6 / H9. |
+| C3 | All engine-affecting behaviour MUST stay deterministic. | `07EngineReplayPnL.md` §8. The router only loads/saves artifacts; it does not perturb engine state directly. |
+| C4 | NL → artifact requires explicit user acceptance before compile/run. | `11StockScreenerKLineProduct.md` §3.2. This spec adapts the acceptance gate to the conversation level (see §8.2). |
+| C5 | New third-party deps require an ADR + entry in `Decisions/Dependencies.md`. | `Governance/AGENTS.md` §6 / H9. |
 
 ### 1.4 Out of scope
 
@@ -69,7 +69,7 @@ Five layers, top to bottom:
 | 2 | **AI entry points** (two, parallel) | Existing tooling (local agents) + Owner 4 (web) | Local: Codex and other `.agents/skills`-compatible hosts load skills natively. Web: Chrome extension injects skill content into ChatGPT / Gemini conversations. |
 | 3 | **Action JSON** (contract layer) | Owner 4 | Versioned envelope. Identical shape regardless of producer. |
 | 4 | **Qt parser + localhost endpoint** | Owner 4 | New module `Src/Backend/AiActionRouter/`. cpp-httplib server, dispatch table, auth. |
-| 5 | **Qt view-models** | Owner 5 | Existing MVVM layer (`02_Frontend_Qt.md`). Owner 4 calls; does not edit. |
+| 5 | **Qt view-models** | Owner 5 | Existing MVVM layer (`02FrontendQt.md`). Owner 4 calls; does not edit. |
 
 Owner 4's net-new code surface:
 
@@ -193,7 +193,7 @@ Four actions, two semantic groups.
 {
   "type": "apply_screener_rule",
   "name": "value_picks",
-  "rule": { /* rule.json object per `05_Strategy_Authoring.md` §3 */ }
+  "rule": { /* rule.json object per `05StrategyAuthoring.md` §3 */ }
 }
 ```
 
@@ -408,7 +408,7 @@ Src/Backend/AiActionRouter/
     ├── ApplyScreenerRule.{h,cpp}
     ├── LoadStrategyByPath.{h,cpp}
     └── LoadScreenerByPath.{h,cpp}
-Tests/AiActionRouter/
+Tests/Unit/AiActionRouter/
 ├── UnitTest_Envelope.cpp
 ├── UnitTest_Authn.cpp
 ├── UnitTest_PathWhitelist.cpp
@@ -436,7 +436,7 @@ Bind only to `127.0.0.1`. `Access-Control-Allow-Origin` whitelist: `https://chat
 - Synchronous handler model maps cleanly onto Qt's cross-thread `invokeMethod`.
 - Mature, ~10k stars, in use by many projects.
 
-`Decisions/dependencies.md` entry: `cpp-httplib | 0.18.x | MIT | localhost HTTP server for AiActionRouter`. An ADR is also required (see §10).
+`Decisions/Dependencies.md` entry: `cpp-httplib | 0.18.x | MIT | localhost HTTP server for AiActionRouter`. An ADR is also required (see §10).
 
 QHttpServer was considered but rejected for MVP — the Qt 6 module is still TP/experimental on some distributions and has thinner documentation. Revisit if a future Qt version makes QHttpServer materially better integrated than cpp-httplib.
 
@@ -537,11 +537,11 @@ These method signatures are declared in `Src/Frontend/ViewModels/StrategyEditorV
 | Payload limit | 100 KB per `source`; 500 KB per envelope; 413 on exceed. |
 | Rate limit | 10 envelopes per token per second. |
 
-We do **not** sandbox the Python `source` in this module — that is the job of the strategy host described in `05_Strategy_Authoring.md` §5 and the future Python ADR. SKILL.md must warn users that `apply` runs unverified Python and that they should review the generated source before backtesting.
+We do **not** sandbox the Python `source` in this module — that is the job of the strategy host described in `05StrategyAuthoring.md` §5 and the future Python ADR. SKILL.md must warn users that `apply` runs unverified Python and that they should review the generated source before backtesting.
 
 ### 8.2 Acceptance gate (relation to Spec 11 §3.2)
 
-`11_Stock_Screener_KLine_Product.md` §3.2 requires "explicit user acceptance" before NL output is compiled or run. This spec satisfies that requirement at the **conversation level** rather than per-artifact:
+`11StockScreenerKLineProduct.md` §3.2 requires "explicit user acceptance" before NL output is compiled or run. This spec satisfies that requirement at the **conversation level** rather than per-artifact:
 
 - The "Activate Stock-BT" button is the user's explicit broad opt-in.
 - The action JSON is visible in the chat transcript before it is dispatched — the user can read what will happen.
@@ -573,18 +573,18 @@ All failure paths surface to the user via toast or popup. No silent failures.
 
 | Layer | Approach |
 |---|---|
-| Qt parser unit | GoogleTest under `Tests/AiActionRouter/`. Fake view-models; no GUI started. Covers envelope parsing, schema validation, authn, path whitelist, `StateProvider` snapshot assembly (including truncation), and each of the four actions individually. |
+| Qt parser unit | GoogleTest under `Tests/Unit/AiActionRouter/`. Fake view-models; no GUI started. Covers envelope parsing, schema validation, authn, path whitelist, `StateProvider` snapshot assembly (including truncation), and each of the four actions individually. |
 | Qt integration | Headless Qt (`-platform offscreen`), real router, `curl` against the endpoints. Verifies end-to-end JSON round-trip. |
 | Extension unit | Vitest for pure logic in `service-worker.ts` and the adapters' parsing functions. |
 | Extension DOM | Playwright against fixture HTML captured from real ChatGPT / Gemini DOMs. Re-record fixtures whenever a layout change breaks a test. |
 | Skill self-validation | CI step that validates every example in `SKILL.md` against `schema.json`. Prevents documentation drift. |
 | End-to-end | Manual. The 12-step happy path in §7 (plus the follow-up modification turn) is the acceptance test. Record video and attach to PR for each Scope graduation. |
 
-Every public symbol in `Src/Backend/AiActionRouter/` requires a test per `10_CI_Dev_Flow.md` §7. Mutation testing applies to this module the same as any other.
+Every public symbol in `Src/Backend/AiActionRouter/` requires a test per `10CiDevFlow.md` §7. Mutation testing applies to this module the same as any other.
 
 ### 8.5 Determinism
 
-The router itself has no engine state and emits no orders. It only loads/saves artifacts. Determinism (`07_Engine_Replay_PnL.md` §8) is unaffected because the engine still consumes the exact same artifact format whether the artifact originated in the Qt editor or via the router.
+The router itself has no engine state and emits no orders. It only loads/saves artifacts. Determinism (`07EngineReplayPnL.md` §8) is unaffected because the engine still consumes the exact same artifact format whether the artifact originated in the Qt editor or via the router.
 
 ---
 
@@ -643,12 +643,12 @@ Scope graduation criteria (each Scope ships when):
 
 | Spec | Required change |
 |---|---|
-| `02_Frontend_Qt.md` | Add a section "External AI integration via Action Router" pointing at this spec. Consider an optional "AI Console" tab that surfaces the action log for transparency. |
-| `05_Strategy_Authoring.md` | Add a cross-reference noting that strategy artifacts may also originate from the Action Router; the compile/lint pipeline is unchanged. |
-| `11_Stock_Screener_KLine_Product.md` | Add a note in §3 that the NL-mode user surface is now realised primarily via the Chrome extension defined here, retaining the §3.2 acceptance requirement (interpreted per §8.2). |
-| `10_CI_Dev_Flow.md` | Add CI jobs: `AiActionRouter` unit/integration test job, extension build + Vitest job, skill schema-validation job. |
-| `Decisions/dependencies.md` | Add `cpp-httplib`. |
-| `Governance/owner.md` and `Team_Ownership_And_Product_Pillars.md` | Update Owner 4's surface to explicitly include `AiActionRouter`, the Chrome extension, and the `.agents/skills/stockbt-actions/` skill. |
+| `02FrontendQt.md` | Add a section "External AI integration via Action Router" pointing at this spec. Consider an optional "AI Console" tab that surfaces the action log for transparency. |
+| `05StrategyAuthoring.md` | Add a cross-reference noting that strategy artifacts may also originate from the Action Router; the compile/lint pipeline is unchanged. |
+| `11StockScreenerKLineProduct.md` | Add a note in §3 that the NL-mode user surface is now realised primarily via the Chrome extension defined here, retaining the §3.2 acceptance requirement (interpreted per §8.2). |
+| `10CiDevFlow.md` | Add CI jobs: `AiActionRouter` unit/integration test job, extension build + Vitest job, skill schema-validation job. |
+| `Decisions/Dependencies.md` | Add `cpp-httplib`. |
+| `Governance/Owner.md` and `TeamOwnershipAndProductPillars.md` | Update Owner 4's surface to explicitly include `AiActionRouter`, the Chrome extension, and the `.agents/skills/stockbt-actions/` skill. |
 
 ### 11.1 ADRs to file (before implementation)
 
@@ -661,11 +661,11 @@ Scope graduation criteria (each Scope ships when):
 
 | Concern | Primary sources |
 |---|---|
-| Product NL surface | `11_Stock_Screener_KLine_Product.md` §3, this spec |
-| Strategy artifact format | `05_Strategy_Authoring.md` §3 (rule.json), §5 (Python host) |
-| UI binding for loaded artifacts | `02_Frontend_Qt.md` §2 (MVVM, editors) |
-| Error model | `03_Backend_Core.md` §6 (`Result<T, Error>`) |
-| Threading | `01_Architecture.md` §3, `00_Overview.md` §4 |
-| CI gates | `10_CI_Dev_Flow.md` §3 / §5 / §7 |
-| Acceptance gate (NL) | `11_Stock_Screener_KLine_Product.md` §3.2, this spec §8.2 |
-| Dependency governance | `Governance/AGENTS.md` §6, `Decisions/dependencies.md` |
+| Product NL surface | `11StockScreenerKLineProduct.md` §3, this spec |
+| Strategy artifact format | `05StrategyAuthoring.md` §3 (rule.json), §5 (Python host) |
+| UI binding for loaded artifacts | `02FrontendQt.md` §2 (MVVM, editors) |
+| Error model | `03BackendCore.md` §6 (`Result<T, Error>`) |
+| Threading | `01Architecture.md` §3, `00Overview.md` §4 |
+| CI gates | `10CiDevFlow.md` §3 / §5 / §7 |
+| Acceptance gate (NL) | `11StockScreenerKLineProduct.md` §3.2, this spec §8.2 |
+| Dependency governance | `Governance/AGENTS.md` §6, `Decisions/Dependencies.md` |

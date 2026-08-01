@@ -5,17 +5,17 @@ It is a planning map for GitHub issues, not a replacement for the product specs.
 
 Authoritative specs:
 
-- `Docs/Specs/02_Frontend_Qt.md`
-- `Docs/Specs/04_Data_Layer.md`
-- `Docs/Specs/07_Engine_Replay_PnL.md`
-- `Docs/Specs/11_Stock_Screener_KLine_Product.md`
+- `Docs/Specs/02FrontendQt.md`
+- `Docs/Specs/04DataLayer.md`
+- `Docs/Specs/07EngineReplayPnL.md`
+- `Docs/Specs/11StockScreenerKLineProduct.md`
 
 Current repository state: `main` has backend core and data-fetcher code, but no Qt frontend, data read layer, or replay engine implementation yet.
 
 ## Product Contract
 
 K-line replay is the single-symbol candlestick playback surface described in
-`Docs/Specs/11_Stock_Screener_KLine_Product.md` section 1. The feature must let
+`Docs/Specs/11StockScreenerKLineProduct.md` section 1. The feature must let
 the user choose a symbol, timeframe/schema, date range, and initial capital, then
 play historical OHLCV bars one bar at a time on a candlestick chart.
 
@@ -27,12 +27,12 @@ The minimum user-facing contract is:
 - state output: current bar, bar index, total bars, replay state, and visible chart window
 - later result output: portfolio strip, buy/sell markers, trade log, metrics, and saved result snapshots
 
-The Qt implementation follows `Docs/Specs/02_Frontend_Qt.md`: Qt 6 Widgets,
+The Qt implementation follows `Docs/Specs/02FrontendQt.md`: Qt 6 Widgets,
 Qt Charts for candles, an `IChartView` abstraction, and view-models that keep the
 UI isolated from backend internals.
 
-The backend implementation follows `Docs/Specs/04_Data_Layer.md` and
-`Docs/Specs/07_Engine_Replay_PnL.md`: data arrives through `BarStream`, replay is
+The backend implementation follows `Docs/Specs/04DataLayer.md` and
+`Docs/Specs/07EngineReplayPnL.md`: data arrives through `BarStream`, replay is
 paced by `ReplayClock`, and functional output must stay deterministic for the
 same input bars and engine config.
 
@@ -141,7 +141,7 @@ Suggested persistence location:
 
 - `<userData>/results/` for comparable run outputs, or
 - `<userData>/sessions/` if implementation chooses to align with the existing
-  session persistence path from `Docs/Specs/02_Frontend_Qt.md`.
+  session persistence path from `Docs/Specs/02FrontendQt.md`.
 
 The implementation should pick one path in the issue or PR and keep the file
 format stable enough for Phase 3 to load.
@@ -187,7 +187,7 @@ Recommended order for implementation:
 
 ## Out Of Scope For Zoe Unless Reassigned
 
-Based on `Docs/owner.md`, Zoe owns K-line replay front end first, then back end. The following are related product surfaces but should remain separate unless ownership changes:
+Based on `Docs/Owner.md`, Zoe owns K-line replay front end first, then back end. The following are related product surfaces but should remain separate unless ownership changes:
 
 - full Strategy editor implementation
 - full Backtest tab implementation

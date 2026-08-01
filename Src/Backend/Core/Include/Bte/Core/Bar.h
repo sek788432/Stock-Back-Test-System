@@ -10,7 +10,7 @@ namespace bte::core {
 
 using Timestamp = std::chrono::sys_time<std::chrono::milliseconds>;
 
-/// Single OHLCV bar (UTC timestamp at bar close). See Docs/Specs/03_Backend_Core.md §3.
+/// Single OHLCV bar (UTC timestamp at bar close). See Docs/Specs/03BackendCore.md §3.
 struct Bar {
     Timestamp ts{};
     double open = 0.0;

@@ -12,10 +12,10 @@ Open an ADR PR **before** the implementation if your change:
 
 - introduces a third-party dependency,
 - changes a public API across module boundaries,
-- changes the plugin or Lua API ([`../Specs/08`](../Specs/08_Plugin_System.md)),
-- changes the data layer's contract with the Python pipeline ([`../Specs/04`](../Specs/04_Data_Layer.md)),
-- changes any CI gate ([`../Specs/10`](../Specs/10_CI_Dev_Flow.md)),
-- adds a module to the dependency graph ([`../Specs/01`](../Specs/01_Architecture.md) §1),
+- changes the plugin or Lua API ([`../Specs/08`](../Specs/08PluginSystem.md)),
+- changes the data layer's contract with the Python pipeline ([`../Specs/04`](../Specs/04DataLayer.md)),
+- changes any CI gate ([`../Specs/10`](../Specs/10CiDevFlow.md)),
+- adds a module to the dependency graph ([`../Specs/01`](../Specs/01Architecture.md) §1),
 - has more than one reasonable answer.
 
 Skip the ADR for typos, version bumps that don't change APIs, mechanical refactors that preserve behavior, and one-off fixes.
@@ -58,6 +58,7 @@ ADRs are append-only. To change a decision, write a new ADR that supersedes it. 
 | 0007 | [Vendor shared agent skills](0007-vendor-shared-agent-skills.md) | Superseded by 0008 |
 | 0008 | [Standardize project agent skills](0008-standardize-project-agent-skills.md) | Superseded by 0009 |
 | 0009 | [Retain host adapters and centralize hard rules](0009-retain-host-adapters-and-centralize-hard-rules.md) | Accepted |
+| 0010 | [Enforce PascalCase paths and unit-test layout](0010-enforce-pascal-case-paths-and-unit-test-layout.md) | Accepted |
 
 When you add an ADR, add a row here. Keep numbering monotonic — gaps are confusing, never reuse a number.
 
@@ -65,4 +66,4 @@ When you add an ADR, add a row here. Keep numbering monotonic — gaps are confu
 
 ## Dependencies log
 
-Per [`../Governance/AGENTS.md`](../Governance/AGENTS.md) §6, every dependency we adopt has a one-liner here: [`dependencies.md`](dependencies.md). It's not a full ADR (the ADR is the upstream decision); it's the rolling summary so anyone can answer "what do we depend on and why" in 30 seconds.
+Per [`../Governance/AGENTS.md`](../Governance/AGENTS.md) §6, every dependency we adopt has a one-liner here: [`Dependencies.md`](Dependencies.md). It's not a full ADR (the ADR is the upstream decision); it's the rolling summary so anyone can answer "what do we depend on and why" in 30 seconds.

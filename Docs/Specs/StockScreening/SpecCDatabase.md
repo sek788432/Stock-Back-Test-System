@@ -1,10 +1,10 @@
 # Spec C — Database Design
 
 **Part of:** Stock Screener sub-specs
-**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md)
-**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)
-**Constraint source:** [`04_Data_Layer.md`](../04_Data_Layer.md)
-**Referenced by:** `Spec_A_Screener_Engine.md`, `Spec_B_Valuation_Engine.md`, `Spec_D_NL_Python_Runtime.md`
+**UI reference:** [`ScreenerUiOverview.md`](./ScreenerUiOverview.md)
+**Parent product spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md)
+**Constraint source:** [`04DataLayer.md`](../04DataLayer.md)
+**Referenced by:** `SpecAScreenerEngine.md`, `SpecBValuationEngine.md`, `SpecDNlPythonRuntime.md`
 
 ---
 

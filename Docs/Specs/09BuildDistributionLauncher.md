@@ -28,9 +28,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-include(Cmake/CompilerWarnings.cmake)
-include(Cmake/Sanitizers.cmake)
-include(Cmake/Versioning.cmake)        # writes Src/App/version.h
+include(CMake/CompilerWarnings.cmake)
+include(CMake/Sanitizers.cmake)
+include(CMake/Versioning.cmake)        # writes Src/App/version.h
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Widgets Charts Test LinguistTools)
 find_package(spdlog CONFIG REQUIRED)
@@ -58,7 +58,7 @@ if (BTE_BUILD_TESTS)
     add_subdirectory(Tests)
 endif()
 
-include(Cmake/Packaging.cmake)         # CPack config per OS
+include(CMake/Packaging.cmake)         # CPack config per OS
 ```
 
 ### 1.2 `CMakePresets.json` highlights
@@ -384,7 +384,7 @@ ctest --preset dev
 ./Output/dev/Src/App/stockBacktester
 ```
 
-A single `Cmake/Versioning.cmake` generates `version.h` from `git describe --tags --dirty` so dev builds clearly say `0.3.0-12-gabcdef-dirty` in About.
+A single `CMake/Versioning.cmake` generates `version.h` from `git describe --tags --dirty` so dev builds clearly say `0.3.0-12-gabcdef-dirty` in About.
 
 ---
 
@@ -422,9 +422,9 @@ A single `Cmake/Versioning.cmake` generates `version.h` from `git describe --tag
 | 6 | [Build] Top-level CMakeLists.txt — integrate vcpkg + existing FetchContent | **High** | ⬜ |
 | 7 | [Build] CMakePresets.json — extend with multi-platform presets | **High** | ⬜ |
 | 8 | [Build] vcpkg.json manifest — pin all third-party dependencies | **High** | ⬜ |
-| 9 | [Build] Cmake/Versioning.cmake — generate version.h from git describe | Medium | ⬜ |
-| 10 | [Build] Cmake/CompilerWarnings.cmake — enhance (already exists) | Low | ⬜ |
-| 11 | [Build] Cmake/Sanitizers.cmake — enhance (already exists) | Low | ⬜ |
+| 9 | [Build] CMake/Versioning.cmake — generate version.h from git describe | Medium | ⬜ |
+| 10 | [Build] CMake/CompilerWarnings.cmake — enhance (already exists) | Low | ⬜ |
+| 11 | [Build] CMake/Sanitizers.cmake — enhance (already exists) | Low | ⬜ |
 | 12 | [Build] Handle non-existent modules — optional add_subdirectory mechanism | **High** | ⬜ |
 | 13 | [POC] Minimal working build: Qt6 + DuckDB + spdlog via vcpkg | **High** | ⬜ |
 
@@ -432,9 +432,9 @@ A single `Cmake/Versioning.cmake` generates `version.h` from `git describe --tag
 
 | # | Task | Priority | Status |
 |---|------|----------|--------|
-| 14 | [Build] Cmake/Packaging.cmake — CPack configuration | Medium | ⬜ |
+| 14 | [Build] CMake/Packaging.cmake — CPack configuration | Medium | ⬜ |
 | 15 | [CI/CD] .github/workflows/build.yml — matrix build | **High** | ⬜ |
-| 16 | [CI/CD] .github/workflows/release.yml — align with RELEASE_PROCESS.md | **High** | ⬜ |
+| 16 | [CI/CD] .github/workflows/release.yml — align with ReleaseProcess.md | **High** | ⬜ |
 | 17 | [Packaging] Windows MSI + portable zip | Medium | ⬜ |
 | 18 | [Packaging] macOS .app + .dmg + .tgz | Medium | ⬜ |
 | 19 | [Packaging] Linux AppImage + .tar.gz | Medium | ⬜ |

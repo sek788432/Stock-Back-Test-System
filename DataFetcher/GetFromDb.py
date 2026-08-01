@@ -30,11 +30,11 @@ def resolveStockRepoRoot(scriptDir: Path) -> Path:
             raise FileNotFoundError(f"{_ENV_STOCK_REPO_ROOT} points to root with no StockData/ folder: {root}")
         return root
     for candidate in [scriptDir, *scriptDir.parents]:
-        marker = candidate / "StockData" / "symbols.txt"
+        marker = candidate / "StockData" / "Symbols.txt"
         if marker.is_file():
             return candidate
     raise FileNotFoundError(
-        "Cannot find project root (look for StockData/symbols.txt when walking upward from "
+        "Cannot find project root (look for StockData/Symbols.txt when walking upward from "
         f"{scriptDir}). Move that file back under StockData/, or export {_ENV_STOCK_REPO_ROOT}=/abs/path/repo."
     )
 
@@ -43,7 +43,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = resolveStockRepoRoot(_SCRIPT_DIR)
 STOCK_DATA_DIR = "StockData"
 DEFAULT_DB_PATH = str(_REPO_ROOT / STOCK_DATA_DIR / "MarketData.duckdb")
-DEFAULT_SYMBOL_LIST = str(_REPO_ROOT / STOCK_DATA_DIR / "symbols.txt")
+DEFAULT_SYMBOL_LIST = str(_REPO_ROOT / STOCK_DATA_DIR / "Symbols.txt")
 DEFAULT_EXTRACT_DIR = str(_REPO_ROOT / STOCK_DATA_DIR / "Extracted")
 
 

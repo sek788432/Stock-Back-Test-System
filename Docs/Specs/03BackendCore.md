@@ -279,7 +279,7 @@ All are registered with `Q_DECLARE_METATYPE` in `bteBindings` and may travel acr
 
 ## 10. Testing
 
-- `Tests/Core/` with GoogleTest:
+- `Tests/Unit/Core/` with GoogleTest:
   - `Bar::isValid()` covers every OHLC violation case.
   - `Result<T,Error>` happy path + error path + chaining.
   - Time round-trip: `parseIso8601` → `toIso8601` is identity for any DuckDB-emitted timestamp.

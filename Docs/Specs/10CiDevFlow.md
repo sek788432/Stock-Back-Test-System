@@ -17,15 +17,15 @@ A pull request is **mergeable** only when **all** of the following are green:
 |---|---|---|---|
 | G1 | Build all matrix targets | CMake on Win/macOS/Linux | yes |
 | G2 | All unit tests pass on all matrix targets | `ctest`, `pytest` | yes |
-| G3 | Anti-cheat audit | `bteTestAudit` (custom) | yes |
-| G4 | Symbol-coverage parity | `bteSymbolAudit` (custom) | yes |
+| G3 | Anti-cheat audit | `BteTestAudit` (custom) | yes |
+| G4 | Symbol-coverage parity | `BteSymbolAudit` (custom) | yes |
 | G5 | Line + branch coverage on changed code | `llvm-cov` / `OpenCppCoverage` + `coverage.py` | yes (≥ 90% diff line, ≥ 80% diff branch) |
 | G6 | Mutation kill-rate on changed code | `mull` (LLVM) / `mutmut` (Python) | yes (≥ 70% killed, see §6) |
 | G7 | Static analysis | `clang-tidy`, `cppcheck`, `ruff` | yes (no new warnings) |
 | G8 | Format | `clang-format`, `ruff format` | yes (zero diff) |
 | G9 | Determinism gate | engine fixture run, byte-compare | yes (per `07`) |
 | G10 | Reviewer approval | GitHub branch protection | yes (1 reviewer) |
-| G11 | Full-tree project standards | `tools/checkProjectStandards.py --full-tree` | yes (zero violations) |
+| G11 | Full-tree project standards | `Tools/CheckProjectStandards.py --full-tree` | yes (zero violations) |
 
 GitHub branch protection on `main`:
 - Require all of the above as **Required Status Checks**.
@@ -40,14 +40,15 @@ A PR author can ship as soon as G1–G9 are green and G10 lands. **No human can 
 
 The standards job audits every tracked UTF-8 text file at the exact commit under
 test, rather than only the pull-request diff. It rejects formatting violations,
-banned C++ idioms, trivial tests, unregistered unit-test files, and new top-level
-modules without registered unit tests. Documentation may explain `TODO` and
-`FIXME`; the issue-reference rule applies to source and configuration comments.
+banned C++ idioms, trivial tests, non-PascalCase project paths, unit tests outside
+`Tests/Unit/<Module>/`, unregistered unit-test files, and new top-level modules
+without registered unit tests. Documentation may explain `TODO` and `FIXME`;
+the issue-reference rule applies to source and configuration comments.
 
 Run the same commit-level check locally with:
 
 ```bash
-python3 tools/checkProjectStandards.py \
+python3 Tools/CheckProjectStandards.py \
   --full-tree --base origin/main --head HEAD
 ```
 
@@ -99,14 +100,14 @@ repos:
     hooks:
       - id: clang-format
         name: clang-format (changed C++)
-        entry: tools/run-clang-format.sh
+        entry: Tools/RunClangFormat.sh
         language: system
         types_or: [c++, c]
         pass_filenames: true
 
       - id: clang-tidy-changed
         name: clang-tidy on changed files
-        entry: tools/run-clang-tidy-diff.sh
+        entry: Tools/RunClangTidyDiff.sh
         language: system
         types_or: [c++]
 
@@ -118,26 +119,26 @@ repos:
 
       - id: bte-test-audit
         name: anti-cheat audit on changed tests
-        entry: tools/bteTestAudit.py --diff
+        entry: Tools/BteTestAudit.py --diff
         language: system
         types_or: [c++, python]
 
       - id: bte-symbol-audit
         name: every public symbol has a test (changed files)
-        entry: tools/bteSymbolAudit.py --diff
+        entry: Tools/BteSymbolAudit.py --diff
         language: system
         types_or: [c++]
 
       - id: changed-tests-pass
         name: run tests touching changed files
-        entry: tools/run-changed-tests.sh
+        entry: Tools/RunChangedTests.sh
         language: system
         pass_filenames: true
 ```
 
 Result: by the time you `git push`, the same checks the PR will run have already run locally on your delta. No "wait 12 minutes to see a stupid mistake".
 
-`run-changed-tests.sh` uses `git diff` plus a static **module map** (which test target covers which production target) to run only relevant CTest labels. CI runs the full suite; local runs the subset.
+`RunChangedTests.sh` uses `git diff` plus a static **module map** (which test target covers which production target) to run only relevant CTest labels. CI runs the full suite; local runs the subset.
 
 ---
 
@@ -175,7 +176,7 @@ A test passing is a necessary but not sufficient condition for "this code works"
 
 ### 5.1 What counts as cheating
 
-A test is **cheating** when any of these apply (all checked statically by `bteTestAudit`):
+A test is **cheating** when any of these apply (all checked statically by `BteTestAudit`):
 
 #### (a) Trivially-true assertions
 
@@ -266,14 +267,14 @@ TEST(Foo, perBar) {
 }
 ```
 
-Detection: `bteTestAudit` instruments tests with a tiny preprocessor (`BTE_TEST_LOOP`) that counts iterations of the macro-marked loops; a CI post-processing step fails the PR if any marked loop ran zero times in the test run. (Authors must use the macro for any loop containing the only assertions in a test.)
+Detection: `BteTestAudit` instruments tests with a tiny preprocessor (`BTE_TEST_LOOP`) that counts iterations of the macro-marked loops; a CI post-processing step fails the PR if any marked loop ran zero times in the test run. (Authors must use the macro for any loop containing the only assertions in a test.)
 
-### 5.2 The audit tool: `bteTestAudit`
+### 5.2 The audit tool: `BteTestAudit`
 
 A small Python script using **libclang** (so we get a real AST, not regex theater):
 
 ```
-tools/bteTestAudit.py
+Tools/BteTestAudit.py
   --src-roots Tests/  Src/Backend/  Src/Frontend/
   --header-globs '**/Include/**/*.h'
   --test-globs   '**/Tests/**/*.cpp' '**/Tests/**/*.py'
@@ -392,13 +393,13 @@ For each public C++ header in `Src/**/Include/**/*.h`:
 4. Compute the set `S_tested`.
 5. **Fail** if `S_decl \ S_tested` is non-empty.
 
-Tool: `tools/bteSymbolAudit.py` — also libclang-based, shares parsing with `bteTestAudit`.
+Tool: `Tools/BteSymbolAudit.py` — also libclang-based, shares parsing with `BteTestAudit`.
 
 For Python (`DataFetcher/`), the same rule applies: every public name (no leading underscore) in a public module must be referenced by at least one test in `DataFetcher/Tests/`.
 
 ### 7.1 Exemptions
 
-A short YAML file `tools/symbolAudit.exemptions.yaml`:
+A short YAML file `Tools/SymbolAuditExemptions.yaml`:
 
 ```yaml
 exemptions:
@@ -440,7 +441,7 @@ Src/Backend/Core/
 For header-only types (e.g. `Bar`), there may be no separate `.cpp` until the module grows.
 
 ```
-Tests/Backend/Core/
+Tests/Unit/Core/
 ├── UnitTest_Bar.cpp           # auto-paired with Bar.h
 ├── UnitTest_Portfolio.cpp
 ├── UnitTest_Result.cpp
@@ -458,15 +459,15 @@ When you genuinely need to ship without a gate:
 | Gate | Exemption mechanism | Approver |
 |---|---|---|
 | G3 anti-cheat | `BTE-AUDIT:` annotation per §5.4 | normal reviewer |
-| G4 symbol parity | `symbolAudit.exemptions.yaml` entry with `until:` date | CODEOWNER |
+| G4 symbol parity | `SymbolAuditExemptions.yaml` entry with `until:` date | CODEOWNER |
 | G5 coverage | line-level `// LCOV_EXCL_LINE` comment + reason in PR description | CODEOWNER for that file |
-| G6 mutation | `mutation.exemptions.yaml` entry with `until:` date and surviving mutant ids | CODEOWNER |
+| G6 mutation | `MutationExemptions.yaml` entry with `until:` date and surviving mutant ids | CODEOWNER |
 | G7 lint | `// NOLINT(check-name): reason` per line | normal reviewer |
 | G9 determinism | regenerate fixture + describe semantic change | engine CODEOWNER |
 
 There is **no** "I'll fix it later" override on G1, G2, G8. Build and existing tests must pass.
 
-Every exemption shows up in a weekly auto-generated report (`Tests/exemptions-report.md`) committed by a scheduled Action so the team can pay down debt deliberately.
+Every exemption shows up in a weekly auto-generated report (`Tests/ExemptionsReport.md`) committed by a scheduled Action so the team can pay down debt deliberately.
 
 ---
 
@@ -488,13 +489,13 @@ Auto-merge: GitHub's native "Auto-merge" is enabled for the repo. As soon as all
 git clone <repo>
 cd Stock-Back-Test-System
 git submodule update --init                      # vcpkg, etc.
-./tools/setup-dev.sh                             # installs pre-commit, hooks, clang-format
+./Tools/SetupDev.sh                             # installs pre-commit, hooks, clang-format
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev                                # all tests run locally first
 ```
 
-`tools/setup-dev.sh` is idempotent and prints a summary of what it installed.
+`Tools/SetupDev.sh` is idempotent and prints a summary of what it installed.
 
 A new dev cannot land a PR until they:
 - Have signed commits configured.

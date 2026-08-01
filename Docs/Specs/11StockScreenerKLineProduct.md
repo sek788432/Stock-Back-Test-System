@@ -113,12 +113,12 @@ Store alongside strategy files:
 
 | Capability | Primary specs |
 | --- | --- |
-| Charting & tabs layout | `02_Frontend_Qt.md` |
-| Rule JSON & operators | `05_Strategy_Authoring.md` §3 |
-| Python & NL authoring | `05_Strategy_Authoring.md` §5–6 |
-| Engine, replay clock, P&L | `07_Engine_Replay_PnL.md` |
-| Data access, no writer from C++ | `04_Data_Layer.md`, `AGENTS.md` H2 |
-| Determinism CI | `07` §8, `10_CI_Dev_Flow.md` |
+| Charting & tabs layout | `02FrontendQt.md` |
+| Rule JSON & operators | `05StrategyAuthoring.md` §3 |
+| Python & NL authoring | `05StrategyAuthoring.md` §5–6 |
+| Engine, replay clock, P&L | `07EngineReplayPnL.md` |
+| Data access, no writer from C++ | `04DataLayer.md`, `AGENTS.md` H2 |
+| Determinism CI | `07` §8, `10CiDevFlow.md` |
 
 ---
 

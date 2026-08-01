@@ -5,14 +5,15 @@ import unittest
 from pathlib import Path
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, os.fspath(REPOSITORY_ROOT / "tools"))
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, os.fspath(REPOSITORY_ROOT / "Tools"))
 
-from checkProjectStandards import (  # noqa: E402
+from CheckProjectStandards import (  # noqa: E402
     AddedLine,
     audit_added_line,
     audit_git_tree,
     audit_new_modules,
+    audit_path_conventions,
     audit_text_sources,
     audit_test_registration,
     parse_unified_diff,
@@ -63,7 +64,7 @@ class AuditAddedLineTest(unittest.TestCase):
     def test_checker_rule_definition_does_not_match_itself(self) -> None:
         source = 'UNJUSTIFIED_TASK = re.compile("TO" + "DO")'
 
-        self.assertEqual(audit_added_line(AddedLine(Path("tools/checkProjectStandards.py"), 1, source)), [])
+        self.assertEqual(audit_added_line(AddedLine(Path("Tools/CheckProjectStandards.py"), 1, source)), [])
 
     def test_rejects_untracked_task_in_cpp_comment(self) -> None:
         violations = audit_added_line(
@@ -138,7 +139,7 @@ class AuditNewModulesTest(unittest.TestCase):
             base_paths=set(),
             head_paths={
                 Path("Src/Launcher/Main.cpp"),
-                Path("Tests/Launcher/UnitTest_Launcher.cpp"),
+                Path("Tests/Unit/Launcher/UnitTest_Launcher.cpp"),
                 Path("Tests/CMakeLists.txt"),
             },
             cmake_sources={Path("Tests/CMakeLists.txt"): "add_test(NAME unrelated)"},
@@ -151,7 +152,7 @@ class AuditNewModulesTest(unittest.TestCase):
             base_paths=set(),
             head_paths={
                 Path("Src/Launcher/Main.cpp"),
-                Path("Tests/Launcher/UnitTest_Launcher.cpp"),
+                Path("Tests/Unit/Launcher/UnitTest_Launcher.cpp"),
                 Path("Tests/CMakeLists.txt"),
             },
             cmake_sources={Path("Tests/CMakeLists.txt"): "UnitTest_Launcher.cpp"},
@@ -179,12 +180,43 @@ class AuditTestRegistrationTest(unittest.TestCase):
 
     def test_accepts_python_test_registered_by_discovery_pattern(self) -> None:
         violations = audit_test_registration(
-            {Path("Tests/Tools/UnitTest_Checker.py")},
+            {Path("Tests/Unit/Tools/UnitTest_Checker.py")},
             {Path("Tests/CMakeLists.txt"): "-p UnitTest_*.py"},
         )
 
         self.assertEqual(violations, [])
 
+
+class AuditPathConventionsTest(unittest.TestCase):
+    def test_rejects_non_pascal_case_project_paths(self) -> None:
+        violations = audit_path_conventions(
+            {
+                Path("Docs/bad folder/GoodFile.md"),
+                Path("Docs/GoodFolder/bad_file.md"),
+            }
+        )
+
+        self.assertEqual([violation.rule for violation in violations], ["PATH001", "PATH001"])
+
+    def test_accepts_pascal_case_and_conventional_paths(self) -> None:
+        violations = audit_path_conventions(
+            {
+                Path("AGENTS.md"),
+                Path("Docs/Specs/10CiDevFlow.md"),
+                Path("Docs/Decisions/0010-enforce-pascal-case-paths-and-unit-test-layout.md"),
+                Path("StockData/Extracted/BRK_B.csv"),
+                Path("Tests/Unit/Core/UnitTest_Bar.cpp"),
+            }
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_rejects_unit_test_outside_unit_tree(self) -> None:
+        violations = audit_path_conventions(
+            {Path("Tests/Frontend/UnitTest_ReplayTab.cpp")}
+        )
+
+        self.assertEqual([violation.rule for violation in violations], ["TEST005"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@ If you're the author, save the reviewer time:
 
 1. **Self-review first** using this same playbook on your own diff.
 2. **Fill the PR template completely.** No blank fields.
-3. **Confirm [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md)** — copy the relevant checklist into the PR body.
+3. **Confirm [`DefinitionOfDone.md`](DefinitionOfDone.md)** — copy the relevant checklist into the PR body.
 4. **Pre-emptively answer the obvious questions.** "Why this approach over X?" → answer in the description.
 5. **Keep it small.** ≤ 400 lines of diff is the sweet spot. ≥ 1000 lines and you'll get a perfunctory review.
 6. **One concern per PR.** Found a bug while in the area? File an issue, don't smuggle a fix.

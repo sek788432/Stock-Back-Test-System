@@ -1,11 +1,11 @@
 # Spec B — Valuation Engine
 
 **Part of:** Stock Screener sub-specs
-**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §B1–B3
-**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md)
-**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md)
-**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1
-**Consumes output of:** `Spec_A_Screener_Engine.md` (screenerResults → symbol lists)
+**UI reference:** [`ScreenerUiOverview.md`](./ScreenerUiOverview.md) §B1–B3
+**DB schema:** [`SpecCDatabase.md`](./SpecCDatabase.md)
+**Parent product spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md)
+**Coding conventions:** [`03BackendCore.md`](../03BackendCore.md) §1
+**Consumes output of:** `SpecAScreenerEngine.md` (screenerResults → symbol lists)
 
 > **Scope note:** Block B (Valuation Matrix) is an **extended feature** not explicitly defined in Spec 11. Spec 11 §2 defines screening (Block A) only. Block B was added during sub-spec design as a companion analysis tool that consumes screener output. If Spec 11 is ever revisited, Block B should be promoted to a first-class section there.
 
@@ -258,7 +258,7 @@ struct SymbolData {
     double epsGrowth5Y  = 0.0;
     double sectorAvgPe  = 0.0;
     double sectorAvgPb  = 0.0;
-    double sectorMedianPs    = 0.0;   // from fundamentals (pre-computed by Python pipeline — see API_Data_Requirements.md §2.2E)
+    double sectorMedianPs    = 0.0;   // from fundamentals (pre-computed by Python pipeline — see ApiDataRequirements.md §2.2E)
     double sharesOutstanding = 0.0;   // diluted shares — required for per-share DCF (Spec_C §3.2)
     double peAvg5Y      = 0.0;
     double peAvg10Y     = 0.0;
@@ -1030,8 +1030,8 @@ void ValuationWidget::onThresholdChanged()
 | This spec section | References |
 |---|---|
 | §6 DB queries | `Spec_C §3.1` hourlyBars, `Spec_C §3.2` fundamentals |
-| §7 Model formulas | `Screener_UI_Overview.md §B3` column definitions |
-| §8 Composite Score formula | `Screener_UI_Overview.md §B3` Score Formula section |
-| §10 Qt integration | `02_Frontend_Qt.md §3` threading, `Spec_C §4.4` valuationLists |
+| §7 Model formulas | `ScreenerUiOverview.md §B3` column definitions |
+| §8 Composite Score formula | `ScreenerUiOverview.md §B3` Score Formula section |
+| §10 Qt integration | `02FrontendQt.md §3` threading, `Spec_C §4.4` valuationLists |
 | Symbol lists consumed | `Spec_A §9` ScreenerResult, `Spec_C §4.3` screenerResults |
 | NL/Python data access | `Spec_D §2.2` bars DataFrame columns (same fundamentals join) |

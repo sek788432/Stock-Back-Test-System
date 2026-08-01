@@ -253,7 +253,7 @@ sma200/
 
 ## 10. Tests
 
-- Load a fixture plugin from `Tests/Plugins/fixtures/`, assert its strategy is selectable.
+- Load a fixture plugin from `Tests/Unit/Plugins/Fixtures/`, assert its strategy is selectable.
 - Plugin with mismatched `abiMajor`: load fails with the exact error code, app stays up.
 - Plugin that registers a duplicate `kind`: second registration rejected, first still works.
 - Plugin whose `bteRegisterPlugin` crashes: caught by the host (signal handler around `dlsym` calls) — plugin marked failed, app continues.

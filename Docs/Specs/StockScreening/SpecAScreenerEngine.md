@@ -1,11 +1,11 @@
 # Spec A — Screener Engine
 
 **Part of:** Stock Screener sub-specs
-**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §A1–A6
-**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md)
-**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md) §2
-**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1
-**Referenced by:** `Spec_B_Valuation_Engine.md`, `Spec_D_NL_Python_Runtime.md`
+**UI reference:** [`ScreenerUiOverview.md`](./ScreenerUiOverview.md) §A1–A6
+**DB schema:** [`SpecCDatabase.md`](./SpecCDatabase.md)
+**Parent product spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md) §2
+**Coding conventions:** [`03BackendCore.md`](../03BackendCore.md) §1
+**Referenced by:** `SpecBValuationEngine.md`, `SpecDNlPythonRuntime.md`
 
 ---
 
@@ -18,9 +18,9 @@ This spec defines the **logic layer** of Block A (Screener) as C++ code:
 - Concrete SQL patterns against `MarketData.duckdb` and `app.db`
 - How to call the engine from the Qt UI layer
 
-UI behaviour is in `Screener_UI_Overview.md`.
-DB schema (column types, indexes) is in `Spec_C_Database.md`.
-Python / NL execution is in `Spec_D_NL_Python_Runtime.md`.
+UI behaviour is in `ScreenerUiOverview.md`.
+DB schema (column types, indexes) is in `SpecCDatabase.md`.
+Python / NL execution is in `SpecDNlPythonRuntime.md`.
 
 ---
 
@@ -40,7 +40,7 @@ Src/Backend/Screener/
 ```
 
 All types live in `namespace bte::screener`.
-Conventions from `03_Backend_Core.md §1`:
+Conventions from `03BackendCore.md §1`:
 - Types → `UpperCamelCase`
 - Variables / methods → `lowerCamelCase`
 - Private members → trailing underscore (`conn_`)
@@ -518,7 +518,7 @@ DuckDbFundamentalsRepository::symbolsInUniverse(std::string_view universe) const
 {
     // Phase 1: returns all symbols with fundamentals data; `universe` param is ignored.
     // Phase 2: add indexConstituents table (symbol, indexName, effectiveDate) written by
-    // Python pipeline — see API_Data_Requirements.md §2.3. Then filter:
+    // Python pipeline — see ApiDataRequirements.md §2.3. Then filter:
     //   WHERE indexName = universe AND effectiveDate <= cutoff AND removed = 0
     (void)universe;
     auto res = conn_.Query(R"(
@@ -1198,7 +1198,7 @@ void ScreenerWidget::onSaveResultClicked()
 |---|---|
 | §8 DuckDB queries | `Spec_C §3.2` fundamentals schema, `Spec_C §8.2` flow diagram |
 | §10 app.db operations | `Spec_C §4.2` screenerTemplates, `Spec_C §4.3` screenerResults |
-| §12 Qt worker thread | `02_Frontend_Qt.md §3` threading rules |
+| §12 Qt worker thread | `02FrontendQt.md §3` threading rules |
 | Python / NL execution | `Spec_D §2` (Python screen() API — different code path, same request struct) |
 | Result consumed by Block B | `Spec_B §1`, `Spec_C §4.3` screenerResults |
-| No-lookahead rule | `11_Stock_Screener_KLine_Product.md §2.3` |
+| No-lookahead rule | `11StockScreenerKLineProduct.md §2.3` |

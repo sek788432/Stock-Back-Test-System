@@ -1,6 +1,6 @@
 # Building the C++ workspace
 
-This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+**. The first landed module is **Backend Core** (`bte::core`), starting with `Bar` ([Specs/03_Backend_Core.md](Specs/03_Backend_Core.md) §3). Qt, vcpkg-heavy dependencies, and the full app targets will wire in later per [Specs/09_Build_Distribution_Launcher.md](Specs/09_Build_Distribution_Launcher.md).
+This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+**. The first landed module is **Backend Core** (`bte::core`), starting with `Bar` ([Specs/03BackendCore.md](Specs/03BackendCore.md) §3). Qt, vcpkg-heavy dependencies, and the full app targets will wire in later per [Specs/09BuildDistributionLauncher.md](Specs/09BuildDistributionLauncher.md).
 
 ## Prerequisites
 
@@ -84,8 +84,8 @@ configuring.
 | `CMakeLists.txt`             | Root project, optional tests, FetchContent (GTest) |
 | `CMakePresets.json`        | `dev`, `dev-sanitize`, `release`                  |
 | `Output/<preset>/`        | CMake binary directory (gitignored; e.g. `Output/dev`) |
-| `Cmake/CompilerWarnings.cmake` | Shared warning flags                            |
-| `Cmake/Sanitizers.cmake`   | ASan/UBSan when `BTE_SANITIZERS=ON`               |
+| `CMake/CompilerWarnings.cmake` | Shared warning flags                            |
+| `CMake/Sanitizers.cmake`   | ASan/UBSan when `BTE_SANITIZERS=ON`               |
 | `Src/Backend/Core/Include/Bte/Core/` | Public headers (e.g. `Bar.h`)                       |
 | `Src/Backend/Core/Private/`           | Implementation `.cpp` files for Core              |
 | `Tests/`                   | Google Test sources (`UnitTest_<Thing>.cpp`; see Docs/Specs/03 §1) |

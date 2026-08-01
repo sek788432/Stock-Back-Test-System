@@ -15,7 +15,7 @@ option(BTE_BUILD_QT_APP "Build the Qt desktop app shell" OFF)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/Cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 include(CompilerWarnings)
 include(Sanitizers)
 

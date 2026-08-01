@@ -2,7 +2,7 @@
 
 Python tooling that fetches Databento OHLCV aggregates into DuckDB and exports CSV snapshots. This module is the **only writer** to `StockData/MarketData.duckdb`; the C++ desktop app reads from it but never writes.
 
-For the system architecture, see [`Docs/Specs/`](../Docs/Specs/README.md) (in particular [`04_Data_Layer.md`](../Docs/Specs/04_Data_Layer.md)).
+For the system architecture, see [`Docs/Specs/`](../Docs/Specs/README.md) (in particular [`04DataLayer.md`](../Docs/Specs/04DataLayer.md)).
 
 ---
 
@@ -10,12 +10,12 @@ For the system architecture, see [`Docs/Specs/`](../Docs/Specs/README.md) (in pa
 
 | Path                          | Purpose                                                                           |
 | ----------------------------- | --------------------------------------------------------------------------------- |
-| `StockData/symbols.txt`       | List of tickers to fetch or export                                                |
+| `StockData/Symbols.txt`       | List of tickers to fetch or export                                                |
 | `StockData/MarketData.duckdb` | DuckDB database (created when you collect)                                        |
 | `StockData/Extracted/`        | CSV files produced by extraction (one file per symbol; gitignored when generated) |
-| `DataFetcher/`                | `FetchDatabento.py`, `GetFromDB.py`, shell wrappers                               |
+| `DataFetcher/`                | `FetchDatabento.py`, `GetFromDb.py`, shell wrappers                               |
 
-The fetch scripts locate the **project root** by walking upward from `DataFetcher/` until they find **`StockData/symbols.txt`**, or use **`STOCK_REPO_ROOT`** (see below).
+The fetch scripts locate the **project root** by walking upward from `DataFetcher/` until they find **`StockData/Symbols.txt`**, or use **`STOCK_REPO_ROOT`** (see below).
 
 Bar interval must be a **native Databento schema** (`ohlcv-1s`, **`ohlcv-1m`**, **`ohlcv-1h`**, `ohlcv-1d`, `ohlcv-eod`; there is no **`ohlcv-30min`**). Configure the schema and time range via CLI flags or env vars (**`--schema-name` / `SCHEMA_NAME`**, **`--start-ts` / `START_TS`**, **`--end-ts` / `END_TS`**). The default end timestamp is fixed (see `DEFAULT_END_TS` in **`FetchDatabento.py`**); bump it or pass **`--end-ts`** to extend the window. For 30‑minute bars, fetch finer data (e.g. `ohlcv-1m`) and resample in pandas. The DuckDB table **`hourlyBars`** keeps a legacy name; the real interval is **`schemaName`** on each row.
 
@@ -55,11 +55,11 @@ Running **`python DataFetcher/FetchDatabento.py`** directly does **not** load `.
 
 ---
 
-## Symbol list (`StockData/symbols.txt`)
+## Symbol list (`StockData/Symbols.txt`)
 
 - One symbol per line.
 - Blank lines and lines starting with `#` are ignored.
-- Allowed characters per line: letters, digits, `._-` only (consistent with **`GetFromDB.py`** extraction).
+- Allowed characters per line: letters, digits, `._-` only (consistent with **`GetFromDb.py`** extraction).
 
 Example:
 
@@ -69,7 +69,7 @@ AAPL
 TSLA
 ```
 
-Populate or refresh **`StockData/symbols.txt`** from **Wikipedia's current [List of S&P 500 companies](https://en.wikipedia.org/wiki/List_of_S%26P_500_companies)** (~500 rows; multiple share classes can exceed 500 tickers):
+Populate or refresh **`StockData/Symbols.txt`** from **Wikipedia's current [List of S&P 500 companies](https://en.wikipedia.org/wiki/List_of_S%26P_500_companies)** (~500 rows; multiple share classes can exceed 500 tickers):
 
 ```bash
 python DataFetcher/update_sp500_symbols.py
@@ -123,7 +123,7 @@ Requires an existing **`StockData/MarketData.duckdb`** (run collect first unless
 ./DataFetcher/ExtractFromDB.sh
 ```
 
-Reads **`StockData/symbols.txt`** by default and writes one CSV **per symbol that has matching rows** under **`StockData/Extracted/`** (e.g. `AAPL.csv`; dots in tickers become underscores in filenames). Symbols with **no matching rows do not produce a CSV**—and any **stale CSV** already on disk with that name is **deleted**. Each file contains only the OHLCV columns (`symbol, ts, open, high, low, close, volume`) and timestamps are emitted in **UTC** so output is reproducible across machines.
+Reads **`StockData/Symbols.txt`** by default and writes one CSV **per symbol that has matching rows** under **`StockData/Extracted/`** (e.g. `AAPL.csv`; dots in tickers become underscores in filenames). Symbols with **no matching rows do not produce a CSV**—and any **stale CSV** already on disk with that name is **deleted**. Each file contains only the OHLCV columns (`symbol, ts, open, high, low, close, volume`) and timestamps are emitted in **UTC** so output is reproducible across machines.
 
 Optional:
 
@@ -147,8 +147,8 @@ If **`--schema-name`** is omitted and a symbol has rows under more than one sche
 | Variable            | Meaning                                                                                                                                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DATABENTO_API_KEY` | Required for Databento API fetches (**`CollectData.sh`**).                                                                                                                                                |
-| `STOCK_REPO_ROOT`   | Absolute path to repo root containing **`StockData/`**. Use if auto-discovery via **`StockData/symbols.txt`** fails.                                                                                      |
-| `EXTRACT_DB_SCRIPT` | Alternate Python entry for extraction (default **`GetFromDB.py`** next to **`ExtractFromDB.sh`**). Absolute path allowed.                                                                                 |
+| `STOCK_REPO_ROOT`   | Absolute path to repo root containing **`StockData/`**. Use if auto-discovery via **`StockData/Symbols.txt`** fails.                                                                                      |
+| `EXTRACT_DB_SCRIPT` | Alternate Python entry for extraction (default **`GetFromDb.py`** next to **`ExtractFromDB.sh`**). Absolute path allowed.                                                                                 |
 | `SCHEMA_NAME`       | Default schema for **`FetchDatabento.py`** when **`--schema-name`** is not passed (default `ohlcv-1h`).                                                                                                   |
 | `START_TS`          | Default ISO‑8601 UTC start for **`FetchDatabento.py`** (default `2018-05-01T00:00:00Z`).                                                                                                                  |
 | `END_TS`            | Default ISO‑8601 UTC end for **`FetchDatabento.py`** (see **`DEFAULT_END_TS`** in code; bump or override with `--end-ts`; must stay **on or before** the dataset **`available_end`** to avoid **`422`**). |
@@ -157,13 +157,13 @@ If **`--schema-name`** is omitted and a symbol has rows under more than one sche
 
 Wrappers locate **`.venv/bin/python`** by walking upward from **`DataFetcher/`**; otherwise they use **`python3`** on your `PATH`.
 
-**Repo root discovery:** Scripts never write **`STOCK_REPO_ROOT`** into the shell for you—you **`export`** it yourself (or put it in **`.env`** picked up only by **`CollectData.sh`**). Python resolves it from **`os.environ`** or walks upward from **`DataFetcher/`** to **`StockData/symbols.txt`** (and may try **`cwd`** once). See **`resolveStockRepoRoot()`** in **`FetchDatabento.py`** and **`GetFromDB.py`**.
+**Repo root discovery:** Scripts never write **`STOCK_REPO_ROOT`** into the shell for you—you **`export`** it yourself (or put it in **`.env`** picked up only by **`CollectData.sh`**). Python resolves it from **`os.environ`** or walks upward from **`DataFetcher/`** to **`StockData/Symbols.txt`** (and may try **`cwd`** once). See **`resolveStockRepoRoot()`** in **`FetchDatabento.py`** and **`GetFromDb.py`**.
 
 ---
 
 ## Typical workflow
 
-1. Edit **`StockData/symbols.txt`**.
+1. Edit **`StockData/Symbols.txt`**.
 2. **`./DataFetcher/CollectData.sh`** — populate or update **`StockData/MarketData.duckdb`**.
 3. **`./DataFetcher/ExtractFromDB.sh`** — export **`StockData/Extracted/<symbol>.csv`**.
 
@@ -175,5 +175,5 @@ From the repository root with `.venv` activated and **`DATABENTO_API_KEY`** expo
 
 ```bash
 python DataFetcher/FetchDatabento.py --help
-python DataFetcher/GetFromDB.py --help
+python DataFetcher/GetFromDb.py --help
 ```

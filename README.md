@@ -9,11 +9,11 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 | You are… | Start with |
 |---|---|
 | AI coding agent | [`AGENTS.md`](AGENTS.md) → [`Docs/Governance/AGENTS.md`](Docs/Governance/AGENTS.md) |
-| Human contributor | [`Docs/Governance/CONTRIBUTING.md`](Docs/Governance/CONTRIBUTING.md) → [`Docs/ONBOARDING.md`](Docs/ONBOARDING.md) |
+| Human contributor | [`Docs/Governance/CONTRIBUTING.md`](Docs/Governance/CONTRIBUTING.md) → [`Docs/Onboarding.md`](Docs/Onboarding.md) |
 | Reading the design | [`Docs/Specs/`](Docs/Specs/README.md) |
 | Building the C++ tree | [`Docs/BUILD.md`](Docs/BUILD.md) (`./RunTest.sh` builds and runs unit tests) |
-| Reviewing a PR | [`Docs/REVIEW_PLAYBOOK.md`](Docs/REVIEW_PLAYBOOK.md) |
-| Cutting a release | [`Docs/RELEASE_PROCESS.md`](Docs/RELEASE_PROCESS.md) |
+| Reviewing a PR | [`Docs/ReviewPlaybook.md`](Docs/ReviewPlaybook.md) |
+| Cutting a release | [`Docs/ReleaseProcess.md`](Docs/ReleaseProcess.md) |
 | Looking for license / changelog | [`Docs/Governance/`](Docs/Governance/) |
 
 ## Repository layout

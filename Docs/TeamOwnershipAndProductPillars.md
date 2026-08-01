@@ -4,10 +4,10 @@ This document describes **how work is split across seven topic owners** and how 
 
 **Primary technical sources of truth**
 
-- [`../Specs/00_Overview.md`](../Specs/00_Overview.md) — scope and flow
-- [`../Specs/11_Stock_Screener_KLine_Product.md`](../Specs/11_Stock_Screener_KLine_Product.md) — product contract: K-line replay, strategy modes, screener
-- [`../Specs/02_Frontend_Qt.md`](../Specs/02_Frontend_Qt.md), [`../Specs/04_Data_Layer.md`](../Specs/04_Data_Layer.md), [`../Specs/05_Strategy_Authoring.md`](../Specs/05_Strategy_Authoring.md), [`../Specs/07_Engine_Replay_PnL.md`](../Specs/07_Engine_Replay_PnL.md)
-- [`../Specs/10_CI_Dev_Flow.md`](../Specs/10_CI_Dev_Flow.md), [`../Specs/09_Build_Distribution_Launcher.md`](../Specs/09_Build_Distribution_Launcher.md)
+- [`Specs/00Overview.md`](Specs/00Overview.md) — scope and flow
+- [`Specs/11StockScreenerKLineProduct.md`](Specs/11StockScreenerKLineProduct.md) — product contract: K-line replay, strategy modes, screener
+- [`Specs/02FrontendQt.md`](Specs/02FrontendQt.md), [`Specs/04DataLayer.md`](Specs/04DataLayer.md), [`Specs/05StrategyAuthoring.md`](Specs/05StrategyAuthoring.md), [`Specs/07EngineReplayPnL.md`](Specs/07EngineReplayPnL.md)
+- [`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md), [`Specs/09BuildDistributionLauncher.md`](Specs/09BuildDistributionLauncher.md)
 
 ---
 
@@ -18,7 +18,7 @@ These rules keep seven streams moving **without** “you must wait for my PR fir
 1. **Contract-first** — Table shapes, C++ interfaces, strategy hooks, and CI policy are fixed in **specs + short interface notes** before (or in parallel with) full implementations.
 2. **Replace the stub, not the plan** — Each owner tests against **in-memory bars**, **fake `BarStream`**, **frozen fixtures**, or **mock view-models** until production wiring lands.
 3. **Integration is swapping implementations** — The same façade (e.g. data read API, `IStrategy`, `ReplaySessionVm`) gains a real backend when ready; other owners do not block on that day.
-4. **Respect repo invariants** — e.g. C++ does not write `StockData/MarketData.duckdb` (see [`Governance/AGENTS.md`](../Governance/AGENTS.md) H2); engine **determinism** when semantics change (see `07` §8).
+4. **Respect repo invariants** — e.g. C++ does not write `StockData/MarketData.duckdb` (see [`Governance/AGENTS.md`](Governance/AGENTS.md) H2); engine **determinism** when semantics change (see `07` §8).
 
 ---
 
@@ -82,7 +82,7 @@ Owner numbers are **labels**, not hierarchy. Each row is a **single accountable 
 
 ## 3. The three main product functions (detailed distribution)
 
-The product pillars are defined in [`../Specs/11_Stock_Screener_KLine_Product.md`](../Specs/11_Stock_Screener_KLine_Product.md). Below: **components per pillar** and **which owner** is accountable. Use **mocks and contracts** so no pillar waits on another stream.
+The product pillars are defined in [`Specs/11StockScreenerKLineProduct.md`](Specs/11StockScreenerKLineProduct.md). Below: **components per pillar** and **which owner** is accountable. Use **mocks and contracts** so no pillar waits on another stream.
 
 ### Pillar A — K-line replay (single-symbol candle playback)
 
@@ -129,9 +129,9 @@ The product pillars are defined in [`../Specs/11_Stock_Screener_KLine_Product.md
 
 ## 4. Cross-cutting commitments (everyone)
 
-- Follow [`../Specs/`](../Specs/README.md) for the subsystem you touch; product surface for the three pillars is pinned in **`11`**.
+- Follow [`Specs/`](Specs/README.md) for the subsystem you touch; product surface for the three pillars is pinned in **`11`**.
 - **No exceptions across modules**: `Result<T, Error>` at boundaries (`03`), **deterministic** engine outputs where required (`07` §8).
-- **Dependency adds**: ADR + `Decisions/dependencies.md` per [`Governance/AGENTS.md`](../Governance/AGENTS.md).
+- **Dependency adds**: ADR + `Decisions/Dependencies.md` per [`Governance/AGENTS.md`](Governance/AGENTS.md).
 
 ---
 
@@ -140,7 +140,7 @@ The product pillars are defined in [`../Specs/11_Stock_Screener_KLine_Product.md
 When ownership or pillar scope changes:
 
 - Update **this doc** in the same PR that changes behavior or responsibilities.
-- If a decision is architectural (e.g. Python host shape, screener runner placement), add or amend an ADR under [`../Decisions/`](../Decisions/README.md).
+- If a decision is architectural (e.g. Python host shape, screener runner placement), add or amend an ADR under [`Decisions/`](Decisions/README.md).
 
 ---
 

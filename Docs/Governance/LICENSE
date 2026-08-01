@@ -45,4 +45,4 @@ that in an ADR and update this file accordingly.
 
 For the current dependency-license rules (what the project itself can
 *depend on*, regardless of how the project is licensed), see
-Docs/Decisions/dependencies.md and Docs/Governance/AGENTS.md §6.
+Docs/Decisions/Dependencies.md and Docs/Governance/AGENTS.md §6.
