@@ -1,10 +1,10 @@
 # Spec D — NL / Python Runtime
 
-**Part of:** Stock Screener sub-specs  
-**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §A4 (Python), §A5 (NL/AI)  
-**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md) §4.2, §4.5  
-**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md) §3  
-**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1  
+**Part of:** Stock Screener sub-specs
+**UI reference:** [`Screener_UI_Overview.md`](./Screener_UI_Overview.md) §A4 (Python), §A5 (NL/AI)
+**DB schema:** [`Spec_C_Database.md`](./Spec_C_Database.md) §4.2, §4.5
+**Parent product spec:** [`11_Stock_Screener_KLine_Product.md`](../11_Stock_Screener_KLine_Product.md) §3
+**Coding conventions:** [`03_Backend_Core.md`](../03_Backend_Core.md) §1
 **Screener engine:** [`Spec_A_Screener_Engine.md`](./Spec_A_Screener_Engine.md)
 
 ---
@@ -16,7 +16,7 @@ This spec covers the **two non-built-in authoring modes** of Block A:
 - **Mode 2 — Python Script:** user writes a `screen()` function directly; C++ runs it in a sandbox.
 - **Mode 3 — Natural Language (AI):** user types plain text; C++ sends it to Claude API, receives generated Python, user reviews and accepts before it runs.
 
-This spec defines the **interface contracts** only.  
+This spec defines the **interface contracts** only.
 The choice of sandbox implementation (embedded CPython via `pybind11` vs subprocess IPC) is deferred to an ADR — this spec must not be invalidated by that choice.
 
 ---
@@ -39,14 +39,14 @@ Src/Backend/Scripting/
   ScriptingController.h / .cpp        — orchestrates sandbox + NL bridge + audit
 ```
 
-All types live in `namespace bte::scripting`.  
+All types live in `namespace bte::scripting`.
 Conventions: same as `Spec_A §2`.
 
 ---
 
 ## 3. Python `screen()` API Contract
 
-This is the **exact interface** a user's Python script must implement.  
+This is the **exact interface** a user's Python script must implement.
 The sandbox will reject scripts that do not conform to this signature.
 
 ### 3.1 Function Signature
@@ -84,7 +84,7 @@ def screen(symbol: str, bars, as_of) -> bool | float:
     """
 ```
 
-**Float return → ranking rule:**  
+**Float return → ranking rule:**
 When `screen()` returns a `float` for at least one symbol, `ScriptingController::runScript()` sorts the result set by float score descending. Symbols returning `True` (no float) are appended after float-scoring symbols, sorted by `marketCap` descending. `SymbolMatch::conditionsMet` is assigned the descending ordinal among float-returning symbols (`N` for top scorer, `N-1` for second, …, `1` for last); symbols returning `True` receive `conditionsMet = 0`.
 
 ### 3.2 `bars` DataFrame — Complete Column Reference
@@ -168,7 +168,7 @@ if math.isnan(bars['roe'].iloc[-1]):
 
 ## 4. `BarsView` — C++ Representation
 
-The `bars` DataFrame is constructed in C++ and handed to Python.  
+The `bars` DataFrame is constructed in C++ and handed to Python.
 Its C++ form is `BarsView` — a lightweight read-only structure the sandbox serialises as a pandas DataFrame.
 
 ### `BarsView.h`
@@ -405,7 +405,7 @@ Allowed: math, statistics, numpy, pandas (read-only slice only),
 
 ### 6.3 Determinism Requirement
 
-Scripts **must not** produce different results given the same `(symbol, bars, as_of)` tuple.  
+Scripts **must not** produce different results given the same `(symbol, bars, as_of)` tuple.
 Randomness (`random`, `numpy.random`) is permitted in code but its use must be seeded with a fixed value, or results will fail CI determinism checks (Spec 10 §8).
 
 ---
@@ -517,7 +517,7 @@ extractPythonBlock(const std::string& rawResponse)
 }
 ```
 
-If no valid block is found after `maxRetries` attempts, the bridge returns an error.  
+If no valid block is found after `maxRetries` attempts, the bridge returns an error.
 The UI shows: *"Could not generate valid Python — please try rephrasing."*
 
 ---

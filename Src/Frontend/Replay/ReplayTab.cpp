@@ -56,37 +56,39 @@ ReplayTab::ReplayTab(QWidget *parent) : QWidget(parent) {
   setAccessibleName("K-line replay tab");
   setStyleSheet(replayTabStyleSheet());
 
-  auto *outer = new QVBoxLayout(this);
+  auto *outer = std::make_unique<QVBoxLayout>(this).release();
   outer->setContentsMargins(0, 0, 0, 0);
   outer->setSpacing(0);
 
-  auto *scrollArea = new QScrollArea(this);
+  auto *scrollArea = std::make_unique<QScrollArea>(this).release();
   scrollArea->setObjectName("replayScrollArea");
   scrollArea->setAccessibleName("Replay scroll area");
   scrollArea->setWidgetResizable(true);
   scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   scrollArea->setFrameShape(QFrame::NoFrame);
 
-  auto *content = new QWidget(scrollArea);
+  auto *content = std::make_unique<QWidget>(scrollArea).release();
   content->setObjectName("replayScrollContent");
   content->setAccessibleName("Replay scroll content");
   scrollArea->setWidget(content);
   outer->addWidget(scrollArea);
 
-  auto *root = new QVBoxLayout(content);
+  auto *root = std::make_unique<QVBoxLayout>(content).release();
   root->setContentsMargins(14, 12, 14, 12);
   root->setSpacing(8);
 
-  auto *headerRow = new QHBoxLayout();
-  auto *headerText = new QVBoxLayout();
+  auto headerRowOwner = std::make_unique<QHBoxLayout>();
+  auto *headerRow = headerRowOwner.get();
+  auto headerTextOwner = std::make_unique<QVBoxLayout>();
+  auto *headerText = headerTextOwner.get();
   headerText->setSpacing(2);
-  auto *title = new QLabel(tr("K-line Replay"), this);
+  auto *title = std::make_unique<QLabel>(tr("K-line Replay"), this).release();
   title->setObjectName("replayTitleLabel");
   title->setAccessibleName("K-line Replay");
   headerText->addWidget(title);
-  headerRow->addLayout(headerText);
+  headerRow->addLayout(headerTextOwner.release());
   headerRow->addStretch(1);
-  root->addLayout(headerRow);
+  root->addLayout(headerRowOwner.release());
 
   const auto setup = makeReplaySetupControls(this);
   root->addWidget(setup.box);
@@ -104,7 +106,7 @@ ReplayTab::ReplayTab(QWidget *parent) : QWidget(parent) {
   root->addWidget(tradeLog.panel);
 
   auto replaySession = std::make_shared<ReplaySessionVm>();
-  auto *replayTimer = new QTimer(this);
+  auto *replayTimer = std::make_unique<QTimer>(this).release();
   replayTimer->setObjectName("replayPlaybackTimer");
   replayTimer->setTimerType(Qt::PreciseTimer);
   replayTimer->setInterval(

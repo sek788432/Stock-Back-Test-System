@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <limits>
+#include <memory>
 
 namespace bte::frontend {
 namespace {
@@ -124,17 +125,21 @@ qreal toEpochMilliseconds(const core::Timestamp timestamp) {
 }
 
 QCandlestickSet *makeCandleSet(const core::Bar &bar) {
-  return new QCandlestickSet(bar.open, bar.high, bar.low, bar.close,
-                             toEpochMilliseconds(bar.ts));
+  return std::make_unique<QCandlestickSet>(
+             bar.open, bar.high, bar.low, bar.close,
+             toEpochMilliseconds(bar.ts))
+      .release();
 }
 
 } // namespace
 
 QtChartsCandlestickView::QtChartsCandlestickView(QWidget *parent)
-    : QWidget(parent), chart_(new QChart()),
-      chartView_(new InteractiveChartView(chart_, this)),
-      candles_(new QCandlestickSeries(chart_)),
-      axisX_(new QDateTimeAxis(chart_)), axisY_(new QValueAxis(chart_)) {
+    : QWidget(parent), chart_(std::make_unique<QChart>().release()),
+      chartView_(
+          std::make_unique<InteractiveChartView>(chart_, this).release()),
+      candles_(std::make_unique<QCandlestickSeries>(chart_).release()),
+      axisX_(std::make_unique<QDateTimeAxis>(chart_).release()),
+      axisY_(std::make_unique<QValueAxis>(chart_).release()) {
   setObjectName("replayCandlestickChartView");
   setAccessibleName("K-line candlestick chart");
 
@@ -170,7 +175,7 @@ QtChartsCandlestickView::QtChartsCandlestickView(QWidget *parent)
   chartView_->setStyleSheet("background-color: #06121d; border: 0;");
   chartView_->setBackgroundBrush(QColor{6, 18, 29});
 
-  auto *layout = new QVBoxLayout(this);
+  auto *layout = std::make_unique<QVBoxLayout>(this).release();
   layout->setContentsMargins(0, 0, 0, 0);
   layout->addWidget(chartView_);
 

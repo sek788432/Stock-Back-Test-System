@@ -57,10 +57,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Review changed code against project standards
+      - name: Review the full repository against project standards
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 tools/checkProjectStandards.py --base "$BASE_SHA" --head "$GITHUB_SHA"
+        run: >-
+          python3 tools/checkProjectStandards.py
+          --full-tree
+          --base "$BASE_SHA"
+          --head "$GITHUB_SHA"
 
   merge-gate:
     name: Merge gate (all required checks)

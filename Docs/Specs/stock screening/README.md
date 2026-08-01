@@ -6,7 +6,7 @@
 
 ## Live Frontend Prototype
 
-Open [`screener_v2.html`](./screener_v2.html) in any browser to see the interactive prototype.  
+Open [`screener_v2.html`](./screener_v2.html) in any browser to see the interactive prototype.
 No build step required — it runs entirely in the browser.
 
 ---

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject newly added lines that violate the repository's hard coding rules."""
+"""Reject repository content that violates the project's hard coding rules."""
 
 from __future__ import annotations
 
@@ -14,6 +14,14 @@ from pathlib import Path
 
 CPP_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
 TEST_PATH_PARTS = {"Test", "Tests", "test", "tests"}
+HASH_COMMENT_SUFFIXES = {
+    ".cmake",
+    ".py",
+    ".sh",
+    ".toml",
+    ".yaml",
+    ".yml",
+}
 
 
 @dataclass(frozen=True)
@@ -56,6 +64,24 @@ PYTHON_TRIVIAL_ASSERTION = re.compile(r"^\s*assert\s+(?:True|False)\s*(?:#.*)?$"
 UNJUSTIFIED_TASK = re.compile(
     r"\b(?:" + "|".join(("TO" + "DO", "FIX" + "ME")) + r")\b(?![^\n]*\bISSUE-\d+\b)"
 )
+
+
+def comment_text(path: Path, text: str) -> str:
+    """Return the comment portion for file types governed by DOC001."""
+    suffix = path.suffix.lower()
+    if suffix in CPP_SUFFIXES:
+        markers = [index for marker in ("//", "/*") if (index := text.find(marker)) >= 0]
+        if markers:
+            return text[min(markers) :]
+        if re.match(r"^\s*\*", text):
+            return text
+        return ""
+
+    if suffix in HASH_COMMENT_SUFFIXES or path.name == "CMakeLists.txt":
+        marker = text.find("#")
+        return text[marker:] if marker >= 0 else ""
+
+    return ""
 
 
 def parse_unified_diff(diff_text: str) -> list[AddedLine]:
@@ -119,7 +145,7 @@ def audit_added_line(added: AddedLine) -> list[Violation]:
     if text.rstrip() != text:
         violations.append(Violation(added.path, added.number, "FMT001", "trailing whitespace is forbidden"))
 
-    if UNJUSTIFIED_TASK.search(text):
+    if UNJUSTIFIED_TASK.search(comment_text(added.path, text)):
         violations.append(
             Violation(
                 added.path,
@@ -157,6 +183,28 @@ def audit_added_line(added: AddedLine) -> list[Violation]:
 
 def audit_added_lines(lines: list[AddedLine]) -> list[Violation]:
     return [violation for added in lines for violation in audit_added_line(added)]
+
+
+def audit_text_sources(sources: dict[Path, str]) -> tuple[list[Violation], int]:
+    violations: list[Violation] = []
+    line_count = 0
+    for path, source in sources.items():
+        suffix = path.suffix.lower()
+        needs_content_rules = (
+            suffix in CPP_SUFFIXES
+            or suffix in HASH_COMMENT_SUFFIXES
+            or path.name == "CMakeLists.txt"
+            or (suffix == ".py" and TEST_PATH_PARTS.intersection(path.parts))
+        )
+        for number, line in enumerate(source.splitlines(), start=1):
+            line_count += 1
+            if needs_content_rules:
+                violations.extend(audit_added_line(AddedLine(path, number, line)))
+            elif line.rstrip() != line:
+                violations.append(
+                    Violation(path, number, "FMT001", "trailing whitespace is forbidden")
+                )
+    return violations, line_count
 
 
 def module_and_test_roots(path: Path) -> tuple[Path, Path] | None:
@@ -272,6 +320,27 @@ def git_cmake_sources(revision: str, paths: set[Path]) -> dict[Path, str]:
     return sources
 
 
+def audit_git_tree(revision: str, paths: set[Path]) -> tuple[list[Violation], int, int]:
+    violations: list[Violation] = []
+    line_count = 0
+    text_file_count = 0
+    for path in sorted(paths):
+        result = subprocess.run(
+            ["git", "show", f"{revision}:{path.as_posix()}"],
+            check=True,
+            capture_output=True,
+        )
+        try:
+            source = result.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        source_violations, source_line_count = audit_text_sources({path: source})
+        violations.extend(source_violations)
+        line_count += source_line_count
+        text_file_count += 1
+    return violations, line_count, text_file_count
+
+
 def format_violation(violation: Violation) -> str:
     message = f"[{violation.rule}] {violation.message}"
     if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -283,6 +352,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, help="Git base revision")
     parser.add_argument("--head", help="Git head revision; omit to include working-tree changes")
+    parser.add_argument(
+        "--full-tree",
+        action="store_true",
+        help="audit every UTF-8 text file at --head, not only added lines",
+    )
     return parser.parse_args()
 
 
@@ -290,7 +364,16 @@ def main() -> int:
     args = parse_args()
     try:
         added_lines = parse_unified_diff(git_diff(args.base, args.head))
-        violations = audit_added_lines(added_lines)
+        audited_line_count = len(added_lines)
+        if args.full_tree and args.head is None:
+            raise ValueError("--full-tree requires --head")
+        if args.full_tree:
+            head_paths = git_tree_paths(args.head)
+            violations, audited_line_count, audited_file_count = audit_git_tree(
+                args.head, head_paths
+            )
+        else:
+            violations = audit_added_lines(added_lines)
         if args.head is not None:
             base_paths = git_tree_paths(args.base)
             head_paths = git_tree_paths(args.head)
@@ -308,7 +391,13 @@ def main() -> int:
         print(f"Project standards audit failed with {len(violations)} violation(s).", file=sys.stderr)
         return 1
 
-    print(f"Project standards audit passed for {len(added_lines)} added line(s).")
+    if args.full_tree:
+        print(
+            "Project standards audit passed for "
+            f"{audited_line_count} line(s) in {audited_file_count} tracked UTF-8 file(s)."
+        )
+    else:
+        print(f"Project standards audit passed for {audited_line_count} added line(s).")
     return 0
 
 

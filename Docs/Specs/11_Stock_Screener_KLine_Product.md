@@ -75,7 +75,7 @@ Exports (CSV / clipboard) SHOULD reuse the same table model types as metrics exp
 
 Phase 1 may implement screening as:
 
-- sequential per-symbol indicator evaluation backed by existing `Indicators`/`BarStream` APIs; or  
+- sequential per-symbol indicator evaluation backed by existing `Indicators`/`BarStream` APIs; or
 - batched prefetch where `04` exposes efficient multi-symbol windows.
 
 Heavy cross-sectional workloads remain subject to **`10`** performance hygiene (no needless all-history loads).

@@ -8,17 +8,18 @@
 #include <QTabWidget>
 #include <QWidget>
 
+#include <memory>
 #include <utility>
 
 namespace bte::app {
 namespace {
 
 QWidget *makePlaceholderTab(QString title) {
-  auto *label = new QLabel(std::move(title));
+  auto label = std::make_unique<QLabel>(std::move(title));
   label->setAlignment(Qt::AlignCenter);
   label->setObjectName("placeholderTab");
   label->setAccessibleName(label->text());
-  return label;
+  return label.release();
 }
 
 } // namespace
@@ -85,12 +86,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   menuBar()->addMenu(tr("&View"));
   menuBar()->addMenu(tr("&Help"));
 
-  tabs_ = new QTabWidget(this);
+  tabs_ = std::make_unique<QTabWidget>(this).release();
   tabs_->setObjectName("mainTabWidget");
   tabs_->setAccessibleName("Main tabs");
   tabs_->addTab(makePlaceholderTab(tr("Strategies")), tr("Strategies"));
   tabs_->addTab(makePlaceholderTab(tr("Backtest")), tr("Backtest"));
-  tabs_->addTab(new frontend::ReplayTab(tabs_), tr("Replay"));
+  tabs_->addTab(std::make_unique<frontend::ReplayTab>(tabs_).release(),
+                tr("Replay"));
   tabs_->addTab(makePlaceholderTab(tr("Screener")), tr("Screener"));
   tabs_->addTab(makePlaceholderTab(tr("Plugins")), tr("Plugins"));
   tabs_->addTab(makePlaceholderTab(tr("Logs")), tr("Logs"));

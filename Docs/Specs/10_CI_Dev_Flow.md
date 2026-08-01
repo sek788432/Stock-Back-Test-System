@@ -25,6 +25,7 @@ A pull request is **mergeable** only when **all** of the following are green:
 | G8 | Format | `clang-format`, `ruff format` | yes (zero diff) |
 | G9 | Determinism gate | engine fixture run, byte-compare | yes (per `07`) |
 | G10 | Reviewer approval | GitHub branch protection | yes (1 reviewer) |
+| G11 | Full-tree project standards | `tools/checkProjectStandards.py --full-tree` | yes (zero violations) |
 
 GitHub branch protection on `main`:
 - Require all of the above as **Required Status Checks**.
@@ -34,6 +35,25 @@ GitHub branch protection on `main`:
 - Disallow deleting `main`.
 
 A PR author can ship as soon as G1–G9 are green and G10 lands. **No human can override G3–G6 except through a written exemption** (see §10).
+
+### 1.1 Full-tree standards baseline (G11)
+
+The standards job audits every tracked UTF-8 text file at the exact commit under
+test, rather than only the pull-request diff. It rejects formatting violations,
+banned C++ idioms, trivial tests, unregistered unit-test files, and new top-level
+modules without registered unit tests. Documentation may explain `TODO` and
+`FIXME`; the issue-reference rule applies to source and configuration comments.
+
+Run the same commit-level check locally with:
+
+```bash
+python3 tools/checkProjectStandards.py \
+  --full-tree --base origin/main --head HEAD
+```
+
+The required aggregate status is `Merge gate (all required checks)`. It remains
+red if either operating-system test run or the full-tree standards job fails.
+See [ADR 0006](../Decisions/0006-full-tree-project-standards-gate.md).
 
 ---
 

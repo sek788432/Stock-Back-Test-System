@@ -39,8 +39,14 @@ class BarStream {
 };
 
 class CsvBarStream final : public BarStream {
+  private:
+    struct ConstructionKey final {};
+
   public:
     [[nodiscard]] static core::Result<std::unique_ptr<CsvBarStream>> open(const StreamRequest& request);
+
+    CsvBarStream(ConstructionKey, std::string symbol, std::string schemaName, core::DateRange range,
+                 std::vector<core::Bar> bars);
 
     [[nodiscard]] std::optional<core::Bar> next() override;
     [[nodiscard]] std::int64_t totalBars() const noexcept override;
@@ -52,8 +58,6 @@ class CsvBarStream final : public BarStream {
     [[nodiscard]] bool seek(std::int64_t barIndex) noexcept override;
 
   private:
-    CsvBarStream(std::string symbol, std::string schemaName, core::DateRange range, std::vector<core::Bar> bars);
-
     std::string symbol_;
     std::string schemaName_;
     core::DateRange range_{};

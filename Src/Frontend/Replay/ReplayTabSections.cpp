@@ -11,86 +11,92 @@
 #include <QStyle>
 #include <QVBoxLayout>
 
+#include <memory>
 #include <utility>
 
 namespace bte::frontend {
 namespace {
 
 QLabel *makeValueLabel(QString text, QString objectName) {
-  auto *label = new QLabel(std::move(text));
+  auto label = std::make_unique<QLabel>(std::move(text));
   label->setObjectName(std::move(objectName));
   label->setAccessibleName(label->objectName());
   label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   label->setMinimumWidth(150);
-  return label;
+  return label.release();
 }
 
 QLabel *makeFormLabel(QString text, QString objectName, QWidget *parent) {
-  auto *label = new QLabel(std::move(text), parent);
+  auto label = std::make_unique<QLabel>(std::move(text), parent);
   label->setObjectName(std::move(objectName));
   label->setAccessibleName(label->text());
-  return label;
+  return label.release();
 }
 
 QFrame *makePanel(QString objectName, QWidget *parent) {
-  auto *frame = new QFrame(parent);
+  auto frame = std::make_unique<QFrame>(parent);
   frame->setObjectName(std::move(objectName));
   frame->setAccessibleName(frame->objectName());
   frame->setFrameShape(QFrame::StyledPanel);
   frame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  return frame;
+  return frame.release();
 }
 
 QToolButton *makeToolButton(QWidget *owner, QStyle::StandardPixmap icon,
                             QString name, QString tooltip) {
-  auto *button = new QToolButton(owner);
+  auto button = std::make_unique<QToolButton>(owner);
   button->setObjectName(std::move(name));
   button->setAccessibleName(button->objectName());
   button->setToolTip(std::move(tooltip));
   button->setIcon(owner->style()->standardIcon(icon));
-  return button;
+  return button.release();
 }
 
 } // namespace
 
 ReplaySetupControls makeReplaySetupControls(QWidget *owner) {
   ReplaySetupControls controls;
-  controls.box = new QGroupBox(ReplayTab::tr("Replay setup"), owner);
+  controls.box =
+      std::make_unique<QGroupBox>(ReplayTab::tr("Replay setup"), owner)
+          .release();
   controls.box->setObjectName("replaySetupBox");
   controls.box->setAccessibleName("Replay setup");
   controls.box->setMinimumHeight(142);
   controls.box->setMaximumHeight(150);
 
-  auto *setupLayout = new QGridLayout(controls.box);
+  auto *setupLayout = std::make_unique<QGridLayout>(controls.box).release();
   setupLayout->setContentsMargins(18, 22, 18, 16);
   setupLayout->setHorizontalSpacing(16);
   setupLayout->setVerticalSpacing(12);
 
-  controls.symbolCombo = new QComboBox(controls.box);
+  controls.symbolCombo = std::make_unique<QComboBox>(controls.box).release();
   controls.symbolCombo->setObjectName("replaySymbolCombo");
   controls.symbolCombo->setAccessibleName("Replay symbol");
   controls.symbolCombo->addItems({"AAPL", "MSFT", "NVDA"});
   controls.symbolCombo->setFixedWidth(240);
 
-  controls.schemaCombo = new QComboBox(controls.box);
+  controls.schemaCombo = std::make_unique<QComboBox>(controls.box).release();
   controls.schemaCombo->setObjectName("replaySchemaCombo");
   controls.schemaCombo->setAccessibleName("Replay timeframe schema");
   controls.schemaCombo->addItems({"ohlcv-1d", "ohlcv-1h", "ohlcv-1m"});
   controls.schemaCombo->setFixedWidth(240);
 
-  controls.startDate = new QDateEdit(QDate{2024, 1, 1}, controls.box);
+  controls.startDate =
+      std::make_unique<QDateEdit>(QDate{2024, 1, 1}, controls.box).release();
   controls.startDate->setObjectName("replayStartDateEdit");
   controls.startDate->setAccessibleName("Replay start date");
   controls.startDate->setCalendarPopup(true);
   controls.startDate->setFixedWidth(240);
 
-  controls.endDate = new QDateEdit(QDate{2024, 6, 30}, controls.box);
+  controls.endDate =
+      std::make_unique<QDateEdit>(QDate{2024, 6, 30}, controls.box).release();
   controls.endDate->setObjectName("replayEndDateEdit");
   controls.endDate->setAccessibleName("Replay end date");
   controls.endDate->setCalendarPopup(true);
   controls.endDate->setFixedWidth(240);
 
-  controls.initialCapital = new QDoubleSpinBox(controls.box);
+  controls.initialCapital =
+      std::make_unique<QDoubleSpinBox>(controls.box).release();
   controls.initialCapital->setObjectName("replayInitialCapitalSpinBox");
   controls.initialCapital->setAccessibleName("Replay initial capital");
   controls.initialCapital->setRange(1.0, 1'000'000'000.0);
@@ -99,7 +105,9 @@ ReplaySetupControls makeReplaySetupControls(QWidget *owner) {
   controls.initialCapital->setValue(100'000.0);
   controls.initialCapital->setFixedWidth(220);
 
-  controls.loadButton = new QPushButton(ReplayTab::tr("Load"), controls.box);
+  controls.loadButton =
+      std::make_unique<QPushButton>(ReplayTab::tr("Load"), controls.box)
+          .release();
   controls.loadButton->setObjectName("replayLoadButton");
   controls.loadButton->setAccessibleName("Load replay data");
   controls.loadButton->setFixedSize(132, 38);
@@ -157,44 +165,44 @@ ReplayPlaybackControls makeReplayPlaybackControls(QWidget *owner) {
   controls.stepForwardButton->setText(ReplayTab::tr("Step"));
   controls.stepForwardButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
 
-  controls.zoomOutButton = new QToolButton(owner);
+  controls.zoomOutButton = std::make_unique<QToolButton>(owner).release();
   controls.zoomOutButton->setObjectName("replayZoomOutButton");
   controls.zoomOutButton->setAccessibleName("Zoom out");
   controls.zoomOutButton->setToolTip(ReplayTab::tr("Zoom out"));
   controls.zoomOutButton->setText(ReplayTab::tr("Out"));
   controls.zoomOutButton->setMinimumWidth(64);
 
-  controls.zoomInButton = new QToolButton(owner);
+  controls.zoomInButton = std::make_unique<QToolButton>(owner).release();
   controls.zoomInButton->setObjectName("replayZoomInButton");
   controls.zoomInButton->setAccessibleName("Zoom in");
   controls.zoomInButton->setToolTip(ReplayTab::tr("Zoom in"));
   controls.zoomInButton->setText(ReplayTab::tr("In"));
   controls.zoomInButton->setMinimumWidth(64);
 
-  controls.zoomResetButton = new QToolButton(owner);
+  controls.zoomResetButton = std::make_unique<QToolButton>(owner).release();
   controls.zoomResetButton->setObjectName("replayZoomResetButton");
   controls.zoomResetButton->setAccessibleName("Reset zoom");
   controls.zoomResetButton->setToolTip(ReplayTab::tr("Reset zoom"));
   controls.zoomResetButton->setText(ReplayTab::tr("Reset"));
   controls.zoomResetButton->setMinimumWidth(72);
 
-  controls.speedCombo = new QComboBox(owner);
+  controls.speedCombo = std::make_unique<QComboBox>(owner).release();
   controls.speedCombo->setObjectName("replaySpeedCombo");
   controls.speedCombo->setAccessibleName("Replay speed");
   controls.speedCombo->addItems({"1x", "5x", "10x", "max"});
 
-  controls.progress = new QProgressBar(owner);
+  controls.progress = std::make_unique<QProgressBar>(owner).release();
   controls.progress->setObjectName("replayProgressBar");
   controls.progress->setAccessibleName("Replay progress");
   controls.progress->setRange(0, 100);
   controls.progress->setValue(0);
   controls.progress->setFixedWidth(260);
 
-  controls.bar = new QFrame(owner);
+  controls.bar = std::make_unique<QFrame>(owner).release();
   controls.bar->setObjectName("replayPlaybackBar");
   controls.bar->setAccessibleName("Replay playback controls");
   controls.bar->setFrameShape(QFrame::StyledPanel);
-  auto *playbackRow = new QHBoxLayout(controls.bar);
+  auto *playbackRow = std::make_unique<QHBoxLayout>(controls.bar).release();
   playbackRow->setContentsMargins(10, 8, 10, 8);
   playbackRow->setSpacing(8);
   playbackRow->addWidget(controls.stepBackButton);
@@ -217,11 +225,12 @@ ReplayPlaybackControls makeReplayPlaybackControls(QWidget *owner) {
 ReplayChartSection makeReplayChartSection(QWidget *owner) {
   ReplayChartSection section;
   section.panel = makePanel("replayChartPanel", owner);
-  auto *chartLayout = new QVBoxLayout(section.panel);
+  auto *chartLayout = std::make_unique<QVBoxLayout>(section.panel).release();
   chartLayout->setContentsMargins(10, 10, 10, 10);
   chartLayout->setSpacing(8);
 
-  section.chartView = new QtChartsCandlestickView(section.panel);
+  section.chartView =
+      std::make_unique<QtChartsCandlestickView>(section.panel).release();
   section.chartView->setMinimumHeight(300);
 
   chartLayout->addWidget(section.chartView, 1);
@@ -230,11 +239,14 @@ ReplayChartSection makeReplayChartSection(QWidget *owner) {
 
 ReplayPortfolioSection makeReplayPortfolioSection(QWidget *owner) {
   ReplayPortfolioSection section;
-  section.box = new QGroupBox(ReplayTab::tr("Portfolio status"), owner);
+  section.box =
+      std::make_unique<QGroupBox>(ReplayTab::tr("Portfolio status"), owner)
+          .release();
   section.box->setObjectName("replayPortfolioBox");
   section.box->setAccessibleName("Portfolio status");
 
-  auto *portfolioLayout = new QGridLayout(section.box);
+  auto *portfolioLayout =
+      std::make_unique<QGridLayout>(section.box).release();
   portfolioLayout->setContentsMargins(16, 20, 16, 14);
   portfolioLayout->setHorizontalSpacing(10);
   portfolioLayout->setVerticalSpacing(8);
@@ -266,21 +278,24 @@ ReplayPortfolioSection makeReplayPortfolioSection(QWidget *owner) {
 
 ReplayTradeLogSection makeReplayTradeLogSection(QWidget *owner) {
   ReplayTradeLogSection section;
-  section.panel = new QFrame(owner);
+  section.panel = std::make_unique<QFrame>(owner).release();
   section.panel->setObjectName("replayTradeLogPanel");
   section.panel->setAccessibleName("Trade log panel");
   section.panel->setFrameShape(QFrame::StyledPanel);
 
-  auto *tradeLogLayout = new QVBoxLayout(section.panel);
+  auto *tradeLogLayout =
+      std::make_unique<QVBoxLayout>(section.panel).release();
   tradeLogLayout->setContentsMargins(10, 10, 10, 10);
   tradeLogLayout->setSpacing(8);
 
-  auto *tradeLogTitle = new QLabel(ReplayTab::tr("Trade log"), section.panel);
+  auto *tradeLogTitle =
+      std::make_unique<QLabel>(ReplayTab::tr("Trade log"), section.panel)
+          .release();
   tradeLogTitle->setObjectName("replayTradeLogTitle");
   tradeLogTitle->setAccessibleName("Trade log title");
   tradeLogLayout->addWidget(tradeLogTitle);
 
-  section.table = new QTableWidget(0, 6, owner);
+  section.table = std::make_unique<QTableWidget>(0, 6, owner).release();
   section.table->setObjectName("replayTradeLogTable");
   section.table->setAccessibleName("Trade log");
   section.table->setHorizontalHeaderLabels(
