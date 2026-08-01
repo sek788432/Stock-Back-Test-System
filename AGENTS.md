@@ -4,7 +4,10 @@ The canonical playbook for AI coding agents in this repository lives at:
 
 > **[`Docs/Governance/AGENTS.md`](Docs/Governance/AGENTS.md)**
 
-This file exists at the repository root only so AI tools that auto-discover `AGENTS.md` (Cursor, Codex, Claude Code, Copilot Workspace, etc.) immediately pick up the pointer and follow it.
+This file exists at the repository root so AI tools that auto-discover
+`AGENTS.md` immediately pick up the pointer and follow it. Host adapters such as
+[`CLAUDE.md`](CLAUDE.md) import the same canonical playbook for tools that use a
+different instruction entry point.
 
 ## Mandatory before any change in this repo
 

@@ -2,7 +2,11 @@
 
 This file is read by AI agents (Cursor, Codex, Claude Code, GitHub Copilot Workspace, etc.) at the start of any task. **Read it before doing anything in this repo.**
 
-The repository root has a thin [`AGENTS.md`](../../AGENTS.md) pointer for tools that auto-discover; this file is the canonical playbook.
+The repository root has a thin [`AGENTS.md`](../../AGENTS.md) pointer for tools
+that auto-discover it. Host-specific adapters such as
+[`CLAUDE.md`](../../CLAUDE.md) import this file when a tool uses a different
+instruction entry point. Those adapters must remain thin and must not duplicate
+project rules. This file is the canonical playbook.
 
 Humans contributing to this repo: see [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`../ONBOARDING.md`](../ONBOARDING.md). Most of what's here applies to you too.
 
@@ -25,6 +29,12 @@ Whenever you start a task here, read these in order. Don't skip — every sectio
 ## 2. Hard rules (non-negotiable)
 
 These are repo-wide invariants. Violating any of them is a defect.
+
+This section is the authoritative source for hard requirements. Skills under
+`.agents/skills/` explain how to apply these requirements in specific tasks,
+but a skill may not weaken or override them. When guidance should become a new
+hard rule, promote it into this section and add mechanical CI enforcement where
+practical; do not rely on skill activation alone.
 
 | #   | Rule                                                                                                                                                                                                                                                                                                          |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

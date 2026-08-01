@@ -16,6 +16,7 @@
 /Docs/Decisions/               @TBD-repo-lead @TBD-architect
 /Docs/Governance/AGENTS.md     @TBD-repo-lead @TBD-architect
 /AGENTS.md                     @TBD-repo-lead @TBD-architect
+/CLAUDE.md                     @TBD-repo-lead @TBD-architect
 
 # Skills changes (coding rules) need lead approval — they affect every PR.
 /.agents/                      @TBD-repo-lead

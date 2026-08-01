@@ -8,6 +8,20 @@ playbook in
 
 Repository instructions always take precedence over skill guidance.
 
+## Authority model
+
+| Layer | Canonical location | Purpose |
+|---|---|---|
+| Hard invariants | [`Docs/Governance/AGENTS.md` §2](../../Docs/Governance/AGENTS.md) | Always-read, non-negotiable repository rules |
+| Product and architecture contracts | [`Docs/Specs/`](../../Docs/Specs/README.md) and [`Docs/Decisions/`](../../Docs/Decisions/README.md) | Defines required behavior and accepted decisions |
+| Task-specific workflows | This `.agents/skills/` directory | Detailed guidance loaded only when a skill matches the task |
+| Mechanical enforcement | [`.github/workflows/`](../../.github/workflows/) and [`tools/`](../../tools/) | Detects violations without relying on agent memory |
+
+Do not make a non-negotiable rule live only in a skill. Put its concise,
+authoritative form in `Docs/Governance/AGENTS.md`, keep implementation detail in
+the relevant skill, and enforce it in CI when the rule is mechanically
+checkable.
+
 ## Repository-specific C++ skills
 
 | Skill | Activates when | Enforces |
@@ -18,8 +32,8 @@ Repository instructions always take precedence over skill guidance.
 | [`cpp-oop-design`](cpp-oop-design/SKILL.md) | Designing modules, classes, interfaces, seams, or refactors | SOLID, composition, narrow interfaces, and appropriate design patterns |
 | [`cpp-static-analysis`](cpp-static-analysis/SKILL.md) | Running or interpreting formatting, lint, analyzers, and sanitizers | The repository's complete static-analysis and sanitizer workflow |
 
-These five skills contain the repository's detailed C++ rules. The canonical
-hard requirements remain in `AGENTS.md` and `Docs/Governance/AGENTS.md` so they
+These five skills contain the repository's detailed C++ workflows and examples.
+The canonical hard requirements live in `Docs/Governance/AGENTS.md` so they
 apply even when an agent host does not support skill discovery.
 
 ## How the C++ skills layer with specs
