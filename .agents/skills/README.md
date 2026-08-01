@@ -15,12 +15,13 @@ Repository instructions always take precedence over skill guidance.
 | Hard invariants | [`Docs/Governance/AGENTS.md` §2](../../Docs/Governance/AGENTS.md) | Always-read, non-negotiable repository rules |
 | Product and architecture contracts | [`Docs/Specs/`](../../Docs/Specs/README.md) and [`Docs/Decisions/`](../../Docs/Decisions/README.md) | Defines required behavior and accepted decisions |
 | Task-specific workflows | This `.agents/skills/` directory | Detailed guidance loaded only when a skill matches the task |
-| Mechanical enforcement | [`.github/workflows/`](../../.github/workflows/) and [`tools/`](../../tools/) | Detects violations without relying on agent memory |
+| Mechanical enforcement (currently partial) | [`.github/workflows/`](../../.github/workflows/) and [`tools/`](../../tools/) | Detects the covered subset without relying on agent memory |
 
 Do not make a non-negotiable rule live only in a skill. Put its concise,
 authoritative form in `Docs/Governance/AGENTS.md`, keep implementation detail in
-the relevant skill, and enforce it in CI when the rule is mechanically
-checkable.
+the relevant skill, and add CI coverage when the rule is mechanically
+checkable. Until a gate exists, governance remains authoritative and human
+review must cover the gap.
 
 ## Repository-specific C++ skills
 
