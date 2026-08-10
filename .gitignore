@@ -80,6 +80,9 @@ Testing/
 # Superpowers brainstorm visual companion (local-only mockups)
 .superpowers/
 
+# Temporary repository audits; conclusions must be folded into canonical docs.
+Docs/Reviews/
+
 # Shell scripts (untracked by default). Exception: root `RunTest.sh` is intended to be committed.
 *.sh
 !RunTest.sh

@@ -1,6 +1,6 @@
 # DataFetcher
 
-Python tooling that fetches Databento OHLCV aggregates into DuckDB and exports CSV snapshots. This module is the **only writer** to `StockData/MarketData.duckdb`; the C++ desktop app reads from it but never writes.
+Python tooling that fetches Databento OHLCV aggregates into DuckDB and exports CSV snapshots. This module is the **only writer** to `StockData/MarketData.duckdb`. The database is a developer ingestion/verification store; the V1 release design builds an immutable snapshot from the extracted CSV inputs.
 
 For the system architecture, see [`Docs/Specs/`](../Docs/Specs/README.md) (in particular [`04DataLayer.md`](../Docs/Specs/04DataLayer.md)).
 
@@ -12,7 +12,7 @@ For the system architecture, see [`Docs/Specs/`](../Docs/Specs/README.md) (in pa
 | ----------------------------- | --------------------------------------------------------------------------------- |
 | `StockData/Symbols.txt`       | List of tickers to fetch or export                                                |
 | `StockData/MarketData.duckdb` | DuckDB database (created when you collect)                                        |
-| `StockData/Extracted/`        | CSV files produced by extraction (one file per symbol; gitignored when generated) |
+| `StockData/Extracted/`        | CSV files produced by extraction (one file per symbol; the current reviewed snapshot is tracked) |
 | `DataFetcher/`                | `FetchDatabento.py`, `GetFromDb.py`, shell wrappers                               |
 
 The fetch scripts locate the **project root** by walking upward from `DataFetcher/` until they find **`StockData/Symbols.txt`**, or use **`STOCK_REPO_ROOT`** (see below).
@@ -28,7 +28,7 @@ Create a virtual environment at the **repository root** (recommended):
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r DataFetcher/requirements.txt
 ```
 
 Or: `pip install databento duckdb pandas`

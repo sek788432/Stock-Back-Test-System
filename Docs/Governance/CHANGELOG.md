@@ -2,20 +2,26 @@
 
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The plugin ABI version (`BTE_PLUGIN_ABI_MAJOR`) and the Lua API version (`bte.apiVersion`) version independently — see entries below.
+Current compatibility surfaces include the application, strategy API, result schema, and data manifest. Historical entries below may mention superseded Lua or plugin experiments; they do not define current architecture.
 
 ## [Unreleased]
 
 ### Added
 - Project specs (`Docs/Specs/`) describing the C++/Qt desktop backtester architecture, modules, and CI policy.
 - AI-agent skills (`.agents/skills/`) for modern C++, thread safety, performance, OOP/design, static analysis, and shared engineering workflows.
-- Collaboration docs grouped under `Docs/Governance/` (`AGENTS.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `LICENSE`) plus `Docs/Onboarding.md`, `Docs/DefinitionOfDone.md`, `Docs/ReviewPlaybook.md`, `Docs/ReleaseProcess.md`. Repo root keeps thin `AGENTS.md` and `CLAUDE.md` adapters that load the same canonical playbook.
+- Collaboration docs grouped under `Docs/Governance/` (`AGENTS.md`, `CONTRIBUTING.md`, `CHANGELOG.md`) plus `Docs/Onboarding.md`, `Docs/DefinitionOfDone.md`, `Docs/ReviewPlaybook.md`, and `Docs/ReleaseProcess.md`. The Apache-2.0 `LICENSE` and thin `AGENTS.md`/`CLAUDE.md` adapters remain at the repository root.
 - Restructured: `Specs/` moved to `Docs/Specs/`; root `README.md` slimmed to point at module READMEs; long DataFetcher content moved to `DataFetcher/README.md`.
-- ADR framework (`Docs/Decisions/`) with the meta-ADR and three accepted decisions.
-- Issue templates (bug, feature, design-rfc) and a structured PR template.
+- ADR framework (`Docs/Decisions/`) with an indexed decision history and explicit supersession metadata.
+- Bug and feature issue templates plus a structured PR template.
 
 ### Changed
-- (none)
+- Reconciled the canonical specs around a project-owned C++ engine, typed
+  Selectable Conditions, a trusted isolated Python worker, immutable Release
+  Snapshots, fixed-point accounting, and transactional `.bteresult` files.
+- Distinguished implemented, planned, blocked, and non-normative behavior across
+  product, CI, release, and stock-screening documentation.
+- Distinguished Paced Backtest engine execution from K-line Replay presentation
+  so result playback cannot be mistaken for a second execution engine.
 
 ### Fixed
 - (none)
@@ -26,8 +32,9 @@ The plugin ABI version (`BTE_PLUGIN_ABI_MAJOR`) and the Lua API version (`bte.ap
 ### Plugin ABI
 - Not yet declared. Will be `1` at first release.
 
-### Lua API
-- Not yet declared. Will be `1` at first release.
+### Strategy API
+- Not yet declared. The first implemented Python strategy contract will declare
+  its version independently from the application.
 
 ---
 
@@ -53,7 +60,7 @@ Format:
 - unchanged from previous release
 - OR bumped to N — see ADR NNNN
 
-### Lua API
+### Strategy API
 - unchanged
 - OR bumped to N — see ADR NNNN
 -->

@@ -1,126 +1,139 @@
 # Definition of Done
 
-A change is **done** when every applicable item below is true. Not "I think it works" — true.
+A change is done only when every applicable item below is true. Copy the
+applicable sections into the pull request. Write `N/A — <reason>` for an item
+that does not apply; never claim that an unrun or nonexistent check passed.
 
-This checklist is the gate between "I made some edits" and "this can ship". It exists because:
+## Universal — every change
 
-- Humans rush. AI agents rush more. Both will declare a task complete before it actually is.
-- CI catches most things, but not all (intent, performance, design, docs).
-- Reviewers waste time when "done" PRs aren't actually done.
+- [ ] **Authorized scope:** the change addresses the requested concern and
+  preserves unrelated and user-owned work.
+- [ ] **Context:** the relevant specs, ADRs, project skills, and
+  [`Governance/AGENTS.md`](Governance/AGENTS.md) were read.
+- [ ] **Status truth:** documentation identifies behavior as Implemented,
+  Planned, or Blocked and does not describe planned tooling as enforced.
+- [ ] **Self-review:** the complete diff was reviewed hunk by hunk.
+- [ ] **Repository hygiene:** no secrets, dead commented-out code, generated
+  build output, or task comments without an `ISSUE-NNN` reference were added.
+- [ ] **Traceability:** the PR references its issue or ADR, or explains why one
+  is unnecessary.
+- [ ] **History:** the branch and commit messages follow the repository's PR
+  conventions when a branch or commit is part of the task.
 
-Copy the checklist into your PR description and tick boxes as you verify each item. If something is N/A, write **N/A — \<reason\>** instead of leaving it blank.
+## Documentation-only changes
 
----
+- [ ] Relative links and referenced anchors resolve.
+- [ ] Code/configuration examples are syntactically plausible and parse when a
+  parser is available.
+- [ ] Related indexes and canonical cross-references are updated.
+- [ ] The change introduces no contradiction with a more authoritative spec or
+  ADR; any intentional supersession is explicit.
+- [ ] Build, runtime, and code-test sections are marked `N/A — docs-only` rather
+  than falsely checked.
 
-## Universal (every PR)
+## Production behavior changes
 
-- [ ] **Scope**: PR addresses a single concern. Unrelated drive-by changes are out.
-- [ ] **Branch**: branch name matches `feature|fix|docs|refactor|chore|perf/<short-name>`.
-- [ ] **Commits**: messages are Conventional Commits (`feat:`, `fix:`, …).
-- [ ] **Linked issue / ADR**: PR references the issue or ADR it addresses (or explains why none exists).
-- [ ] **Self-reviewed**: I read my own diff hunk-by-hunk before requesting review.
-- [ ] **No secrets**: no API keys, tokens, passwords, or private URLs in the diff (including comments).
-- [ ] **No commented-out code**: dead code is deleted, not commented out.
-- [ ] **No TODO without an issue**: every `TODO` / `FIXME` references `ISSUE-NNN`.
+- [ ] The affected target builds cleanly with no new compiler warnings.
+- [ ] Every affected **public behavior** has unit tests for:
+  - [ ] a positive case;
+  - [ ] a negative case, including the specified error and absence of forbidden
+    side effects;
+  - [ ] meaningful boundary cases at and immediately around the limit.
+- [ ] If a public behavior has no meaningful negative or boundary case, the PR
+  gives a concrete reason; this is not a blanket exemption.
+- [ ] Every bug fix has a focused regression test that fails under the old
+  implementation.
+- [ ] Every intentional change to public behavior has a focused regression test
+  that captures the old-versus-new contract.
+- [ ] Tests exercise real production code, contain meaningful assertions, and
+  do not use trivial, tautological, empty, silently disabled, or mock-only
+  substitutes for the unit under test.
+- [ ] Existing registered tests pass.
 
-## Code (any production code change)
+Public behavior includes observable contracts exposed by public C++ or Python
+APIs, UI actions, command interfaces, persisted formats, and generated
+artifacts. Private helpers need direct unit tests only when that is the clearest
+way to prove a public behavior.
 
-- [ ] **Builds clean** on at least one OS locally (`cmake --build --preset dev`).
-- [ ] **All existing tests pass** (`ctest --preset dev`).
-- [ ] **No new compiler warnings** on touched files.
-- [ ] **No new clang-tidy warnings** on touched files (`Tools/RunClangTidyDiff.sh`).
-- [ ] **clang-format clean** (`Tools/RunClangFormat.sh --check`).
-- [ ] **Sanitizers clean**: ASan/UBSan/LSan reports are empty when running affected tests.
-- [ ] **Skills compliance**: change does not violate the repository-specific C++ rules in `.agents/skills/` — no banned C-style idioms, no raw `new`/`delete`, no `using namespace std;`, no exceptions across module boundaries, RAII for every resource.
+## Cross-module and persistence changes
 
-## Threading / concurrency (when touching threads, mutexes, atomics, callbacks)
+- [ ] IPC protocols, immutable snapshot generation, and `.bteresult` schema or
+  lifecycle changes have contract/integration tests in addition to unit tests.
+- [ ] Failure, interruption, invalid-schema, and version-mismatch paths are
+  covered where applicable.
+- [ ] Authoritative financial values remain fixed-point at storage and engine
+  boundaries.
+- [ ] Identical immutable inputs produce identical canonical functional records
+  and `canonicalResultHash`; physical SQLite bytes, local paths, and wall-clock
+  metadata are not compared.
+- [ ] An intentional semantic change updates its regression expectation and,
+  once implemented, the canonical determinism fixture with an explanation.
 
-- [ ] **Cross-thread state is immutable or owned by exactly one thread** (Specs/01 §3).
-- [ ] **TSan run** locally if I added new synchronization (`ctest --preset dev-tsan`).
-- [ ] **No detached threads** (`std::jthread` + `std::stop_token` instead).
-- [ ] **All locks are RAII** (`std::scoped_lock` / `std::shared_lock`, never `mutex.lock()` directly).
-- [ ] **No `volatile` used as a synchronization primitive** (use `std::atomic`).
+## Threading and Python-worker changes
 
-## Performance (any change in a documented hot path — engine bar loop, indicators, replay tick, data prefetch)
+- [ ] Cross-thread state is immutable or owned by exactly one thread.
+- [ ] Resources and process lifetime use RAII; no detached threads or manual
+  mutex `lock()`/`unlock()` were introduced.
+- [ ] Qt widgets are touched only on the UI thread through queued delivery.
+- [ ] Cancellation, timeout, worker failure, protocol violation, and cleanup
+  boundaries have tests when affected.
 
-- [ ] **Benchmark numbers**: nanobench results before vs after included in PR description.
-- [ ] **No new allocations** in hot loops (verify with allocator-counting test where present).
-- [ ] **No new `std::function` or virtual call** in per-bar/per-tick paths.
-- [ ] **Determinism unchanged** (Specs/07 §8): fixture run produces byte-identical `metrics.json` and `trades.json` — or fixture is intentionally refreshed and explained.
+## Performance-sensitive changes
 
-## Tests (every PR that touches code)
+- [ ] The PR identifies the affected hot path and includes before/after evidence
+  using a repository benchmark if one exists, or a documented reproducible
+  measurement otherwise.
+- [ ] Allocation, copying, algorithmic complexity, and synchronization changes
+  were reviewed.
+- [ ] Functional determinism is preserved or the intentional change is
+  explained and regression-tested.
 
-- [ ] **Every new public symbol has a unit test** (Specs/10 §7) — class, free function, public method, plus public Q_OBJECT methods.
-- [ ] **Every modified public symbol has an updated or new test** that exercises the changed behavior.
-- [ ] **Tests would actually fail if the production code were wrong** (mutation-aware). Mentally check: "if I flipped a `<` to `<=`, would my test catch it?"
-- [ ] **No cheating patterns** (Specs/10 §5): no `EXPECT_TRUE(true)`, no tautologies, no empty test bodies, no mocking the unit under test, no silent `DISABLED_*` or `GTEST_SKIP()` without `ISSUE-NNN`.
-- [ ] **Diff coverage**: ≥ 90% line coverage and ≥ 80% branch coverage on changed lines (CI computes; check the PR comment).
-- [ ] **Mutation kill rate**: ≥ 70% on changed files (CI computes).
+## CI and tooling changes
 
-## Frontend (Qt) (any UI change)
+- [ ] The tool or workflow exists in the submitted tree and its documented
+  command matches the implementation.
+- [ ] Tool behavior has positive, negative, and boundary tests where applicable.
+- [ ] `python3 Tools/CheckProjectStandards.py --full-tree --base <base> --head
+  <head>` passes for committed revisions.
+- [ ] The complete workflow was run on a real branch when changing an
+  implemented merge gate.
+- [ ] Newly proposed but unimplemented checks remain labeled **Planned / not
+  merge-blocking**.
 
-- [ ] **No widget access from worker threads** — all updates via queued signals (Specs/02).
-- [ ] **All user-visible strings wrapped in `tr(...)`**.
-- [ ] **Keyboard shortcuts present** for new actions (Specs/02 §8).
-- [ ] **Accessible name set** on new widgets (`accessibleName`).
-- [ ] **Manual smoke test**: I opened the app, navigated to my changed area, exercised the new flow, and nothing crashes or visibly misbehaves.
+## Verified commands currently available
 
-## Data layer / DuckDB (any change in `Src/Backend/Data/`)
+Use the applicable commands from the checked-out repository:
 
-- [ ] **Read-only access only** to `MarketData.duckdb` — no writes from C++.
-- [ ] **Schema discovery still works** for older DBs missing optional provenance columns (Specs/04 §3.1).
-- [ ] **Multi-schema disambiguation handled** for symbols with rows in more than one `schemaName`.
-- [ ] **Streaming preserved** — no `LIMIT 9999999` shortcuts that materialize everything.
+```bash
+cmake --preset qt-dev -DBTE_BUILD_TESTS=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+cmake --build --preset qt-dev --parallel
+ctest --preset qt-dev --no-tests=error
+```
 
-## Strategy / engine (any change in `Src/Backend/Strategy/` or `Src/Backend/Engine/`)
+The sanitizer preset also exists for applicable local C++ work:
 
-- [ ] **Both rule mode and Lua mode** still produce identical trades for the reference `sma-cross-aapl` strategy (Specs/05 §8).
-- [ ] **Determinism fixture refreshed** if engine semantics intentionally change; PR explains why.
-- [ ] **`onInit → onBar* → onShutdown` contract preserved** (Liskov).
+```bash
+cmake --preset dev-sanitize
+cmake --build --preset dev-sanitize --parallel
+ctest --preset dev-sanitize --no-tests=error
+```
 
-## Plugin or SDK change (any change in `Src/Backend/Strategy/Include/Bte/Plugin/` or `Src/Plugins/`)
+Sanitizers are not currently a merge-blocking workflow job. See
+[`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) for the exact implemented
+and planned enforcement status.
 
-- [ ] **`BTE_PLUGIN_ABI_MAJOR` bumped** if the change is a breaking ABI change.
-- [ ] **Sample plugin still builds** in CI on all three OSes.
-- [ ] **Trust prompt still fires** on first load of an unknown hash.
+## Release changes
 
-## Docs (any spec, ADR, README, or skill change)
+- [ ] Version and user-visible release metadata are consistent.
+- [ ] [`Governance/CHANGELOG.md`](Governance/CHANGELOG.md) is updated.
+- [ ] Packaging and installation were verified on every declared release
+  platform, or an unsupported platform is clearly excluded.
+- [ ] Third-party package versions, hashes, licenses, and the release SBOM are
+  recorded.
+- [ ] Market-data redistribution rights and the verified split manifest are
+  present before a public release containing project-managed data.
 
-- [ ] **Cross-references updated**: if I renumbered a section, every doc that links to it is fixed.
-- [ ] **Examples still parse**: any code in code fences is plausible; if it's a config (JSON, YAML), it parses.
-- [ ] **No broken links**: relative paths resolve, anchors exist.
-- [ ] **Index updated**: `Docs/Specs/README.md`, `Docs/Decisions/README.md`, etc.
+## When an item cannot be completed
 
-## CI / tooling (any change in `.github/`, `CMake/`, `Tools/`, `vcpkg.json`, `requirements.txt`)
-
-- [ ] **One platform at a time**: I ran the full PR pipeline at least once on a real branch (or via `gh workflow run`).
-- [ ] **Full-tree standards clean**: `Tools/CheckProjectStandards.py --full-tree` reports zero violations for the commit.
-- [ ] **Path layout clean**: project-owned path components use PascalCase and every unit suite is under `Tests/Unit/<Module>/`.
-- [ ] **Cache keys updated** if dependency versions changed.
-- [ ] **Backwards compatible**: old contributor branches don't suddenly fail to configure.
-
-## Release (a release-cutting PR)
-
-- [ ] **`Docs/Governance/CHANGELOG.md`** updated with the new version section.
-- [ ] **Version number** bumped consistently in CMake, `version.h`, and any user-visible "About" string.
-- [ ] **All ADRs touched in this version reference the version**.
-- [ ] **Release manifest** template fields filled (Specs/09 §4).
-- [ ] **Plugin SDK ABI version** updated if applicable.
-
----
-
-## When you can't tick everything
-
-Three legitimate paths forward:
-
-1. **Narrow scope**: split the PR. Land what's done; leave the rest for a follow-up PR.
-2. **Mark N/A with reason**: e.g. "N/A — change is docs-only, no tests required."
-3. **Ask in PR description**: "I couldn't get the TSan job to run locally on macOS arm64; please verify on Linux." A reviewer can take it from there.
-
-What's **not** legitimate: ticking a box you didn't actually verify, or quietly skipping a section. The point of this list is the conversation you have with yourself before claiming done. Skipping that conversation defeats the purpose.
-
----
-
-## Why this matters
-
-If you ship a PR where this list is genuinely true, the change works, fits the system, has a clear maintenance story, and won't surprise anyone in a month. If you ship before the list is true, every reviewer becomes the safety net — which doesn't scale, even with four to eight people.
+Narrow or split the work, record a genuine blocker, or ask for help. Do not
+weaken a requirement, disable a merge gate, or describe planned work as done.

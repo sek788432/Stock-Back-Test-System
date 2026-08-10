@@ -1,5 +1,7 @@
 # K-Line Replay Roadmap
 
+> **Status:** Historical planning aid, not a behavioral specification or implementation-status source. Use `Specs/07EngineReplayPnL.md` and `Specs/11StockScreenerKLineProduct.md` for current accepted behavior.
+
 This document tracks the implementation plan for Zoe's K-line replay ownership area.
 It is a planning map for GitHub issues, not a replacement for the product specs.
 
@@ -10,7 +12,12 @@ Authoritative specs:
 - `Docs/Specs/07EngineReplayPnL.md`
 - `Docs/Specs/11StockScreenerKLineProduct.md`
 
-Current repository state: `main` has backend core and data-fetcher code, but no Qt frontend, data read layer, or replay engine implementation yet.
+Current repository state: CSV-backed data loading, bar-step replay, replay-clock
+controls, Qt candlestick/volume presentation, and legacy JSON replay summaries
+are implemented. Strategy execution, orders/fills, portfolio accounting, managed
+Release Snapshots, and `.bteresult` remain planned. See the status table in
+`Docs/Specs/11StockScreenerKLineProduct.md` rather than inferring delivery
+status from the historical phases below.
 
 ## Product Contract
 
@@ -25,7 +32,7 @@ The minimum user-facing contract is:
 - chart output: candlesticks plus a volume pane
 - playback: step, play, pause, speed multiplier, and max-speed mode
 - state output: current bar, bar index, total bars, replay state, and visible chart window
-- later result output: portfolio strip, buy/sell markers, trade log, metrics, and saved result snapshots
+- later result output: portfolio strip, buy/sell markers, trade log, metrics, and saved Backtest Results
 
 The Qt implementation follows `Docs/Specs/02FrontendQt.md`: Qt 6 Widgets,
 Qt Charts for candles, an `IChartView` abstraction, and view-models that keep the
@@ -38,13 +45,17 @@ same input bars and engine config.
 
 ## Phase 1 - K-Line Replay MVP
 
+> **Current disposition:** Implemented baseline. The shipped behavior is the
+> bar-only replay described by Specs 07 and 11; it is not a trading Backtest.
+
 Goal: deliver a visible, testable replay loop that can read fixture/CSV bars, step or play through them, and render K-line candles in the Qt UI. Backend integration may use fake or fixture-backed components until production data and strategy execution are ready.
 
 ### Phase 1 Required Behavior
 
 Frontend:
 
-- Create a Replay tab under the future Qt app shell.
+- Create a Replay tab under the Qt app shell (historical task wording; the
+  baseline tab is now implemented).
 - Show controls for symbol, schema/timeframe, start date, end date, initial capital, step, play, pause, and speed.
 - Render candlesticks from fixture or CSV bars through `IChartView`.
 - Keep the UI responsive while replay advances.
@@ -91,24 +102,33 @@ Phase 1 demo target:
 
 ## Phase 2 - Production Data And Replay Results
 
-Goal: connect replay to production-style data and persist completed run results for later comparison. File-system result snapshots are separate from in-memory progress snapshots used by the UI.
+> **Current disposition:** Superseded target. ADR 0011 replaced direct runtime
+> DuckDB access and generic replay-result snapshots with immutable Release
+> Snapshots and transactional `.bteresult` Backtest Results. The issue links are
+> retained as historical context, not accepted implementation instructions.
+
+Goal: connect replay to production-style data and persist completed Backtest
+Results for later comparison. Durable Backtest Results are separate from
+in-memory progress snapshots used by the UI.
 
 ### Phase 2 Required Behavior
 
 Data:
 
-- Open `StockData/MarketData.duckdb` read-only from C++.
-- Discover symbols and schemas from the data source.
-- Open streams filtered by symbol, schema, and range.
-- Preserve the project invariant that the C++ app never writes the DuckDB file.
+- Build an immutable, versioned Release Snapshot from tracked
+  `StockData/Extracted` inputs outside the application runtime.
+- Discover symbols and supported timeframes from its validated manifest.
+- Open bounded streams filtered by snapshot, universe, timeframe, and range.
+- Keep DuckDB developer-only; the release application neither reads nor writes
+  `StockData/MarketData.duckdb`.
 
 Replay results:
 
-- Persist completed replay/backtest results to the file system.
-- Treat persisted result snapshots as durable artifacts for comparison, not as
-  transient UI progress messages.
-- Store enough metadata to prove what data, strategy, and engine config produced
-  the result.
+- Persist each run as a transactional SQLite `.bteresult` Backtest Result.
+- Treat the Backtest Result as a durable artifact distinct from transient UI
+  progress snapshots.
+- Persist canonical events, configuration, strategy/runtime identities, and
+  exact content-addressed Data Segment references.
 
 Portfolio and trades:
 
@@ -117,12 +137,12 @@ Portfolio and trades:
 
 | Issue | Type | Task | Outcome |
 | --- | --- | --- | --- |
-| [#11](https://github.com/sek788432/Stock-Back-Test-System/issues/11) | BE | Read-only DuckDB `DataSource` | Replay can read real OHLCV rows from `StockData/MarketData.duckdb` without writing to it. |
-| [#19](https://github.com/sek788432/Stock-Back-Test-System/issues/19) | BE | Persist replay result snapshots | Completed runs are saved to the file system for future strategy comparison. |
+| [#11](https://github.com/sek788432/Stock-Back-Test-System/issues/11) | BE | Historical read-only DuckDB `DataSource` | **Superseded by ADR 0011:** replace with an immutable Release Snapshot reader. |
+| [#19](https://github.com/sek788432/Stock-Back-Test-System/issues/19) | BE | Persist replay results | Re-scope to transactional `.bteresult` output and canonical hash validation. |
 | [#12](https://github.com/sek788432/Stock-Back-Test-System/issues/12) | BE | Portfolio snapshots and trade markers | Replay can emit cash, position, equity, PnL, and buy/sell marker data. |
 | [#13](https://github.com/sek788432/Stock-Back-Test-System/issues/13) | FE | Portfolio strip and trade log | Replay UI displays portfolio state, trade rows, and chart markers. |
 
-Persisted result snapshots should include enough metadata to compare runs later:
+Backtest Results include enough canonical identity to compare runs later:
 
 - symbol
 - schema name / timeframe
@@ -134,8 +154,10 @@ Persisted result snapshots should include enough metadata to compare runs later:
 - equity curve
 - trade log when available
 - metrics when available
-- generated timestamp
-- data snapshot or data version metadata when available
+- non-functional creation timestamp
+- required Release Snapshot, Data Segment, calendar, and split-manifest hashes
+- result-schema, engine, strategy API, runtime, and numeric-policy versions
+- `canonicalResultHash`
 
 Suggested persistence location:
 
@@ -143,17 +165,19 @@ Suggested persistence location:
 - `<userData>/sessions/` if implementation chooses to align with the existing
   session persistence path from `Docs/Specs/02FrontendQt.md`.
 
-The implementation should pick one path in the issue or PR and keep the file
-format stable enough for Phase 3 to load.
+The implementation must use the OS-appropriate application data directory and
+the versioned `.bteresult` contract in Spec 07. It must not invent a second
+session/result format in an issue or PR.
 
 ## Phase 3 - Strategy Comparison
 
-Goal: load saved result snapshots and compare strategies without requiring every run to be re-executed immediately.
+Goal: load saved Backtest Results and compare strategies without requiring every run to be re-executed immediately.
 
 ### Phase 3 Required Behavior
 
-- List saved result snapshots from the chosen persistence directory.
-- Validate snapshots before showing them.
+- List saved Backtest Results from the application data directory.
+- Validate result schema, canonical hash, and referenced data/runtime identities
+  before showing them.
 - Let the user select at least two saved runs.
 - Display key metrics side by side.
 - Optionally overlay equity curves when curve data is present.
@@ -170,7 +194,7 @@ Minimum comparison fields:
 
 | Issue | Type | Task | Outcome |
 | --- | --- | --- | --- |
-| [#20](https://github.com/sek788432/Stock-Back-Test-System/issues/20) | FE + BE | Strategy comparison view | Users can compare saved snapshots by return, drawdown, win rate, trade count, and final equity. |
+| [#20](https://github.com/sek788432/Stock-Back-Test-System/issues/20) | FE + BE | Strategy comparison view | Users can compare validated completed Backtest Results by return, drawdown, win rate, trade count, and final equity. |
 
 ## Dependency Order
 
@@ -180,14 +204,15 @@ Recommended order for implementation:
 2. `#4`, `#5`, `#6`, and `#18` create the backend replay contract needed by `#9`.
 3. `#9` connects the frontend controls and chart to backend replay snapshots.
 4. `#10` locks in deterministic behavior before production data is introduced.
-5. `#11` replaces fixture/CSV data with read-only DuckDB data.
-6. `#19` persists completed results for comparison.
+5. Replace the historical `#11` scope with immutable Release Snapshot build and
+   reader work from Specs 04 and 07.
+6. Re-scope `#19` to transactional `.bteresult` persistence and validation.
 7. `#12` and `#13` add portfolio, markers, and trade log.
-8. `#20` builds comparison UI on top of saved result snapshots.
+8. `#20` builds comparison UI on top of validated Backtest Results.
 
 ## Out Of Scope For Zoe Unless Reassigned
 
-Based on `Docs/Owner.md`, Zoe owns K-line replay front end first, then back end. The following are related product surfaces but should remain separate unless ownership changes:
+The current organizational guidance is in `Docs/TeamOwnershipAndProductPillars.md`. The following are related product surfaces but should remain separate unless ownership changes:
 
 - full Strategy editor implementation
 - full Backtest tab implementation

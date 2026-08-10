@@ -1,10 +1,10 @@
 # 0005 — Build, distribution, and launcher deployment decisions
 
-- **Status**: Accepted
+- **Status**: Superseded by 0011
 - **Date**: 2026-05-29
 - **Deciders**: founding team
 - **Supersedes**: —
-- **Superseded by**: —
+- **Superseded by**: 0011
 
 ## Context
 

@@ -1,9 +1,17 @@
 # Spec A — Screener Engine
 
+> **Status:** Non-normative proposal. Interfaces, SQL, defaults, and behavior below are not implemented or accepted. Promote reconciled behavior into the canonical specs before coding.
+
+> **Canonical constraints:** A promoted screener is a read-only computation over
+> an immutable Release Snapshot and returns ranked symbols, never orders or
+> portfolio mutations. Direct DuckDB/application-database interfaces, file
+> layouts, type names, and SQL below are historical sketches. Reconcile them
+> with Specs 01, 03–06, and 11 before implementation.
+
 **Part of:** Stock Screener sub-specs
 **UI reference:** [`ScreenerUiOverview.md`](./ScreenerUiOverview.md) §A1–A6
 **DB schema:** [`SpecCDatabase.md`](./SpecCDatabase.md)
-**Parent product spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md) §2
+**Parent product spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md) §4
 **Coding conventions:** [`03BackendCore.md`](../03BackendCore.md) §1
 **Referenced by:** `SpecBValuationEngine.md`, `SpecDNlPythonRuntime.md`
 
@@ -381,7 +389,7 @@ namespace bte::screener {
 
 class DuckDbFundamentalsRepository final : public IFundamentalsRepository {
 public:
-    // Opens MarketData.duckdb in read-only mode (Spec 04 hard rule).
+    // Historical prototype only: direct runtime DuckDB access is superseded.
     // Returns error if the file is missing, locked, or schema mismatches.
     static core::Result<std::unique_ptr<DuckDbFundamentalsRepository>>
         open(const std::filesystem::path& duckDbPath);

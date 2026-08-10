@@ -1,5 +1,14 @@
 # Spec C — Database Design
 
+> **Status:** Superseded, non-normative database proposal. It does not override the frozen managed snapshot or `.bteresult` design in canonical specs `04` and `07`.
+
+> **Canonical constraints:** DuckDB is developer-only ingestion/verification
+> storage. The release application reads immutable Release Snapshots, Backtest
+> execution writes one transactional `.bteresult` per run, and K-line Replay
+> reads that result plus retained Data Segments. The `app.db`, table schemas,
+> direct C++ DuckDB reads, and named-provider audit examples below are historical
+> prototype material, not implementation instructions.
+
 **Part of:** Stock Screener sub-specs
 **UI reference:** [`ScreenerUiOverview.md`](./ScreenerUiOverview.md)
 **Parent product spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md)
@@ -10,13 +19,13 @@
 
 ## 1. Purpose
 
-This spec defines every table the screener feature reads from or writes to.
-It is the **single source of truth** for column names, types, and constraints.
-All other specs reference this document — never define schema elsewhere.
+This document historically proposed every table the prototype would read or
+write. It is not a source of truth for current column names, types, storage, or
+constraints; accepted schemas must be defined by the owning canonical spec.
 
 ---
 
-## 2. Storage Architecture
+## 2. Historical Storage Architecture (Superseded)
 
 Two completely separate databases with separate owners:
 
@@ -53,7 +62,7 @@ Two completely separate databases with separate owners:
 
 | Question | Answer |
 |---|---|
-| Why not put everything in DuckDB? | Spec 04: C++ is read-only on DuckDB. The app must write templates, results, and audit logs. |
+| Why not put everything in DuckDB? | Historical rationale only. Current Spec 04 removes DuckDB from the release runtime, and Spec 07 owns Backtest Result persistence. |
 | Why not put everything in SQLite? | Market data is owned by Python pipeline; mixing ownership causes write conflicts and upgrade pain. |
 | Why SQLite for app.db? | Qt ships `QSqlDatabase` with a built-in SQLite driver — zero extra dependencies. |
 
@@ -1008,7 +1017,7 @@ Both rows stay forever. Deletion is not permitted (audit integrity).
              │
              │ Click Send
              ▼
-  C++ calls Claude API ─────────────── (network, no DB yet)
+  Historical named-provider call ──── (rejected by canonical Spec 12)
              │
              │ API responds with generated Python code
              ▼

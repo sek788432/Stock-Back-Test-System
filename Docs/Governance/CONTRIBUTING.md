@@ -14,11 +14,15 @@ If you're a **human contributor**, read this file and [`../Onboarding.md`](../On
 2. Branch from `main`: `feature/<short-name>`, `fix/<short-name>`, etc.
 3. Make small, focused commits with [Conventional Commits](https://www.conventionalcommits.org/) messages.
 4. For non-trivial changes: open an [ADR](../Decisions/) first.
-5. Write or update unit tests for every public symbol you touch (`Docs/Specs/10`).
-6. Run local gates: `clang-format`, `clang-tidy`, `ctest --preset dev`.
+5. Add positive, negative, and boundary unit tests for every affected public
+   behavior; bug fixes and behavior changes also need regression tests
+   ([`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md)).
+6. Run the applicable verified local commands from
+   [`../DefinitionOfDone.md`](../DefinitionOfDone.md).
 7. Open a PR using the template; fill every section.
 8. Confirm [`../DefinitionOfDone.md`](../DefinitionOfDone.md) passes.
-9. Wait for CI green + 1 review approval. Auto-merge takes it from there.
+9. Wait for the required CI and reviews configured in GitHub. Repository files
+   do not prove the current branch-protection or auto-merge settings (`Specs/10`).
 
 ---
 
@@ -40,7 +44,9 @@ If you're a **human contributor**, read this file and [`../Onboarding.md`](../On
 
 ## Branching and commits
 
-- `main` is always green and shippable. Direct pushes are blocked.
+- Keep `main` green. Public release remains blocked by the explicit data and
+  packaging prerequisites in the specs; branch-protection and direct-push
+  settings are external and must be checked in GitHub.
 - Feature branches are short-lived (target: < 5 days).
 - Rebase your branch on `main` before requesting review if it lags by more than a few days.
 - We squash-merge. Your PR title becomes the squash commit message.
@@ -71,33 +77,41 @@ Verified determinism fixture unchanged.
 
 ## Code style
 
-The two binding sources are:
+The binding sources are:
 
-1. The five repository-specific C++ skills in [`../../.agents/skills/`](../../.agents/skills/README.md): modern C++, thread safety, performance, OOP/design, static analysis.
-2. The repo's `.clang-format` and `.clang-tidy` (authoritative for any conflict).
+1. The repository hard rules in [`AGENTS.md`](AGENTS.md).
+2. The repository-specific C++ skills in [`../../.agents/skills/`](../../.agents/skills/README.md).
+
+No `.clang-format` or `.clang-tidy` configuration is currently checked in, and
+format/tidy enforcement is not a merge-blocking workflow job (`Specs/10`).
 
 Naming (recap from `cpp-modern-style` and [`../Specs/03BackendCore.md`](../Specs/03BackendCore.md) §1):
 - Variables / methods / namespaces: `lowerCamelCase`.
 - Types: `UpperCamelCase`.
 - Private members: trailing underscore.
-- Project-owned file stems: **PascalCase** (e.g. `Bar.h`, `ReplayPlan.md`).
+- New C++ file stems: **UpperCamelCase** (e.g. `Bar.h`, `Bar.cpp`).
 - C++ unit test files: **`UnitTest_<Thing>.cpp`** (e.g. `UnitTest_Bar.cpp`).
-- Project-owned directories: **PascalCase** for repo layout and code roots (e.g. `Src/`, `Docs/`, `Docs/Governance/`, `Tests/`; CMake binary dir `Output/` per `CMakePresets.json`).
-- Exact external-tool conventions, numbered ADR slugs, entrypoints, unit-test names, and domain-data identifiers are the documented exceptions (ADR 0010).
-- Unit-test suites live under `Tests/Unit/<Module>/`; shared fixtures remain under `Tests/Fixtures/`.
+- **Directories (new top-level or module folders):** **UpperCamelCase** for repo layout and code roots (e.g. `Src/`, `Docs/`, `Docs/Governance/`, `Tests/`; CMake binary dir `Output/` per `CMakePresets.json`).
+- **`*.md`:** no enforced filename pattern.
 
 ---
 
-## Testing rules (recap from `Docs/Specs/10`)
+## Testing rules
 
 A PR must:
 
-- Add a test for every new public symbol.
-- Achieve ≥ 90% diff line coverage and ≥ 80% diff branch coverage.
-- Pass the anti-cheat audit (no trivial / tautological / empty / disabled-without-issue tests).
-- Achieve ≥ 70% mutation kill-rate on changed files.
+- Add positive, negative, and meaningful boundary unit tests for every affected
+  public behavior.
+- Add a regression test for every bug fix and intentional public-behavior
+  change.
+- Exercise real production behavior with meaningful assertions; no trivial,
+  tautological, empty, silently disabled, or mock-only substitute tests.
+- Add contract/integration coverage for IPC, snapshot generation, and
+  `.bteresult` changes.
 
-If a test is genuinely a smoke test, mark it: `// BTE-AUDIT: smoke`. If a test must be skipped, mark it: `// BTE-AUDIT: skip-justified ISSUE-NNN`.
+Coverage, semantic anti-cheat, public-behavior parity, and mutation enforcement
+are planned but are not current merge gates. See
+[`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md) for exact status.
 
 ---
 
@@ -143,7 +157,10 @@ If you accidentally commit a secret: rotate it immediately, then `git filter-rep
 
 ## License
 
-See [`LICENSE`](LICENSE). This repo is private; the team picks the license collectively. Unless and until that decision is made, treat all code as "all rights reserved" within the team.
+Project source is licensed under Apache-2.0. See the canonical
+[`../../LICENSE`](../../LICENSE). Third-party dependencies and market data keep
+their own terms; the project source license does not grant redistribution rights
+for Databento-derived data.
 
 ---
 

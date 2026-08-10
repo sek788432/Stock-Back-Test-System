@@ -14,8 +14,8 @@ In this order:
 2. [`Governance/AGENTS.md`](Governance/AGENTS.md) — how to behave (applies to humans too).
 3. [`Governance/CONTRIBUTING.md`](Governance/CONTRIBUTING.md) — process.
 4. [`Specs/00Overview.md`](Specs/00Overview.md) and [`Specs/README.md`](Specs/README.md) — system design.
-5. [`TeamOwnershipAndProductPillars.md`](TeamOwnershipAndProductPillars.md) — seven topic owners and the three product pillars (organizational; optional on day one).
-6. `Docs/DefinitionOfDone.md` — what "done" means.
+5. [`TeamOwnershipAndProductPillars.md`](TeamOwnershipAndProductPillars.md) — topic owners and product pillars (organizational; optional on day one).
+6. [`DefinitionOfDone.md`](DefinitionOfDone.md) — what "done" means.
 
 If you only have time to read three, read [`Governance/AGENTS.md`](Governance/AGENTS.md), [`Specs/00Overview.md`](Specs/00Overview.md), and [`DefinitionOfDone.md`](DefinitionOfDone.md).
 
@@ -24,7 +24,6 @@ If you only have time to read three, read [`Governance/AGENTS.md`](Governance/AG
 Ask the repo lead for:
 
 - Repository write access (GitHub).
-- Membership in the relevant team in `.github/CODEOWNERS`.
 - Sync-chat invitation.
 - A Databento API key (only if you'll work on the data pipeline; otherwise the existing CSV snapshots are enough).
 
@@ -44,7 +43,7 @@ xcode-select --install
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Build tools
-brew install cmake ninja git pre-commit
+brew install cmake ninja git
 brew install --cask qt    # OR install Qt 6.8 LTS via the Qt online installer
 brew install python@3.11
 ```
@@ -54,7 +53,7 @@ brew install python@3.11
 ```bash
 # Ubuntu / Debian
 sudo apt update
-sudo apt install -y build-essential cmake ninja-build git pre-commit \
+sudo apt install -y build-essential cmake ninja-build git \
                     clang clang-tidy clang-format llvm \
                     qt6-base-dev qt6-charts-dev \
                     python3.11 python3.11-venv pipx
@@ -80,20 +79,18 @@ Use a "Developer PowerShell for VS 2022" terminal for builds so the MSVC toolcha
 git clone <repo-url>
 cd Stock-Back-Test-System
 
-# Submodules (vcpkg, etc., once C++ source lands)
-git submodule update --init
-
-# Pre-commit hooks (run locally on every git push)
-pre-commit install --hook-type pre-push --hook-type pre-commit
-
 # Python pipeline (already in this repo)
 python3.11 -m venv .venv
 source .venv/bin/activate                    # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r DataFetcher/requirements.txt
 
 # C++ build (see Docs/BUILD.md + Docs/Specs/09)
-./RunTest.sh                                 # configure + build + unit tests (same as below)
-# or manually:
+./RunTest.sh                                 # default non-Qt backend tests
+# or manually, matching the current CI Qt build:
+cmake --preset qt-dev -DBTE_BUILD_TESTS=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+cmake --build --preset qt-dev --parallel
+ctest --preset qt-dev --no-tests=error
+# smaller non-Qt development build:
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev                           # unit tests
@@ -102,14 +99,14 @@ ctest --preset dev                           # unit tests
 
 ### Verify
 
-If `ctest --preset dev` passes, your environment is good. For ASan/UBSan, configure and run `dev-sanitize` (see [`Docs/BUILD.md`](BUILD.md)). Run the existing Python pipeline once to verify it too:
+If `ctest --preset dev` passes, your environment is good. For ASan/UBSan, configure and run `dev-sanitize` when that preset is available (see [`BUILD.md`](BUILD.md)). Running the data pipeline is optional and requires its own credentials:
 
 ```bash
 # (Optional) collect data into DuckDB — needs Databento API key
-./DataFetcher/collectData.sh
+./DataFetcher/CollectData.sh
 
 # Or just extract CSVs from an existing DuckDB
-./DataFetcher/extractFromDB.sh
+./DataFetcher/ExtractFromDB.sh
 ```
 
 If anything in this section fails, fix the docs as part of your first PR — that's everyone's first contribution.
@@ -123,8 +120,9 @@ Pick a task from the issue tracker labeled `good-first-issue`. If none, the lead
 Good first PRs (by category):
 
 - **Docs**: clarify a section in a spec, fix a typo, expand an example.
-- **Tests**: add tests for a public symbol that isn't yet covered. Run `Tools/BteSymbolAudit.py` to find candidates.
-- **Tooling**: add a missing helper script, improve `pre-commit-config.yaml`.
+- **Tests**: add positive, negative, and boundary coverage for an existing public behavior whose current tests are incomplete. Find a candidate by comparing a relevant public API with its registered tests.
+- **Tooling**: add tests for or improve an existing checked-in helper such as
+  `Tools/CheckProjectStandards.py`.
 
 For your first PR, **prefer tests or docs** over production code. It's a low-risk way to learn the review process, the CI gates, and the team's review style.
 
@@ -162,19 +160,19 @@ If any are blocked, raise it in the next sync.
 | Symptom                                         | Likely cause                               | Fix                                                                              |
 | ----------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
 | `cmake --preset dev` not found                  | Old CMake                                  | Need 3.24+; `brew upgrade cmake` / install fresh                                 |
-| Sanitizer reports leak in third-party lib       | Suppression missing                        | Add narrow entry to `Tests/sanitizer-suppressions.txt`, get CODEOWNER review     |
-| `clang-tidy` flagging hundreds of legacy issues | Running on whole repo                      | Use `Tools/RunClangTidyDiff.sh` for changed files only                        |
+| Sanitizer reports leak in third-party lib       | Suppression missing                        | Add a narrow entry to `Tests/sanitizer-suppressions.txt` and get maintainer review |
+| `clang-tidy` flagging many legacy issues        | Running an optional analyzer on whole repo | Limit manual analysis to touched targets and report the exact command used       |
 | Qt not found by CMake                           | Qt install path not on `CMAKE_PREFIX_PATH` | Set `CMAKE_PREFIX_PATH` env var or `-DCMAKE_PREFIX_PATH=...`                     |
-| Python pipeline can't find DuckDB               | Missing dep                                | `pip install -r requirements.txt` inside `.venv`                                 |
-| `pre-commit` slow on huge diffs                 | Auditing everything                        | It only runs on changed files; if you rebased, expect more work briefly          |
-| Tests pass locally, fail in CI on Windows       | Path / line-ending / case-sensitivity      | Use forward slashes in code paths; check `.gitattributes` for `text=auto eol=lf` |
+| Python pipeline can't find DuckDB               | Missing dep                                | `pip install -r DataFetcher/requirements.txt` inside `.venv`                     |
+| First configure cannot fetch GoogleTest         | Network unavailable                         | Restore network access or use an already populated FetchContent cache            |
+| Tests pass locally, fail on another OS          | Path / line-ending / case-sensitivity       | Use `std::filesystem::path`; check `.gitattributes` for line-ending policy        |
 | "Permission denied" running shell scripts       | Missing exec bit                           | `chmod +x DataFetcher/*.sh` (and check it's preserved in your commit)            |
 
 ---
 
 ## Who to ask
 
-- **Build / CI** issues → repo lead (named in `.github/CODEOWNERS`).
+- **Build / CI** issues → open an issue or PR discussion and tag the repo maintainer.
 - **Spec ambiguity** → comment on the spec file in a PR or issue. Don't DM — the answer should be public.
 - **Anything urgent** → sync chat.
 

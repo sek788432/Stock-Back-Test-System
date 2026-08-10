@@ -5,6 +5,13 @@
 - **Deciders**: founding team
 - **Supersedes**: —
 - **Superseded by**: —
+- **Clarified by**: 0011 (DuckDB is developer-only ingestion storage; the
+  release application reads an immutable Release Snapshot)
+
+> **Current interpretation:** The C++20/Qt desktop-stack decision remains
+> accepted. ADR 0011 replaces the historical direct-DuckDB integration
+> constraint with the immutable release-data contract. The original constraint
+> below is retained as decision history.
 
 ## Context
 

@@ -6,6 +6,8 @@
 - **Supersedes**: —
 - **Superseded by**: —
 
+> **Implementation status:** This ADR records an accepted target, not current enforcement. The named semantic audit, symbol-parity, coverage, and mutation tools below are not implemented or merge-blocking. [`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md) is the authority for current gate status.
+
 ## Context
 
 A "tests passed" green check is necessary but not sufficient evidence that a change is correct. Common failure modes:

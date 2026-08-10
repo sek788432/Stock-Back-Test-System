@@ -1,51 +1,66 @@
-# Specs — Stock Back-Test System (C++ Desktop App)
+# Specifications
 
-This folder is the design source of truth for the C++/Qt desktop backtester being built on top of the existing Python data pipeline ([`../../DataFetcher/`](../../DataFetcher/README.md), `../../StockData/`).
+These files define the intended C++/Qt desktop backtester. Read `00` first, then the owning subsystem spec. A status label in each document distinguishes implemented behavior from accepted design and future work.
 
-Read **`00Overview.md` first**. It sets scope, draws the architecture diagram, and tells you which detailed spec covers what. Each subsequent file goes one level deeper on a single subsystem.
+## Canonical reading order
 
-**Team ownership** (seven topic owners × three product pillars) is described in [`../TeamOwnershipAndProductPillars.md`](../TeamOwnershipAndProductPillars.md) — organizational only; specs remain authoritative for behavior.
-
-| File | One-line summary |
+| Spec | Scope |
 |---|---|
-| [`00Overview.md`](00Overview.md) | Purpose, end-to-end flow, repo layout, NFRs |
-| [`01Architecture.md`](01Architecture.md) | Module dependency graph, threading, error model, build presets |
-| [`02FrontendQt.md`](02FrontendQt.md) | Qt UI, charts (incl. K-line replay), screener, MVVM |
-| [`03BackendCore.md`](03BackendCore.md) | `Bar`, `Order`, `Trade`, `Portfolio`, `Result<T,Error>`, naming |
-| [`04DataLayer.md`](04DataLayer.md) | DuckDB + CSV adapters, `BarStream`, prefetch, caching |
-| [`05StrategyAuthoring.md`](05StrategyAuthoring.md) | Rule DSL (JSON) + Lua sandbox + **Python / NL roadmap**, all target `IStrategy` |
-| [`06Indicators.md`](06Indicators.md) | Streaming TA library, full Phase-1 catalog |
-| [`07EngineReplayPnL.md`](07EngineReplayPnL.md) | Backtest loop, broker simulator, replay clock, metrics |
-| [`08PluginSystem.md`](08PluginSystem.md) | Native C++ plugin ABI + Lua, SDK packaging, trust model |
-| [`09BuildDistributionLauncher.md`](09BuildDistributionLauncher.md) | CMake, vcpkg, CI matrix, per-OS packaging, **Launcher** |
-| [`10CiDevFlow.md`](10CiDevFlow.md) | PR gates, mandatory tests for every symbol, **anti-cheat audit**, mutation testing |
-| [`11StockScreenerKLineProduct.md`](11StockScreenerKLineProduct.md) | Product contract: **K-line replay**, **three strategy input modes**, **stock screener** (same modes + AND/OR) |
-| [`12AiActionRouter.md`](12AiActionRouter.md) | CLI skills + Chrome extension → action JSON → Qt parser. Realises Spec 11 §3 NL mode without LLM credentials. |
+| [`00Overview.md`](00Overview.md) | Product scope and end-to-end flow |
+| [`01Architecture.md`](01Architecture.md) | Module boundaries, dependency direction, threading, and errors |
+| [`02FrontendQt.md`](02FrontendQt.md) | Qt UI, charts, replay, and view models |
+| [`03BackendCore.md`](03BackendCore.md) | Core value types, fixed-point quantities, orders, and results |
+| [`04DataLayer.md`](04DataLayer.md) | Frozen managed snapshot, bars, calendar, splits, and identity |
+| [`05StrategyAuthoring.md`](05StrategyAuthoring.md) | Selectable Conditions and explicit Python strategy contract |
+| [`06Indicators.md`](06Indicators.md) | Deterministic streaming indicators |
+| [`07EngineReplayPnL.md`](07EngineReplayPnL.md) | C++ engine, fills, short selling, accounting, results, and replay |
+| [`08PluginSystem.md`](08PluginSystem.md) | Future native plugin boundary; not a V1 dependency |
+| [`09BuildDistributionLauncher.md`](09BuildDistributionLauncher.md) | Builds, supported releases, runtime/data packaging, and current gaps |
+| [`10CiDevFlow.md`](10CiDevFlow.md) | Actual and planned merge gates and public-behavior test policy |
+| [`11StockScreenerKLineProduct.md`](11StockScreenerKLineProduct.md) | User workflows for backtests, replay, strategy modes, and screening |
+| [`12AiActionRouter.md`](12AiActionRouter.md) | Future provider-neutral AI candidate import and acceptance boundary |
 
-## Decisions baked in
+The [`StockScreening/`](StockScreening/README.md) folder contains non-normative proposals and a UI prototype. It does not override `03`–`07`, `11`, or `12`.
 
-These were chosen up-front to keep the rest of the design simple:
+## Accepted foundations
 
-- **Qt 6 LTS, Widgets + Qt Charts** for the UI (`02` explains why over QCustomPlot or custom QPainter).
-- **Hybrid strategy authoring**: rule-based JSON for the form-driven editor, Lua 5.4 (sandboxed, via sol2) for advanced scripts. Both compile to one `IStrategy` interface (`05`). **Product UX** also targets **Python** and **natural-language → script** paths (`11`); binding Python to `IStrategy` is an implementation choice recorded in an ADR when implemented.
-- **DuckDB read-only** from C++; the existing Python pipeline keeps owning writes (`04`).
-- **Launcher app** for version management — users install once, then any number of app versions live side-by-side under `<userData>/versions/`. `active.json` selects the current one (`09`).
-- **Determinism is mandatory** for engine output across OSes and runs (`07`).
-- **Native plugins** are full-trust, but each load is hash-confirmed by the user (`08`).
-- **Naming**: `lowerCamelCase` for variables/methods, `UpperCamelCase` for types, and PascalCase for project-owned path components. Unit suites live under `Tests/Unit/<Module>/`; see ADR 0010 for conventional exceptions.
-- **CI is the merge gate, not the reviewer** — every public symbol must have a test, every test is checked against a defined "no-cheating" rulebook, and mutation testing forces tests to actually catch bugs (`10`).
+- The canonical backtest engine is project-owned C++, not Zipline, Backtrader, vn.py, or another framework.
+- Selectable Conditions become a typed plan executed by the C++ engine.
+- Explicit Python runs in a fresh trusted-local worker and communicates with C++ through control pipes plus read-only shared memory. It uses the same C++ execution/accounting engine.
+- V1 reads the frozen managed snapshot derived from `StockData/Extracted`; arbitrary user-data import and runtime providers are excluded.
+- Batch and Paced Backtest execution use the same project-owned C++ engine and
+  must produce identical canonical records for identical inputs.
+- K-line Replay presents a versioned Backtest Result plus its exact data
+  identity; it never reruns the Strategy, Python worker, or C++ engine.
+- Native plugins and AI import are planned seams, not implemented features.
+- Project source uses Apache-2.0; third-party code and market data retain their own terms.
+- Tests are required for every public behavior: positive, negative, and meaningful boundary cases. Bug fixes and behavior changes require regression tests.
 
-## What's intentionally not in here yet
+## C++ engine contract ownership
 
-- The **full** CMake/vcpkg/Qt tree from [`09`](09BuildDistributionLauncher.md). A minimal bootstrap (Core + tests) lives at repo root; see [`../BUILD.md`](../BUILD.md).
-- Full database migration story for breaking schema changes — Python pipeline owns that, and current schema is stable.
-- Live trading. The whole system is designed assuming historical bars only. Live feeds would extend the `BarStream` interface but are out of scope until backtest + replay land.
-- Cloud sync. Strategies and settings are local-only by design.
-- **Stock screener** wire-up to all data sources: `11` states the product contract; batch performance and universe sources may land incrementally (`04`).
+| Concern | Owning contract |
+|---|---|
+| Module ownership, processes, and seams | [`01Architecture.md`](01Architecture.md) |
+| Fixed-point values, errors, and run status | [`03BackendCore.md`](03BackendCore.md) |
+| Immutable market inputs, calendar, and splits | [`04DataLayer.md`](04DataLayer.md) |
+| Strategy commands and the Python worker seam | [`05StrategyAuthoring.md`](05StrategyAuthoring.md) |
+| Event order, fills, accounting, margin, metrics, scheduling, and `.bteresult` | [`07EngineReplayPnL.md`](07EngineReplayPnL.md) |
+| Backtest, Paced Backtest, and K-line Replay user workflows | [`11StockScreenerKLineProduct.md`](11StockScreenerKLineProduct.md) |
+| Determinism and required verification | [`10CiDevFlow.md`](10CiDevFlow.md) |
 
-## How to evolve these specs
+Overlapping documents summarize these concerns but do not redefine them.
 
-- One PR = one spec change. Comment trail lives on the PR.
-- Update `00Overview.md` if scope or flow changes; update the relevant detail spec for everything else.
-- Numbers (perf targets, defaults) are non-binding suggestions — adjust as we measure.
-- Anything in **`07`** that changes engine semantics needs a determinism-fixture refresh in CI.
+## Status language
+
+- **Implemented:** code and automated verification exist in the repository.
+- **Accepted design:** normative behavior for implementation, but not necessarily shipped.
+- **Planned / not implemented:** not available and not an active CI gate.
+- **Proposal / non-normative:** exploration only; do not implement without promotion into a canonical spec or ADR.
+
+## Change rules
+
+- Change the owning spec in the same PR as behavior.
+- Add or amend an ADR for architectural decisions and dependency changes.
+- Engine-semantic changes require deterministic fixture updates and regression tests.
+- Never describe a planned check as merge-blocking until the workflow actually enforces it.
+- Temporary investigations belong in ignored `Docs/Reviews/` and must be folded into canonical docs before merge.

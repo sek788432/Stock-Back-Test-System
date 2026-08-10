@@ -2,7 +2,7 @@
 
 How to review a PR in this repo. Same checklist for humans and AI reviewers.
 
-A good review is two passes: **what did the author intend, and does the diff achieve it without breaking other things?** The goals below help you stay on that track instead of getting lost in stylistic quibbles (those are clang-tidy's job).
+A good review is two passes: **what did the author intend, and does the diff achieve it without breaking other things?** Automated checks help, but the reviewer remains responsible for behavior, design, and status truth.
 
 ---
 
@@ -40,7 +40,7 @@ Goal: 5–10 minutes. Decide whether to dive in or send back for fixes.
 2. **CI green?** If red, why? "Pre-existing flaky test" gets a fresh CI run; new failure gets an "address before review" comment.
 3. **Scope clear?** One concern? Title accurate?
 4. **Does the change do what it says it does?** Skim the diff. Is the PR title a fair summary?
-5. **Are tests included?** New / changed public symbols → unit tests. If absent, request them before deeper review.
+5. **Are tests included?** Every affected public behavior needs positive, negative, and meaningful boundary tests. Bug fixes and behavior changes also need regression tests. If absent, request them before deeper review.
 
 If pass 1 fails, request fixes and stop. Don't review code that isn't ready.
 
@@ -55,13 +55,15 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] The logic does what the code says. Walk through edge cases mentally: empty inputs, one-element inputs, max-size inputs, concurrent inputs.
 - [ ] Off-by-ones, NaN, divide-by-zero, integer overflow handled where they can occur.
 - [ ] Error paths handled — no swallowed `Result<T>::error()`, no silent failure.
-- [ ] No look-ahead bias in trading code (Specs/07 §2.1 — fills happen on next bar's open, not current bar's close, by default).
+- [ ] No look-ahead bias in trading code (Specs/07 §4.1 — a new order cannot
+  fill on the observed slice; market orders fill at the next actual open).
 
 ### Tests
 
-- [ ] Every new public symbol has a test that names it.
+- [ ] Every affected public behavior has positive, negative, and meaningful boundary coverage, or a concrete explanation for a non-applicable category.
+- [ ] Every bug fix or intentional behavior change has a regression test that distinguishes old and new behavior.
 - [ ] Test names describe the **invariant** being checked, not the implementation (`testRsiWilderSmoothingMatchesReference` not `testRsi`).
-- [ ] No anti-cheat patterns (Specs/10 §5).
+- [ ] No anti-cheat patterns (Specs/10 §4).
 - [ ] Mentally apply mutation: "if I changed `+` to `-` here, would a test catch it?"
 - [ ] Fixtures are minimal — small enough to read, big enough to be interesting.
 
@@ -78,7 +80,7 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] No raw `new` / `delete`, no raw `mutex.lock()`.
 - [ ] All resources RAII.
 - [ ] Cross-thread comms via immutable snapshots or queued signals.
-- [ ] If TSan was warranted, did the author run it?
+- [ ] If concurrency changed, applicable local sanitizer evidence is present; TSan is not currently a repository CI gate.
 
 ### Performance
 
@@ -146,7 +148,9 @@ If you can't approve but don't want to block, request changes with an explanatio
 
 ## Common review traps to avoid
 
-- **Bikeshedding style** clang-format already enforces. If clang-tidy didn't catch it and `cpp-modern-style` doesn't ban it, it's not a real issue.
+- **Bikeshedding style.** Follow the repository hard rules and
+  `cpp-modern-style`; no format/tidy configuration is currently checked in and
+  those tools are not merge-blocking workflow jobs.
 - **Reviewing for "what I would have written"** instead of "is this a good solution to the problem". The author's solution might be better than yours.
 - **Approving fast** because CI is green. CI catches a lot, but not design and intent.
 - **Demanding rewrites** for small style preferences. Use `nit:` and move on.
@@ -159,8 +163,9 @@ If you can't approve but don't want to block, request changes with an explanatio
 If two reviewers leave conflicting `blocking:` comments, the author shouldn't have to mediate. Default protocol:
 
 1. Reviewers thread it out in the PR until they converge.
-2. If they can't, escalate to the file's CODEOWNER.
-3. If the CODEOWNER is one of them, escalate to the repo lead.
+2. If they can't, escalate to the topic owner listed in
+   [`TeamOwnershipAndProductPillars.md`](TeamOwnershipAndProductPillars.md).
+3. If the topic owner is one of them, escalate to the repo maintainer.
 4. Whatever the resolution, **write it down in an ADR** if the disagreement was about design (so future PRs don't re-litigate).
 
 ---
