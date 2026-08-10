@@ -1,12 +1,18 @@
 # 02 — Frontend (Qt)
 
-The Qt application: every screen the user sees, the chart engine for replay, and how the UI talks to the backend without ever blocking.
+> **Status:** Partially implemented. The current application contains Qt tab, chart, and replay scaffolding. Strategy authoring, complete backtest workflows, screening, plugins, and release-quality UX remain planned unless their owning spec says otherwise.
+
+This spec owns the Qt presentation interface: every screen the user sees, chart
+presentation, and how the UI communicates with backend modules without blocking
+or acquiring engine authority.
 
 ---
 
-## 1. Framework choice — Qt 6 LTS, Widgets + Qt Charts
+## 1. Framework choice — Qt 6, Widgets + Qt Charts
 
-We use **Qt 6 LTS (currently 6.8)** with the **Widgets** module for layout and **Qt Charts** for candlesticks and the equity curve.
+The checked-in CMake contract requires **Qt 6.8+** with **Widgets** and **Qt
+Charts**; the current CI workflow installs Qt 6.9.x. Version claims must follow
+those files rather than an unpinned "current LTS" label.
 
 ### Why Widgets, not QML?
 
@@ -62,29 +68,50 @@ A two-pane view:
 - **Left** — list of saved strategies (from `<userData>/strategies/`).
 - **Right** — editor for the selected strategy.
 
-Editor has **four visible modes** (three concrete artifact types):
+Editor has **three visible modes** (two concrete artifact types):
 
-1. **Built-in components (rule)** (default) — form-driven rows (indicator, filter, portfolio gate…) with **`ALL conditions` / `ANY condition`** logic matching `conditionLogic` in `05` §3. Generates `*.rule.json`.
-2. **Python** — code editor with highlighting, diagnostics debounce (`05` §5), **Validate** invoking `compilePython()`.
-3. **Natural language (AI)** — prompt + chat transcript panes; generated text **must not** auto-run. **Accept** copies into Python or rule mode for compilation (`05` §6, `11` §3).
-4. **Lua** (optional / advanced) — retained for compatibility and reference strategies until Python reaches parity — same patterns as today (`05` §4).
+1. **Selectable Conditions** (default) — form-driven rows for typed indicators,
+   filters, portfolio gates, sizing, and actions with flat **ALL / ANY** logic.
+   The saved artifact is the versioned typed plan owned by Spec 05, not generated
+   Python.
+2. **Python Script Strategy** — code editor with diagnostics and **Validate
+   Strategy**, using the contract in Spec 05 rather than a UI-specific compiler
+   interface.
+3. **AI candidate import** — provider-neutral preview/diff and explicit
+   acceptance. No candidate auto-runs, and V1 contains no direct provider chat
+   or credential flow (`12`). Acceptance creates an ordinary conditions or
+   Python artifact.
 
-Bottom of the editor has **Run Backtest** and **Open in Replay** buttons.
+The editor can create a Run Configuration and start a Backtest. **Open in
+Replay** is enabled only for an existing Backtest Result; it never executes the
+editor's current Strategy.
 
 ### 2.2 Backtest tab
 
 | Region | Content |
 |---|---|
-| Top toolbar | Symbol picker, date range, schema dropdown (read from DuckDB), commission/slippage settings, **Run** button. |
-| Center | Equity curve (`QLineSeries`) + benchmark (buy-and-hold) overlay. |
+| Top toolbar | Universe, range, timeframe, capital, costs, and Strategy from the Run Configuration; **Run** starts the default single active Backtest. |
+| Center | Equity curve (`QLineSeries`) and optional presentation-only buy-and-hold overlay; benchmark alpha/beta remains deferred. |
 | Right side panel | Summary metrics: total return, CAGR, Sharpe, max drawdown, win rate, # trades, exposure. |
 | Bottom | Sortable trade log table (`QTableView` + `QSortFilterProxyModel`). |
 
 **Cross-link.** A dedicated CTA (toolbar or footer button) SHOULD deep-link results into Replay so users can reconcile fills on the candlestick chart (`11` §1).
 
-### 2.3 Replay tab — K-line setup
+### 2.3 Replay tab — current baseline and target result playback
 
-Treat **Replay** as the **K-line (candlestick) playback surface** keyed by **`(symbol, timeframe/schema, inclusive date range, initial capital)`**, matching `11` §1 inputs. Playback chrome (speed presets, scrub, portfolio strip, trade markers) inherits `ReplaySessionVm`.
+The implemented baseline is a bar-only player keyed by symbol, timeframe/range,
+and placeholder initial capital. It has no Strategy, fills, or accounting.
+Hourly CSV and daily aggregation are the only truthful data paths; other
+displayed timeframe choices currently fall back to hourly data and are a known
+gap, not supported behavior.
+The current loader also turns a load failure into an empty bar collection; the
+typed failure behavior in §3 is planned and must land before empty data can be
+distinguished reliably from an error.
+
+The target **K-line Replay** opens a validated Backtest Result and its referenced
+Data Segments. It does not accept a new Strategy or Run Configuration and does
+not invoke Python or the C++ engine. Speed, scrub, portfolio, and marker controls
+present persisted records only.
 
 The headline UX. Layout:
 
@@ -110,131 +137,103 @@ The headline UX. Layout:
 ```
 
 Interactions:
-- **Speed control** — 1× = 1 bar / sec real-time; max = drain as fast as the engine can.
-- **Pause / Step** — `Space` to pause/resume, `→` to step one bar.
-- **Scrub bar** — drag to a moment in time; engine rebuilds portfolio state by replaying from start (we keep checkpoints every 1000 bars to make this fast — see `07`).
+- **Speed control** — 1× presents one persisted slice per second; max presents
+  records without intentional delay. It does not pace engine execution.
+- **Pause / Step** — `Space` pauses/resumes presentation; `→` presents the next
+  persisted slice.
+- **Scrub bar** — seek within validated persisted checkpoints/records and
+  referenced bars; seeking never reconstructs fills by rerunning the engine.
 - **Trade markers** — green up-triangle for buys, red down-triangle for sells, click to see fill details.
 - **Cursor inspector** — hover any candle to see OHLCV + active indicators in a side popup.
 - **Volume pane** — histogram under the candles, sharing the categorical axis window (`11` §1).
 
-Universe picker + predicate builder mirrors the strategy editor modalities (`11` §2):
+### 2.4 Screener tab
+
+The universe picker and predicate builder reuse accepted strategy-authoring
+concepts where their semantics match (`11` §4):
 
 | Region | Content |
 | --- | --- |
-| Top | Tabs: **Technical / Fundamental (when data exists) / Preset / Custom (Python) / AI (NL)** — exact availability depends on data pipeline staging. |
-| Builder | Reuses the same row model as rule mode for built-ins; separate Python editor for scripted scans; NL assistant identical to strategy flow. |
-| Logic | **Match ALL** vs **Match ANY** selector for built-in rows (maps to screener `conditionLogic`). |
+| Top | Technical and fundamental fields only when verified Release Snapshot metadata exists; Python and AI remain planned. |
+| Builder | Reuses typed Selectable Conditions where semantics match. Any future Python or AI path must follow Specs 05 and 12. |
+| Logic | **Match ALL** vs **Match ANY** selector for typed built-in rows (maps to canonical `all` / `any`). |
 | Actions | **Run Screener**, export (CSV/clipboard). |
 | Results | `QTableView` with rank, symbol, company, price, change %, market cap, sector — plus optional performance/sector summary views in later milestones. |
 
 ### 2.5 Plugins tab
 
-Read `<userData>/plugins/`, list each `.so` / `.dll` / `.dylib` with:
-- Plugin name, version, author (from `bteGetPluginManifest`)
-- Strategies and indicators it registered
-- Enable/disable toggle
-- "Open folder" button
+No Plugins tab is shipped in V1. If the future native-plugin system in Spec 08
+is implemented, the UI begins with explicit file selection, hash display, trust
+confirmation, ABI validation, and negotiated-capability display. It must not
+scan and execute arbitrary libraries automatically, advertise plugin Strategy
+execution, or invent a manifest interface before the ABI exists.
 
 ### 2.6 Logs tab
 
-Tails `<userData>/logs/stockBacktester.log` via `QFileSystemWatcher` + ring buffer in memory, color-coded by level.
+The planned Logs tab presents bounded structured application and Strategy logs
+from the application data directory. Its exact file/schema contract remains
+unimplemented and must not be treated as a current public interface.
 
 ---
 
-## 3. View-Model pattern
+## 3. View-model seam
 
-We use a **lightweight MVVM**:
-
-- **Model** — backend types (`Bar`, `Trade`, `BacktestResult`). Pure C++.
-- **ViewModel** — `Q_OBJECT` adapter living in `bteBindings`. Owns a backend object, exposes `Q_PROPERTY` and signals.
-- **View** — `QWidget` subclass. Subscribes to ViewModel signals. Never holds backend pointers.
-
-Example:
-
-```cpp
-namespace bte::bindings {
-
-class ReplaySessionVm : public QObject {
-    Q_OBJECT
-    Q_PROPERTY(double cash READ cash NOTIFY portfolioChanged)
-    Q_PROPERTY(double equity READ equity NOTIFY portfolioChanged)
-    Q_PROPERTY(int barsProcessed READ barsProcessed NOTIFY tick)
-    Q_PROPERTY(ReplayState state READ state NOTIFY stateChanged)
-
-public:
-    explicit ReplaySessionVm(std::shared_ptr<engine::Replay> replay,
-                             QObject* parent = nullptr);
-
-    Q_INVOKABLE void play();
-    Q_INVOKABLE void pause();
-    Q_INVOKABLE void step();
-    Q_INVOKABLE void setSpeedMultiplier(double mult);
-    Q_INVOKABLE void seekToBar(int barIndex);
-
-signals:
-    void tick(int barIndex, BarSnapshot bar);     // queued from worker
-    void tradeFilled(TradeSnapshot trade);
-    void portfolioChanged(PortfolioSnapshot snap);
-    void stateChanged(ReplayState newState);
-    void errorOccurred(QString message);
-
-private:
-    std::shared_ptr<engine::Replay> replayImpl_;
-    QThread worker_;
-};
-
-}  // namespace bte::bindings
-```
-
-`BarSnapshot`, `TradeSnapshot`, `PortfolioSnapshot` are **trivial copyable** types registered with `Q_DECLARE_METATYPE` so they cross the queued-signal boundary safely.
+- **Implemented baseline:**
+  [`ReplaySessionVm`](../../Src/Bindings/Include/Bte/Bindings/ReplaySessionVm.h)
+  is a synchronous, dependency-light adapter over the current bar-only Replay.
+  It owns the backend with `std::unique_ptr`; its portfolio values are explicitly
+  placeholders, not engine accounting.
+- **Target:** Qt-facing adapters receive immutable progress/result values from
+  an engine worker through queued delivery. Views never hold backend pointers or
+  call widgets from workers.
+- Fixed-point `Money`, `Price`, and `Quantity` remain authoritative through the
+  engine/result seam. Conversion to display numbers or strings occurs only in
+  the presentation adapter.
+- Empty successful values and typed failures remain distinct; adapters surface
+  structured errors instead of substituting empty charts or placeholder state.
 
 ---
 
 ## 4. Chart abstraction
 
-```cpp
-class IChartView {
-public:
-    virtual ~IChartView() = default;
-    virtual void setBarWindow(std::span<const Bar> visible) = 0;
-    virtual void appendBar(const Bar& bar) = 0;          // streaming during replay
-    virtual void addIndicatorOverlay(const std::string& name,
-                                     std::span<const double> values) = 0;
-    virtual void addTradeMarker(const TradeMarker& m) = 0;
-    virtual void clearMarkers() = 0;
-    virtual void setCrosshair(std::optional<int> barIndex) = 0;
-};
-```
+The implemented
+[`IChartView`](../../Src/Frontend/Include/Bte/Frontend/IChartView.h) seam has
+three operations: replace the visible bar window, append one bar, and clear
+markers. `QtChartsCandlestickView` is its current adapter.
 
-Concrete impl: `QtChartsCandlestickView : QWidget, IChartView`. Swapping to QCustomPlot later is one new file.
+Indicator overlays, persisted fill/corporate-action markers, crosshair state,
+and result seeking are planned interface additions. Add them only with their
+real callers, immutable value types, and tests; K-line Replay consumes persisted
+result values rather than asking the chart to execute engine logic.
 
 ---
 
 ## 5. Persistence
 
-| What | Where | Format |
+| What | Location contract | Format/status |
 |---|---|---|
-| Strategies | `<userData>/strategies/<name>.{rule.json,lua,py}` | JSON (rule mode) or scripts + optional `.meta.json` |
-| Screener presets | `<userData>/screeners/<name>.json` | Stores universe, `conditionLogic`, rows, optional Python path |
-| Saved replay sessions | `<userData>/sessions/<timestamp>.json` | JSON: symbol, range, strategy ref, last-bar position |
-| Settings | `<userData>/config/settings.json` | JSON: theme, db path, default schema, commission defaults |
-| Last layout | `<userData>/config/window.bin` | `QByteArray` from `saveState()` |
+| Strategies | OS-appropriate application data directory | Versioned typed condition artifacts or Python source plus versioned metadata; exact schema is owned by `05` |
+| Screener presets | OS-appropriate application data directory | Planned typed universe/predicate artifacts; Python/runtime references only if that mode is promoted |
+| Backtest Results | OS-appropriate application data directory | Target `.bteresult`; current legacy summaries remain JSON until migrated (`07`) |
+| Settings and layout | OS-appropriate application data directory | Planned UI-only state; never a mutable market-data path |
 
-All paths resolve through `bteCore::userDataDir()` so the test suite can redirect them.
+One future Core path resolver owns these locations and must be redirectable in
+tests. No public resolver name or subdirectory layout is accepted until its
+implementation exists.
 
 ---
 
 ## 6. Theming
 
-- Two QSS files in `Resources/Themes/{light.qss,dark.qss}`.
-- Loaded by `QApplication::setStyleSheet` based on `settings.json`.
-- Qt Charts theme set via `QChart::setTheme(QChart::ChartThemeDark)` to match.
+Light/dark theming, QSS resources, and matching Qt Charts themes are planned.
+Exact resource paths are not a public contract until the files exist.
 
 ---
 
 ## 7. Internationalization
 
-Wrap all user-visible strings in `tr(...)`. Keep a `Resources/i18n/stockBacktester_en.ts` baseline. We won't ship translations day one, but the wrapping makes them cheap to add.
+Wrap all user-visible strings in `tr(...)`. Translation catalogs are planned;
+their exact paths are not a current contract.
 
 ---
 
@@ -251,5 +250,7 @@ Wrap all user-visible strings in `tr(...)`. Keep a `Resources/i18n/stockBacktest
 - `Tests/Unit/Frontend/` uses Qt Test:
   - Smoke test: open each tab, ensure no crashes.
   - Replay state machine: simulate signals, assert UI labels update.
-  - Strategy editor: invalid Lua or Python stub → underline + compile error surfaced in the diagnostics strip. **NL** smoke: **Run Backtest** stays disabled until the user **Accept**s generated text into an editor **and** `compile*` succeeds (`05` §6).
+  - Strategy editor: invalid conditions or Python surface validation errors.
+    AI-candidate smoke: **Run Backtest** stays disabled until the user accepts a
+    complete imported candidate into an editor and normal validation succeeds.
 - Visual regression on charts is **out of scope** for now; we eyeball it.

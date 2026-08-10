@@ -1,129 +1,101 @@
-# 11 — K-Line Replay, Strategy Modes, & Stock Screener (Product Requirements)
+# 11 — K-Line Replay, Strategy Modes, and Stock Screener
 
-This spec captures **user-visible capabilities** aligned with the application blueprint: **K-line (candlestick) replay**, **strategy authoring in three modes**, and **universe stock selection / screening** using the same three modes. It refines `00`, `02`, `05`, and `07` without replacing their engineering detail.
+This spec is the user-visible product contract. Strategy details live in [`05StrategyAuthoring.md`](05StrategyAuthoring.md), indicators in [`06Indicators.md`](06Indicators.md), and execution/results in [`07EngineReplayPnL.md`](07EngineReplayPnL.md).
 
-When this document disagrees with a deeper spec on **implementation** (for example, which embeddable language ships first), treat this file as the **product contract**; resolve gaps with an ADR and then update the implementation spec.
+## 1. Honest delivery status
 
----
-
-## 1. K-line replay backtest
-
-### 1.1 Definition
-
-**K-line replay** is a **single-symbol**, **time-synchronized** playback of historical OHLCV bars on a candlestick chart, while the **same strategy and broker model** as batch backtest drive orders, fills, portfolio state, and P&L **one bar at a time** under user-controlled pacing (`07` §5).
-
-### 1.2 Required inputs (setup)
-
-| Input | Requirement |
-| --- | --- |
-| **Symbol** | User-selected tradable symbol present in the data layer (`04`). |
-| **Timeframe** | Maps to a **schema** / bar resolution in DuckDB (e.g. daily, hourly); must match existing `schemaName` discovery rules. |
-| **Start / end** | Inclusive UTC date-time or date-only range constrained to available history for that symbol + schema. |
-| **Initial capital** | Positive cash balance at replay start (`07` §1 `initialCash`). |
-| Built-in components | Whatever strategy bundle is active in the Strategy editor (`05`) for this session (built-in rule set, Python, or artifact produced from natural language — §3). |
-
-### 1.3 Required UI behaviors
-
-- **Chart**: Candlesticks + volume pane; visible window clipped to performance limits in `02` §4 (`IChartView`).
-- **Playback**: Play/pause, step forward/back where supported (`07` §5 scrub), speed multiplier (including “max”).
-- **Markers**: Distinct buy/sell markers at fill timestamps/prices (`02` §2.3).
-- **Portfolio strip**: Cash, position size / market value, total equity, realized and unrealized P&L (`07` §3).
-- **Trade log**: Tabular audit trail compatible with batch backtest fields (timestamp, side, qty, price, fees, cash after, optional P&L attribution) (`07` §4).
-
-### 1.4 Consistency with batch backtest
-
-For the **same** `(symbol, schema, date range, engine config, strategy definition, data snapshot)`, **replay stepping through all bars** must reach the **same** final trades and equity series as **`run(...)` without pacing** modulo explicit timing differences solely from replay clock sleeps (`07` §8 determinism applies to functional outputs, not wall-clock pacing).
-
----
-
-## 2. Stock selection / screener (universe filtering)
-
-Stock selection identifies a **subset of symbols** (a **universe**) that satisfy declarative criteria at a **reference date** (or rolling “as-of” cadence). It shares the **condition model** philosophy with strategy rules but **outputs a ranked/filtered symbol list**, not orders.
-
-### 2.1 Modes (must match §3 structurally)
-
-1. **Built-in conditions** — form-driven indicators, thresholds, crosses, fundamentals-style fields once available, combined with explicit **logical composition** (§2.2).
-2. **Python script** — user-authored script expressing per-symbol predicates and optional ranking; runs in the same trust/sandbox posture as Python strategies (`05` §5).
-3. **Natural language (AI)** — user prompt is transformed by an **assistant** into reviewable Python or structured conditions; user confirms before execution (§3.3).
-
-### 2.2 Logical composition for built-in conditions
-
-Built-in screening rows SHALL support:
-
-| Composition | Meaning |
-| --- | --- |
-| **ALL (AND)** | Every configured condition must evaluate true for inclusion. |
-| **ANY (OR)** | At least one condition must evaluate true. |
-
-**Stretch (document for future refinement, not MVP gate):** nested groups with `(A AND B) OR (C AND D)` via a bracketed AST or explicit group IDs — until then, MVP is flat AND or flat OR selector plus ordering of rows for readability only.
-
-### 2.3 Universe & run metadata
-
-| Field | Notes |
-| --- | --- |
-| **Universe** | Enumerated set: e.g. US listed (NASDAQ + NYSE), index constituents, watchlist — exact sources live in data pipeline / config (`04`). |
-| **As-of date / range** | Evaluation uses bars **≤ chosen timestamp** only — **no lookahead** across the evaluated bar. |
-| **Refresh cadence** | Batch on demand vs scheduled (e.g. daily after close); scheduled runs are Launcher/app-level jobs (`09`), not engine core. |
-
-### 2.4 Results presentation
-
-Minimum columns: **rank**, **symbol**, **human-readable company name** (when available), **last price**, **change %**, **market cap**, **sector** (or closest available classification from data pipeline). Tabs or views for simple **performance attribution** vs benchmark and **sector breakdown** may follow in later phases (`02` will host layout).
-
-Exports (CSV / clipboard) SHOULD reuse the same table model types as metrics exports for consistency.
-
-### 2.5 Engine coupling
-
-Phase 1 may implement screening as:
-
-- sequential per-symbol indicator evaluation backed by existing `Indicators`/`BarStream` APIs; or
-- batched prefetch where `04` exposes efficient multi-symbol windows.
-
-Heavy cross-sectional workloads remain subject to **`10`** performance hygiene (no needless all-history loads).
-
----
-
-## 3. Strategy input & natural language bridging
-
-Three **first-class authoring modes** SHALL appear in UI and persistence:
-
-| Mode | User experience | Compiled / loaded artifact |
+| Capability | Status | User-visible truth |
 | --- | --- | --- |
-| **1. Built-in components (no code)** | Form rows: type (indicator, filter, portfolio gate, …), component id, parameters; optional AND/OR only where the rule schema supports Boolean trees — see `05` §3. | `*.rule.json` (or successor schema) compiling to `IStrategy`. |
-| **2. Python script** | `QPlainTextEdit` (+ highlighting, lint), explicit **Validate**/**Compile** (`02` §2.1). Same persistence as other strategies (`02` §5). Compile entry point **`05` §5**. | Python-hosted strategy adaptor implementing `IStrategy` (**implementation via ADR** — embed CPython/pybind vs subprocess IPC vs translator). |
-| **3. Natural language (AI agent → script)** | Prompt box + chat-style refinement; emits **candidate** Python or structured rules; requires **explicit user acceptance** before compile/run (no silent auto-trade). Audit trail stores prompt + emitted source hash/version. | Same as modes 1 or 2 after acceptance.
+| Bar loading and K-line playback | **Implemented with known gap** | Load tracked hourly CSV bars, aggregate them to daily bars, show candlesticks/volume, and play/pause/step/change speed. Other displayed timeframe choices are not supported and may currently receive hourly data; this must be fixed before claiming general timeframe selection. |
+| Portfolio strip in current replay | **Implemented placeholder** | Displays initial cash/equity only; it is not driven by trades. |
+| Legacy replay summaries | **Implemented legacy** | JSON summary save/list/compare exists; it is not the target `.bteresult` backtest artifact. |
+| Selectable Conditions | **Planned** | Typed C++ condition plans; no shipped editor/compiler yet. |
+| Python Script Mode and Debug Run | **Planned** | Trusted worker design is specified; no shipped worker/runtime yet. |
+| Natural-language assistance | **Planned** | Candidate generation with explicit user acceptance; no shipped integration yet. |
+| Orders, fills, P&L, metrics, result replay | **Planned** | Current replay does not execute a strategy or broker simulation. |
+| Stock screener | **Planned** | No shipped universe filtering/ranking workflow. |
+| Public data-bearing release | **Blocked** | Requires documented redistribution rights and verified redistribution-cleared split metadata. |
 
-### 3.1 Safety & determinism posture
+The UI, README, release notes, and screenshots must use these status meanings and must not call the current bar player a complete backtest.
 
-- NL and Python paths MUST inherit **sandboxing** analogous to Lua (`05` §4.2 sandbox shape, **`05` §5.3** Python constraints, **`05` §9** randomness/determinism; engine invariants in **`07` §8**).
-- Prompts MUST NOT bypass user confirmation before running backtests attaching real capital configurations in paper/live extensions (out of scope today but design must not forbid future guardrails).
+## 2. Backtest execution and K-line Replay
 
-### 3.2 Traceability
+The completed **Backtest setup** accepts an ordered universe from the immutable
+Release Snapshot, supported timeframe/range, positive initial capital, Strategy,
+costs, risk-free rate, and runtime/numeric profiles. Batch and Paced Backtest
+execution submit that same Run Configuration to the project-owned C++ engine.
+For identical inputs, they produce the same canonical events and result hash;
+pause, step, and speed controls affect wall-clock pacing only.
 
-Store alongside strategy files:
+**K-line Replay** opens an existing `.bteresult` and its exact retained Data
+Segments. It does not accept or execute a new Strategy, call Python hooks,
+reevaluate orders, or create fills. Playback shows persisted candlesticks,
+volume, fills, corporate actions, indicator snapshots, ambiguity/warning markers,
+cash, restricted cash, positions, margin, realized/unrealized P&L, equity, trade
+log, and structured strategy logs. Controls include play, pause, single-record
+step, supported seek, speed presets, and maximum speed; these controls only
+change presentation.
 
-| Metadata | Purpose |
-| --- | --- |
-| Originating prompt (NL mode) | Reproducibility and user support. |
-| Model / agent identifier + version string | Debugging semantic drift (`10` telemetry policies TBD). |
-| Accepted/generated source snapshot | Litigation-grade replay of what actually ran.
+If required data, runtime, or a valid final mark is unavailable, the UI displays the exact structured status from `07`; it never fabricates bars, fills, or completed metrics.
 
----
+## 3. Strategy experience
 
-## 4. Traceability matrix
+### 3.1 Selectable Conditions
 
-| Capability | Primary specs |
-| --- | --- |
-| Charting & tabs layout | `02FrontendQt.md` |
-| Rule JSON & operators | `05StrategyAuthoring.md` §3 |
-| Python & NL authoring | `05StrategyAuthoring.md` §5–6 |
-| Engine, replay clock, P&L | `07EngineReplayPnL.md` |
-| Data access, no writer from C++ | `04DataLayer.md`, `AGENTS.md` H2 |
-| Determinism CI | `07` §8, `10CiDevFlow.md` |
+- Form rows use typed fields, indicators, comparisons, portfolio gates, sizing, and actions.
+- V1 offers flat **ALL (AND)** or **ANY (OR)** composition. Nested groups are **Planned**.
+- The canonical condition model is saved and executed in C++.
+- Generated explanatory Python is read-only. **Edit as Python** creates a separate strategy.
 
----
+### 3.2 Python Script Mode
 
-## 5. Out of scope (explicit)
+- The editor starts from the fixed versioned template in `05` §2.2.
+- **Validate Strategy** reports contract and input problems before execution.
+- **Debug Run** uses a small chosen range and shows source traceback, slice, portfolio, indicators, orders, commands, and structured logs.
+- The UI clearly states that Python is trusted local code isolated for stability, not a secure sandbox.
+- Users select only project-managed data for verified runs; V1 does not import user pricing data.
 
-- Live brokerage execution.
-- Cloud sync of prompts/strategies unless added later with ADR.
-- Guarantees about third-party LLM availability or pricing — NL mode is **optional subsystem** that degrades gracefully when disabled.
+### 3.3 Natural-language assistance
+
+- The assistant produces a complete candidate condition plan or Python script.
+- Nothing runs until the user reviews and explicitly accepts the candidate.
+- Candidate/model identity when supplied, accepted artifact, validation outcome,
+  and hashes remain attached for support and reproducibility. Prompts and
+  transcripts are retained only with explicit user consent.
+
+## 4. Stock screener contract
+
+The screener evaluates only bars at or before an explicit as-of timestamp and outputs a filtered/ranked symbol list, not orders.
+
+- It reuses the same typed indicators and flat ALL/ANY condition model as strategy authoring.
+- An accepted Python screener uses the same runtime, trust notice, validation, history limits, and chronology-safe data interface as Python strategies.
+- Natural-language input remains a proposal path, never a separate execution engine.
+- V1 universe sources are only those enumerated in the immutable project snapshot; watchlists or index membership require snapshot metadata.
+- Minimum result fields are rank, symbol, as-of timestamp, last actual price, and each condition/rank value. Company name, sector, market cap, and benchmark attribution appear only when verified snapshot fields exist.
+- CSV/clipboard export preserves the as-of timestamp, universe/snapshot ID, condition artifact hash, and generator/runtime version.
+
+## 5. Local artifacts and lifecycle
+
+- Strategies, condition plans, metadata, runtime references, and `.bteresult` files live in the OS-appropriate application data directory, never inside the installation directory.
+- Results reference immutable project data segments; users cannot replace their bars.
+- Deletion uses the 30-day Trash and reference rules in `07` §8.
+- Runtime upgrades and strategy-template migrations never silently rewrite an existing strategy or result.
+- User documentation includes one complete runnable Python template and plain explanations of next-bar activation, full-fill-on-touch, OCO adverse-first ambiguity, extended-hours execution, missing bars, splits, excluded dividends, short-margin assumptions, transaction costs, and incomplete results.
+
+## 6. Required verification
+
+- Every public UI/view-model behavior requires positive, negative, and boundary unit tests, including accessibility and queued worker-to-UI delivery.
+- End-to-end fixtures cover condition and Python authoring, validation/Debug
+  Run, Batch/Paced Backtest parity, result reopening without engine execution,
+  screener no-look-ahead, and all incomplete/blocked states.
+- Current bar-only replay tests remain truthful and must not use placeholder portfolio values as evidence of engine accounting.
+- Every bug fix or intentional user-visible behavior change requires a regression test.
+- A check is merge-blocking only when [`10CiDevFlow.md`](10CiDevFlow.md) marks its implemented gate as required.
+
+## 7. Explicitly out of scope for V1
+
+- Lua, Zipline, or another third-party backtest engine.
+- User pricing-data import, runtime provider downloads, or database integration.
+- Live brokerage execution, partial fills, order-book liquidity, stop-limit, IOC, FOK, and dividend accounting.
+- Arbitrary Python package installation, system Python, or cloud execution of strategies.
+- Benchmark alpha/beta and nested condition groups.

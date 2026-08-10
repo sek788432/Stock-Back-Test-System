@@ -1,5 +1,14 @@
 # Stock Screener — UI Overview Spec
 
+> **Status:** Non-normative prototype walkthrough. It demonstrates ideas, not implemented or accepted product behavior. The parent spec and canonical engine/data specs take precedence.
+
+> **Canonical constraints:** The accepted screener outputs a filtered/ranked
+> symbol list and never owns orders, fills, portfolio state, or accounting.
+> Runtime inputs come from an immutable Release Snapshot. Any future Python
+> screening must reuse the trusted-local worker constraints in Spec 05; it is
+> not a secure sandbox. AI is provider-neutral candidate import with explicit
+> acceptance under Spec 12, not a direct in-application vendor call.
+
 **Live prototype:** [`ScreenerV2.html`](./ScreenerV2.html)
 **Parent spec:** [`11StockScreenerKLineProduct.md`](../11StockScreenerKLineProduct.md)
 **Full index:** [`README.md`](./README.md)
@@ -9,7 +18,7 @@
 
 ## Frontend Screenshot
 
-![Stock Screener Frontend](./Frontend.png)
+![Stock Screener Frontend](./frontend.PNG)
 
 ---
 
@@ -24,8 +33,14 @@ The Stock Screener & Valuation platform lets a user narrow a stock universe down
 The user defines screening conditions in one of three modes:
 
 - **Built-in (form-driven):** Drag-and-drop condition cards (e.g. ROE ≥ 15%, EPS trend stable). Conditions are combined with a single **AND** (all must pass) or **OR** (any one passes) selector.
-- **Python Script:** User writes a `screen(symbol, bars, as_of) -> bool | float` function directly. The system runs it in a hardened sandbox per symbol (500 ms timeout, 128 MB limit, no I/O or network).
-- **Natural Language (AI):** User describes criteria in plain text; Claude generates the Python equivalent. The user must explicitly click **Accept** before the code is allowed to run — silent auto-execution is never permitted.
+- **Python Script (prototype only):** The prototype imagined a per-symbol
+  function. No function signature, timeout, memory limit, or sandbox claim is
+  accepted. Any promoted design must reuse Spec 05's trusted worker and
+  chronology-safe snapshot views.
+- **Natural Language (prototype only):** A future external assistant may propose
+  a provider-neutral candidate. The application must preview, validate, and
+  require explicit acceptance; it stores no vendor credential and makes no
+  direct provider call in V1.
 
 The output is a ranked symbol list (rank, name, price, change %, market cap, sector) that can be saved to the database and fed into Block B.
 
@@ -50,8 +65,8 @@ A **Technical Signal** (moving-average alignment + volume ratio) is displayed se
 
 | Database | Writer | Reader | Contents |
 |---|---|---|---|
-| `MarketData.duckdb` | Python pipeline | C++ (read-only) | `hourlyBars`, `fundamentals`, `stocks`, `indexConstituents` (Phase 2) |
-| `app.db` (SQLite) | C++ app | C++ app | `screenerTemplates`, `screenerResults`, `valuationLists`, `nlAuditLog` |
+| `MarketData.duckdb` | Python pipeline | Historical prototype proposed C++ reads | Superseded at release runtime by the immutable Release Snapshot |
+| `app.db` (SQLite) | Historical prototype | Historical prototype | No accepted application-database schema; `.bteresult` owns Backtest Results |
 
 C++ **never writes to DuckDB** — this is a hard constraint inherited from `04DataLayer.md`. Market data ownership stays with the Python pipeline; application state ownership stays with C++.
 

@@ -1,288 +1,121 @@
 # 03 — Backend Core
 
-The shared vocabulary every other backend module speaks: bars, orders, trades, portfolios, time, error type, logging. Tiny module, but everything else depends on it.
+Core defines the small, dependency-light vocabulary shared by backend modules. This file owns time, financial scalar types, base market/order values, errors, and run status.
 
----
+## 1. Status
 
-## 1. Coding conventions
+- **Implemented:** UTC millisecond timestamps, `DateRange`, floating-point `Bar`, OHLC helpers, and `Result<T>` exist.
+- **Planned migration:** fixed-point domain types, valid-state `Result<T>` including `Result<void>`, order/fill/portfolio values, and canonical serialization.
+- **Not release-ready:** current `double` accounting and JSON result values are baseline code, not the accepted financial contract.
 
-- Variables, methods, free functions, namespaces: **lowerCamelCase** (`barIndex`, `submitOrder`, `bte::engine`).
-- Types (classes, structs, enums, type aliases): **UpperCamelCase** (`Bar`, `OrderType`, `Portfolio`).
-- Enum values: **lowerCamelCase** when scoped (`OrderSide::buy`).
-- Member fields: **trailing underscore** for private, plain for public structs (`cash_`, vs. `Bar::open`).
-- **C++ file names (new code):** **UpperCamelCase** stem, matching the primary type or module unit (`Bar.h`, `Portfolio.cpp`). Extensions: headers `.h`, sources `.cpp`.
-- **C++ unit test file names:** `UnitTest_<Thing>.cpp` where `<Thing>` is UpperCamelCase (e.g. `UnitTest_Bar.cpp` for `Bar`). See Docs/Specs/10 for audit pairing with headers.
-- **Directory names (repo layout, module trees, generated build tree):** **UpperCamelCase** — e.g. `Src/`, `Docs/`, `Docs/Governance/`, `Tests/`, and the CMake binary directory **`Output/`** (see `CMakePresets.json`; e.g. `Output/dev`).
-- **Markdown (`*.md`):** no project-wide naming convention.
-- Header guards: `#pragma once` (every supported compiler handles it).
-- Namespace: everything in `bte::core` (alias `bte` for short uses).
+The implemented timestamp parser still mishandles offsets/fractions/trailing
+input, and the current `Result<T>` permits invalid states described in the
+repository audit. The contracts below are target behavior until those gaps and
+their regression tests land.
 
-This matches the user's stated rule and keeps the existing Python pipeline's `lowerCamelCase` style consistent.
+## 2. C++ conventions
 
----
+- Namespaces, functions, methods, and variables use `lowerCamelCase`; types use `UpperCamelCase`; scoped enum values use `lowerCamelCase`.
+- New C++ file stems are `UpperCamelCase`; unit tests are `UnitTest_<Thing>.cpp`.
+- Project headers use `#pragma once`.
+- Paths use `std::filesystem::path`; time uses `std::chrono`.
+- Public fallible functions are `[[nodiscard]]` and do not throw across module seams.
 
-## 2. Time & timestamps
-
-DuckDB stores `ts` as `TIMESTAMPTZ` (UTC). We mirror that: **all timestamps in the C++ layer are UTC**, represented by:
+## 3. Time
 
 ```cpp
-namespace bte::core {
-
 using Timestamp = std::chrono::sys_time<std::chrono::milliseconds>;
 
 struct DateRange {
     Timestamp start;
-    Timestamp end;     // half-open: [start, end)
+    Timestamp end; // half-open [start, end)
 };
-
-}  // namespace bte::core
 ```
 
-UI formats with the user's locale at the very edge (Qt `QLocale`); core code never localizes.
+Core timestamps are UTC. Exchange-session identity uses the versioned US-equities calendar owned by the Release Snapshot. UI localization occurs only at the presentation edge. Parsing must reject invalid calendar dates, unsupported offsets, and trailing input rather than silently truncating them.
 
-Helpers in `bte::core::time`:
+## 4. Authoritative numeric types
+
+| Type | Representation | Scale |
+|---|---|---|
+| `Price` | signed checked `int64_t` | 1 unit = USD 0.000000001 |
+| `Quantity` | signed checked `int64_t` | 1 unit = 0.000001 share |
+| `Money` | signed checked `int64_t` | 1 unit = USD 0.000001 |
+| `Rate` | signed checked `int64_t` | 1 unit = 0.000000001 |
+
+- Overflow is an error; no operation silently wraps.
+- General `Money` conversion rounds half-even once at the domain edge.
+- Adverse execution costs and margin requirements round conservatively.
+- Buy slippage rounds price upward; sell slippage rounds downward.
+- Python-facing floats are input ergonomics only. Prices normalize to at most 9 decimal places and quantities to at most 6 before command validation.
+- Canonical result values are stored as integer units, never JSON floating-point values.
+
+Floating point remains appropriate for indicators, research statistics, and display. It is not authoritative accounting.
+
+## 5. Market and trading values
+
+The planned canonical values use the strong types above:
 
 ```cpp
-Timestamp parseIso8601(std::string_view s);  // returns Result<Timestamp, Error>
-std::string toIso8601(Timestamp ts);
-Timestamp fromUnixMillis(int64_t ms);
-int64_t   toUnixMillis(Timestamp ts);
+struct Bar {
+    Timestamp ts;
+    Price open;
+    Price high;
+    Price low;
+    Price close;
+    Quantity volume;
+};
+
+enum class OrderSide { buy, sell };
+enum class OrderType { market, limit, stop };
+enum class TimeInForce { day, gtc };
+enum class OrderState { pending, active, filled, cancelled, expired, rejected };
 ```
 
----
+V1 does not expose stop-limit, IOC, FOK, partial-fill, or liquidity-model values. OCO and bracket relationships are explicit order-group identifiers, not hidden behavior.
 
-## 3. The bar
+One `Position` exists per symbol and holds signed net `Quantity` plus average `Price`. `Fill` is immutable. `PortfolioSnapshot` is an immutable value containing cash, restricted proceeds, positions, realized/unrealized P&L, and margin state.
+
+The current floating-point `Bar` remains implemented until the migration lands. Its exact object size is not a persistence or IPC contract.
+
+## 6. `Result<T>` and errors
+
+The canonical spelling is:
 
 ```cpp
 namespace bte::core {
-
-struct Bar {
-    Timestamp ts;        // bar close time, UTC
-    double open  = 0.0;
-    double high  = 0.0;
-    double low   = 0.0;
-    double close = 0.0;
-    double volume = 0.0;
-
-    constexpr bool isValid() const noexcept {
-        return open > 0 && high >= std::max({open, close, low})
-            && low  > 0 && low  <= std::min({open, close, high})
-            && volume >= 0.0
-            && high >= low;
-    }
-};
-
-struct SymbolBar {
-    std::string symbol;
-    Bar bar;
-};
-
-std::optional<double> typicalPrice(const Bar& bar) noexcept;
-std::optional<double> medianPrice(const Bar& bar) noexcept;
-std::optional<double> trueRange(const Bar& bar, std::optional<double> prevClose) noexcept;
-std::optional<double> trueRange(const Bar& bar) noexcept;
-
-}  // namespace bte::core
-```
-
-- `Bar` is trivially copyable. Its object representation contains **no padding beyond `sizeof(Timestamp) + 5 * sizeof(double)`** (`static_assert` in `Bar.h`). With an 8-byte `Timestamp` on LP64, **`sizeof(Bar)` is 48 bytes** (the older “56 bytes” figure assumed a different `Timestamp` width).
-- `isValid()` mirrors the Python pipeline's validation (see `FetchDatabento.py`) — same invariant, same source of truth.
-- `SymbolBar` is for multi-symbol streams; single-symbol streams stick to `Bar`.
-- `trueRange(bar)` equals intrabar `high - low`. **`trueRange(bar, prevClose)`** implements Wilder true range: `max(high - low, |high - prevClose|, |low - prevClose|)` when `prevClose` is set; omit it on the first bar or when no prior close exists (`nullopt`).
-
----
-
-## 4. Orders, fills, trades
-
-### 4.1 Order
-
-```cpp
-enum class OrderSide  { buy, sell };
-enum class OrderType  { market, limit, stop, stopLimit };
-enum class TimeInForce { day, gtc, ioc, fok };
-
-struct Order {
-    uint64_t id = 0;            // assigned by Engine
-    std::string symbol;
-    OrderSide side = OrderSide::buy;
-    OrderType type = OrderType::market;
-    TimeInForce tif = TimeInForce::day;
-    double qty = 0.0;           // shares (fractional allowed)
-    double limitPrice = 0.0;    // for limit / stopLimit
-    double stopPrice  = 0.0;    // for stop / stopLimit
-    Timestamp createdAt;
-    std::string strategyId;     // who emitted this
-    std::string clientTag;      // free-form, surfaced in UI
-};
-```
-
-### 4.2 Fill / Trade
-
-```cpp
-struct Fill {
-    uint64_t orderId = 0;
-    Timestamp ts;
-    double qty = 0.0;
-    double price = 0.0;
-    double commission = 0.0;
-    double slippage = 0.0;      // signed, positive = worse than mid
-};
-
-struct Trade {                  // a closed round-trip (entry + exit)
-    std::string symbol;
-    Timestamp openedAt;
-    Timestamp closedAt;
-    double qty = 0.0;
-    double entryPrice = 0.0;
-    double exitPrice  = 0.0;
-    double commission = 0.0;
-    double pnl = 0.0;           // signed, in account currency
-    double pnlPct = 0.0;
-    OrderSide direction = OrderSide::buy;   // direction of the *open* side
-    std::string strategyId;
-};
-```
-
-`Order` lives in `bte::core::Order`. `Fill` and `Trade` are the events the engine emits.
-
----
-
-## 5. Portfolio
-
-```cpp
-struct Position {
-    std::string symbol;
-    double qty = 0.0;
-    double avgCost = 0.0;       // VWAP across opens, after partial closes
-};
-
-struct PortfolioSnapshot {
-    Timestamp ts;
-    double cash = 0.0;
-    std::vector<Position> positions;
-    double realizedPnl = 0.0;
-    double unrealizedPnl = 0.0;     // mark-to-market at this snapshot
-    double equity() const { return cash + marketValue() + unrealizedPnl; /* see impl */ }
-    double marketValue() const;     // sum(qty * lastPrice) — needs price oracle
-};
-```
-
-The full `Portfolio` (mutable engine state) lives in `bte::engine` (`07`). `PortfolioSnapshot` is what crosses thread boundaries to the UI.
-
----
-
-## 6. Result<T, Error>
-
-```cpp
-enum class ErrorCode {
-    ok = 0,
-    // generic
-    invalidArgument,
-    notFound,
-    permissionDenied,
-    cancelled,
-    timeout,
-    internal,
-    // domain
-    dataUnavailable,
-    schemaMismatch,
-    strategyCompileFailed,
-    strategyRuntimeError,
-    insufficientCash,
-    insufficientShares,
-    pluginIncompatibleAbi,
-};
-
-struct Error {
-    ErrorCode code = ErrorCode::ok;
-    std::string message;
-    std::source_location where = std::source_location::current();
-    std::vector<Error> causes;
-    explicit operator bool() const { return code != ErrorCode::ok; }
-};
-
 template <typename T>
-class Result {
-public:
-    Result(T v) : value_(std::move(v)) {}
-    Result(Error e) : error_(std::move(e)) {}
-
-    bool ok() const { return !error_; }
-    const T& value() const& { return *value_; }
-    T&&      value() && { return std::move(*value_); }
-    const Error& error() const { return error_; }
-
-private:
-    std::optional<T> value_;
-    Error error_;
-};
-
-// helpers
-Error makeError(ErrorCode c, std::string msg,
-                std::source_location loc = std::source_location::current());
-```
-
-Rules:
-- Public API never throws. Internal helpers may throw `std::system_error` etc.; the boundary catches and wraps.
-- `Error::message` is **already user-readable**. UI displays it directly.
-- Logs always include `where.file_name():where.line()` and the cause chain.
-
----
-
-## 7. Logging
-
-`spdlog` with two sinks:
-- Console (debug builds) — colorized.
-- Rotating file at `<userData>/logs/stockBacktester.log` (10 MB × 5 files).
-
-API:
-
-```cpp
-namespace bte::core::log {
-spdlog::logger& main();             // category "bte"
-spdlog::logger& engine();           // category "bte.engine"
-spdlog::logger& data();             // category "bte.data"
-// ... one per module
+class Result; // fixed Error payload
 }
 ```
 
-Level controlled by `settings.json` (`logLevel: "info"`).
+Use `bte::core::Result<T>`, not `Result<T, Error>`. A successful result contains a `T`; a failed result contains a non-`ok` `Error`. Invalid mixed or empty states are not constructible. `Result<void>` represents success without a value.
 
----
+`Error` contains a stable `ErrorCode`, user-readable message, source location, and optional cause chain. Required codes include invalid input, unavailable data/snapshot/runtime, cancellation, timeout, schema mismatch, strategy validation/runtime/protocol failures, buying-power failure, and result corruption.
 
-## 8. Snapshots for cross-thread transport
+Rules:
 
-To ship engine state to the UI without sharing pointers, we define **trivially copyable** snapshot structs:
+- `value()` is available only for success; callers must not obtain a value from failure.
+- An `ErrorCode::ok` object cannot construct a failed result.
+- Public adapters translate filesystem, SQLite, Python, and parsing exceptions into `Error`.
+- UI code must preserve failure distinct from an empty successful collection.
 
-```cpp
-struct BarSnapshot       { /* same fields as Bar, plus barIndex */ };
-struct TradeSnapshot     { /* same as Trade, plus indices */ };
-struct PortfolioSnapshot { /* see §5 */ };
-struct ReplayProgressSnapshot {
-    int barIndex;
-    int totalBars;
-    Timestamp ts;
-};
-```
+## 7. Run status
 
-All are registered with `Q_DECLARE_METATYPE` in `bteBindings` and may travel across `Qt::QueuedConnection`. They have no shared ownership, so they're safe.
+| Status | Meaning |
+|---|---|
+| `Completed` | The run ended normally and final metrics are valid. |
+| `Failed` | A strategy, protocol, engine, or persistence error stopped execution. |
+| `Canceled` | The user canceled execution; committed diagnostics remain non-final. |
+| `Interrupted` | Process or write interruption prevented normal finalization. |
+| `Incomplete` | Execution ended but a required final condition was unavailable, such as `StaleFinalMark` or `UnliquidatableMarginDeficit`. |
 
----
+Only `Completed` exposes final performance metrics. Other statuses may expose clearly labeled diagnostic values.
 
-## 9. Money & precision
+## 8. Canonical serialization
 
-- **Use `double`** for prices and money. We're equities-only and never hold positions long enough for `double` accumulation error to matter. (Worst case: ~10 ppm error after 10⁹ ops; we're ~10⁵.)
-- **Quantities** are `double` so fractional shares work uniformly.
-- A future tick-precision bond / FX module would need fixed-point; we'll add `bte::core::Money` then. For now, `double` is documented and consistent.
+Every persisted/wire value has an explicit field order, integer scale, enum encoding, and schema version. `canonicalResultHash` covers functional records and their ordered identities. It excludes local paths, wall-clock metadata, and SQLite physical layout.
 
----
+## 9. Verification requirements
 
-## 10. Testing
-
-- `Tests/Unit/Core/` with GoogleTest:
-  - `Bar::isValid()` covers every OHLC violation case.
-  - `Result<T,Error>` happy path + error path + chaining.
-  - Time round-trip: `parseIso8601` → `toIso8601` is identity for any DuckDB-emitted timestamp.
-  - `PortfolioSnapshot` equity invariants.
-
-CI runs `ctest --preset dev` on every PR.
+Each public behavior requires positive, negative, and boundary unit tests. Any bug fix or intentional behavior change requires a regression test that fails under the prior behavior. Planned checks must not be called enforced until CI actually requires them.

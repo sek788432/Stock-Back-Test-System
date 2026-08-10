@@ -1,5 +1,13 @@
 # Spec B — Valuation Engine
 
+> **Status:** Non-normative post-V1 proposal. The models, scores, interfaces, and defaults below are not implemented or accepted product behavior.
+
+> **Canonical constraints:** Valuation is outside accepted V1 scope. Any future
+> implementation consumes verified as-of fields from an immutable Release
+> Snapshot, remains separate from order/fill/accounting authority, returns
+> `bte::core::Result<T>` across public C++ seams, and must not adopt the direct
+> DuckDB interfaces or invented file layout below without a new accepted design.
+
 **Part of:** Stock Screener sub-specs
 **UI reference:** [`ScreenerUiOverview.md`](./ScreenerUiOverview.md) §B1–B3
 **DB schema:** [`SpecCDatabase.md`](./SpecCDatabase.md)
@@ -7,7 +15,9 @@
 **Coding conventions:** [`03BackendCore.md`](../03BackendCore.md) §1
 **Consumes output of:** `SpecAScreenerEngine.md` (screenerResults → symbol lists)
 
-> **Scope note:** Block B (Valuation Matrix) is an **extended feature** not explicitly defined in Spec 11. Spec 11 §2 defines screening (Block A) only. Block B was added during sub-spec design as a companion analysis tool that consumes screener output. If Spec 11 is ever revisited, Block B should be promoted to a first-class section there.
+> **Scope note:** Block B (Valuation Matrix) is an **extended feature** not
+> accepted by Spec 11. Spec 11 §4 defines screening only. Promotion requires an
+> owning canonical spec or ADR rather than edits to this archive.
 
 ---
 

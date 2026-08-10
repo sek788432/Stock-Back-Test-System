@@ -1,10 +1,10 @@
 # 0003 — Hybrid rule + Lua strategy authoring
 
-- **Status**: Accepted
+- **Status**: Superseded by 0011
 - **Date**: 2026-05-06
 - **Deciders**: founding team
 - **Supersedes**: —
-- **Superseded by**: —
+- **Superseded by**: 0011
 
 ## Context
 

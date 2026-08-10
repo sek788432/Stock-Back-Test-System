@@ -1,6 +1,9 @@
 # Building the C++ workspace
 
-This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+**. The first landed module is **Backend Core** (`bte::core`), starting with `Bar` ([Specs/03BackendCore.md](Specs/03BackendCore.md) §3). Qt, vcpkg-heavy dependencies, and the full app targets will wire in later per [Specs/09BuildDistributionLauncher.md](Specs/09BuildDistributionLauncher.md).
+This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+**.
+Core, Data, and the bar-only Replay build in the default preset. Bindings,
+Frontend, and App targets are implemented behind `BTE_BUILD_QT_APP`; the
+canonical trading engine described in Specs 05 and 07 remains planned.
 
 ## Prerequisites
 
@@ -11,7 +14,7 @@ This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+*
 Optional:
 
 - **Git** (for FetchContent to download Google Test on first configure)
-- **Qt 6.8+** (Core, Widgets, Test) when configuring with `BTE_BUILD_QT_APP=ON`
+- **Qt 6.8+** (Core, Widgets, Charts, and Test when tests are enabled) when configuring with `BTE_BUILD_QT_APP=ON`
 
 ## One-liner: `RunTest.sh`
 
@@ -24,6 +27,9 @@ From the repo root (configure + build + unit tests):
 
 `RunTest.sh` is tracked in git. Other `*.sh` files remain ignored unless you force-add them (see `.gitignore`).
 
+`RunTest.sh` uses the non-Qt `dev` preset. To match the current CI build and run
+the Qt/frontend tests too, use the `qt-dev` commands below.
+
 ## Quick start (macOS / Linux)
 
 ```bash
@@ -33,7 +39,8 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
-This configures `Output/dev`, compiles the `bte_core` static library and the `bte_core_tests` executable, then runs unit tests.
+This configures `Output/dev`, builds the default backend targets and registered
+non-Qt tests, then runs them.
 
 ### Sanitizers (Clang / GCC)
 
@@ -65,8 +72,9 @@ cd Output && ctest --output-on-failure
 
 ## Optional Qt app shell
 
-The repository still builds backend core by default. To build the initial Qt app
-shell, install Qt 6.8+ and configure with:
+The repository builds non-Qt backend targets by default. To build the
+implemented Qt app shell and all currently registered tests, install Qt 6.8+
+and configure with:
 
 ```bash
 cmake --preset qt-dev
@@ -82,7 +90,7 @@ configuring.
 | Path                         | Role                                              |
 | ---------------------------- | ------------------------------------------------- |
 | `CMakeLists.txt`             | Root project, optional tests, FetchContent (GTest) |
-| `CMakePresets.json`        | `dev`, `dev-sanitize`, `release`                  |
+| `CMakePresets.json`        | `dev`, `qt-dev`, `dev-sanitize`, `release`        |
 | `Output/<preset>/`        | CMake binary directory (gitignored; e.g. `Output/dev`) |
 | `CMake/CompilerWarnings.cmake` | Shared warning flags                            |
 | `CMake/Sanitizers.cmake`   | ASan/UBSan when `BTE_SANITIZERS=ON`               |

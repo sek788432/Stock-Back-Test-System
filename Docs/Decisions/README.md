@@ -12,7 +12,7 @@ Open an ADR PR **before** the implementation if your change:
 
 - introduces a third-party dependency,
 - changes a public API across module boundaries,
-- changes the plugin or Lua API ([`../Specs/08`](../Specs/08PluginSystem.md)),
+- changes the native plugin or Python strategy contract ([`../Specs/05`](../Specs/05StrategyAuthoring.md)),
 - changes the data layer's contract with the Python pipeline ([`../Specs/04`](../Specs/04DataLayer.md)),
 - changes any CI gate ([`../Specs/10`](../Specs/10CiDevFlow.md)),
 - adds a module to the dependency graph ([`../Specs/01`](../Specs/01Architecture.md) §1),
@@ -50,15 +50,16 @@ ADRs are append-only. To change a decision, write a new ADR that supersedes it. 
 | # | Title | Status |
 |---|---|---|
 | 0001 | [Record architecture decisions](0001-record-architecture-decisions.md) | Accepted |
-| 0002 | [C++ and Qt as the desktop stack](0002-cpp-and-qt-as-the-desktop-stack.md) | Accepted |
-| 0003 | [Hybrid rule + Lua strategy authoring](0003-hybrid-rule-and-lua-strategy-authoring.md) | Accepted |
+| 0002 | [C++ and Qt as the desktop stack](0002-cpp-and-qt-as-the-desktop-stack.md) | Accepted; data constraint clarified by 0011 |
+| 0003 | [Hybrid rule + Lua strategy authoring](0003-hybrid-rule-and-lua-strategy-authoring.md) | Superseded by 0011 |
 | 0004 | [Anti-cheat CI gate with mutation testing](0004-anti-cheat-ci-gate-with-mutation-testing.md) | Accepted |
-| 0005 | [Build, distribution, and launcher deployment decisions](0005-build-distribution-launcher-decisions.md) | Accepted |
+| 0005 | [Build, distribution, and launcher deployment decisions](0005-build-distribution-launcher-decisions.md) | Superseded by 0011 |
 | 0006 | [Full-tree project standards gate](0006-full-tree-project-standards-gate.md) | Accepted |
 | 0007 | [Vendor shared agent skills](0007-vendor-shared-agent-skills.md) | Superseded by 0008 |
 | 0008 | [Standardize project agent skills](0008-standardize-project-agent-skills.md) | Superseded by 0009 |
 | 0009 | [Retain host adapters and centralize hard rules](0009-retain-host-adapters-and-centralize-hard-rules.md) | Accepted |
 | 0010 | [Enforce PascalCase paths and unit-test layout](0010-enforce-pascal-case-paths-and-unit-test-layout.md) | Accepted |
+| 0011 | [Own the engine and release-data contract](0011-own-the-engine-and-release-data-contract.md) | Accepted |
 
 When you add an ADR, add a row here. Keep numbering monotonic — gaps are confusing, never reuse a number.
 

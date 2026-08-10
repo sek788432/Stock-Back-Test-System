@@ -1,5 +1,13 @@
 # API Data Requirements — Stock Screener
 
+> **Status:** Non-normative candidate field inventory. Sources, licensing, update cadence, schemas, and V1 inclusion are not accepted. Canonical managed-data rules in `../04DataLayer.md` take precedence.
+
+> **Canonical constraints:** These fields may inform a future developer-side
+> ingestion proposal only. The release application reads a validated immutable
+> Release Snapshot, not DuckDB or live APIs. A field is unavailable to the C++
+> screener until its source, redistribution rights, as-of semantics, schema, and
+> snapshot identity are accepted in Specs 04 and 11.
+
 **Part of:** Stock Screener sub-specs
 **Audience:** Python pipeline engineers — what to fetch, compute, and store in `MarketData.duckdb`
 **DB schema:** [`SpecCDatabase.md`](./SpecCDatabase.md)
@@ -9,7 +17,8 @@
 
 ## 1. Overview
 
-The screener reads from two tables in `MarketData.duckdb`. Both are owned and written by the Python pipeline.
+The historical proposal below stages candidate fields in two developer DuckDB
+tables. That layout is not a release-runtime or C++ screener contract.
 
 ```
 External APIs
