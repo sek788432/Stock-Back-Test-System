@@ -46,9 +46,19 @@ template <typename T> class Result {
 
     [[nodiscard]] bool ok() const noexcept { return !error_; }
 
-    [[nodiscard]] const T& value() const& { return value_.value(); }
+    [[nodiscard]] const T& value() const& {
+        if (!value_.has_value()) {
+            throw std::bad_optional_access{};
+        }
+        return *value_;
+    }
 
-    [[nodiscard]] T&& value() && { return std::move(value_).value(); }
+    [[nodiscard]] T&& value() && {
+        if (!value_.has_value()) {
+            throw std::bad_optional_access{};
+        }
+        return std::move(*value_);
+    }
 
     [[nodiscard]] const Error& error() const noexcept { return error_; }
 

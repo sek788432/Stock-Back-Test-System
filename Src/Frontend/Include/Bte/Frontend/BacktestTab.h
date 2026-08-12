@@ -12,7 +12,8 @@ namespace bte::frontend {
 class BacktestTab final : public QWidget {
 public:
   using BacktestRunner = std::function<core::Result<bindings::BacktestSnapshot>(
-      bindings::BacktestConfiguration, core::CancellationToken)>;
+      const bindings::BacktestConfiguration &,
+      const core::CancellationToken &)>;
 
   explicit BacktestTab(QWidget *parent = nullptr);
   explicit BacktestTab(BacktestRunner runner, QWidget *parent = nullptr);

@@ -144,8 +144,8 @@ struct BacktestTab::RunState final {
 
 BacktestTab::BacktestTab(QWidget *parent)
     : BacktestTab(
-          [](bindings::BacktestConfiguration configuration,
-             core::CancellationToken cancellation) {
+          [](const bindings::BacktestConfiguration &configuration,
+             const core::CancellationToken &cancellation) {
             return bindings::runBacktestConfiguration(configuration,
                                                       cancellation);
           },
@@ -361,7 +361,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         watcher->setFuture(
             QtConcurrent::run([runner, configuration, cancellation]() mutable {
               try {
-                return runner(std::move(configuration), cancellation);
+                return runner(configuration, cancellation);
               } catch (const std::exception &error) {
                 return core::Result<bindings::BacktestSnapshot>{core::makeError(
                     core::ErrorCode::internal,
