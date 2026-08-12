@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <limits>
 
@@ -203,7 +204,139 @@ TEST(SelectableStrategyTest, incompatibleThresholdDomainIsRejected) {
   EXPECT_EQ(invalid.error().code, bte::core::ErrorCode::strategyCompileFailed);
 }
 
-TEST(SelectableStrategyTest, invalidInputBarIsRejectedBeforeConditionEvaluation) {
+TEST(SelectableStrategyTest, comparisonOperatorsUseTypedBarFieldValues) {
+  const auto comparisons = std::array{
+      bte::strategy::Comparison::greaterThan,
+      bte::strategy::Comparison::greaterThanOrEqual,
+      bte::strategy::Comparison::lessThan,
+      bte::strategy::Comparison::lessThanOrEqual,
+      bte::strategy::Comparison::equal,
+      bte::strategy::Comparison::notEqual,
+  };
+  const auto expected = std::array{false, true, false, true, true, false};
+
+  for (std::size_t index = 0; index < comparisons.size(); ++index) {
+    auto created = bte::strategy::SelectableStrategy::create({
+        .buy =
+            {
+                .conditions = {bte::strategy::Condition{
+                    .source = bte::strategy::ConditionSource::barField,
+                    .comparison = comparisons[index],
+                    .threshold = 10.0,
+                    .barField = bte::indicators::BarField::close,
+                }},
+            },
+    });
+    ASSERT_TRUE(created.ok());
+    auto strategy = std::move(created).value();
+
+    const auto signal = strategy->onBar(makeBar(2, 10.0));
+    ASSERT_TRUE(signal.ok());
+    EXPECT_EQ(signal.value().buy, expected[index]);
+  }
+}
+
+TEST(SelectableStrategyTest, rejectsInvalidLogicAndTypedConditionPlans) {
+  const auto invalidLogic = bte::strategy::SelectableStrategy::create({
+      .buy =
+          {
+              .logic = static_cast<bte::strategy::ConditionLogic>(99),
+              .conditions = {priceChangeCondition(
+                  bte::strategy::Comparison::greaterThan, 1.0)},
+          },
+  });
+  const auto wrongPercentDomain = bte::strategy::SelectableStrategy::create({
+      .buy =
+          {
+              .conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::closeChangePercent,
+                  .comparison = bte::strategy::Comparison::greaterThan,
+                  .threshold = 1.0,
+                  .thresholdDomain = bte::indicators::NumericDomain::price,
+              }},
+          },
+  });
+  const auto wrongIndicatorDomain = bte::strategy::SelectableStrategy::create({
+      .buy =
+          {
+              .conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::indicator,
+                  .comparison = bte::strategy::Comparison::greaterThan,
+                  .threshold = 50.0,
+                  .thresholdDomain = bte::indicators::NumericDomain::price,
+                  .indicator =
+                      {
+                          .kind = bte::indicators::IndicatorKind::rsi,
+                          .period = 2,
+                      },
+              }},
+          },
+  });
+
+  EXPECT_FALSE(invalidLogic.ok());
+  EXPECT_FALSE(wrongPercentDomain.ok());
+  EXPECT_FALSE(wrongIndicatorDomain.ok());
+  EXPECT_EQ(invalidLogic.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_EQ(wrongPercentDomain.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_EQ(wrongIndicatorDomain.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+}
+
+TEST(SelectableStrategyTest, invalidSellPlanIsRejectedAfterValidBuyPlan) {
+  const auto invalidSell = bte::strategy::SelectableStrategy::create({
+      .buy =
+          {
+              .conditions = {priceChangeCondition(
+                  bte::strategy::Comparison::greaterThan, 1.0)},
+          },
+      .sell =
+          {
+              .conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::indicator,
+                  .indicator =
+                      {
+                          .kind = bte::indicators::IndicatorKind::sma,
+                          .period = 0,
+                      },
+              }},
+          },
+  });
+
+  EXPECT_FALSE(invalidSell.ok());
+  EXPECT_EQ(invalidSell.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+}
+
+TEST(SelectableStrategyTest, moveOperationsPreserveExecutableStrategyState) {
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy =
+          {
+              .conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::barField,
+                  .comparison = bte::strategy::Comparison::greaterThan,
+                  .threshold = 5.0,
+              }},
+          },
+  };
+  auto initialResult = bte::strategy::SelectableStrategy::create(plan);
+  auto replacementResult = bte::strategy::SelectableStrategy::create(plan);
+  ASSERT_TRUE(initialResult.ok());
+  ASSERT_TRUE(replacementResult.ok());
+  auto initial = std::move(initialResult).value();
+  auto replacement = std::move(replacementResult).value();
+
+  auto moved = std::move(*initial);
+  *replacement = std::move(moved);
+  const auto signal = replacement->onBar(makeBar(2, 10.0));
+
+  ASSERT_TRUE(signal.ok());
+  EXPECT_TRUE(signal.value().buy);
+}
+
+TEST(SelectableStrategyTest,
+     invalidInputBarIsRejectedBeforeConditionEvaluation) {
   auto created = bte::strategy::SelectableStrategy::create({
       .buy =
           {

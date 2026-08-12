@@ -124,6 +124,127 @@ TEST(StreamingIndicatorTest, invalidDefinitionsAndBarsReturnStructuredErrors) {
   EXPECT_EQ(update.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
+TEST(StreamingIndicatorTest, rejectsInvalidEnumAndMultiPeriodDefinitions) {
+  using bte::indicators::BarField;
+  using bte::indicators::IndicatorKind;
+
+  const auto unknownKind = bte::indicators::StreamingIndicator::create({
+      .kind = static_cast<IndicatorKind>(99),
+  });
+  const auto unknownField = bte::indicators::StreamingIndicator::create({
+      .kind = IndicatorKind::barField,
+      .field = static_cast<BarField>(99),
+  });
+  const auto invalidMacd = bte::indicators::StreamingIndicator::create({
+      .kind = IndicatorKind::macd,
+      .period = 3,
+      .secondaryPeriod = 2,
+      .signalPeriod = 1,
+  });
+  const auto invalidStochastic = bte::indicators::StreamingIndicator::create({
+      .kind = IndicatorKind::stochastic,
+      .period = 2,
+      .signalPeriod = bte::indicators::maximumIndicatorPeriod + 1,
+  });
+
+  EXPECT_FALSE(unknownKind.ok());
+  EXPECT_FALSE(unknownField.ok());
+  EXPECT_FALSE(invalidMacd.ok());
+  EXPECT_FALSE(invalidStochastic.ok());
+  EXPECT_EQ(unknownKind.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(unknownField.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(invalidMacd.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(invalidStochastic.error().code,
+            bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(StreamingIndicatorTest, barFieldHelpersPreserveValuesAndDomains) {
+  const auto bar = bte::core::Bar{
+      .ts = bte::core::Timestamp{std::chrono::sys_days{std::chrono::year{2024} /
+                                                       1 / 2}},
+      .open = 10.0,
+      .high = 13.0,
+      .low = 8.0,
+      .close = 11.0,
+      .volume = 250.0,
+  };
+
+  const auto open =
+      bte::indicators::barFieldValue(bar, bte::indicators::BarField::open);
+  const auto high =
+      bte::indicators::barFieldValue(bar, bte::indicators::BarField::high);
+  const auto low =
+      bte::indicators::barFieldValue(bar, bte::indicators::BarField::low);
+  const auto volume =
+      bte::indicators::barFieldValue(bar, bte::indicators::BarField::volume);
+  const auto unknown = bte::indicators::barFieldValue(
+      bar, static_cast<bte::indicators::BarField>(99));
+
+  EXPECT_TRUE(
+      bte::indicators::isValidBarField(bte::indicators::BarField::close));
+  EXPECT_FALSE(bte::indicators::isValidBarField(
+      static_cast<bte::indicators::BarField>(99)));
+  EXPECT_DOUBLE_EQ(open.value, 10.0);
+  EXPECT_DOUBLE_EQ(high.value, 13.0);
+  EXPECT_DOUBLE_EQ(low.value, 8.0);
+  EXPECT_DOUBLE_EQ(volume.value, 250.0);
+  EXPECT_EQ(open.domain, bte::indicators::NumericDomain::price);
+  EXPECT_EQ(volume.domain, bte::indicators::NumericDomain::volume);
+  EXPECT_EQ(unknown.domain, bte::indicators::NumericDomain::scalar);
+  EXPECT_EQ(bte::indicators::indicatorOutputDomain(
+                {.kind = static_cast<bte::indicators::IndicatorKind>(99)}),
+            bte::indicators::NumericDomain::scalar);
+}
+
+TEST(StreamingIndicatorTest, handlesNeutralRsiAndZeroVolumeRocBoundaries) {
+  auto rsi = bte::indicators::StreamingIndicator::create({
+      .kind = bte::indicators::IndicatorKind::rsi,
+      .period = 1,
+  });
+  auto roc = bte::indicators::StreamingIndicator::create({
+      .kind = bte::indicators::IndicatorKind::roc,
+      .period = 2,
+      .field = bte::indicators::BarField::volume,
+  });
+  ASSERT_TRUE(rsi.ok());
+  ASSERT_TRUE(roc.ok());
+  auto neutralRsi = std::move(rsi).value();
+  auto zeroVolumeRoc = std::move(roc).value();
+  auto zeroVolumeBar = makeBar(2, 10.0);
+  zeroVolumeBar.volume = 0.0;
+
+  EXPECT_FALSE(neutralRsi.latest().has_value());
+  EXPECT_FALSE(neutralRsi.update(makeBar(2, 10.0)).value().has_value());
+  const auto neutral = neutralRsi.update(makeBar(3, 10.0));
+  ASSERT_TRUE(neutral.ok());
+  ASSERT_TRUE(neutral.value().has_value());
+  EXPECT_DOUBLE_EQ(neutral.value()->value, 50.0);
+  EXPECT_EQ(neutralRsi.definition().kind, bte::indicators::IndicatorKind::rsi);
+
+  EXPECT_FALSE(zeroVolumeRoc.update(zeroVolumeBar).value().has_value());
+  ASSERT_TRUE(zeroVolumeRoc.update(zeroVolumeBar).ok());
+  const auto undefinedRoc = zeroVolumeRoc.update(zeroVolumeBar);
+  ASSERT_TRUE(undefinedRoc.ok());
+  EXPECT_FALSE(undefinedRoc.value().has_value());
+}
+
+TEST(StreamingIndicatorTest, constantBollingerBandUsesNeutralPercentB) {
+  auto created = bte::indicators::StreamingIndicator::create({
+      .kind = bte::indicators::IndicatorKind::bollingerBands,
+      .period = 2,
+      .output = bte::indicators::IndicatorOutput::percentB,
+  });
+  ASSERT_TRUE(created.ok());
+  auto indicator = std::move(created).value();
+
+  ASSERT_TRUE(indicator.update(makeBar(2, 10.0)).ok());
+  const auto second = indicator.update(makeBar(3, 10.0));
+
+  ASSERT_TRUE(second.ok());
+  ASSERT_TRUE(second.value().has_value());
+  EXPECT_DOUBLE_EQ(second.value()->value, 0.5);
+}
+
 TEST(StreamingIndicatorTest,
      maximumSupportedPeriodIsAcceptedAndNextValueIsRejected) {
   const auto maximum = bte::indicators::StreamingIndicator::create({

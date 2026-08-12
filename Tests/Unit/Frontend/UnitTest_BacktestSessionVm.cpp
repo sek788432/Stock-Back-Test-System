@@ -41,6 +41,7 @@ private slots:
   void filledSnapshotPreservesNextBarTimestamp();
   void capitalUsesHalfEvenRoundingAtTheMinimumBoundary();
   void selectablePlanPresentsBothBuyAndSellFills();
+  void selectablePlanPresentsNoSignalOutcome();
   void invalidSelectablePlanPreservesCompileError();
   void configuredRunComposesTrackedDataAndEngine();
 };
@@ -231,6 +232,26 @@ void BacktestSessionVmTest::selectablePlanPresentsBothBuyAndSellFills() {
   QCOMPARE(result.value().fills[1].side, bte::bindings::BacktestFillSide::sell);
   QCOMPARE(result.value().positionShares, 0);
   QCOMPARE(result.value().cash, 1'899.81);
+}
+
+void BacktestSessionVmTest::selectablePlanPresentsNoSignalOutcome() {
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy =
+          {
+              .conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::barField,
+                  .comparison = bte::strategy::Comparison::greaterThan,
+                  .threshold = 1'000.0,
+              }},
+          },
+  };
+  const auto result = bte::bindings::runBacktestSession(
+      {makeBar(2, 100.0, 100.0), makeBar(3, 101.0, 101.0)}, 1'000.0, 1, plan);
+
+  QVERIFY(result.ok());
+  QCOMPARE(result.value().outcome,
+           bte::bindings::BacktestOutcome::completedNoSignal);
+  QVERIFY(result.value().fills.empty());
 }
 
 void BacktestSessionVmTest::invalidSelectablePlanPreservesCompileError() {

@@ -83,6 +83,7 @@ private slots:
   void selectableConditionsSubmitTypedPlanToBackend();
   void selectableMetricsSubmitTypedPlansToBackend();
   void selectableConditionStatusNamesItsSelectedStrategy();
+  void selectableControlsPresentNoSignalAndSellFill();
 };
 
 void BacktestTabTest::exposesAccessibleRunConfiguration() {
@@ -521,6 +522,47 @@ void BacktestTabTest::selectableConditionStatusNamesItsSelectedStrategy() {
   QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("selectable strategy"),
                            5'000);
   QVERIFY(!status->text().contains("starter order"));
+}
+
+void BacktestTabTest::selectableControlsPresentNoSignalAndSellFill() {
+  std::atomic_int invocation = 0;
+  bte::frontend::BacktestTab tab{[&invocation](
+                                     bte::bindings::BacktestConfiguration,
+                                     bte::core::CancellationToken) {
+    if (invocation.fetch_add(1) == 0) {
+      return bte::core::Result<bte::bindings::BacktestSnapshot>{
+          noFillSnapshot(bte::bindings::BacktestOutcome::completedNoSignal)};
+    }
+    auto snapshot = filledSnapshot();
+    snapshot.fills.front().side = bte::bindings::BacktestFillSide::sell;
+    return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+  }};
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  auto *sellSecond =
+      tab.findChild<QCheckBox *>("backtestSellSecondEnabledCheckBox");
+  auto *sellSecondMetric =
+      tab.findChild<QComboBox *>("backtestSellSecondMetricCombo");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  auto *trades = tab.findChild<QTableWidget *>("backtestTradeLogTable");
+  QVERIFY(strategy != nullptr);
+  QVERIFY(sellSecond != nullptr);
+  QVERIFY(sellSecondMetric != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(trades != nullptr);
+
+  strategy->setCurrentText("Selectable conditions");
+  QVERIFY(!sellSecondMetric->isEnabled());
+  QTest::mouseClick(sellSecond, Qt::LeftButton);
+  QVERIFY(sellSecondMetric->isEnabled());
+  QTest::mouseClick(run, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("no selectable condition"),
+                           5'000);
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QTRY_COMPARE_WITH_TIMEOUT(trades->rowCount(), 1, 5'000);
+  QCOMPARE(trades->item(0, 1)->text(), QString{"Sell"});
 }
 
 } // namespace
