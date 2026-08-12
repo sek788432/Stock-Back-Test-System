@@ -67,6 +67,13 @@ class CiWorkflowSecurityTest(unittest.TestCase):
         self.assertIn("--require-hashes", self.workflow)
         self.assertIn("--requirement Tools/CoverageRequirements.txt", self.workflow)
 
+    def test_artifact_uploads_use_the_pinned_node24_release(self) -> None:
+        self.assertIn(
+            "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+            self.workflow,
+        )
+        self.assertNotIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", self.workflow)
+
 
 class StaticAnalysisToolTest(unittest.TestCase):
     def test_workflow_uses_supported_scan_build_probe(self) -> None:

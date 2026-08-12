@@ -28,7 +28,7 @@ pull requests, pushes to `main`, a weekly schedule, and manual dispatch.
 | `all-tests` | Installs Qt 6.9 with Qt Charts; configures and builds the `qt-dev` preset with tests and compiler warnings as errors; runs every registered CTest test on Ubuntu and macOS. | Implemented / merge-blocking |
 | `project-standards` | Runs `Tools/CheckProjectStandards.py --full-tree` against the submitted Git revision on Ubuntu. | Implemented / merge-blocking |
 | `static-analysis` | Configures the complete Qt source tree with Clang 18. On pull requests and pushes, it runs clang-tidy, cppcheck, and IWYU on changed translation units; manual and scheduled runs analyze every project translation unit. scan-build always analyzes the complete build. Analyzer findings fail the job; scan-build reports are uploaded. | Implemented / merge-blocking |
-| `coverage` | Builds and runs all registered tests with coverage instrumentation; requires 90% changed-line coverage and 80% changed-branch coverage; uploads gcovr reports. | Implemented / merge-blocking |
+| `coverage` | Builds and runs all registered tests with coverage instrumentation; requires 98% changed-line coverage and 90% changed-branch coverage; uploads gcovr reports. | Implemented / merge-blocking |
 | `merge-gate` | Fails unless both matrix test runs, project standards, static analysis, and changed-code coverage succeed. Its display name is `Merge gate (all required checks)`. | Implemented / merge-blocking |
 
 The workflow does **not** currently run Windows, DataFetcher pytest, mutation
@@ -194,7 +194,7 @@ The complete local quality entry point is:
 ```
 
 It runs the implemented analyzer and coverage commands below, including the
-same 90% changed-line and 80% changed-branch thresholds. Its `--fast` option
+same 98% changed-line and 90% changed-branch thresholds. Its `--fast` option
 skips whole-tree scan-build for iteration, but the complete default workflow is
 required before pushing applicable C++ changes or requesting CI. Generated
 reports are written below `Output/` and are not checked in. On its first run,
@@ -247,8 +247,8 @@ cmake --preset coverage -DBTE_BUILD_QT_APP=ON
 cmake --build --preset coverage --parallel
 ctest --preset coverage --no-tests=error
 python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --decisions --cobertura coverage.xml --json coverage.json --html-details coverage.html
-diff-cover coverage.xml --compare-branch=<base> --fail-under=90
-python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 80
+diff-cover coverage.xml --compare-branch=<base> --fail-under=98
+python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 90
 ```
 
 CI regenerates these reports for the submitted revision and renders the gcovr

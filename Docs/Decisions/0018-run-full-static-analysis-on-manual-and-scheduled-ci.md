@@ -1,4 +1,4 @@
-# 0017 — Run full static analysis on manual and scheduled CI
+# 0018 — Run full static analysis on manual and scheduled CI
 
 - **Status**: Accepted
 - **Date**: 2026-08-12

@@ -1,10 +1,10 @@
 # 0012 — Enforce static analysis and diff coverage
 
-- **Status**: Superseded in part by 0017
+- **Status**: Superseded in part by 0017 and 0018
 - **Date**: 2026-08-12
 - **Deciders**: repository maintainer
 - **Supersedes**: —
-- **Superseded by**: —
+- **Superseded by**: [ADR 0017](0017-raise-changed-code-coverage-gates-and-update-artifact-runtime.md) (coverage thresholds) and [ADR 0018](0018-run-full-static-analysis-on-manual-and-scheduled-ci.md) (static-analysis scope)
 
 ## Context
 
@@ -30,8 +30,8 @@ Add two required Ubuntu 24.04 workflow jobs and make `merge-gate` depend on both
    analysis fails.
 2. `coverage` builds and runs every registered backend and Qt test with GCC
    coverage instrumentation. gcovr 8.5 produces machine-readable and HTML
-   reports. diff-cover 10.0.0 requires at least 90% changed-line coverage, and a
-   repository-owned checker requires at least 80% changed-branch coverage.
+   reports. The initial 90% changed-line and 80% changed-branch thresholds are
+   superseded by ADR 0017.
 
 Only changed translation units under `Src/` are clang-tidy, cppcheck, and IWYU
 roots; included project headers remain visible to the tools, while fetched and
