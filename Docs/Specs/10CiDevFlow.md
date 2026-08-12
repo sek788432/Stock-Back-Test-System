@@ -35,6 +35,12 @@ The workflow does **not** currently run Windows, DataFetcher pytest, mutation
 testing, ruff, explicit format checks, sanitizers, TSan, or a determinism
 fixture comparison.
 
+Every external action is pinned to a full commit SHA, checkout credentials are
+not persisted into the repository configuration, and coverage dependencies are
+installed from the hash-locked `Tools/CoverageRequirements.txt`. Release labels
+remain beside action SHAs as review and dependency-update metadata; labels are
+not executable references.
+
 Whether GitHub branch protection requires the aggregate status, signed commits,
 reviews, or linear history is **External / unverified**. Those settings must be
 checked in GitHub; repository files alone cannot prove them.
@@ -193,7 +199,10 @@ scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty -o Out
 ```
 
 CI pins clang/clang-tidy/clang-tools `1:18.1.3-1ubuntu1`, cppcheck
-`2.13.0-2ubuntu3`, and IWYU `8.21-1build2` on Ubuntu 24.04.
+`2.13.0-2ubuntu3`, and IWYU `8.21-1build2` on Ubuntu 24.04. The complete Python
+coverage dependency closure and artifact hashes are recorded in
+`Tools/CoverageRequirements.txt`; direct requirements remain in
+`Tools/CoverageRequirements.in`.
 
 The merge-blocking coverage commands are:
 
