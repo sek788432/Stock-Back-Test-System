@@ -11,21 +11,26 @@ description: >-
 
 # Static Analysis
 
-Static analysis runs locally (pre-commit), in CI (G7 of Docs/Specs/10), and on demand. The same configs are used everywhere — there is no "CI is stricter than my machine".
+Static analysis runs locally, in CI (G7 of Docs/Specs/10), and on demand. The
+repository does not currently install a pre-commit hook. Local and CI execution
+use the same checked-in analyzer and coverage configuration.
 
 ## Tool stack
 
 | Tool | What it catches | Required? |
 |---|---|---|
-| `clang-format` | formatting drift | yes (G8) |
+| `clang-format` | formatting drift | planned, not merge-blocking |
 | `clang-tidy` | bug-pattern lints, modernize-* checks, naming | yes (G7) |
-| `clang static analyzer` (`scan-build`) | data-flow bugs (null deref, use-after-free, leaks) | yes, weekly + pre-release |
+| `clang static analyzer` (`scan-build`) | data-flow bugs (null deref, use-after-free, leaks) | yes (G7) |
 | `cppcheck` | extra coverage of patterns clang-tidy misses | yes (G7) |
 | `include-what-you-use` (IWYU) | unused / missing includes | yes (G7) |
-| `clang -fsanitize=address,undefined,leak` (dev preset) | runtime bugs caught at test-time | yes (G2 / G6 prerequisite) |
-| `clang -fsanitize=thread` (dev-tsan preset) | data races | yes, before merging concurrency-touching PRs |
+| `clang -fsanitize=address,undefined` (`dev-sanitize`) | runtime bugs caught at test-time | implemented locally, not merge-blocking |
+| `clang -fsanitize=thread` | data races | planned, not implemented |
 
-All of these are wired into the `dev` and `dev-tsan` CMake presets and `Tests/` runner. You should never have to install them by hand outside the documented setup.
+The implemented merge-blocking analyzers and coverage gate are orchestrated
+locally by `RunQuality.sh`. The sanitizer preset is local-only; TSan and explicit
+clang-format enforcement remain planned. See `Docs/Specs/10CiDevFlow.md` for the
+authoritative implemented-versus-planned status.
 
 ## Files that own the configuration
 
@@ -33,47 +38,42 @@ All of these are wired into the `dev` and `dev-tsan` CMake presets and `Tests/` 
 |---|---|
 | `.clang-format` | format rules (column width, brace style, spacing) |
 | `.clang-tidy` | lint checks enabled + per-check options (naming case, etc.) |
-| `Tests/sanitizer-suppressions.txt` | rare false-positive suppressions (CODEOWNER review required) |
 | `Cmake/Sanitizers.cmake` | which sanitizers each preset enables |
-| `tools/iwyu.imp` | IWYU mapping file (Qt, std, third-party) |
-| `cppcheck.suppressions` | cppcheck false-positive suppressions |
+| `Tools/Iwyu.imp` | IWYU mapping file (Qt, std, third-party) |
+| `Cppcheck.suppressions` | cppcheck false-positive suppressions |
 
 If you change one of these files, the PR description must explain why, and it requires CODEOWNER review.
 
 ## Running locally
 
 ```bash
-# 1. Configure dev preset (once per machine, after submodule update)
-cmake --preset dev
+# Complete registered test suite, matching the CI Qt build.
+./RunTest.sh
 
-# 2. Format + tidy + cppcheck on changed files (pre-commit does this on `git push`)
-./tools/run-clang-format.sh
-./tools/run-clang-tidy-diff.sh         # only changed files
-./tools/run-cppcheck.sh
+# Complete pre-CI static-analysis and changed-coverage workflow.
+./RunQuality.sh --base origin/main --head HEAD
 
-# 3. Build and run tests with sanitizers
-cmake --build --preset dev
-ctest --preset dev
+# Faster iteration: skips whole-tree scan-build only.
+./RunQuality.sh --fast --base origin/main --head HEAD
 
-# 4. Run TSan on threading-touching changes
-cmake --preset dev-tsan
-cmake --build --preset dev-tsan
-ctest --preset dev-tsan
-
-# 5. Run scan-build on demand (slower; weekly in CI)
-./tools/run-scan-build.sh
-
-# 6. Check includes
-./tools/run-iwyu.sh
+# Optional local ASan/UBSan run.
+cmake --preset dev-sanitize
+cmake --build --preset dev-sanitize --parallel
+ctest --preset dev-sanitize --no-tests=error
 ```
 
-These scripts read the same `compile_commands.json` CMake produces. If a tool can't find your file, run `cmake --build --preset dev` first to refresh the database.
+Run the complete, non-`--fast` command on the committed `HEAD` before pushing
+applicable C++ work or requesting CI. The analyzer scripts read the compilation
+database under `Output/analysis`, and coverage reports are generated under
+`Output/CoverageReport/`. The first invocation bootstraps missing analyzer
+packages and a private locked Python environment; no activation or manual
+`PATH` setup is required.
 
-## What "zero new warnings" means (G7)
+## What analyzer-clean means (G7)
 
-CI compares analyzer output on `main` to analyzer output on the PR branch. **Net new warnings on touched files block merge.**
-
-You may inherit existing warnings; you don't add new ones. Existing warnings show up in a weekly debt report — fix opportunistically.
+CI runs clang-tidy, cppcheck, and IWYU on changed project translation units.
+Any reported finding fails the job; there is no warning-baseline comparison or
+weekly debt report. Scan-build analyzes the complete configured source tree.
 
 ## Reading analyzer output
 
@@ -95,7 +95,7 @@ Read in this order:
 
 ### scan-build / clang analyzer
 
-Outputs an HTML report under `Output/scan-build/` (or your configured binary dir). Open `index.html`. Each report walks you through a path: `here we set p = nullptr; here we deref p`. Trust the path — the analyzer is good. If you think it's wrong, write a comment that proves it can't happen, and add the file/line to suppressions with a CODEOWNER review.
+Outputs HTML reports under `Output/scan-build-reports/`. Each report walks you through a path: `here we set p = nullptr; here we deref p`. Trust the path — the analyzer is good. If you think it's wrong, write a comment that proves it can't happen, and add the file/line to suppressions with a CODEOWNER review.
 
 ### Sanitizers
 
@@ -120,7 +120,7 @@ Foo.cpp should remove these lines:
 - #include <vector>    // lines 3-3
 ```
 
-Apply the suggestions unless IWYU is wrong about a private header — in which case add a mapping to `tools/iwyu.imp`.
+Apply the suggestions unless IWYU is wrong about a private header — in which case add a mapping to `Tools/Iwyu.imp`.
 
 ## clang-tidy check selection (this repo)
 
@@ -171,30 +171,19 @@ Static analysis is opinionated. When you genuinely think a finding is wrong:
 
 Before requesting review, confirm:
 
-- [ ] `clang-format` clean on touched files (`./tools/run-clang-format.sh --check`)
-- [ ] `clang-tidy` zero new warnings on touched files (`./tools/run-clang-tidy-diff.sh`)
-- [ ] `cppcheck` zero new warnings (`./tools/run-cppcheck.sh`)
-- [ ] `ctest --preset dev` passes (ASan/UBSan/LSan clean)
-- [ ] If you touched threading code: `ctest --preset dev-tsan` passes
-- [ ] If you touched headers: `./tools/run-iwyu.sh` clean or fixed
+- [ ] `./RunTest.sh` passes on the submitted commit
+- [ ] `./RunQuality.sh --base <base> --head HEAD` passes without `--fast`
+- [ ] Optional applicable `ctest --preset dev-sanitize` passes
 - [ ] All `// NOLINT` and suppression entries justified in PR description
 
-If pre-commit passed locally and the diff is small, this is usually 30 seconds to verify. The CI does it again, so anything you forget is caught — but failing in CI is slower than checking locally.
+CI repeats the checks against the submitted SHA; it is the verifier, not the
+first feedback loop.
 
 ## Working with sanitizer false positives
 
-If a sanitizer flags external (third-party / system) code:
-
-- Add a narrow suppression to `Tests/sanitizer-suppressions.txt`:
-  ```
-  leak:libduckdb.so
-  race:dlopen
-  ```
-- Add an `until: YYYY-MM-DD` (or `never` for system code) in a comment.
-- Open an issue if the third party has an upstream bug; reference it.
-- Get CODEOWNER review on the suppression file.
-
-Never suppress on **our** code without first writing the test that proves the code is correct.
+No sanitizer-suppression file is currently wired into the build. Treat every
+finding as a defect. A future suppression mechanism must be introduced as a
+narrow, reviewed tooling change before any suppression can be used.
 
 ## Summary
 

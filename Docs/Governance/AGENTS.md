@@ -55,6 +55,7 @@ practical; do not rely on skill activation alone.
 | H15 | Never use manual mutex `lock()`/`unlock()`, detached threads, or `volatile` for synchronization. Never call `QWidget` methods from a worker thread. Use scoped locks, `std::jthread` with cancellation, immutable/value snapshots, and queued Qt delivery.                                                        |
 | H16 | Static-analysis and sanitizer suppressions must be narrow, name the exact check, include a reason, and have maintainer approval. Never blanket-disable a check or suppress a sanitizer finding merely to make a gate pass.                                                                                       |
 | H17 | Project-owned directory names and file stems use PascalCase. Exact external-tool conventions, numbered ADR slugs, `UnitTest_<Thing>` files, entrypoints, and domain-data identifiers are the only exceptions documented by ADR 0010. Every unit-test suite lives under `Tests/Unit/<Module>/`. |
+| H18 | Before pushing or otherwise requesting CI for a change that touches C++ code, build wiring, C++ tests, or C++ quality tooling, run `./RunTest.sh` and then `./RunQuality.sh --base <base-revision> --head HEAD`. Both must pass on the exact committed `HEAD` being submitted. Do not use a CI run as the first quality check. |
 
 ---
 
@@ -84,8 +85,10 @@ unrequested implementation.
    - IPC, snapshot generation, persistence formats, and other cross-module
      contracts: add contract or integration tests in addition to unit tests.
 7. **Run applicable verified checks.** Use only commands that exist in the
-   checked-out tree. `Docs/Specs/10` separates current merge gates from planned
-   checks.
+   checked-out tree. For applicable C++ changes, run `./RunTest.sh` and the
+   complete `./RunQuality.sh --base <base-revision> --head HEAD` workflow before
+   pushing or requesting CI. `Docs/Specs/10` separates current merge gates from
+   planned checks.
 8. **Verify the applicable Definition of Done.** Mark non-applicable items with
    a reason; never claim an unrun or nonexistent check passed.
 9. **Hand off clearly.** Summarize changed files, verification performed, and
@@ -262,6 +265,7 @@ Quick mental pass. If you can answer "yes" to all, you're ready:
 - [ ] Every bug fix or intentional public-behavior change has a regression test.
 - [ ] My tests would actually fail if the production code were wrong (mutation-aware).
 - [ ] I ran every applicable command that exists in this checkout and recorded any planned check that is not yet available.
+- [ ] Before requesting CI for applicable C++ work, `./RunTest.sh` and the complete `./RunQuality.sh --base <base-revision> --head HEAD` passed on the submitted commit.
 - [ ] My commit messages are Conventional Commits.
 - [ ] I filled out the PR template completely (no blank fields).
 - [ ] I worked through the Definition of Done.
