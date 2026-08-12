@@ -60,6 +60,7 @@ ADRs are append-only. To change a decision, write a new ADR that supersedes it. 
 | 0009 | [Retain host adapters and centralize hard rules](0009-retain-host-adapters-and-centralize-hard-rules.md) | Accepted |
 | 0010 | [Enforce PascalCase paths and unit-test layout](0010-enforce-pascal-case-paths-and-unit-test-layout.md) | Accepted |
 | 0011 | [Own the engine and release-data contract](0011-own-the-engine-and-release-data-contract.md) | Accepted |
+| 0012 | [Enforce static analysis and diff coverage](0012-enforce-static-analysis-and-diff-coverage.md) | Accepted |
 
 When you add an ADR, add a row here. Keep numbering monotonic — gaps are confusing, never reuse a number.
 

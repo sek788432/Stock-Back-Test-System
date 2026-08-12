@@ -122,6 +122,10 @@ Sanitizers are not currently a merge-blocking workflow job. See
 [`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) for the exact implemented
 and planned enforcement status.
 
+Static analysis and changed-code coverage are merge-blocking. Their exact local
+commands and required tool versions are documented in
+[`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7.
+
 ## Release changes
 
 - [ ] Version and user-visible release metadata are consistent.

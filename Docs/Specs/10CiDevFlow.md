@@ -21,17 +21,19 @@ aggregate gate depends on it.
 
 The repository currently has one workflow:
 [`../../.github/workflows/ci.yml`](../../.github/workflows/ci.yml). It runs on
-pull requests and pushes to `main`.
+pull requests, pushes to `main`, a weekly schedule, and manual dispatch.
 
 | Workflow job | Verified behavior | Status |
 | --- | --- | --- |
 | `all-tests` | Installs Qt 6.9 with Qt Charts; configures and builds the `qt-dev` preset with tests and compiler warnings as errors; runs every registered CTest test on Ubuntu and macOS. | Implemented / merge-blocking |
 | `project-standards` | Runs `Tools/CheckProjectStandards.py --full-tree` against the submitted Git revision on Ubuntu. | Implemented / merge-blocking |
-| `merge-gate` | Fails unless both matrix test runs and the project-standards job succeed. Its display name is `Merge gate (all required checks)`. | Implemented / merge-blocking |
+| `static-analysis` | Configures the complete Qt source tree with Clang 18; runs clang-tidy, cppcheck, and IWYU on changed translation units; and runs scan-build on the complete build. Analyzer findings fail the job; scan-build reports are uploaded. | Implemented / merge-blocking |
+| `coverage` | Builds and runs all registered tests with coverage instrumentation; requires 90% changed-line coverage and 80% changed-branch coverage; uploads gcovr reports. | Implemented / merge-blocking |
+| `merge-gate` | Fails unless both matrix test runs, project standards, static analysis, and changed-code coverage succeed. Its display name is `Merge gate (all required checks)`. | Implemented / merge-blocking |
 
-The workflow does **not** currently run Windows, DataFetcher pytest, coverage,
-mutation testing, clang-tidy, cppcheck, scan-build, IWYU, ruff, explicit format
-checks, sanitizers, TSan, or a determinism fixture comparison.
+The workflow does **not** currently run Windows, DataFetcher pytest, mutation
+testing, ruff, explicit format checks, sanitizers, TSan, or a determinism
+fixture comparison.
 
 Whether GitHub branch protection requires the aggregate status, signed commits,
 reviews, or linear history is **External / unverified**. Those settings must be
@@ -144,10 +146,9 @@ The following work is explicitly unimplemented:
 - DataFetcher pytest execution.
 - Semantic anti-cheat analysis.
 - Public-behavior parity, including positive/negative/boundary parity.
-- Changed-line and changed-branch coverage.
 - Mutation testing.
 - clang-format and ruff-format enforcement.
-- clang-tidy, cppcheck, scan-build, IWYU, and ruff analysis.
+- ruff analysis.
 - ASan, UBSan, LSan, and TSan workflow jobs.
 - Canonical functional-result fixture comparison.
 - Repository-verifiable reviewer and branch-protection policy checks.
@@ -179,6 +180,32 @@ ctest --preset dev-sanitize --no-tests=error
 
 The sanitizer preset is Implemented / local, not merge-blocking. No repository
 pre-commit configuration or changed-test runner currently exists.
+
+The merge-blocking analyzer commands are:
+
+```bash
+CC=clang-18 CXX=clang++-18 cmake --preset analysis -DBTE_BUILD_QT_APP=ON
+python3 Tools/RunStaticAnalysis.py clang-tidy --base <base> --head <head>
+python3 Tools/RunStaticAnalysis.py cppcheck --base <base> --head <head>
+python3 Tools/RunStaticAnalysis.py iwyu --base <base> --head <head>
+scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
+scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty -o Output/scan-build-reports cmake --build Output/scan-build --parallel
+```
+
+CI pins clang/clang-tidy/clang-tools `1:18.1.3-1ubuntu1`, cppcheck
+`2.13.0-2ubuntu3`, and IWYU `8.21-1build2` on Ubuntu 24.04.
+
+The merge-blocking coverage commands are:
+
+```bash
+cmake -E remove_directory Output/coverage
+cmake --preset coverage -DBTE_BUILD_QT_APP=ON
+cmake --build --preset coverage --parallel
+ctest --preset coverage --no-tests=error
+python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --cobertura coverage.xml --json coverage.json --html-details coverage.html
+diff-cover coverage.xml --compare-branch=<base> --fail-under=90
+python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 80
+```
 
 ## 8. Gate changes and failures
 

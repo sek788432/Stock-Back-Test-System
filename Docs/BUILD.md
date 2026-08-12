@@ -69,6 +69,16 @@ cd Output && ctest --output-on-failure
 | `BTE_BUILD_TESTS`  | `ON`    | Fetch Google Test and build `Tests/` targets |
 | `BTE_SANITIZERS`   | `OFF`   | ASan/UBSan on Clang/GNU when set to `ON`     |
 | `BTE_BUILD_QT_APP` | `OFF`   | Build the optional Qt desktop app shell and frontend smoke tests |
+| `BTE_COVERAGE`     | `OFF`   | Add gcov-compatible test coverage instrumentation |
+
+The `analysis` and `coverage` presets back the merge-blocking quality jobs.
+Analyzer and changed-code coverage commands are documented in
+[`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7.
+
+After a GitHub Actions run, open the run's **Artifacts** section, download
+`coverage-reports`, extract it, and open `coverage.html`. For a local HTML
+report, run the coverage commands from Specs 10 and direct gcovr's
+`--html-details` output to `Output/CoverageReport/index.html`.
 
 ## Optional Qt app shell
 
@@ -90,7 +100,7 @@ configuring.
 | Path                         | Role                                              |
 | ---------------------------- | ------------------------------------------------- |
 | `CMakeLists.txt`             | Root project, optional tests, FetchContent (GTest) |
-| `CMakePresets.json`        | `dev`, `qt-dev`, `dev-sanitize`, `release`        |
+| `CMakePresets.json`        | `dev`, `qt-dev`, `dev-sanitize`, `analysis`, `coverage`, `release` |
 | `Output/<preset>/`        | CMake binary directory (gitignored; e.g. `Output/dev`) |
 | `CMake/CompilerWarnings.cmake` | Shared warning flags                            |
 | `CMake/Sanitizers.cmake`   | ASan/UBSan when `BTE_SANITIZERS=ON`               |
