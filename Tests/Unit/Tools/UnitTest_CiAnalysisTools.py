@@ -52,6 +52,26 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
             self.assertEqual(static_analysis.compilation_units(database, root), [source.resolve()])
 
+    def test_changed_translation_units_keep_only_cpp_sources(self) -> None:
+        root = Path("/tmp/repository")
+        completed = mock.Mock(
+            stdout="Src/Core/Bar.cpp\nSrc/Core/Bar.h\nDocs/BUILD.md\n"
+        )
+        with mock.patch.object(
+            static_analysis.subprocess, "run", return_value=completed
+        ) as run:
+            self.assertEqual(
+                static_analysis.changed_translation_units(root, "base", "head"),
+                {(root / "Src/Core/Bar.cpp").resolve()},
+            )
+        run.assert_called_once_with(
+            ["git", "diff", "--name-only", "base", "head", "--", "Src"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     @mock.patch.object(static_analysis.shutil, "which", return_value=None)
     def test_missing_analyzer_is_reported(self, unused_which: mock.Mock) -> None:
         with self.assertRaisesRegex(RuntimeError, "required command not found"):
@@ -70,10 +90,13 @@ class StaticAnalysisToolTest(unittest.TestCase):
     def test_cppcheck_command_uses_database_and_repository_suppressions(
         self, unused_which: mock.Mock
     ) -> None:
-        command = static_analysis.analyzer_command("cppcheck", Path("/tmp/build"), [])
+        command = static_analysis.analyzer_command(
+            "cppcheck", Path("/tmp/build"), [Path("/tmp/repository/Src/Bar.cpp")]
+        )
 
         self.assertIn("--project=/tmp/build/compile_commands.json", command)
         self.assertIn("--error-exitcode=1", command)
+        self.assertIn("--file-filter=/tmp/repository/Src/Bar.cpp", command)
         self.assertTrue(command[-1].endswith("Cppcheck.suppressions"))
 
     @mock.patch.object(static_analysis.shutil, "which", return_value="/usr/bin/iwyu_tool.py")
@@ -108,7 +131,9 @@ class StaticAnalysisToolTest(unittest.TestCase):
                 json.dumps([{"directory": str(root), "file": str(source)}]),
                 encoding="utf-8",
             )
-            arguments = SimpleNamespace(tool="clang-tidy", build_dir=build_directory)
+            arguments = SimpleNamespace(
+                tool="clang-tidy", build_dir=build_directory, base=None, head=None
+            )
             completed = mock.Mock(returncode=17)
 
             with (
@@ -118,6 +143,39 @@ class StaticAnalysisToolTest(unittest.TestCase):
                 mock.patch.object(static_analysis.subprocess, "run", return_value=completed),
             ):
                 self.assertEqual(static_analysis.main(), 17)
+
+    def test_main_skips_analyzer_when_no_translation_unit_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build_directory = root / "Output/analysis"
+            build_directory.mkdir(parents=True)
+            source = root / "Src/Core/Bar.cpp"
+            source.parent.mkdir(parents=True)
+            source.touch()
+            (build_directory / "compile_commands.json").write_text(
+                json.dumps([{"directory": str(root), "file": str(source)}]),
+                encoding="utf-8",
+            )
+            arguments = SimpleNamespace(
+                tool="clang-tidy",
+                build_dir=build_directory,
+                base="base",
+                head="head",
+            )
+            with (
+                mock.patch.object(static_analysis, "REPOSITORY_ROOT", root),
+                mock.patch.object(
+                    static_analysis, "parse_arguments", return_value=arguments
+                ),
+                mock.patch.object(
+                    static_analysis,
+                    "changed_translation_units",
+                    return_value=set(),
+                ),
+                mock.patch.object(static_analysis, "analyzer_command") as command,
+            ):
+                self.assertEqual(static_analysis.main(), 0)
+                command.assert_not_called()
 
 
 class ChangedBranchCoverageTest(unittest.TestCase):

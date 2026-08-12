@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -105,13 +107,19 @@ jobs:
         run: cmake --preset analysis -DBTE_BUILD_QT_APP=ON
 
       - name: Run clang-tidy
-        run: python3 Tools/RunStaticAnalysis.py clang-tidy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
+        run: python3 Tools/RunStaticAnalysis.py clang-tidy --base "$BASE_SHA" --head "$GITHUB_SHA"
 
       - name: Run cppcheck
-        run: python3 Tools/RunStaticAnalysis.py cppcheck
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
+        run: python3 Tools/RunStaticAnalysis.py cppcheck --base "$BASE_SHA" --head "$GITHUB_SHA"
 
       - name: Run include-what-you-use
-        run: python3 Tools/RunStaticAnalysis.py iwyu
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
+        run: python3 Tools/RunStaticAnalysis.py iwyu --base "$BASE_SHA" --head "$GITHUB_SHA"
 
       - name: Run clang static analyzer
         run: |
@@ -137,7 +145,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install coverage tools
-        run: python3 -m pip install --disable-pip-version-check gcovr==8.5 diff-cover==10.0.0
+        run: python3 -m pip install --disable-pip-version-check 'gcovr[html]==8.5' diff-cover==10.0.0
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
