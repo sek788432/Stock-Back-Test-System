@@ -110,6 +110,9 @@ jobs:
           CXX: clang++-18
         run: cmake --preset analysis -DBTE_BUILD_QT_APP=ON
 
+      - name: Materialize generated analysis sources
+        run: cmake --build --preset analysis --parallel
+
       - name: Run clang-tidy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}

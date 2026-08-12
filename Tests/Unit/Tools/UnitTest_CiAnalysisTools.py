@@ -73,6 +73,14 @@ class StaticAnalysisToolTest(unittest.TestCase):
         self.assertIn("scan-build-18 --help | sed -n '1p'", WORKFLOW_TEXT)
         self.assertNotIn("scan-build-18 --version", WORKFLOW_TEXT)
 
+    def test_workflow_materializes_generated_sources_before_cppcheck(self) -> None:
+        build = WORKFLOW_TEXT.index("cmake --build --preset analysis --parallel")
+        cppcheck = WORKFLOW_TEXT.index(
+            "python3 Tools/RunStaticAnalysis.py cppcheck"
+        )
+
+        self.assertLess(build, cppcheck)
+
     def test_compilation_units_keep_only_project_sources_and_remove_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
