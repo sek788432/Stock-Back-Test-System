@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '30 3 * * 0'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -59,12 +62,128 @@ jobs:
 
       - name: Review the full repository against project standards
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
         run: >-
           python3 Tools/CheckProjectStandards.py
           --full-tree
           --base "$BASE_SHA"
           --head "$GITHUB_SHA"
+
+  static-analysis:
+    name: Static analysis (clang-tidy, cppcheck, IWYU, scan-build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            clang-18=1:18.1.3-1ubuntu1 \
+            clang-tidy-18=1:18.1.3-1ubuntu1 \
+            clang-tools-18=1:18.1.3-1ubuntu1 \
+            cppcheck=2.13.0-2ubuntu3 \
+            iwyu=8.21-1build2
+          clang-tidy-18 --version
+          cppcheck --version
+          include-what-you-use --version
+          scan-build-18 --version
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.*'
+          modules: qtcharts
+          cache: true
+
+      - name: Configure compilation database
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: cmake --preset analysis -DBTE_BUILD_QT_APP=ON
+
+      - name: Run clang-tidy
+        run: python3 Tools/RunStaticAnalysis.py clang-tidy
+
+      - name: Run cppcheck
+        run: python3 Tools/RunStaticAnalysis.py cppcheck
+
+      - name: Run include-what-you-use
+        run: python3 Tools/RunStaticAnalysis.py iwyu
+
+      - name: Run clang static analyzer
+        run: |
+          scan-build-18 --use-analyzer=clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
+          scan-build-18 --use-analyzer=clang-18 --status-bugs --keep-empty --output Output/scan-build-reports cmake --build Output/scan-build --parallel
+
+      - name: Upload scan-build reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-build-reports
+          path: Output/scan-build-reports
+          if-no-files-found: ignore
+
+  coverage:
+    name: Changed-code coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install coverage tools
+        run: python3 -m pip install --disable-pip-version-check gcovr==8.5 diff-cover==10.0.0
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.*'
+          modules: qtcharts
+          cache: true
+
+      - name: Configure coverage tests
+        run: cmake --preset coverage -DBTE_BUILD_QT_APP=ON
+
+      - name: Build coverage tests
+        run: cmake --build --preset coverage --parallel
+
+      - name: Run coverage tests
+        run: ctest --preset coverage --no-tests=error
+
+      - name: Generate coverage reports
+        run: >-
+          python3 -m gcovr
+          --root .
+          --filter 'Src/'
+          --exclude 'Output/'
+          --merge-mode-functions merge-use-line-min
+          --cobertura coverage.xml
+          --json coverage.json
+          --html-details coverage.html
+
+      - name: Enforce changed-line and changed-branch coverage
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
+        run: |
+          diff-cover coverage.xml --compare-branch="$BASE_SHA" --fail-under=90
+          python3 Tools/CheckDiffBranchCoverage.py coverage.json --base "$BASE_SHA" --head "$GITHUB_SHA" --fail-under 80
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage.html
+            coverage.*.html
+            coverage.xml
+            coverage.json
+          if-no-files-found: ignore
 
   merge-gate:
     name: Merge gate (all required checks)
@@ -72,14 +191,16 @@ jobs:
     needs:
       - project-standards
       - all-tests
+      - static-analysis
+      - coverage
     runs-on: ubuntu-latest
     steps:
       - name: Reject failed or cancelled checks
-        if: needs.all-tests.result != 'success' || needs.project-standards.result != 'success'
+        if: needs.all-tests.result != 'success' || needs.project-standards.result != 'success' || needs.static-analysis.result != 'success' || needs.coverage.result != 'success'
         run: |
-          echo "Every registered test and the project standards review must pass before merge."
+          echo "Tests, standards, static analysis, and changed-code coverage must pass before merge."
           exit 1
 
       - name: Approve successful checks
-        if: needs.all-tests.result == 'success' && needs.project-standards.result == 'success'
-        run: echo "Every registered test and the project standards review passed."
+        if: needs.all-tests.result == 'success' && needs.project-standards.result == 'success' && needs.static-analysis.result == 'success' && needs.coverage.result == 'success'
+        run: echo "Tests, standards, static analysis, and changed-code coverage passed."

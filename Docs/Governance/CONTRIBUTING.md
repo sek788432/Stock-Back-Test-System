@@ -82,8 +82,9 @@ The binding sources are:
 1. The repository hard rules in [`AGENTS.md`](AGENTS.md).
 2. The repository-specific C++ skills in [`../../.agents/skills/`](../../.agents/skills/README.md).
 
-No `.clang-format` or `.clang-tidy` configuration is currently checked in, and
-format/tidy enforcement is not a merge-blocking workflow job (`Specs/10`).
+The checked-in `.clang-tidy` configuration is enforced by the merge-blocking
+static-analysis job. Explicit clang-format enforcement remains planned
+(`Specs/10`).
 
 Naming (recap from `cpp-modern-style` and [`../Specs/03BackendCore.md`](../Specs/03BackendCore.md) §1):
 - Variables / methods / namespaces: `lowerCamelCase`.
@@ -109,8 +110,8 @@ A PR must:
 - Add contract/integration coverage for IPC, snapshot generation, and
   `.bteresult` changes.
 
-Coverage, semantic anti-cheat, public-behavior parity, and mutation enforcement
-are planned but are not current merge gates. See
+Changed-line and changed-branch coverage are merge gates. Semantic anti-cheat,
+public-behavior parity, and mutation enforcement remain planned. See
 [`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md) for exact status.
 
 ---
