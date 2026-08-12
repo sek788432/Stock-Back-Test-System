@@ -200,7 +200,10 @@ executeBuyAtOpen(BacktestResult &result, const core::Bar &bar,
     return amount.error();
   }
   if (amount.value() > result.cashMicrodollars) {
-    return PendingOrderExecution{.rejectedInsufficientCash = true};
+    return PendingOrderExecution{
+        .fill = {},
+        .rejectedInsufficientCash = true,
+    };
   }
   const auto remainingCash =
       checkedSubtract(result.cashMicrodollars, amount.value());

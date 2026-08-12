@@ -77,7 +77,7 @@ indicatorOutputDomain(const IndicatorDefinition &definition) noexcept;
 class StreamingIndicator final {
 public:
   [[nodiscard]] static core::Result<StreamingIndicator>
-  create(IndicatorDefinition definition);
+  create(const IndicatorDefinition &definition);
 
   ~StreamingIndicator();
   StreamingIndicator(StreamingIndicator &&) noexcept;

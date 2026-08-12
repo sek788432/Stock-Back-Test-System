@@ -273,7 +273,7 @@ outputAllowed(const IndicatorDefinition &definition) noexcept {
 }
 
 [[nodiscard]] core::Result<IndicatorDefinition>
-validateDefinition(const IndicatorDefinition definition) {
+validateDefinition(const IndicatorDefinition &definition) {
   if (!isIndicatorKind(definition.kind) ||
       !isIndicatorOutput(definition.output) ||
       !isValidBarField(definition.field)) {
@@ -319,7 +319,7 @@ validateDefinition(const IndicatorDefinition definition) {
 } // namespace
 
 struct StreamingIndicator::Impl final {
-  explicit Impl(const IndicatorDefinition configuredDefinition)
+  explicit Impl(const IndicatorDefinition &configuredDefinition)
       : definition(configuredDefinition),
         window(windowCapacity(configuredDefinition)),
         highWindow(
@@ -725,7 +725,7 @@ StreamingIndicator &
 StreamingIndicator::operator=(StreamingIndicator &&) noexcept = default;
 
 core::Result<StreamingIndicator>
-StreamingIndicator::create(const IndicatorDefinition definition) {
+StreamingIndicator::create(const IndicatorDefinition &definition) {
   const auto validated = validateDefinition(definition);
   if (!validated.ok()) {
     return validated.error();
