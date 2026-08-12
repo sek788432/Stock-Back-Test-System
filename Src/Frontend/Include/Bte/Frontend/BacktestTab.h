@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Bte/Bindings/BacktestSessionVm.h"
+#include "Bte/Core/Cancellation.h"
+#include "Bte/Core/Result.h"
 
 #include <QWidget>
 

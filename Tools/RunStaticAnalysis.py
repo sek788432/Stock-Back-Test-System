@@ -85,6 +85,8 @@ def analyzer_command(tool: str, build_directory: Path, units: list[Path]) -> lis
             "-Xiwyu",
             f"--mapping_file={REPOSITORY_ROOT / 'Tools/Iwyu.imp'}",
             "-Xiwyu",
+            "--no_fwd_decls",
+            "-Xiwyu",
             "--error=1",
         ]
     raise ValueError(f"unsupported analyzer: {tool}")

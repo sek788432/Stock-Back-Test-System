@@ -1,14 +1,28 @@
 #include "Bte/Data/BarStream.h"
 
+#include "Bte/Core/Bar.h"
+#include "Bte/Core/Cancellation.h"
+#include "Bte/Core/Result.h"
+#include "Bte/Core/Time.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <compare>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 #include <locale>
-#include <ranges>
+#include <memory>
+#include <optional>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace bte::data {
 namespace {

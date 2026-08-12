@@ -1,10 +1,14 @@
 #include "Bte/Engine/Backtest.h"
 
+#include "Bte/Core/Result.h"
+
 #include <array>
 #include <cmath>
+#include <compare>
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <utility>
 
 namespace bte::engine {
 namespace {

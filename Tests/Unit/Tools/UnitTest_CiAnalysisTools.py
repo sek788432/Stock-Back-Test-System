@@ -158,6 +158,7 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
         self.assertIn("/tmp/repository/Src/Bar.cpp", command)
         self.assertTrue(any(argument.endswith("Tools/Iwyu.imp") for argument in command))
+        self.assertIn("--no_fwd_decls", command)
         self.assertEqual(command[-2:], ["-Xiwyu", "--error=1"])
 
     def test_unsupported_analyzer_is_rejected(self) -> None:
@@ -234,6 +235,13 @@ class ChangedBranchCoverageTest(unittest.TestCase):
         self.assertIn("jinja2==3.1.6", COVERAGE_REQUIREMENTS)
         self.assertIn("markupsafe==3.0.3", COVERAGE_REQUIREMENTS)
         self.assertIn("--decisions", WORKFLOW_TEXT)
+
+    def test_workflow_renders_coverage_for_the_submitted_commit(self) -> None:
+        self.assertIn("--markdown-summary coverage-summary.md", WORKFLOW_TEXT)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', WORKFLOW_TEXT)
+        self.assertIn('echo "Report commit: \\`$GITHUB_SHA\\`"', WORKFLOW_TEXT)
+        self.assertIn("changed-line-coverage.txt", WORKFLOW_TEXT)
+        self.assertIn("changed-branch-coverage.txt", WORKFLOW_TEXT)
 
     def test_changed_lines_parse_added_ranges_and_single_lines(self) -> None:
         diff = """+++ b/Src/Foo.cpp

@@ -9,13 +9,17 @@
 #include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFutureWatcher>
+#include <QFont>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLayout>
+#include <QList>
 #include <QLocale>
+#include <QObject>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -23,13 +27,17 @@
 #include <QTableWidgetItem>
 #include <QTimeZone>
 #include <QToolButton>
+#include <QVariant>
 #include <QVBoxLayout>
+#include <QtCore/Qt>
 #include <QtConcurrentRun>
 
 #include <chrono>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace bte::frontend {

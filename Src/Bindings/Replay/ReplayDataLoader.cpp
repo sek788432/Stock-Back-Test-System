@@ -3,14 +3,19 @@
 #include "Bte/Data/BarStream.h"
 
 #include <QCoreApplication>
+#include <QDate>
 #include <QDebug>
 
 #include <algorithm>
 #include <chrono>
+#include <compare>
+#include <cstddef>
 #include <exception>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace bte::bindings {
