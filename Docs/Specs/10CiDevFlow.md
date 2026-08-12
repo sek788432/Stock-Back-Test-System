@@ -193,7 +193,8 @@ scan-build-18 --use-analyzer=clang-18 --status-bugs --keep-empty --output Output
 ```
 
 CI pins clang/clang-tidy/clang-tools `1:18.1.3-1ubuntu1`, cppcheck
-`2.13.0-2ubuntu3`, and IWYU `8.21-1build2` on Ubuntu 24.04.
+`2.13.0-2ubuntu3`, IWYU `8.21-1build2`, gcovr `8.5`, diff-cover `10.0.0`,
+and Jinja2 `3.1.6` on Ubuntu 24.04.
 
 The merge-blocking coverage commands are:
 

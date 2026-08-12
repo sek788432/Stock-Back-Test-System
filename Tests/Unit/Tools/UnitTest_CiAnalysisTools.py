@@ -14,6 +14,7 @@ from unittest import mock
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+WORKFLOW_TEXT = (REPOSITORY_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
 
 def load_tool(name: str):
@@ -29,6 +30,10 @@ branch_coverage = load_tool("CheckDiffBranchCoverage")
 
 
 class StaticAnalysisToolTest(unittest.TestCase):
+    def test_workflow_uses_supported_scan_build_probe(self) -> None:
+        self.assertIn("scan-build-18 --help | sed -n '1p'", WORKFLOW_TEXT)
+        self.assertNotIn("scan-build-18 --version", WORKFLOW_TEXT)
+
     def test_compilation_units_keep_only_project_sources_and_remove_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -121,6 +126,9 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
 
 class ChangedBranchCoverageTest(unittest.TestCase):
+    def test_workflow_installs_html_report_dependency_at_an_exact_version(self) -> None:
+        self.assertIn("jinja2==3.1.6", WORKFLOW_TEXT)
+
     def test_changed_lines_parse_added_ranges_and_single_lines(self) -> None:
         diff = """+++ b/Src/Foo.cpp
 @@ -2,0 +3,2 @@

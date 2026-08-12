@@ -89,7 +89,7 @@ jobs:
           clang-tidy-18 --version
           cppcheck --version
           include-what-you-use --version
-          scan-build-18 --version
+          scan-build-18 --help | sed -n '1p'
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -137,7 +137,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install coverage tools
-        run: python3 -m pip install --disable-pip-version-check gcovr==8.5 diff-cover==10.0.0
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          gcovr==8.5 diff-cover==10.0.0 jinja2==3.1.6
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4

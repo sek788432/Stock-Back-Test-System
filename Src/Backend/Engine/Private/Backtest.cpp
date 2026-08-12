@@ -137,9 +137,14 @@ runBacktest(const BacktestRequest &request,
   }
 
   auto result = BacktestResult{
+      .orderStatus = StarterOrderStatus::cancelledNoFutureMarketData,
+      .fill = {},
       .initialCapitalMicrodollars = request.initialCapitalMicrodollars,
       .cashMicrodollars = request.initialCapitalMicrodollars,
+      .marketValueMicrodollars = 0,
       .equityMicrodollars = request.initialCapitalMicrodollars,
+      .pnlMicrodollars = 0,
+      .finalPriceNanodollars = 0,
       .barsProcessed = request.bars.size(),
   };
 
