@@ -148,9 +148,9 @@ If you can't approve but don't want to block, request changes with an explanatio
 
 ## Common review traps to avoid
 
-- **Bikeshedding style.** Follow the repository hard rules and
-  `cpp-modern-style`; no format/tidy configuration is currently checked in and
-  those tools are not merge-blocking workflow jobs.
+- **Bikeshedding style.** Follow the repository hard rules, checked-in
+  `.clang-tidy` configuration, and `cpp-modern-style`; use the implemented
+  static-analysis workflow rather than personal style preferences.
 - **Reviewing for "what I would have written"** instead of "is this a good solution to the problem". The author's solution might be better than yours.
 - **Approving fast** because CI is green. CI catches a lot, but not design and intent.
 - **Demanding rewrites** for small style preferences. Use `nit:` and move on.

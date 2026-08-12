@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <source_location>
 #include <string>
@@ -8,7 +9,7 @@
 
 namespace bte::core {
 
-enum class ErrorCode {
+enum class ErrorCode : std::uint8_t {
     ok = 0,
     invalidArgument,
     notFound,
@@ -45,9 +46,19 @@ template <typename T> class Result {
 
     [[nodiscard]] bool ok() const noexcept { return !error_; }
 
-    [[nodiscard]] const T& value() const& { return *value_; }
+    [[nodiscard]] const T& value() const& {
+        // std::optional::value performs the check and throws; the contract is
+        // covered by ResultTest.valueAccessOnErrorThrowsForConstAndMovedResults.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        return value_.value();
+    }
 
-    [[nodiscard]] T&& value() && { return std::move(*value_); }
+    [[nodiscard]] T&& value() && {
+        // std::optional::value performs the check and throws; the contract is
+        // covered by ResultTest.valueAccessOnErrorThrowsForConstAndMovedResults.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        return std::move(value_).value();
+    }
 
     [[nodiscard]] const Error& error() const noexcept { return error_; }
 

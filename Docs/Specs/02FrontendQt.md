@@ -1,6 +1,10 @@
 # 02 — Frontend (Qt)
 
-> **Status:** Partially implemented. The current application contains Qt tab, chart, and replay scaffolding. Strategy authoring, complete backtest workflows, screening, plugins, and release-quality UX remain planned unless their owning spec says otherwise.
+> **Status:** Partially implemented. The current application contains Qt tab,
+> chart, replay scaffolding, and a starter Backtest page for the limited engine
+> slice documented in `07` §1. Strategy authoring, complete backtest workflows,
+> screening, plugins, and release-quality UX remain planned unless their owning
+> spec says otherwise.
 
 This spec owns the Qt presentation interface: every screen the user sees, chart
 presentation, and how the UI communicates with backend modules without blocking
@@ -87,6 +91,14 @@ Replay** is enabled only for an existing Backtest Result; it never executes the
 editor's current Strategy.
 
 ### 2.2 Backtest tab
+
+The implemented starter page exposes symbol, range, capital, and whole-share
+quantity controls for one fixed starter strategy. It reports the run status,
+cash, position, market value, equity, P&L, processed-bar count, and its optional
+fill. Each range calendar provides a directly selectable year dropdown alongside
+the month control instead of requiring repeated previous/next navigation. This
+is an incremental implementation of the layout below; the complete Run
+Configuration, equity curve, metrics, and sortable trade log remain planned.
 
 | Region | Content |
 |---|---|

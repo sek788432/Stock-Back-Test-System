@@ -27,7 +27,7 @@ add_subdirectory(Src/Backend/Data)
 add_subdirectory(Src/Backend/Engine)
 
 if(BTE_BUILD_QT_APP)
-  set(BTE_QT_COMPONENTS Charts Core Widgets)
+  set(BTE_QT_COMPONENTS Charts Concurrent Core Widgets)
   if(BTE_BUILD_TESTS)
     list(APPEND BTE_QT_COMPONENTS Test)
   endif()

@@ -1,8 +1,10 @@
 add_library(
   bte_engine
   STATIC
+    Include/Bte/Engine/Backtest.h
     Include/Bte/Engine/Replay.h
     Include/Bte/Engine/ResultSnapshotStore.h
+    Private/Backtest.cpp
     Private/Replay.cpp
     Private/ResultSnapshotStore.cpp)
 

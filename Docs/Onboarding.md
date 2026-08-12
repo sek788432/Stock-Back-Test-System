@@ -90,7 +90,7 @@ source .venv/bin/activate                    # Windows: .venv\Scripts\activate
 pip install -r DataFetcher/requirements.txt
 
 # C++ build (see Docs/BUILD.md + Docs/Specs/09)
-./RunTest.sh                                 # default non-Qt backend tests
+./RunTest.sh                                 # all registered backend and Qt tests
 # or manually, matching the current CI Qt build:
 cmake --preset qt-dev -DBTE_BUILD_TESTS=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 cmake --build --preset qt-dev --parallel

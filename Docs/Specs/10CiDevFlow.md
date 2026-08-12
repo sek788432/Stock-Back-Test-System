@@ -191,6 +191,7 @@ The merge-blocking analyzer commands are:
 
 ```bash
 CC=clang-18 CXX=clang++-18 cmake --preset analysis -DBTE_BUILD_QT_APP=ON
+cmake --build --preset analysis --parallel
 python3 Tools/RunStaticAnalysis.py clang-tidy --base <base> --head <head>
 python3 Tools/RunStaticAnalysis.py cppcheck --base <base> --head <head>
 python3 Tools/RunStaticAnalysis.py iwyu --base <base> --head <head>
@@ -198,9 +199,13 @@ scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -
 scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty -o Output/scan-build-reports cmake --build Output/scan-build --parallel
 ```
 
+The analysis build materializes Qt-generated translation units referenced by
+the compilation database before cppcheck loads that database.
+
 CI pins clang/clang-tidy/clang-tools `1:18.1.3-1ubuntu1`, cppcheck
 `2.13.0-2ubuntu3`, and IWYU `8.21-1build2` on Ubuntu 24.04. The complete Python
-coverage dependency closure and artifact hashes are recorded in
+coverage dependency closure—including gcovr `8.5`, diff-cover `10.0.0`, Jinja2
+`3.1.6`, and MarkupSafe `3.0.3`—and artifact hashes are recorded in
 `Tools/CoverageRequirements.txt`; direct requirements remain in
 `Tools/CoverageRequirements.in`.
 
@@ -211,10 +216,15 @@ cmake -E remove_directory Output/coverage
 cmake --preset coverage -DBTE_BUILD_QT_APP=ON
 cmake --build --preset coverage --parallel
 ctest --preset coverage --no-tests=error
-python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --cobertura coverage.xml --json coverage.json --html-details coverage.html
+python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --decisions --cobertura coverage.xml --json coverage.json --html-details coverage.html
 diff-cover coverage.xml --compare-branch=<base> --fail-under=90
 python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 80
 ```
+
+The branch gate uses gcovr's `--decisions` records, so its denominator is
+source-level C++ conditional and switch outcomes on changed lines. Raw GCC
+control-flow edges are not used because they include compiler-generated
+exception and cleanup paths that do not correspond to testable source branches.
 
 ## 8. Gate changes and failures
 

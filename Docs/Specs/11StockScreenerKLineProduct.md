@@ -9,10 +9,11 @@ This spec is the user-visible product contract. Strategy details live in [`05Str
 | Bar loading and K-line playback | **Implemented with known gap** | Load tracked hourly CSV bars, aggregate them to daily bars, show candlesticks/volume, and play/pause/step/change speed. Other displayed timeframe choices are not supported and may currently receive hourly data; this must be fixed before claiming general timeframe selection. |
 | Portfolio strip in current replay | **Implemented placeholder** | Displays initial cash/equity only; it is not driven by trades. |
 | Legacy replay summaries | **Implemented legacy** | JSON summary save/list/compare exists; it is not the target `.bteresult` backtest artifact. |
+| Starter Backtest page | **Implemented limited slice** | Run one fixed whole-share market buy over one symbol/range. The order is submitted on the first bar, may fill only at the next actual bar open with 1 bp adverse slippage, and the page shows its fill and final open-position mark. This is not the complete strategy, order, metric, or result workflow. |
 | Selectable Conditions | **Planned** | Typed C++ condition plans; no shipped editor/compiler yet. |
 | Python Script Mode and Debug Run | **Planned** | Trusted worker design is specified; no shipped worker/runtime yet. |
 | Natural-language assistance | **Planned** | Candidate generation with explicit user acceptance; no shipped integration yet. |
-| Orders, fills, P&L, metrics, result replay | **Planned** | Current replay does not execute a strategy or broker simulation. |
+| Complete orders, fills, P&L, metrics, result replay | **Planned** | Only the explicitly limited starter Backtest slice exists; Replay remains bar-only and does not execute the engine. |
 | Stock screener | **Planned** | No shipped universe filtering/ranking workflow. |
 | Public data-bearing release | **Blocked** | Requires documented redistribution rights and verified redistribution-cleared split metadata. |
 

@@ -16,6 +16,10 @@ from unittest import mock
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/ci.yml"
+WORKFLOW_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
+COVERAGE_REQUIREMENTS = (
+    REPOSITORY_ROOT / "Tools/CoverageRequirements.txt"
+).read_text(encoding="utf-8")
 
 
 def load_tool(name: str):
@@ -65,6 +69,18 @@ class CiWorkflowSecurityTest(unittest.TestCase):
 
 
 class StaticAnalysisToolTest(unittest.TestCase):
+    def test_workflow_uses_supported_scan_build_probe(self) -> None:
+        self.assertIn("scan-build-18 --help | sed -n '1p'", WORKFLOW_TEXT)
+        self.assertNotIn("scan-build-18 --version", WORKFLOW_TEXT)
+
+    def test_workflow_materializes_generated_sources_before_cppcheck(self) -> None:
+        build = WORKFLOW_TEXT.index("cmake --build --preset analysis --parallel")
+        cppcheck = WORKFLOW_TEXT.index(
+            "python3 Tools/RunStaticAnalysis.py cppcheck"
+        )
+
+        self.assertLess(build, cppcheck)
+
     def test_compilation_units_keep_only_project_sources_and_remove_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -107,7 +123,6 @@ class StaticAnalysisToolTest(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-
     @mock.patch.object(static_analysis.shutil, "which", return_value=None)
     def test_missing_analyzer_is_reported(self, unused_which: mock.Mock) -> None:
         with self.assertRaisesRegex(RuntimeError, "required command not found"):
@@ -143,6 +158,7 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
         self.assertIn("/tmp/repository/Src/Bar.cpp", command)
         self.assertTrue(any(argument.endswith("Tools/Iwyu.imp") for argument in command))
+        self.assertIn("--no_fwd_decls", command)
         self.assertEqual(command[-2:], ["-Xiwyu", "--error=1"])
 
     def test_unsupported_analyzer_is_rejected(self) -> None:
@@ -215,6 +231,11 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
 
 class ChangedBranchCoverageTest(unittest.TestCase):
+    def test_workflow_installs_html_report_dependency_at_an_exact_version(self) -> None:
+        self.assertIn("jinja2==3.1.6", COVERAGE_REQUIREMENTS)
+        self.assertIn("markupsafe==3.0.3", COVERAGE_REQUIREMENTS)
+        self.assertIn("--decisions", WORKFLOW_TEXT)
+
     def test_changed_lines_parse_added_ranges_and_single_lines(self) -> None:
         diff = """+++ b/Src/Foo.cpp
 @@ -2,0 +3,2 @@
@@ -233,14 +254,24 @@ class ChangedBranchCoverageTest(unittest.TestCase):
 
         self.assertEqual(branch_coverage.changed_lines(diff), {})
 
-    def test_branch_counts_include_only_branches_on_changed_lines(self) -> None:
+    def test_branch_counts_include_only_source_decisions_on_changed_lines(self) -> None:
         report = {
             "files": [
                 {
                     "file": "Src/Foo.cpp",
                     "lines": [
-                        {"line_number": 3, "branches": [{"count": 1}, {"count": 0}]},
-                        {"line_number": 8, "branches": [{"count": 0}]},
+                        {
+                            "line_number": 3,
+                            "gcovr/decision": {
+                                "type": "conditional",
+                                "count_true": 1,
+                                "count_false": 0,
+                            },
+                        },
+                        {
+                            "line_number": 8,
+                            "gcovr/decision": {"type": "switch", "count": 0},
+                        },
                     ],
                 }
             ]
@@ -249,6 +280,26 @@ class ChangedBranchCoverageTest(unittest.TestCase):
         self.assertEqual(
             branch_coverage.branch_counts(report, {"Src/Foo.cpp": {3}}),
             (1, 2),
+        )
+
+    def test_uncheckable_source_decisions_do_not_inflate_the_denominator(self) -> None:
+        report = {
+            "files": [
+                {
+                    "file": "Src/Foo.cpp",
+                    "lines": [
+                        {
+                            "line_number": 3,
+                            "gcovr/decision": {"type": "uncheckable"},
+                        }
+                    ],
+                }
+            ]
+        }
+
+        self.assertEqual(
+            branch_coverage.branch_counts(report, {"Src/Foo.cpp": {3}}),
+            (0, 0),
         )
 
     def test_no_changed_branches_has_an_empty_denominator(self) -> None:
@@ -309,9 +360,13 @@ class ChangedBranchCoverageTest(unittest.TestCase):
                                 "file": "Src/Foo.cpp",
                                 "lines": [
                                     {
-                                        "line_number": 3,
-                                        "branches": [{"count": count} for count in counts],
+                                        "line_number": 3 + index,
+                                        "gcovr/decision": {
+                                            "type": "switch",
+                                            "count": count,
+                                        },
                                     }
+                                    for index, count in enumerate(counts)
                                 ],
                             }
                         ]
@@ -325,7 +380,9 @@ class ChangedBranchCoverageTest(unittest.TestCase):
                 head="head",
                 fail_under=threshold,
             )
-            diff_result = mock.Mock(stdout="+++ b/Src/Foo.cpp\n@@ -2,0 +3 @@\n")
+            diff_result = mock.Mock(
+                stdout=f"+++ b/Src/Foo.cpp\n@@ -2,0 +3,{len(counts)} @@\n"
+            )
             with (
                 mock.patch.object(branch_coverage, "parse_arguments", return_value=arguments),
                 mock.patch.object(branch_coverage.subprocess, "run", return_value=diff_result),

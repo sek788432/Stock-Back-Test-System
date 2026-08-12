@@ -19,3 +19,14 @@ TEST(ResultTest, errorResult_reportsErrorAndReturnsStructuredCode) {
     EXPECT_EQ(result.error().message, "missing fixture");
     EXPECT_TRUE(static_cast<bool>(result.error()));
 }
+
+TEST(ResultTest, valueAccessOnErrorThrowsForConstAndMovedResults) {
+    const bte::core::Result<int> constResult{
+        bte::core::makeError(bte::core::ErrorCode::notFound, "missing")};
+    auto movedResult = bte::core::Result<std::string>{
+        bte::core::makeError(bte::core::ErrorCode::notFound, "missing")};
+
+    EXPECT_THROW(static_cast<void>(constResult.value()), std::bad_optional_access);
+    EXPECT_THROW(static_cast<void>(std::move(movedResult).value()),
+                 std::bad_optional_access);
+}

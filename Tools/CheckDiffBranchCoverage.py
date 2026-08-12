@@ -41,7 +41,17 @@ def branch_counts(report: dict[str, object], changed: dict[str, set[int]]) -> tu
         for line_entry in file_entry.get("lines", []):
             if int(line_entry["line_number"]) not in relevant_lines:
                 continue
-            for branch in line_entry.get("branches", []):
+            decision = line_entry.get("gcovr/decision")
+            if decision is None or decision.get("type") == "uncheckable":
+                continue
+            if decision.get("type") == "conditional":
+                branches = (
+                    {"count": decision.get("count_true", 0)},
+                    {"count": decision.get("count_false", 0)},
+                )
+            else:
+                branches = ({"count": decision.get("count", 0)},)
+            for branch in branches:
                 total += 1
                 covered += int(branch.get("count", 0)) > 0
     return covered, total

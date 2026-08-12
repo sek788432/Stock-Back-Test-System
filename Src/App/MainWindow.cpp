@@ -1,21 +1,23 @@
 #include "MainWindow.h"
 
+#include "Bte/Frontend/BacktestTab.h"
 #include "Bte/Frontend/ReplayTab.h"
 
 #include <QLabel>
 #include <QMenuBar>
 #include <QStatusBar>
+#include <QString>
 #include <QTabWidget>
 #include <QWidget>
+#include <QtCore/Qt>
 
 #include <memory>
-#include <utility>
 
 namespace bte::app {
 namespace {
 
-QWidget *makePlaceholderTab(QString title) {
-  auto label = std::make_unique<QLabel>(std::move(title));
+QWidget *makePlaceholderTab(const QString &title) {
+  auto label = std::make_unique<QLabel>(title);
   label->setAlignment(Qt::AlignCenter);
   label->setObjectName("placeholderTab");
   label->setAccessibleName(label->text());
@@ -90,13 +92,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   tabs_->setObjectName("mainTabWidget");
   tabs_->setAccessibleName("Main tabs");
   tabs_->addTab(makePlaceholderTab(tr("Strategies")), tr("Strategies"));
-  tabs_->addTab(makePlaceholderTab(tr("Backtest")), tr("Backtest"));
+  tabs_->addTab(std::make_unique<frontend::BacktestTab>(tabs_).release(),
+                tr("Backtest"));
   tabs_->addTab(std::make_unique<frontend::ReplayTab>(tabs_).release(),
                 tr("Replay"));
   tabs_->addTab(makePlaceholderTab(tr("Screener")), tr("Screener"));
   tabs_->addTab(makePlaceholderTab(tr("Plugins")), tr("Plugins"));
   tabs_->addTab(makePlaceholderTab(tr("Logs")), tr("Logs"));
-  tabs_->setCurrentIndex(2);
+  tabs_->setCurrentIndex(1);
   setCentralWidget(tabs_);
 
   statusBar()->showMessage(tr("Ready"));

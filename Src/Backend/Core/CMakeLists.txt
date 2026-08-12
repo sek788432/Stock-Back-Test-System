@@ -2,6 +2,7 @@ add_library(
   bte_core
   STATIC
     Include/Bte/Core/Bar.h
+    Include/Bte/Core/Cancellation.h
     Include/Bte/Core/Result.h
     Include/Bte/Core/Time.h
     Private/Bar.cpp

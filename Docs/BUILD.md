@@ -1,9 +1,11 @@
 # Building the C++ workspace
 
 This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+**.
-Core, Data, and the bar-only Replay build in the default preset. Bindings,
-Frontend, and App targets are implemented behind `BTE_BUILD_QT_APP`; the
-canonical trading engine described in Specs 05 and 07 remains planned.
+Core, Data, the bar-only Replay, and the limited starter Engine build in the
+default preset. Bindings, Frontend, and App targets are implemented behind
+`BTE_BUILD_QT_APP`, including the starter Backtest page. General strategy
+execution, broker/accounting/metrics, and canonical result persistence
+described in Specs 05 and 07 remain planned.
 
 ## Prerequisites
 
@@ -14,21 +16,26 @@ canonical trading engine described in Specs 05 and 07 remains planned.
 Optional:
 
 - **Git** (for FetchContent to download Google Test on first configure)
-- **Qt 6.8+** (Core, Widgets, Charts, and Test when tests are enabled) when configuring with `BTE_BUILD_QT_APP=ON`
+- **Qt 6.8+** (Core, Concurrent, Widgets, Charts, and Test when tests are enabled) when configuring with `BTE_BUILD_QT_APP=ON`
 
-## One-liner: `RunTest.sh`
+## Root developer scripts
 
-From the repo root (configure + build + unit tests):
+From the repo root, rebuild and run every registered backend and Qt test:
 
 ```bash
 ./RunTest.sh              # default: ctest output on failure (preset)
 ./RunTest.sh --verbose    # or -v — full ctest verbose output
 ```
 
-`RunTest.sh` is tracked in git. Other `*.sh` files remain ignored unless you force-add them (see `.gitignore`).
+Rebuild the warning-clean Qt application and launch its frontend window:
 
-`RunTest.sh` uses the non-Qt `dev` preset. To match the current CI build and run
-the Qt/frontend tests too, use the `qt-dev` commands below.
+```bash
+./Launch.sh
+```
+
+Both scripts use `qt-dev`, so Qt 6.8+ is required. `RunTest.sh` matches the
+implemented all-tests workflow and fails if no tests are registered. Other
+`*.sh` files remain ignored unless explicitly added to `.gitignore`.
 
 ## Quick start (macOS / Linux)
 

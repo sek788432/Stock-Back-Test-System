@@ -57,7 +57,6 @@ def changed_translation_units(
         if Path(filename).suffix in {".cc", ".cpp", ".cxx"}
     }
 
-
 def analyzer_command(tool: str, build_directory: Path, units: list[Path]) -> list[str]:
     if tool == "clang-tidy":
         return [
@@ -85,6 +84,8 @@ def analyzer_command(tool: str, build_directory: Path, units: list[Path]) -> lis
             "--",
             "-Xiwyu",
             f"--mapping_file={REPOSITORY_ROOT / 'Tools/Iwyu.imp'}",
+            "-Xiwyu",
+            "--no_fwd_decls",
             "-Xiwyu",
             "--error=1",
         ]
@@ -124,7 +125,6 @@ def main() -> int:
         if not units:
             print("no changed project C++ translation units; analyzer not applicable")
             return 0
-
     try:
         command = analyzer_command(arguments.tool, build_directory, units)
     except RuntimeError as error:

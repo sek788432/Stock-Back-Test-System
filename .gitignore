@@ -83,6 +83,7 @@ Testing/
 # Temporary repository audits; conclusions must be folded into canonical docs.
 Docs/Reviews/
 
-# Shell scripts (untracked by default). Exception: root `RunTest.sh` is intended to be committed.
+# Shell scripts (untracked by default). Root developer entry points are tracked.
 *.sh
+!Launch.sh
 !RunTest.sh

@@ -1,2 +1,15 @@
 [
+  { "include": [ "<bits/chrono.h>", "private", "<chrono>", "public" ] },
+  { "include": [ "<QtCore/qobjectdefs.h>", "private", "<QObject>", "public" ] },
+  { "include": [ "<qdatetime.h>", "private", "<QDateTime>", "public" ] },
+  { "include": [ "<qfont.h>", "private", "<QFont>", "public" ] },
+  { "include": [ "<qfuture.h>", "private", "<QFuture>", "public" ] },
+  { "include": [ "<qlayout.h>", "private", "<QLayout>", "public" ] },
+  { "include": [ "<qlist.h>", "private", "<QList>", "public" ] },
+  { "include": [ "<qlogging.h>", "private", "<QDebug>", "public" ] },
+  { "include": [ "<qnamespace.h>", "private", "<QtCore/Qt>", "public" ] },
+  { "include": [ "<qstring.h>", "private", "<QString>", "public" ] },
+  { "include": [ "<qtabwidget.h>", "private", "<QTabWidget>", "public" ] },
+  { "include": [ "<qvariant.h>", "private", "<QVariant>", "public" ] },
+  { "include": [ "<qwidget.h>", "private", "<QWidget>", "public" ] }
 ]

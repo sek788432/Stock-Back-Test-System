@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Bte/Core/Bar.h"
+#include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
 
@@ -14,19 +15,23 @@
 namespace bte::data {
 
 struct StreamRequest {
-    enum class Source { auto_, duckdb, csv };
+    enum class Source : std::uint8_t { automatic, duckdb, csv };
 
     std::string symbol;
     std::string schemaName;
     core::DateRange range{};
     std::filesystem::path csvDir = std::filesystem::path{"StockData"} / "Extracted";
     int prefetchBars = 4096;
-    Source source = Source::auto_;
+    Source source = Source::automatic;
 };
 
 class BarStream {
   public:
     virtual ~BarStream() = default;
+    BarStream(const BarStream&) = delete;
+    BarStream& operator=(const BarStream&) = delete;
+    BarStream(BarStream&&) = delete;
+    BarStream& operator=(BarStream&&) = delete;
 
     [[nodiscard]] virtual std::optional<core::Bar> next() = 0;
     [[nodiscard]] virtual std::int64_t totalBars() const noexcept = 0;
@@ -36,6 +41,9 @@ class BarStream {
     [[nodiscard]] virtual std::string schemaName() const = 0;
     [[nodiscard]] virtual std::optional<core::Bar> at(std::int64_t barIndex) const = 0;
     [[nodiscard]] virtual bool seek(std::int64_t barIndex) noexcept = 0;
+
+  protected:
+    BarStream() = default;
 };
 
 class CsvBarStream final : public BarStream {
@@ -43,7 +51,8 @@ class CsvBarStream final : public BarStream {
     struct ConstructionKey final {};
 
   public:
-    [[nodiscard]] static core::Result<std::unique_ptr<CsvBarStream>> open(const StreamRequest& request);
+    [[nodiscard]] static core::Result<std::unique_ptr<CsvBarStream>>
+    open(const StreamRequest& request, const core::CancellationToken& cancellation = {});
 
     CsvBarStream(ConstructionKey, std::string symbol, std::string schemaName, core::DateRange range,
                  std::vector<core::Bar> bars);

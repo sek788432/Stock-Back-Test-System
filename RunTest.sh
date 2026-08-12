@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build the C++ tree (CMake preset `dev`) and run all unit tests.
-# Tracked in git; other *.sh remain ignored by default (.gitignore).
+# Build the warning-clean Qt tree and run every registered test.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +14,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h | --help)
       echo "Usage: $0 [-v|--verbose] [-h|--help]"
-      echo "  Runs: cmake --preset dev, cmake --build --preset dev, ctest --preset dev"
+      echo "  Runs the qt-dev configure, build, and complete registered CTest suite"
       exit 0
       ;;
     --)
@@ -30,11 +29,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-cmake --preset dev
-cmake --build --preset dev
+cmake --preset qt-dev \
+  -DBTE_BUILD_TESTS=ON \
+  -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+cmake --build --preset qt-dev --parallel
 
 if [[ "${verbose}" -eq 1 ]]; then
-  ctest --preset dev --verbose
+  ctest --preset qt-dev --no-tests=error --verbose
 else
-  ctest --preset dev
+  ctest --preset qt-dev --no-tests=error
 fi
