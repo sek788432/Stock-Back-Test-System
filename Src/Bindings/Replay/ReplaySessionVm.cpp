@@ -23,19 +23,24 @@ public:
     return bars_[consumed_++];
   }
 
-  std::int64_t totalBars() const noexcept override {
+  [[nodiscard]] std::int64_t totalBars() const noexcept override {
     return static_cast<std::int64_t>(bars_.size());
   }
 
-  std::int64_t consumed() const noexcept override { return consumed_; }
+  [[nodiscard]] std::int64_t consumed() const noexcept override {
+    return consumed_;
+  }
 
-  bte::core::DateRange range() const noexcept override { return {}; }
+  [[nodiscard]] bte::core::DateRange range() const noexcept override {
+    return {};
+  }
 
-  std::string symbol() const override { return {}; }
+  [[nodiscard]] std::string symbol() const override { return {}; }
 
-  std::string schemaName() const override { return {}; }
+  [[nodiscard]] std::string schemaName() const override { return {}; }
 
-  std::optional<bte::core::Bar> at(const std::int64_t barIndex) const override {
+  [[nodiscard]] std::optional<bte::core::Bar>
+  at(const std::int64_t barIndex) const override {
     if (barIndex < 0 || barIndex >= static_cast<std::int64_t>(bars_.size())) {
       return std::nullopt;
     }

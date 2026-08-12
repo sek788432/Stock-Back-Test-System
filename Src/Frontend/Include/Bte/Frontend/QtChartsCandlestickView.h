@@ -27,7 +27,6 @@ public:
 
   [[nodiscard]] std::size_t candleCount() const noexcept;
 
-public slots:
   void zoomIn();
   void zoomOut();
   void resetZoom();

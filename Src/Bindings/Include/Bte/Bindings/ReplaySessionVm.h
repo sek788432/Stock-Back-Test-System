@@ -26,6 +26,10 @@ class ReplaySessionVm {
 public:
   ReplaySessionVm();
   ~ReplaySessionVm();
+  ReplaySessionVm(const ReplaySessionVm &) = delete;
+  ReplaySessionVm &operator=(const ReplaySessionVm &) = delete;
+  ReplaySessionVm(ReplaySessionVm &&) = delete;
+  ReplaySessionVm &operator=(ReplaySessionVm &&) = delete;
 
   void setInitialCapital(double initialCapital);
   [[nodiscard]] double initialCapital() const noexcept;

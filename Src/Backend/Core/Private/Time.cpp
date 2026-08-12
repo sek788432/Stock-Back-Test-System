@@ -68,7 +68,7 @@ Result<Timestamp> parseIso8601(std::string_view text) {
 
 std::string toIso8601(const Timestamp timestamp) {
     const auto millis = toUnixMillis(timestamp);
-    const std::time_t seconds = static_cast<std::time_t>(millis / 1000);
+    const auto seconds = static_cast<std::time_t>(millis / 1000);
     const auto utc = toUtcTm(seconds);
 
     std::ostringstream out;
