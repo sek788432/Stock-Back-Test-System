@@ -1,13 +1,14 @@
 #include "Bte/Indicators/StreamingIndicator.h"
 
+// IWYU pragma: no_include <math>
+// IWYU pragma: no_include <stdlib.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
-#include <math.h>
 #include <memory>
-#include <stdlib.h>
 #include <string>
 #include <utility>
 #include <vector>

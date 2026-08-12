@@ -1,11 +1,12 @@
 #include "Bte/Bindings/BacktestSessionVm.h"
 
+// IWYU pragma: no_include <math>
+
 #include "Bte/Bindings/ReplayDataLoader.h"
 #include "Bte/Engine/Backtest.h"
 
 #include <cmath>
 #include <cstdint>
-#include <math.h>
 #include <optional>
 #include <string>
 #include <utility>

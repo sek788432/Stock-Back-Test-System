@@ -1,9 +1,10 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
+// IWYU pragma: no_include <math>
+
 #include <algorithm>
 #include <cmath>
 #include <exception>
-#include <math.h>
 #include <memory>
 #include <optional>
 #include <string>

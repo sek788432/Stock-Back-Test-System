@@ -1,5 +1,7 @@
 #include "Bte/Engine/Backtest.h"
 
+// IWYU pragma: no_include <math>
+
 #include "Bte/Core/Result.h"
 
 #include <array>
@@ -7,7 +9,6 @@
 #include <compare>
 #include <cstdint>
 #include <limits>
-#include <math.h>
 #include <memory>
 #include <string>
 #include <utility>
