@@ -128,6 +128,7 @@ class StaticAnalysisToolTest(unittest.TestCase):
 class ChangedBranchCoverageTest(unittest.TestCase):
     def test_workflow_installs_html_report_dependency_at_an_exact_version(self) -> None:
         self.assertIn("jinja2==3.1.6", WORKFLOW_TEXT)
+        self.assertIn("markupsafe==3.0.2", WORKFLOW_TEXT)
 
     def test_changed_lines_parse_added_ranges_and_single_lines(self) -> None:
         diff = """+++ b/Src/Foo.cpp

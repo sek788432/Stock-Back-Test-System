@@ -86,6 +86,7 @@ runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
   const auto &result = engineResult.value();
   auto snapshot = BacktestSnapshot{
       .outcome = toViewOutcome(result.orderStatus),
+      .fill = {},
       .initialCapital = moneyToDollars(result.initialCapitalMicrodollars),
       .cash = moneyToDollars(result.cashMicrodollars),
       .marketValue = moneyToDollars(result.marketValueMicrodollars),

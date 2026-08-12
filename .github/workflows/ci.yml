@@ -139,7 +139,7 @@ jobs:
       - name: Install coverage tools
         run: >-
           python3 -m pip install --disable-pip-version-check
-          gcovr==8.5 diff-cover==10.0.0 jinja2==3.1.6
+          gcovr==8.5 diff-cover==10.0.0 jinja2==3.1.6 markupsafe==3.0.2
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
