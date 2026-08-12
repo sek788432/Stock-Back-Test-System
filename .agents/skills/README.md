@@ -37,6 +37,12 @@ These five skills contain the repository's detailed C++ workflows and examples.
 The canonical hard requirements live in `Docs/Governance/AGENTS.md` so they
 apply even when an agent host does not support skill discovery.
 
+## Comprehensive review
+
+| Skill | Activates when | Enforces |
+|---|---|---|
+| [`review`](review/SKILL.md) | Reviewing a branch, pull request, handoff, or uncommitted change set | Complete code, documentation, test-intent, semantic-coverage, and verified-check review across the branch delta and working tree |
+
 ## How the C++ skills layer with specs
 
 | Question | Primary source |

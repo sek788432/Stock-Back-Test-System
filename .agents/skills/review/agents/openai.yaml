@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review"
+  short_description: "Review branch code, docs, tests, and checks"
+  default_prompt: "Use $review to review this branch and all uncommitted changes."
