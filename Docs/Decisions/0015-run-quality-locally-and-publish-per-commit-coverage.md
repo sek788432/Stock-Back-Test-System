@@ -4,7 +4,7 @@
 - **Date**: 2026-08-12
 - **Deciders**: repository maintainer
 - **Supersedes**: —
-- **Superseded by**: —
+- **Superseded by**: [ADR 0017](0017-raise-changed-code-coverage-gates-and-update-artifact-runtime.md) (coverage thresholds only)
 
 ## Context
 
@@ -31,8 +31,8 @@ later invocations reuse that environment without shell activation or manual path
 configuration.
 
 CI remains the authority that regenerates coverage from each submitted commit.
-It continues to reject changed C++ code below 90 percent changed-line coverage
-or 80 percent changed-branch coverage. CI also writes the generated gcovr
+The initial 90 percent changed-line and 80 percent changed-branch thresholds
+are superseded by ADR 0017. CI also writes the generated gcovr
 Markdown summary and changed-code gate results to the GitHub Actions job summary
 so they can be viewed in the browser without downloading the HTML artifact.
 

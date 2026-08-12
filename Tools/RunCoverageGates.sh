@@ -18,10 +18,10 @@ branch_output="changed-branch-coverage.txt"
 
 line_status=0
 branch_status=0
-diff-cover "$coverage_xml" --compare-branch="$base" --fail-under=90 \
+diff-cover "$coverage_xml" --compare-branch="$base" --fail-under=98 \
   | tee "$line_output" || line_status=$?
 python3 Tools/CheckDiffBranchCoverage.py "$coverage_json" \
-  --base "$base" --head "$head" --fail-under 80 \
+  --base "$base" --head "$head" --fail-under 90 \
   | tee "$branch_output" || branch_status=$?
 
 {

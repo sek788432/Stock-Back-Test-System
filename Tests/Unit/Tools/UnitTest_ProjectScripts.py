@@ -209,11 +209,11 @@ fi
         self.assertIn("cmake -E remove_directory Output/analysis", commands)
         self.assertIn("ctest --preset coverage --no-tests=error", commands)
         self.assertIn(
-            "diff-cover Output/CoverageReport/coverage.xml --compare-branch=base-sha --fail-under=90",
+            "diff-cover Output/CoverageReport/coverage.xml --compare-branch=base-sha --fail-under=98",
             commands,
         )
         self.assertIn(
-            "python3 Tools/CheckDiffBranchCoverage.py Output/CoverageReport/coverage.json --base base-sha --head head-sha --fail-under 80",
+            "python3 Tools/CheckDiffBranchCoverage.py Output/CoverageReport/coverage.json --base base-sha --head head-sha --fail-under 90",
             commands,
         )
         self.assertFalse(any(command.startswith("scan-build ") for command in commands))
@@ -443,11 +443,11 @@ exit 29
         (self.root / "summary.md").write_text("# Coverage\n", encoding="utf-8")
         self.install_fake_command(
             "diff-cover",
-            'echo "line gate"\nexit "${BTE_LINE_STATUS:-0}"\n',
+            'printf "diff-cover %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\necho "line gate"\nexit "${BTE_LINE_STATUS:-0}"\n',
         )
         self.install_fake_command(
             "python3",
-            'echo "branch gate"\nexit "${BTE_BRANCH_STATUS:-0}"\n',
+            'printf "python3 %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\necho "branch gate"\nexit "${BTE_BRANCH_STATUS:-0}"\n',
         )
 
         for line_status, branch_status, expected in (
@@ -486,6 +486,14 @@ exit 29
                 self.assertIn("line gate", rendered)
                 self.assertIn("branch gate", rendered)
                 self.assertIn("Report commit: `commit-sha`", rendered)
+                self.assertIn(
+                    "diff-cover coverage.xml --compare-branch=base-sha --fail-under=98",
+                    self.logged_commands(),
+                )
+                self.assertIn(
+                    "python3 Tools/CheckDiffBranchCoverage.py coverage.json --base base-sha --head head-sha --fail-under 90",
+                    self.logged_commands(),
+                )
 
 
 if __name__ == "__main__":
