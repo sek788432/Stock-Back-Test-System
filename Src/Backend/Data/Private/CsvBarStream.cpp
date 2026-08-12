@@ -150,7 +150,7 @@ struct CsvColumns {
     return true;
 }
 
-[[nodiscard]] core::Result<core::Bar> parseBar(const std::vector<std::string>& fields, const CsvColumns columns,
+[[nodiscard]] core::Result<core::Bar> parseBar(const std::vector<std::string>& fields, const CsvColumns& columns,
                                                const std::string& expectedSymbol, const std::string& expectedSchemaName,
                                                const int lineNumber) {
     if (!hasColumn(fields, columns.symbol) ||

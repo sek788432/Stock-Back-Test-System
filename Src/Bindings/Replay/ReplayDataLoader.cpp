@@ -115,12 +115,12 @@ aggregateDailyBars(const std::vector<bte::core::Bar> &bars) {
   return daily;
 }
 
-std::vector<bte::core::Bar> barsForSchema(std::vector<bte::core::Bar> bars,
+std::vector<bte::core::Bar> barsForSchema(std::vector<bte::core::Bar> &&bars,
                                           const QString &schemaName) {
   if (schemaName == "ohlcv-1d") {
     return aggregateDailyBars(bars);
   }
-  return bars;
+  return std::move(bars);
 }
 
 } // namespace
