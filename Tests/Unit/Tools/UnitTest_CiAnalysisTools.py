@@ -88,15 +88,12 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
         self.assertLess(build, cppcheck)
 
-    def test_manual_and_scheduled_runs_analyze_every_project_translation_unit(self) -> None:
-        self.assertIn(
-            'if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then',
-            WORKFLOW_TEXT,
-        )
+    def test_every_workflow_event_analyzes_every_project_translation_unit(self) -> None:
+        self.assertNotIn("analysis_arguments=()", WORKFLOW_TEXT)
         for analyzer in ("clang-tidy", "cppcheck", "iwyu"):
             with self.subTest(analyzer=analyzer):
                 self.assertIn(
-                    f'python3 Tools/RunStaticAnalysis.py {analyzer} "${{analysis_arguments[@]}}"',
+                    f"run: python3 Tools/RunStaticAnalysis.py {analyzer}",
                     WORKFLOW_TEXT,
                 )
 

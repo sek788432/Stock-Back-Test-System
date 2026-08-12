@@ -114,34 +114,13 @@ jobs:
         run: cmake --build --preset analysis --parallel
 
       - name: Run clang-tidy
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
-        run: |
-          analysis_arguments=()
-          if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then
-            analysis_arguments=(--base "$BASE_SHA" --head "$GITHUB_SHA")
-          fi
-          python3 Tools/RunStaticAnalysis.py clang-tidy "${analysis_arguments[@]}"
+        run: python3 Tools/RunStaticAnalysis.py clang-tidy
 
       - name: Run cppcheck
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
-        run: |
-          analysis_arguments=()
-          if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then
-            analysis_arguments=(--base "$BASE_SHA" --head "$GITHUB_SHA")
-          fi
-          python3 Tools/RunStaticAnalysis.py cppcheck "${analysis_arguments[@]}"
+        run: python3 Tools/RunStaticAnalysis.py cppcheck
 
       - name: Run include-what-you-use
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
-        run: |
-          analysis_arguments=()
-          if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then
-            analysis_arguments=(--base "$BASE_SHA" --head "$GITHUB_SHA")
-          fi
-          python3 Tools/RunStaticAnalysis.py iwyu "${analysis_arguments[@]}"
+        run: python3 Tools/RunStaticAnalysis.py iwyu
 
       - name: Run clang static analyzer
         run: |
