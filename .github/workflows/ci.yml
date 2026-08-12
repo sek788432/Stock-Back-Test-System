@@ -29,10 +29,12 @@ jobs:
           - macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
           version: '6.9.*'
           modules: qtcharts
@@ -56,9 +58,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout full history
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Review the full repository against project standards
         env:
@@ -75,9 +78,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install analysis tools
         run: |
@@ -94,7 +98,7 @@ jobs:
           scan-build-18 --help | sed -n '1p'
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
           version: '6.9.*'
           modules: qtcharts
@@ -128,7 +132,7 @@ jobs:
 
       - name: Upload scan-build reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: scan-build-reports
           path: Output/scan-build-reports
@@ -140,19 +144,27 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout full history
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
           version: '6.9.*'
           modules: qtcharts
           cache: true
 
       - name: Install coverage tools
-        run: python3 -m pip install --disable-pip-version-check gcovr==8.5 diff-cover==10.0.0
+        run: |
+          python3 -m pip install \
+            --disable-pip-version-check \
+            --only-binary=:all: \
+            --require-hashes \
+            --requirement Tools/CoverageRequirements.txt
+          python3 -m gcovr --version
+          diff-cover --version
 
       - name: Configure coverage tests
         run: cmake --preset coverage -DBTE_BUILD_QT_APP=ON
@@ -183,7 +195,7 @@ jobs:
 
       - name: Upload coverage reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-reports
           path: |
