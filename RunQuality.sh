@@ -314,11 +314,11 @@ fi
   --html-details "$report_directory/index.html" \
   "${gcov_arguments[@]}"
 
-"$diff_cover" "$report_directory/coverage.xml" --compare-branch="$base" --fail-under=90
+"$diff_cover" "$report_directory/coverage.xml" --compare-branch="$base" --fail-under=98
 "$quality_python" Tools/CheckDiffBranchCoverage.py \
   "$report_directory/coverage.json" \
   --base "$base" \
   --head "$head" \
-  --fail-under 80
+  --fail-under 90
 
 echo "Quality checks passed. Coverage report: $report_directory/index.html"
