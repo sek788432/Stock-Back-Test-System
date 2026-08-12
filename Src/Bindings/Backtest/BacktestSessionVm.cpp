@@ -5,10 +5,10 @@
 #include "Bte/Bindings/ReplayDataLoader.h"
 #include "Bte/Engine/Backtest.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <utility>
 
 namespace bte::bindings {

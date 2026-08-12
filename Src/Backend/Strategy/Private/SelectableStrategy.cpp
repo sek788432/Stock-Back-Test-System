@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>

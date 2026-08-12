@@ -1,12 +1,9 @@
 #include "Bte/Core/Time.h"
 
-// IWYU pragma: no_include <_time.h>
-
 #include <charconv>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
-#include <ratio>
 #include <sstream>
 #include <system_error>
 

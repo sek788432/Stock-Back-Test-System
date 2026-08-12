@@ -2,8 +2,6 @@
 
 #include "Bte/Core/Result.h"
 
-// IWYU pragma: no_include <_ctype.h>
-
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
