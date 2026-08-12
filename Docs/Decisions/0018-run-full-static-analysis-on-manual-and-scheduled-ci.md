@@ -1,10 +1,10 @@
 # 0018 — Run full static analysis on manual and scheduled CI
 
-- **Status**: Accepted
+- **Status**: Superseded by 0019
 - **Date**: 2026-08-12
 - **Deciders**: repository maintainer
 - **Supersedes**: The static-analysis scope in 0012
-- **Superseded by**: —
+- **Superseded by**: [ADR 0019](0019-run-full-static-analysis-for-every-gate.md)
 
 ## Context
 

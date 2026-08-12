@@ -162,7 +162,7 @@ fi
 """,
         )
 
-    def test_run_quality_fast_runs_changed_analysis_and_coverage_gates(self) -> None:
+    def test_run_quality_fast_runs_full_analysis_and_coverage_gates(self) -> None:
         script = self.copy_script("RunQuality.sh")
         self.install_quality_commands()
         environment = self.environment()
@@ -190,22 +190,11 @@ fi
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = self.logged_commands()
         analysis_build = commands.index("cmake --build --preset analysis --parallel")
-        clang_tidy = commands.index(
-            "python3 Tools/RunStaticAnalysis.py clang-tidy --base base-sha --head head-sha"
-        )
+        clang_tidy = commands.index("python3 Tools/RunStaticAnalysis.py clang-tidy")
         self.assertLess(analysis_build, clang_tidy)
-        self.assertIn(
-            "python3 Tools/RunStaticAnalysis.py clang-tidy --base base-sha --head head-sha",
-            commands,
-        )
-        self.assertIn(
-            "python3 Tools/RunStaticAnalysis.py cppcheck --base base-sha --head head-sha",
-            commands,
-        )
-        self.assertIn(
-            "python3 Tools/RunStaticAnalysis.py iwyu --base base-sha --head head-sha",
-            commands,
-        )
+        self.assertIn("python3 Tools/RunStaticAnalysis.py clang-tidy", commands)
+        self.assertIn("python3 Tools/RunStaticAnalysis.py cppcheck", commands)
+        self.assertIn("python3 Tools/RunStaticAnalysis.py iwyu", commands)
         self.assertIn("cmake -E remove_directory Output/analysis", commands)
         self.assertIn("ctest --preset coverage --no-tests=error", commands)
         self.assertIn(

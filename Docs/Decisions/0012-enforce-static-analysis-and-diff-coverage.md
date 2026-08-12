@@ -1,10 +1,10 @@
 # 0012 — Enforce static analysis and diff coverage
 
-- **Status**: Superseded in part by 0017
+- **Status**: Superseded in part by 0017 and 0019
 - **Date**: 2026-08-12
 - **Deciders**: repository maintainer
 - **Supersedes**: —
-- **Superseded by**: [ADR 0017](0017-raise-changed-code-coverage-gates-and-update-artifact-runtime.md) (coverage thresholds only)
+- **Superseded by**: [ADR 0017](0017-raise-changed-code-coverage-gates-and-update-artifact-runtime.md) (coverage thresholds) and [ADR 0019](0019-run-full-static-analysis-for-every-gate.md) (static-analysis scope)
 
 ## Context
 

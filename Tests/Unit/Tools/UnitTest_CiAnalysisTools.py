@@ -88,16 +88,18 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
         self.assertLess(build, cppcheck)
 
-    def test_manual_and_scheduled_runs_analyze_every_project_translation_unit(self) -> None:
-        self.assertIn(
-            'if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then',
-            WORKFLOW_TEXT,
-        )
+    def test_every_workflow_event_analyzes_every_project_translation_unit(self) -> None:
+        static_analysis_job = WORKFLOW_TEXT.split("  static-analysis:", 1)[1].split(
+            "  coverage:", 1
+        )[0]
+        self.assertNotIn("analysis_arguments=()", static_analysis_job)
+        self.assertNotIn("--base", static_analysis_job)
+        self.assertNotIn("--head", static_analysis_job)
         for analyzer in ("clang-tidy", "cppcheck", "iwyu"):
             with self.subTest(analyzer=analyzer):
                 self.assertIn(
-                    f'python3 Tools/RunStaticAnalysis.py {analyzer} "${{analysis_arguments[@]}}"',
-                    WORKFLOW_TEXT,
+                    f"run: python3 Tools/RunStaticAnalysis.py {analyzer}",
+                    static_analysis_job,
                 )
 
     def test_compilation_units_keep_only_project_sources_and_remove_duplicates(self) -> None:

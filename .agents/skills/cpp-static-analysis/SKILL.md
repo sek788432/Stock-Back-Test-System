@@ -50,10 +50,10 @@ If you change one of these files, the PR description must explain why, and it re
 # Complete registered test suite, matching the CI Qt build.
 ./RunTest.sh
 
-# Complete pre-CI static-analysis and changed-coverage workflow.
+# Complete full-project static-analysis and changed-coverage workflow.
 ./RunQuality.sh --base origin/main --head HEAD
 
-# Faster iteration: skips whole-tree scan-build only.
+# Faster iteration: skips whole-tree scan-build only; the other analyzers stay full-project.
 ./RunQuality.sh --fast --base origin/main --head HEAD
 
 # Optional local ASan/UBSan run.
@@ -71,11 +71,9 @@ packages and a private locked Python environment; no activation or manual
 
 ## What analyzer-clean means (G7)
 
-On pull requests and pushes, CI runs clang-tidy, cppcheck, and IWYU on changed
-project translation units. Scheduled and manually dispatched CI runs analyze
-all project translation units. Any reported finding fails the job; there is no
-warning-baseline comparison or weekly debt report. Scan-build analyzes the
-complete configured source tree on every run.
+Every CI event and every `RunQuality.sh` invocation runs clang-tidy, cppcheck,
+IWYU, and scan-build across all project translation units. Any reported finding
+fails the job; there is no warning-baseline comparison or weekly debt report.
 
 ## Reading analyzer output
 
