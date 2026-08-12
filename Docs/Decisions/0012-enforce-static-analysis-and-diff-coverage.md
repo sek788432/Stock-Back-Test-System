@@ -1,4 +1,4 @@
-# 0013 — Enforce static analysis and diff coverage
+# 0012 — Enforce static analysis and diff coverage
 
 - **Status**: Accepted
 - **Date**: 2026-08-12
@@ -24,18 +24,20 @@ hide or redistribute existing test debt.
 Add two required Ubuntu 24.04 workflow jobs and make `merge-gate` depend on both:
 
 1. `static-analysis` configures the complete Qt source tree with Clang 18 and a
-   compilation database, then runs clang-tidy 18, cppcheck 2.13, IWYU, and the
-   Clang 18 static analyzer. Analyzer findings are errors. scan-build reports
-   are uploaded even when analysis fails.
+   compilation database. clang-tidy 18, cppcheck 2.13, and IWYU enforce findings
+   on changed project translation units; scan-build analyzes the complete build.
+   Analyzer findings are errors. scan-build reports are uploaded even when
+   analysis fails.
 2. `coverage` builds and runs every registered backend and Qt test with GCC
    coverage instrumentation. gcovr 8.5 produces machine-readable and HTML
    reports. diff-cover 10.0.0 requires at least 90% changed-line coverage, and a
    repository-owned checker requires at least 80% changed-branch coverage.
 
-Only translation units under `Src/` are analyzer roots; included project headers
-remain visible to the tools, while fetched and system dependencies do not become
-project findings. Coverage is filtered to `Src/`. A change with no executable
-lines or branch sites has no applicable denominator and passes that metric.
+Only changed translation units under `Src/` are clang-tidy, cppcheck, and IWYU
+roots; included project headers remain visible to the tools, while fetched and
+system dependencies do not become project findings. scan-build retains complete
+build coverage. Coverage is filtered to `Src/`. A change with no executable lines
+or branch sites has no applicable denominator and passes that metric.
 
 The workflow runs for pull requests, pushes to `main`, a weekly schedule, and
 manual dispatch. Ubuntu and Python tool package versions are pinned exactly and

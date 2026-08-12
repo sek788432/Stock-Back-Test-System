@@ -27,7 +27,7 @@ pull requests, pushes to `main`, a weekly schedule, and manual dispatch.
 | --- | --- | --- |
 | `all-tests` | Installs Qt 6.9 with Qt Charts; configures and builds the `qt-dev` preset with tests and compiler warnings as errors; runs every registered CTest test on Ubuntu and macOS. | Implemented / merge-blocking |
 | `project-standards` | Runs `Tools/CheckProjectStandards.py --full-tree` against the submitted Git revision on Ubuntu. | Implemented / merge-blocking |
-| `static-analysis` | Configures the complete Qt source tree with Clang 18 and runs clang-tidy, cppcheck, IWYU, and scan-build. Analyzer findings fail the job; scan-build reports are uploaded. | Implemented / merge-blocking |
+| `static-analysis` | Configures the complete Qt source tree with Clang 18; runs clang-tidy, cppcheck, and IWYU on changed translation units; and runs scan-build on the complete build. Analyzer findings fail the job; scan-build reports are uploaded. | Implemented / merge-blocking |
 | `coverage` | Builds and runs all registered tests with coverage instrumentation; requires 90% changed-line coverage and 80% changed-branch coverage; uploads gcovr reports. | Implemented / merge-blocking |
 | `merge-gate` | Fails unless both matrix test runs, project standards, static analysis, and changed-code coverage succeed. Its display name is `Merge gate (all required checks)`. | Implemented / merge-blocking |
 
@@ -185,11 +185,11 @@ The merge-blocking analyzer commands are:
 
 ```bash
 CC=clang-18 CXX=clang++-18 cmake --preset analysis -DBTE_BUILD_QT_APP=ON
-python3 Tools/RunStaticAnalysis.py clang-tidy
-python3 Tools/RunStaticAnalysis.py cppcheck
-python3 Tools/RunStaticAnalysis.py iwyu
-scan-build-18 --use-analyzer=clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
-scan-build-18 --use-analyzer=clang-18 --status-bugs --keep-empty --output Output/scan-build-reports cmake --build Output/scan-build --parallel
+python3 Tools/RunStaticAnalysis.py clang-tidy --base <base> --head <head>
+python3 Tools/RunStaticAnalysis.py cppcheck --base <base> --head <head>
+python3 Tools/RunStaticAnalysis.py iwyu --base <base> --head <head>
+scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
+scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty -o Output/scan-build-reports cmake --build Output/scan-build --parallel
 ```
 
 CI pins clang/clang-tidy/clang-tools `1:18.1.3-1ubuntu1`, cppcheck

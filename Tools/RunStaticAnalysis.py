@@ -41,6 +41,22 @@ def compilation_units(database_path: Path, repository_root: Path) -> list[Path]:
     return sorted(units)
 
 
+def changed_translation_units(
+    repository_root: Path, base: str, head: str
+) -> set[Path]:
+    completed = subprocess.run(
+        ["git", "diff", "--name-only", base, head, "--", "Src"],
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return {
+        (repository_root / filename).resolve()
+        for filename in completed.stdout.splitlines()
+        if Path(filename).suffix in {".cc", ".cpp", ".cxx"}
+    }
+
 def analyzer_command(tool: str, build_directory: Path, units: list[Path]) -> list[str]:
     if tool == "clang-tidy":
         return [
@@ -56,7 +72,7 @@ def analyzer_command(tool: str, build_directory: Path, units: list[Path]) -> lis
             "--enable=warning,performance,portability",
             "--error-exitcode=1",
             "--inline-suppr",
-            "--file-filter=*/Src/*",
+            *(f"--file-filter={unit}" for unit in units),
             f"--suppressions-list={REPOSITORY_ROOT / 'Cppcheck.suppressions'}",
         ]
     if tool == "iwyu":
@@ -78,6 +94,8 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("tool", choices=("clang-tidy", "cppcheck", "iwyu"))
     parser.add_argument("--build-dir", type=Path, default=Path("Output/analysis"))
+    parser.add_argument("--base")
+    parser.add_argument("--head")
     return parser.parse_args()
 
 
@@ -94,6 +112,17 @@ def main() -> int:
         print("no project C++ compilation units found", file=sys.stderr)
         return 2
 
+    if arguments.base is not None or arguments.head is not None:
+        if arguments.base is None or arguments.head is None:
+            print("--base and --head must be provided together", file=sys.stderr)
+            return 2
+        changed_units = changed_translation_units(
+            REPOSITORY_ROOT, arguments.base, arguments.head
+        )
+        units = [unit for unit in units if unit in changed_units]
+        if not units:
+            print("no changed project C++ translation units; analyzer not applicable")
+            return 0
     try:
         command = analyzer_command(arguments.tool, build_directory, units)
     except RuntimeError as error:

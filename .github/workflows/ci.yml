@@ -76,6 +76,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Install analysis tools
         run: |
@@ -105,18 +107,24 @@ jobs:
         run: cmake --preset analysis -DBTE_BUILD_QT_APP=ON
 
       - name: Run clang-tidy
-        run: python3 Tools/RunStaticAnalysis.py clang-tidy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
+        run: python3 Tools/RunStaticAnalysis.py clang-tidy --base "$BASE_SHA" --head "$GITHUB_SHA"
 
       - name: Run cppcheck
-        run: python3 Tools/RunStaticAnalysis.py cppcheck
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
+        run: python3 Tools/RunStaticAnalysis.py cppcheck --base "$BASE_SHA" --head "$GITHUB_SHA"
 
       - name: Run include-what-you-use
-        run: python3 Tools/RunStaticAnalysis.py iwyu
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
+        run: python3 Tools/RunStaticAnalysis.py iwyu --base "$BASE_SHA" --head "$GITHUB_SHA"
 
       - name: Run clang static analyzer
         run: |
-          scan-build-18 --use-analyzer=clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
-          scan-build-18 --use-analyzer=clang-18 --status-bugs --keep-empty --output Output/scan-build-reports cmake --build Output/scan-build --parallel
+          scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
+          scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty -o Output/scan-build-reports cmake --build Output/scan-build --parallel
 
       - name: Upload scan-build reports
         if: always()
@@ -136,17 +144,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install coverage tools
-        run: >-
-          python3 -m pip install --disable-pip-version-check
-          gcovr==8.5 diff-cover==10.0.0 jinja2==3.1.6 markupsafe==3.0.2
-
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.9.*'
           modules: qtcharts
           cache: true
+
+      - name: Install coverage tools
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          gcovr==8.5 diff-cover==10.0.0 jinja2==3.1.6 markupsafe==3.0.2
 
       - name: Configure coverage tests
         run: cmake --preset coverage -DBTE_BUILD_QT_APP=ON

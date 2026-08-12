@@ -1,4 +1,4 @@
-# 0012 — Introduce the starter Backtest seam
+# 0013 — Introduce the starter Backtest seam
 
 - **Status**: Accepted
 - **Date**: 2026-08-10
