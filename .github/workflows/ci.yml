@@ -89,7 +89,7 @@ jobs:
           clang-tidy-18 --version
           cppcheck --version
           include-what-you-use --version
-          scan-build-18 --version
+          scan-build-18 --help | sed -n '1p'
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
