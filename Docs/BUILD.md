@@ -94,8 +94,8 @@ the committed revision:
 ./RunQuality.sh --base origin/main --head HEAD
 ```
 
-`RunQuality.sh` runs changed-translation-unit clang-tidy, cppcheck, and IWYU,
-whole-tree scan-build, all coverage-instrumented registered tests, the 98%
+`RunQuality.sh` runs full-project clang-tidy, cppcheck, IWYU, and scan-build,
+all coverage-instrumented registered tests, the 98%
 changed-line gate, and the 90% changed-branch gate. During iteration,
 `./RunQuality.sh --fast` skips scan-build; it does not replace the complete
 pre-CI run. Its first invocation installs missing quality tools and creates its
