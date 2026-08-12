@@ -8,6 +8,7 @@
 #include <QDateEdit>
 #include <QDateTime>
 #include <QDoubleSpinBox>
+#include <QFuture>
 #include <QFutureWatcher>
 #include <QFont>
 #include <QGridLayout>
@@ -21,14 +22,11 @@
 #include <QLocale>
 #include <QObject>
 #include <QPushButton>
-#include <QSignalBlocker>
-#include <QSpinBox>
+#include <QString>
 #include <QTableWidget>
-#include <QTableWidgetItem>
 #include <QTimeZone>
 #include <QToolButton>
 #include <QVariant>
-#include <QVBoxLayout>
 #include <QtCore/Qt>
 #include <QtConcurrentRun>
 

@@ -4,6 +4,7 @@
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>

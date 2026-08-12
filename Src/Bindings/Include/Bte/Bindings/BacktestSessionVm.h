@@ -7,6 +7,7 @@
 #include <QDate>
 #include <QString>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>

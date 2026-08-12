@@ -1,5 +1,6 @@
 #include "Bte/Bindings/ReplayDataLoader.h"
 
+#include "Bte/Core/Time.h"
 #include "Bte/Data/BarStream.h"
 
 #include <QCoreApplication>

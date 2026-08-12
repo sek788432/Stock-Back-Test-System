@@ -1,8 +1,8 @@
 #pragma once
 
 #include <QMainWindow>
-
-class QTabWidget;
+#include <QTabWidget>
+#include <QWidget>
 
 namespace bte::app {
 

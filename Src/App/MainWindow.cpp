@@ -6,11 +6,12 @@
 #include <QLabel>
 #include <QMenuBar>
 #include <QStatusBar>
+#include <QString>
 #include <QTabWidget>
 #include <QWidget>
+#include <QtCore/Qt>
 
 #include <memory>
-#include <utility>
 
 namespace bte::app {
 namespace {

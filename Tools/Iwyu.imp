@@ -9,5 +9,7 @@
   { "include": [ "<qlogging.h>", "private", "<QDebug>", "public" ] },
   { "include": [ "<qnamespace.h>", "private", "<QtCore/Qt>", "public" ] },
   { "include": [ "<qstring.h>", "private", "<QString>", "public" ] },
-  { "include": [ "<qvariant.h>", "private", "<QVariant>", "public" ] }
+  { "include": [ "<qtabwidget.h>", "private", "<QTabWidget>", "public" ] },
+  { "include": [ "<qvariant.h>", "private", "<QVariant>", "public" ] },
+  { "include": [ "<qwidget.h>", "private", "<QWidget>", "public" ] }
 ]
