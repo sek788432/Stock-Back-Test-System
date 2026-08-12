@@ -399,6 +399,8 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
     bte::strategy::ConditionSource source;
     bte::indicators::NumericDomain domain;
     std::optional<bte::indicators::IndicatorKind> indicatorKind;
+    bte::indicators::IndicatorOutput indicatorOutput =
+        bte::indicators::IndicatorOutput::value;
   };
   const auto metricCases = std::vector<MetricCase>{
       {"Close change %",
@@ -423,10 +425,12 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
        bte::indicators::IndicatorKind::rsi},
       {"MACD histogram", bte::strategy::ConditionSource::indicator,
        bte::indicators::NumericDomain::price,
-       bte::indicators::IndicatorKind::macd},
+       bte::indicators::IndicatorKind::macd,
+       bte::indicators::IndicatorOutput::histogram},
       {"Bollinger upper", bte::strategy::ConditionSource::indicator,
        bte::indicators::NumericDomain::price,
-       bte::indicators::IndicatorKind::bollingerBands},
+       bte::indicators::IndicatorKind::bollingerBands,
+       bte::indicators::IndicatorOutput::upper},
       {"ATR", bte::strategy::ConditionSource::indicator,
        bte::indicators::NumericDomain::price,
        bte::indicators::IndicatorKind::atr},
@@ -435,10 +439,12 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
        bte::indicators::IndicatorKind::adx},
       {"Stochastic %K", bte::strategy::ConditionSource::indicator,
        bte::indicators::NumericDomain::percent,
-       bte::indicators::IndicatorKind::stochastic},
+       bte::indicators::IndicatorKind::stochastic,
+       bte::indicators::IndicatorOutput::percentK},
       {"Donchian upper", bte::strategy::ConditionSource::indicator,
        bte::indicators::NumericDomain::price,
-       bte::indicators::IndicatorKind::donchian},
+       bte::indicators::IndicatorKind::donchian,
+       bte::indicators::IndicatorOutput::upper},
       {"VWAP", bte::strategy::ConditionSource::indicator,
        bte::indicators::NumericDomain::price,
        bte::indicators::IndicatorKind::vwap},
@@ -500,6 +506,7 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
     QCOMPARE(condition.thresholdDomain, metricCase.domain);
     if (metricCase.indicatorKind.has_value()) {
       QCOMPARE(condition.indicator.kind, metricCase.indicatorKind.value());
+      QCOMPARE(condition.indicator.output, metricCase.indicatorOutput);
     }
   }
 }
@@ -526,39 +533,78 @@ void BacktestTabTest::selectableConditionStatusNamesItsSelectedStrategy() {
 
 void BacktestTabTest::selectableControlsPresentNoSignalAndSellFill() {
   std::atomic_int invocation = 0;
-  bte::frontend::BacktestTab tab{[&invocation](
-                                     bte::bindings::BacktestConfiguration,
-                                     bte::core::CancellationToken) {
-    if (invocation.fetch_add(1) == 0) {
-      return bte::core::Result<bte::bindings::BacktestSnapshot>{
-          noFillSnapshot(bte::bindings::BacktestOutcome::completedNoSignal)};
-    }
-    auto snapshot = filledSnapshot();
-    snapshot.fills.front().side = bte::bindings::BacktestFillSide::sell;
-    return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
-  }};
+  std::mutex captureMutex;
+  std::optional<bte::bindings::BacktestConfiguration> captured;
+  bte::frontend::BacktestTab tab{
+      [&captureMutex, &captured,
+       &invocation](bte::bindings::BacktestConfiguration configuration,
+                    bte::core::CancellationToken) {
+        {
+          const std::scoped_lock lock{captureMutex};
+          captured = std::move(configuration);
+        }
+        if (invocation.fetch_add(1) == 0) {
+          return bte::core::Result<bte::bindings::BacktestSnapshot>{
+              noFillSnapshot(
+                  bte::bindings::BacktestOutcome::completedNoSignal)};
+        }
+        auto snapshot = filledSnapshot();
+        snapshot.fills.front().side = bte::bindings::BacktestFillSide::sell;
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      }};
   auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
   auto *sellSecond =
       tab.findChild<QCheckBox *>("backtestSellSecondEnabledCheckBox");
+  auto *sellLogic = tab.findChild<QComboBox *>("backtestSellLogicCombo");
+  auto *sellMetric = tab.findChild<QComboBox *>("backtestSellMetricCombo");
+  auto *sellThreshold =
+      tab.findChild<QDoubleSpinBox *>("backtestSellThresholdSpinBox");
   auto *sellSecondMetric =
       tab.findChild<QComboBox *>("backtestSellSecondMetricCombo");
+  auto *sellSecondThreshold =
+      tab.findChild<QDoubleSpinBox *>("backtestSellSecondThresholdSpinBox");
   auto *run = tab.findChild<QPushButton *>("backtestRunButton");
   auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
   auto *trades = tab.findChild<QTableWidget *>("backtestTradeLogTable");
   QVERIFY(strategy != nullptr);
   QVERIFY(sellSecond != nullptr);
+  QVERIFY(sellLogic != nullptr);
+  QVERIFY(sellMetric != nullptr);
+  QVERIFY(sellThreshold != nullptr);
   QVERIFY(sellSecondMetric != nullptr);
+  QVERIFY(sellSecondThreshold != nullptr);
   QVERIFY(run != nullptr);
   QVERIFY(status != nullptr);
   QVERIFY(trades != nullptr);
 
   strategy->setCurrentText("Selectable conditions");
+  sellLogic->setCurrentText("ANY (OR)");
+  sellMetric->setCurrentText("ROC");
+  sellThreshold->setValue(-2.0);
   QVERIFY(!sellSecondMetric->isEnabled());
   QTest::mouseClick(sellSecond, Qt::LeftButton);
+  sellSecondMetric->setCurrentText("Stochastic %K");
+  sellSecondThreshold->setValue(20.0);
   QVERIFY(sellSecondMetric->isEnabled());
   QTest::mouseClick(run, Qt::LeftButton);
   QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("no selectable condition"),
                            5'000);
+  {
+    const std::scoped_lock lock{captureMutex};
+    QVERIFY(captured.has_value());
+    QVERIFY(captured->selectableStrategy.has_value());
+    const auto &sell = captured->selectableStrategy->sell;
+    QCOMPARE(sell.logic, bte::strategy::ConditionLogic::any);
+    QCOMPARE(sell.conditions.size(), 2U);
+    QCOMPARE(sell.conditions[0].indicator.kind,
+             bte::indicators::IndicatorKind::roc);
+    QCOMPARE(sell.conditions[0].threshold, -2.0);
+    QCOMPARE(sell.conditions[1].indicator.kind,
+             bte::indicators::IndicatorKind::stochastic);
+    QCOMPARE(sell.conditions[1].indicator.output,
+             bte::indicators::IndicatorOutput::percentK);
+    QCOMPARE(sell.conditions[1].threshold, 20.0);
+  }
 
   QTest::mouseClick(run, Qt::LeftButton);
   QTRY_COMPARE_WITH_TIMEOUT(trades->rowCount(), 1, 5'000);

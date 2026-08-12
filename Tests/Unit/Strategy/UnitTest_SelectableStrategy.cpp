@@ -205,23 +205,33 @@ TEST(SelectableStrategyTest, incompatibleThresholdDomainIsRejected) {
 }
 
 TEST(SelectableStrategyTest, comparisonOperatorsUseTypedBarFieldValues) {
-  const auto comparisons = std::array{
-      bte::strategy::Comparison::greaterThan,
-      bte::strategy::Comparison::greaterThanOrEqual,
-      bte::strategy::Comparison::lessThan,
-      bte::strategy::Comparison::lessThanOrEqual,
-      bte::strategy::Comparison::equal,
-      bte::strategy::Comparison::notEqual,
+  struct ComparisonCase final {
+    bte::strategy::Comparison comparison;
+    double close;
+    bool expected;
   };
-  const auto expected = std::array{false, true, false, true, true, false};
+  const auto comparisons = std::array{
+      ComparisonCase{bte::strategy::Comparison::greaterThan, 11.0, true},
+      ComparisonCase{bte::strategy::Comparison::greaterThan, 9.0, false},
+      ComparisonCase{bte::strategy::Comparison::greaterThanOrEqual, 10.0, true},
+      ComparisonCase{bte::strategy::Comparison::greaterThanOrEqual, 9.0, false},
+      ComparisonCase{bte::strategy::Comparison::lessThan, 9.0, true},
+      ComparisonCase{bte::strategy::Comparison::lessThan, 11.0, false},
+      ComparisonCase{bte::strategy::Comparison::lessThanOrEqual, 10.0, true},
+      ComparisonCase{bte::strategy::Comparison::lessThanOrEqual, 11.0, false},
+      ComparisonCase{bte::strategy::Comparison::equal, 10.0, true},
+      ComparisonCase{bte::strategy::Comparison::equal, 11.0, false},
+      ComparisonCase{bte::strategy::Comparison::notEqual, 10.0, false},
+      ComparisonCase{bte::strategy::Comparison::notEqual, 11.0, true},
+  };
 
-  for (std::size_t index = 0; index < comparisons.size(); ++index) {
+  for (const auto &comparisonCase : comparisons) {
     auto created = bte::strategy::SelectableStrategy::create({
         .buy =
             {
                 .conditions = {bte::strategy::Condition{
                     .source = bte::strategy::ConditionSource::barField,
-                    .comparison = comparisons[index],
+                    .comparison = comparisonCase.comparison,
                     .threshold = 10.0,
                     .barField = bte::indicators::BarField::close,
                 }},
@@ -230,9 +240,9 @@ TEST(SelectableStrategyTest, comparisonOperatorsUseTypedBarFieldValues) {
     ASSERT_TRUE(created.ok());
     auto strategy = std::move(created).value();
 
-    const auto signal = strategy->onBar(makeBar(2, 10.0));
+    const auto signal = strategy->onBar(makeBar(2, comparisonCase.close));
     ASSERT_TRUE(signal.ok());
-    EXPECT_EQ(signal.value().buy, expected[index]);
+    EXPECT_EQ(signal.value().buy, comparisonCase.expected);
   }
 }
 
@@ -272,15 +282,48 @@ TEST(SelectableStrategyTest, rejectsInvalidLogicAndTypedConditionPlans) {
               }},
           },
   });
+  const auto invalidSource = bte::strategy::SelectableStrategy::create({
+      .buy = {.conditions = {bte::strategy::Condition{
+                  .source = static_cast<bte::strategy::ConditionSource>(99),
+              }}},
+  });
+  const auto invalidComparison = bte::strategy::SelectableStrategy::create({
+      .buy = {.conditions = {bte::strategy::Condition{
+                  .comparison = static_cast<bte::strategy::Comparison>(99),
+              }}},
+  });
+  const auto invalidBarField = bte::strategy::SelectableStrategy::create({
+      .buy = {.conditions = {bte::strategy::Condition{
+                  .barField = static_cast<bte::indicators::BarField>(99),
+              }}},
+  });
+  const auto invalidDomain = bte::strategy::SelectableStrategy::create({
+      .buy = {.conditions = {bte::strategy::Condition{
+                  .thresholdDomain =
+                      static_cast<bte::indicators::NumericDomain>(99),
+              }}},
+  });
 
   EXPECT_FALSE(invalidLogic.ok());
   EXPECT_FALSE(wrongPercentDomain.ok());
   EXPECT_FALSE(wrongIndicatorDomain.ok());
+  EXPECT_FALSE(invalidSource.ok());
+  EXPECT_FALSE(invalidComparison.ok());
+  EXPECT_FALSE(invalidBarField.ok());
+  EXPECT_FALSE(invalidDomain.ok());
   EXPECT_EQ(invalidLogic.error().code,
             bte::core::ErrorCode::strategyCompileFailed);
   EXPECT_EQ(wrongPercentDomain.error().code,
             bte::core::ErrorCode::strategyCompileFailed);
   EXPECT_EQ(wrongIndicatorDomain.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_EQ(invalidSource.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_EQ(invalidComparison.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_EQ(invalidBarField.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_EQ(invalidDomain.error().code,
             bte::core::ErrorCode::strategyCompileFailed);
 }
 

@@ -28,7 +28,7 @@ struct BacktestRequest {
   std::vector<core::Bar> bars;
   std::int64_t initialCapitalMicrodollars = 0;
   std::int64_t quantityShares = 0;
-  std::optional<strategy::SelectableStrategyPlan> selectableStrategy{};
+  std::optional<strategy::SelectableStrategyPlan> selectableStrategy;
 };
 
 struct BacktestFill {

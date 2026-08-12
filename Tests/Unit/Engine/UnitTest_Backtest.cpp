@@ -210,6 +210,19 @@ TEST(BacktestTest,
             bte::engine::StarterOrderStatus::cancelledNoFutureMarketData);
   EXPECT_EQ(rejected.value().orderStatus,
             bte::engine::StarterOrderStatus::rejectedInsufficientCash);
+  const auto expectNoFill = [](const bte::engine::BacktestResult &result,
+                               const std::int64_t initialCapital) {
+    EXPECT_FALSE(result.fill.has_value());
+    EXPECT_TRUE(result.fills.empty());
+    EXPECT_EQ(result.positionShares, 0);
+    EXPECT_EQ(result.cashMicrodollars, initialCapital);
+    EXPECT_EQ(result.marketValueMicrodollars, 0);
+    EXPECT_EQ(result.equityMicrodollars, initialCapital);
+    EXPECT_EQ(result.pnlMicrodollars, 0);
+  };
+  expectNoFill(noSignal.value(), 1'000'000'000);
+  expectNoFill(pending.value(), 1'000'000'000);
+  expectNoFill(rejected.value(), 1);
 }
 
 TEST(BacktestTest, selectableConditionsPropagateExecutionAndPlanErrors) {
