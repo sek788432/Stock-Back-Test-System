@@ -12,7 +12,8 @@ This log distinguishes dependencies present in the repository from accepted but 
 | gcovr | 8.5 | BSD-3-Clause | Implemented, CI/developer-only | Coverage workflow | gcov coverage reports | [0012](0012-enforce-static-analysis-and-diff-coverage.md) |
 | diff-cover | 10.0.0 | Apache-2.0 | Implemented, CI/developer-only | Coverage workflow | Changed-line coverage gate | [0012](0012-enforce-static-analysis-and-diff-coverage.md) |
 | Jinja2 | 3.1.6 | BSD-3-Clause | Implemented, CI/developer-only | Coverage workflow | HTML templates required by gcovr 8.5 reports | [0012](0012-enforce-static-analysis-and-diff-coverage.md) |
-| MarkupSafe | 3.0.2 | BSD-3-Clause | Implemented, CI/developer-only | Coverage workflow | Escaping runtime required by Jinja2 | [0012](0012-enforce-static-analysis-and-diff-coverage.md) |
+| MarkupSafe | 3.0.3 | BSD-3-Clause | Implemented, CI/developer-only | Coverage workflow | Escaping runtime required by Jinja2 | [0012](0012-enforce-static-analysis-and-diff-coverage.md) |
+| pip-tools | 7.5.2 | BSD-3-Clause | Implemented, lock-generation-only | Coverage dependency lock | Reproduce the hash-locked coverage tool dependency closure | [0013](0013-harden-ci-supply-chain.md) |
 | databento (Python) | 0.64.0 | Apache-2.0 | Implemented, developer-only | DataFetcher | Upstream market-data acquisition | — |
 | duckdb (Python) | 1.4.4 | MIT | Implemented, developer-only | DataFetcher | Mutable ingestion and verification store; not release runtime | [0011](0011-own-the-engine-and-release-data-contract.md) |
 | pandas (Python) | 2.3.3 | BSD-3-Clause | Implemented, developer-only | DataFetcher | Tabular extraction | — |

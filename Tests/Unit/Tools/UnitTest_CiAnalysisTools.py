@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -14,7 +15,11 @@ from unittest import mock
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW_TEXT = (REPOSITORY_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+CI_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/ci.yml"
+WORKFLOW_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
+COVERAGE_REQUIREMENTS = (
+    REPOSITORY_ROOT / "Tools/CoverageRequirements.txt"
+).read_text(encoding="utf-8")
 
 
 def load_tool(name: str):
@@ -27,6 +32,40 @@ def load_tool(name: str):
 
 static_analysis = load_tool("RunStaticAnalysis")
 branch_coverage = load_tool("CheckDiffBranchCoverage")
+
+
+class CiWorkflowSecurityTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    def test_external_actions_are_pinned_to_full_commit_shas(self) -> None:
+        action_references = re.findall(
+            r"^\s*uses:\s+([^#\s]+)", self.workflow, flags=re.MULTILINE
+        )
+
+        self.assertGreater(len(action_references), 0)
+        for reference in action_references:
+            with self.subTest(reference=reference):
+                self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
+
+    def test_checkout_steps_do_not_persist_credentials(self) -> None:
+        step_blocks = re.findall(
+            r"(?ms)^\s{6}- name:.*?(?=^\s{6}- name:|^\s{2}[a-z-]+:|\Z)",
+            self.workflow,
+        )
+        checkout_blocks = [
+            block for block in step_blocks if "actions/checkout@" in block
+        ]
+
+        self.assertGreater(len(checkout_blocks), 0)
+        for block in checkout_blocks:
+            with self.subTest(block=block):
+                self.assertIn("persist-credentials: false", block)
+
+    def test_coverage_dependencies_require_locked_hashes(self) -> None:
+        self.assertIn("--only-binary=:all:", self.workflow)
+        self.assertIn("--require-hashes", self.workflow)
+        self.assertIn("--requirement Tools/CoverageRequirements.txt", self.workflow)
 
 
 class StaticAnalysisToolTest(unittest.TestCase):
@@ -184,8 +223,8 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
 class ChangedBranchCoverageTest(unittest.TestCase):
     def test_workflow_installs_html_report_dependency_at_an_exact_version(self) -> None:
-        self.assertIn("jinja2==3.1.6", WORKFLOW_TEXT)
-        self.assertIn("markupsafe==3.0.2", WORKFLOW_TEXT)
+        self.assertIn("jinja2==3.1.6", COVERAGE_REQUIREMENTS)
+        self.assertIn("markupsafe==3.0.3", COVERAGE_REQUIREMENTS)
         self.assertIn("--decisions", WORKFLOW_TEXT)
 
     def test_changed_lines_parse_added_ranges_and_single_lines(self) -> None:
