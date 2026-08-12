@@ -11,6 +11,7 @@
   { "include": [ "<QtGui/qfont.h>", "private", "<QFont>", "public" ] },
   { "include": [ "<QtGui/qicon.h>", "private", "<QIcon>", "public" ] },
   { "include": [ "<QtWidgets/qabstractitemview.h>", "private", "<QAbstractItemView>", "public" ] },
+  { "include": [ "<QtWidgets/qboxlayout.h>", "private", "<QHBoxLayout>", "public" ] },
   { "include": [ "<QtWidgets/qframe.h>", "private", "<QFrame>", "public" ] },
   { "include": [ "<QtWidgets/qlayout.h>", "private", "<QLayout>", "public" ] },
   { "include": [ "<QtWidgets/qsizepolicy.h>", "private", "<QSizePolicy>", "public" ] },

@@ -4,7 +4,6 @@
 
 #include "Bte/Core/Result.h"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <compare>

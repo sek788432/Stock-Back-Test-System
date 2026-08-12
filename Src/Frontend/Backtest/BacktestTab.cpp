@@ -12,15 +12,14 @@
 #include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFont>
-#include <QFuture>
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLayout>
 #include <QList>
-#include <QObject>
 #include <QPushButton>
 #include <QString>
 #include <QTableWidget>
@@ -33,7 +32,6 @@
 #include <QtCore/qoverload.h>
 #include <QtCore/qtimezone.h>
 #include <QtGui/qkeysequence.h>
-#include <QtWidgets/qboxlayout.h>
 #include <algorithm>
 
 #include <chrono>
@@ -42,7 +40,7 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <type_traits>
+#include <tuple>
 #include <utility>
 #include <vector>
 
