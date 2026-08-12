@@ -5,7 +5,7 @@
 #include <QComboBox>
 #include <QDateEdit>
 #include <QDoubleSpinBox>
-#include <QFrame>
+#include <QtWidgets/qframe.h>
 #include <QGroupBox>
 #include <QLabel>
 #include <QProgressBar>

@@ -2,14 +2,19 @@
 
 #include "Bte/Core/Result.h"
 
+// IWYU pragma: no_include <_ctype.h>
+
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace bte::engine {
 namespace {

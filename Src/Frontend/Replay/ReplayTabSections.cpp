@@ -2,14 +2,18 @@
 
 #include "Bte/Frontend/ReplayTab.h"
 
-#include <QAbstractItemView>
-#include <QGridLayout>
-#include <QHBoxLayout>
+#include <QtCore/qdatetime.h>
+#include <QtCore/qlist.h>
+#include <QtCore/qnamespace.h>
+#include <QtCore/qstring.h>
+#include <QtGui/qicon.h>
+#include <QtWidgets/qabstractitemview.h>
+#include <QtWidgets/qboxlayout.h>
+#include <QtWidgets/qgridlayout.h>
+#include <QtWidgets/qsizepolicy.h>
+#include <QtWidgets/qstyle.h>
+
 #include <QHeaderView>
-#include <QIcon>
-#include <QSizePolicy>
-#include <QStyle>
-#include <QVBoxLayout>
 
 #include <memory>
 namespace bte::frontend {

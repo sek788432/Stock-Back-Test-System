@@ -1,5 +1,7 @@
 #include "Bte/Bindings/ReplaySessionVm.h"
 
+#include "Bte/Core/Time.h"
+#include "Bte/Data/BarStream.h"
 #include "Bte/Engine/Replay.h"
 
 #include <algorithm>
