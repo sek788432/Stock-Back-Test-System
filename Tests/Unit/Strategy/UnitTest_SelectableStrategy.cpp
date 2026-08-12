@@ -203,4 +203,23 @@ TEST(SelectableStrategyTest, incompatibleThresholdDomainIsRejected) {
   EXPECT_EQ(invalid.error().code, bte::core::ErrorCode::strategyCompileFailed);
 }
 
+TEST(SelectableStrategyTest, invalidInputBarIsRejectedBeforeConditionEvaluation) {
+  auto created = bte::strategy::SelectableStrategy::create({
+      .buy =
+          {
+              .conditions = {priceChangeCondition(
+                  bte::strategy::Comparison::greaterThan, 1.0)},
+          },
+  });
+  ASSERT_TRUE(created.ok());
+  auto strategy = std::move(created).value();
+
+  auto invalidBar = makeBar(2, 10.0);
+  invalidBar.volume = std::numeric_limits<double>::infinity();
+  const auto result = strategy->onBar(invalidBar);
+
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
 } // namespace
