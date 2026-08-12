@@ -223,7 +223,11 @@ CsvBarStream::CsvBarStream(ConstructionKey, std::string symbol, std::string sche
                            std::vector<core::Bar> bars)
     : symbol_(std::move(symbol)), schemaName_(std::move(schemaName)), range_(range), bars_(std::move(bars)) {}
 
-core::Result<std::unique_ptr<CsvBarStream>> CsvBarStream::open(const StreamRequest& request) {
+core::Result<std::unique_ptr<CsvBarStream>>
+CsvBarStream::open(const StreamRequest& request, const core::CancellationToken cancellation) {
+    if (cancellation.isCancellationRequested()) {
+        return core::makeError(core::ErrorCode::cancelled, "CSV loading was cancelled");
+    }
     if (request.symbol.empty()) {
         return core::makeError(core::ErrorCode::invalidArgument, "StreamRequest.symbol is required");
     }
@@ -250,6 +254,9 @@ core::Result<std::unique_ptr<CsvBarStream>> CsvBarStream::open(const StreamReque
     std::vector<core::Bar> bars;
     int lineNumber = 1;
     while (std::getline(input, line)) {
+        if (cancellation.isCancellationRequested()) {
+            return core::makeError(core::ErrorCode::cancelled, "CSV loading was cancelled");
+        }
         ++lineNumber;
         if (trim(line).empty()) {
             continue;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Bte/Core/Bar.h"
+#include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
 
@@ -43,7 +44,8 @@ class CsvBarStream final : public BarStream {
     struct ConstructionKey final {};
 
   public:
-    [[nodiscard]] static core::Result<std::unique_ptr<CsvBarStream>> open(const StreamRequest& request);
+    [[nodiscard]] static core::Result<std::unique_ptr<CsvBarStream>>
+    open(const StreamRequest& request, core::CancellationToken cancellation = {});
 
     CsvBarStream(ConstructionKey, std::string symbol, std::string schemaName, core::DateRange range,
                  std::vector<core::Bar> bars);

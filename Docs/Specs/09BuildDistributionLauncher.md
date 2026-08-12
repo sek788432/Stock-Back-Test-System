@@ -65,6 +65,8 @@ Currently implemented checks are merge-blocking wherever the repository workflow
 - Ubuntu and macOS configure/build/test jobs.
 - Registered CTest tests.
 - Full-tree project-standards script.
+- clang-tidy, cppcheck, IWYU, and scan-build static analysis.
+- Changed-line and changed-branch coverage thresholds.
 
 The following checks are required before release but are **not implemented yet** and must not be represented as active gates:
 
@@ -73,8 +75,8 @@ The following checks are required before release but are **not implemented yet**
 - Managed Python-runtime and wheel compatibility tests.
 - Data snapshot validation, licensing, and manifest-signature gates.
 - Deterministic cross-platform golden-result comparison.
-- Coverage threshold and public-behavior test audit.
-- Mutation testing, clang-tidy, cppcheck, IWYU, scan-build, sanitizer, and formatting gates.
+- Public-behavior test audit and mutation testing.
+- Sanitizer and explicit formatting gates.
 - Native symbol/export audit.
 - Code signing, notarization, installer signing, and rollback testing.
 

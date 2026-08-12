@@ -7,8 +7,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace bte::bindings {
@@ -39,8 +41,12 @@ findCsvDataDirFrom(std::filesystem::path cursor) {
 }
 
 std::filesystem::path findCsvDataDir() {
-  if (auto dir = findCsvDataDirFrom(std::filesystem::current_path())) {
-    return *dir;
+  std::error_code ec;
+  const auto currentDirectory = std::filesystem::current_path(ec);
+  if (!ec) {
+    if (auto dir = findCsvDataDirFrom(currentDirectory)) {
+      return *dir;
+    }
   }
   if (auto dir = findCsvDataDirFrom(
           QCoreApplication::applicationDirPath().toStdString())) {
@@ -119,33 +125,67 @@ std::vector<bte::core::Bar> barsForSchema(std::vector<bte::core::Bar> bars,
 
 } // namespace
 
+core::Result<std::vector<core::Bar>>
+loadBacktestBars(const QString &symbol, const QString &schemaName,
+                 const QDate start, const QDate end,
+                 const core::CancellationToken cancellation) {
+  try {
+    const auto exclusiveEnd = end.addDays(1);
+    if (!start.isValid() || !end.isValid() || start > end ||
+        !exclusiveEnd.isValid()) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "backtest date range is invalid");
+    }
+    if (cancellation.isCancellationRequested()) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "backtest data loading was cancelled");
+    }
+    const bte::data::StreamRequest request{
+        .symbol = symbol.toStdString(),
+        .schemaName = "ohlcv-1h",
+        .range =
+            bte::core::DateRange{
+                .start = timestampFromDate(start),
+                .end = timestampFromDate(exclusiveEnd),
+            },
+        .csvDir = findCsvDataDir(),
+        .source = bte::data::StreamRequest::Source::csv,
+    };
+
+    auto stream = bte::data::CsvBarStream::open(request, cancellation);
+    if (!stream.ok()) {
+      return stream.error();
+    }
+
+    std::vector<bte::core::Bar> bars;
+    while (auto bar = stream.value()->next()) {
+      if (cancellation.isCancellationRequested()) {
+        return core::makeError(core::ErrorCode::cancelled,
+                               "backtest data loading was cancelled");
+      }
+      bars.push_back(*bar);
+    }
+    return barsForSchema(std::move(bars), schemaName);
+  } catch (const std::exception &error) {
+    return core::makeError(core::ErrorCode::internal,
+                           std::string{"backtest data loading failed: "} +
+                               error.what());
+  } catch (...) {
+    return core::makeError(core::ErrorCode::internal,
+                           "backtest data loading failed");
+  }
+}
+
 std::vector<bte::core::Bar> loadReplayBars(const QString &symbol,
                                            const QString &schemaName,
                                            const QDate start, const QDate end) {
-  const bte::data::StreamRequest request{
-      .symbol = symbol.toStdString(),
-      .schemaName = "ohlcv-1h",
-      .range =
-          bte::core::DateRange{
-              .start = timestampFromDate(start),
-              .end = timestampFromDate(end.addDays(1)),
-          },
-      .csvDir = findCsvDataDir(),
-      .source = bte::data::StreamRequest::Source::csv,
-  };
-
-  auto stream = bte::data::CsvBarStream::open(request);
-  if (!stream.ok()) {
+  auto result = loadBacktestBars(symbol, schemaName, start, end);
+  if (!result.ok()) {
     qWarning() << "Failed to load replay CSV:"
-               << QString::fromStdString(stream.error().message);
+               << QString::fromStdString(result.error().message);
     return {};
   }
-
-  std::vector<bte::core::Bar> bars;
-  while (auto bar = stream.value()->next()) {
-    bars.push_back(*bar);
-  }
-  return barsForSchema(std::move(bars), schemaName);
+  return std::move(result).value();
 }
 
 } // namespace bte::bindings

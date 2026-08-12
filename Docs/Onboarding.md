@@ -48,18 +48,23 @@ brew install --cask qt    # OR install Qt 6.8 LTS via the Qt online installer
 brew install python@3.11
 ```
 
-#### Linux (Ubuntu 22.04+ / Fedora / Arch)
+#### Linux (Ubuntu 24.04+ / Fedora / Arch)
 
 ```bash
 # Ubuntu / Debian
 sudo apt update
 sudo apt install -y build-essential cmake ninja-build git \
-                    clang clang-tidy clang-format llvm \
+                    clang-18 clang-tidy-18 clang-tools-18 clang-format-18 \
+                    cppcheck iwyu llvm \
                     qt6-base-dev qt6-charts-dev \
                     python3.11 python3.11-venv pipx
 ```
 
 For other distros, install the equivalents. Clang 17+ is preferred; GCC 13+ also works.
+
+The coverage job also uses the pinned Python tools `gcovr==8.5` and
+`diff-cover==10.0.0`. See [`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7 for
+the analyzer and coverage commands.
 
 #### Windows
 
@@ -85,7 +90,7 @@ source .venv/bin/activate                    # Windows: .venv\Scripts\activate
 pip install -r DataFetcher/requirements.txt
 
 # C++ build (see Docs/BUILD.md + Docs/Specs/09)
-./RunTest.sh                                 # default non-Qt backend tests
+./RunTest.sh                                 # all registered backend and Qt tests
 # or manually, matching the current CI Qt build:
 cmake --preset qt-dev -DBTE_BUILD_TESTS=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
 cmake --build --preset qt-dev --parallel
@@ -161,7 +166,7 @@ If any are blocked, raise it in the next sync.
 | ----------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
 | `cmake --preset dev` not found                  | Old CMake                                  | Need 3.24+; `brew upgrade cmake` / install fresh                                 |
 | Sanitizer reports leak in third-party lib       | Suppression missing                        | Add a narrow entry to `Tests/sanitizer-suppressions.txt` and get maintainer review |
-| `clang-tidy` flagging many legacy issues        | Running an optional analyzer on whole repo | Limit manual analysis to touched targets and report the exact command used       |
+| `clang-tidy` reports a project finding          | Required analysis found a rule violation   | Fix it or document a narrow approved suppression; run the exact Spec 10 command  |
 | Qt not found by CMake                           | Qt install path not on `CMAKE_PREFIX_PATH` | Set `CMAKE_PREFIX_PATH` env var or `-DCMAKE_PREFIX_PATH=...`                     |
 | Python pipeline can't find DuckDB               | Missing dep                                | `pip install -r DataFetcher/requirements.txt` inside `.venv`                     |
 | First configure cannot fetch GoogleTest         | Network unavailable                         | Restore network access or use an already populated FetchContent cache            |

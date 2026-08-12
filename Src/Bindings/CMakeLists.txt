@@ -1,8 +1,10 @@
 add_library(
   bte_bindings
   STATIC
+    Include/Bte/Bindings/BacktestSessionVm.h
     Include/Bte/Bindings/ReplayDataLoader.h
     Include/Bte/Bindings/ReplaySessionVm.h
+    Backtest/BacktestSessionVm.cpp
     Replay/ReplayDataLoader.cpp
     Include/Bte/Bindings/ReplaySessionVm.h
     Replay/ReplaySessionVm.cpp)
@@ -14,6 +16,7 @@ target_include_directories(
   PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/Include"
   PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/Backtest"
     "${CMAKE_CURRENT_SOURCE_DIR}/Replay")
 
 target_link_libraries(

@@ -40,6 +40,22 @@
       }
     },
     {
+      "name": "analysis",
+      "inherits": "base",
+      "displayName": "Static analysis",
+      "cacheVariables": {
+        "BTE_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "coverage",
+      "inherits": "base",
+      "displayName": "Coverage",
+      "cacheVariables": {
+        "BTE_COVERAGE": "ON"
+      }
+    },
+    {
       "name": "release",
       "inherits": "base",
       "displayName": "Release",
@@ -61,6 +77,14 @@
     {
       "name": "dev-sanitize",
       "configurePreset": "dev-sanitize"
+    },
+    {
+      "name": "analysis",
+      "configurePreset": "analysis"
+    },
+    {
+      "name": "coverage",
+      "configurePreset": "coverage"
     },
     {
       "name": "release",
@@ -85,6 +109,13 @@
     {
       "name": "dev-sanitize",
       "configurePreset": "dev-sanitize",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "coverage",
+      "configurePreset": "coverage",
       "output": {
         "outputOnFailure": true
       }

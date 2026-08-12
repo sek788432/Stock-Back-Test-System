@@ -1,5 +1,7 @@
 #include "Bte/Data/BarStream.h"
 
+#include "Bte/Core/Cancellation.h"
+
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -122,4 +124,14 @@ TEST(CsvBarStreamTest, CsvBarStream_missingFile_returnsNotFound) {
     ASSERT_FALSE(stream.ok());
     EXPECT_EQ(stream.error().code, bte::core::ErrorCode::notFound);
     EXPECT_NE(stream.error().message.find("CSV file not found"), std::string::npos);
+}
+
+TEST(CsvBarStreamTest, CsvBarStream_requestedCancellationStopsBeforeReading) {
+    bte::core::CancellationSource cancellation;
+    cancellation.requestCancellation();
+
+    const auto stream = bte::data::CsvBarStream::open(makeRequest(), cancellation.token());
+
+    ASSERT_FALSE(stream.ok());
+    EXPECT_EQ(stream.error().code, bte::core::ErrorCode::cancelled);
 }

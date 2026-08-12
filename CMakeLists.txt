@@ -12,19 +12,22 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BTE_BUILD_TESTS "Build GoogleTest-based unit tests" ON)
 option(BTE_SANITIZERS "Enable ASan/UBSan on Clang/GNU builds" OFF)
 option(BTE_BUILD_QT_APP "Build the Qt desktop app shell" OFF)
+option(BTE_COVERAGE "Instrument tests for gcov-compatible coverage" OFF)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 include(CompilerWarnings)
 include(Sanitizers)
+include(Coverage)
+bte_enable_coverage()
 
 add_subdirectory(Src/Backend/Core)
 add_subdirectory(Src/Backend/Data)
 add_subdirectory(Src/Backend/Engine)
 
 if(BTE_BUILD_QT_APP)
-  set(BTE_QT_COMPONENTS Charts Core Widgets)
+  set(BTE_QT_COMPONENTS Charts Concurrent Core Widgets)
   if(BTE_BUILD_TESTS)
     list(APPEND BTE_QT_COMPONENTS Test)
   endif()
