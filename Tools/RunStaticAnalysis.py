@@ -57,7 +57,7 @@ def analyzer_command(tool: str, build_directory: Path, units: list[Path]) -> lis
             "--error-exitcode=1",
             "--inline-suppr",
             "--file-filter=*/Src/*",
-            f"--suppressions-list={REPOSITORY_ROOT / 'cppcheck.suppressions'}",
+            f"--suppressions-list={REPOSITORY_ROOT / 'Cppcheck.suppressions'}",
         ]
     if tool == "iwyu":
         return [
@@ -67,7 +67,7 @@ def analyzer_command(tool: str, build_directory: Path, units: list[Path]) -> lis
             *map(str, units),
             "--",
             "-Xiwyu",
-            f"--mapping_file={REPOSITORY_ROOT / 'Tools/iwyu.imp'}",
+            f"--mapping_file={REPOSITORY_ROOT / 'Tools/Iwyu.imp'}",
             "-Xiwyu",
             "--error=1",
         ]

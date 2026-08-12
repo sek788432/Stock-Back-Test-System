@@ -74,7 +74,7 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
         self.assertIn("--project=/tmp/build/compile_commands.json", command)
         self.assertIn("--error-exitcode=1", command)
-        self.assertTrue(command[-1].endswith("cppcheck.suppressions"))
+        self.assertTrue(command[-1].endswith("Cppcheck.suppressions"))
 
     @mock.patch.object(static_analysis.shutil, "which", return_value="/usr/bin/iwyu_tool.py")
     def test_iwyu_command_uses_mapping_and_finding_exit_code(self, unused_which: mock.Mock) -> None:
@@ -83,7 +83,7 @@ class StaticAnalysisToolTest(unittest.TestCase):
         )
 
         self.assertIn("/tmp/repository/Src/Bar.cpp", command)
-        self.assertTrue(any(argument.endswith("Tools/iwyu.imp") for argument in command))
+        self.assertTrue(any(argument.endswith("Tools/Iwyu.imp") for argument in command))
         self.assertEqual(command[-2:], ["-Xiwyu", "--error=1"])
 
     def test_unsupported_analyzer_is_rejected(self) -> None:
