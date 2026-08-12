@@ -13,7 +13,7 @@ namespace bte::bindings {
 
 [[nodiscard]] bte::core::Result<std::vector<bte::core::Bar>>
 loadBacktestBars(const QString &symbol, const QString &schemaName, QDate start,
-                 QDate end, core::CancellationToken cancellation = {});
+                 QDate end, const core::CancellationToken &cancellation = {});
 
 std::vector<bte::core::Bar> loadReplayBars(const QString &symbol,
                                            const QString &schemaName,

@@ -172,6 +172,7 @@ jobs:
           --filter 'Src/'
           --exclude 'Output/'
           --merge-mode-functions merge-use-line-min
+          --decisions
           --cobertura coverage.xml
           --json coverage.json
           --html-details coverage.html

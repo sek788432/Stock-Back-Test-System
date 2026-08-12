@@ -10,8 +10,8 @@
 namespace bte::core {
 
 struct DateRange {
-    Timestamp start{};
-    Timestamp end{};
+    Timestamp start;
+    Timestamp end;
 };
 
 namespace time {

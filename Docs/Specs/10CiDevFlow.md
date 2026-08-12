@@ -203,10 +203,15 @@ cmake -E remove_directory Output/coverage
 cmake --preset coverage -DBTE_BUILD_QT_APP=ON
 cmake --build --preset coverage --parallel
 ctest --preset coverage --no-tests=error
-python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --cobertura coverage.xml --json coverage.json --html-details coverage.html
+python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --decisions --cobertura coverage.xml --json coverage.json --html-details coverage.html
 diff-cover coverage.xml --compare-branch=<base> --fail-under=90
 python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 80
 ```
+
+The branch gate uses gcovr's `--decisions` records, so its denominator is
+source-level C++ conditional and switch outcomes on changed lines. Raw GCC
+control-flow edges are not used because they include compiler-generated
+exception and cleanup paths that do not correspond to testable source branches.
 
 ## 8. Gate changes and failures
 

@@ -73,11 +73,11 @@ struct CsvColumns {
     }
     columns.symbol = symbol.value();
 
-    const auto ts = require("ts");
-    if (!ts.ok()) {
-        return ts.error();
+    const auto timestampColumn = require("ts");
+    if (!timestampColumn.ok()) {
+        return timestampColumn.error();
     }
-    columns.timestamp = ts.value();
+    columns.timestamp = timestampColumn.value();
 
     const auto open = require("open");
     if (!open.ok()) {
@@ -224,7 +224,7 @@ CsvBarStream::CsvBarStream(ConstructionKey, std::string symbol, std::string sche
     : symbol_(std::move(symbol)), schemaName_(std::move(schemaName)), range_(range), bars_(std::move(bars)) {}
 
 core::Result<std::unique_ptr<CsvBarStream>>
-CsvBarStream::open(const StreamRequest& request, const core::CancellationToken cancellation) {
+CsvBarStream::open(const StreamRequest& request, const core::CancellationToken& cancellation) {
     if (cancellation.isCancellationRequested()) {
         return core::makeError(core::ErrorCode::cancelled, "CSV loading was cancelled");
     }

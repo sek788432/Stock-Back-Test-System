@@ -14,14 +14,14 @@
 
 namespace bte::bindings {
 
-enum class BacktestOutcome {
+enum class BacktestOutcome : std::uint8_t {
   filled,
   rejectedInsufficientCash,
   cancelledNoFutureMarketData,
 };
 
 struct BacktestFillSnapshot {
-  core::Timestamp timestamp{};
+  core::Timestamp timestamp;
   std::int64_t quantityShares = 0;
   double price = 0.0;
   double amount = 0.0;
@@ -52,10 +52,10 @@ struct BacktestConfiguration {
 [[nodiscard]] core::Result<BacktestSnapshot>
 runBacktestSession(std::vector<core::Bar> bars, double initialCapital,
                    std::int64_t quantityShares,
-                   core::CancellationToken cancellation = {});
+                   const core::CancellationToken &cancellation = {});
 
 [[nodiscard]] core::Result<BacktestSnapshot>
-runBacktestConfiguration(BacktestConfiguration configuration,
-                         core::CancellationToken cancellation = {});
+runBacktestConfiguration(const BacktestConfiguration &configuration,
+                         const core::CancellationToken &cancellation = {});
 
 } // namespace bte::bindings

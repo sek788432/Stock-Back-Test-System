@@ -15,8 +15,8 @@
 namespace bte::app {
 namespace {
 
-QWidget *makePlaceholderTab(QString title) {
-  auto label = std::make_unique<QLabel>(std::move(title));
+QWidget *makePlaceholderTab(const QString &title) {
+  auto label = std::make_unique<QLabel>(title);
   label->setAlignment(Qt::AlignCenter);
   label->setObjectName("placeholderTab");
   label->setAccessibleName(label->text());

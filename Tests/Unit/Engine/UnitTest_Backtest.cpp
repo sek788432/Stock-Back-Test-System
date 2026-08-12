@@ -314,7 +314,8 @@ TEST(BacktestTest, checkedArithmeticRejectsSlippageAndMarketValueOverflow) {
       .quantityShares = 1,
   });
   const auto marketValueOverflow = bte::engine::runBacktest({
-      .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, 9'000'000'000.0)},
+      .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, 1.0),
+               makeFlatBar(4, 9'000'000'000.0)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1'000'000'000,
   });
@@ -329,6 +330,21 @@ TEST(BacktestTest, checkedArithmeticRejectsSlippageAndMarketValueOverflow) {
             std::string::npos);
   EXPECT_NE(marketValueOverflow.error().message.find("accounting value"),
             std::string::npos);
+}
+
+TEST(BacktestTest, subMicrodollarFillRoundsToNearestMicrodollar) {
+  const auto result = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 0.0000005), makeFlatBar(3, 0.0000005)},
+      .initialCapitalMicrodollars = 1,
+      .quantityShares = 1,
+  });
+
+  ASSERT_TRUE(result.ok());
+  EXPECT_EQ(result.value().orderStatus,
+            bte::engine::StarterOrderStatus::filled);
+  ASSERT_TRUE(result.value().fill.has_value());
+  EXPECT_EQ(result.value().fill->priceNanodollars, 501);
+  EXPECT_EQ(result.value().fill->amountMicrodollars, 1);
 }
 
 TEST(BacktestTest, priceNormalizationUsesHalfEvenTies) {

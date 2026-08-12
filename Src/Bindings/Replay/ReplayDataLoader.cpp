@@ -18,16 +18,16 @@ namespace {
 
 std::optional<std::filesystem::path>
 findCsvDataDirFrom(std::filesystem::path cursor) {
-  std::error_code ec;
-  cursor = std::filesystem::absolute(std::move(cursor), ec);
-  if (ec) {
+  std::error_code errorCode;
+  cursor = std::filesystem::absolute(cursor, errorCode);
+  if (errorCode) {
     return std::nullopt;
   }
 
   while (!cursor.empty()) {
-    const auto candidate = cursor / "StockData" / "Extracted";
-    if (std::filesystem::exists(candidate, ec) &&
-        std::filesystem::is_directory(candidate, ec)) {
+    auto candidate = cursor / "StockData" / "Extracted";
+    if (std::filesystem::exists(candidate, errorCode) &&
+        std::filesystem::is_directory(candidate, errorCode)) {
       return candidate;
     }
     const auto parent = cursor.parent_path();
@@ -41,9 +41,9 @@ findCsvDataDirFrom(std::filesystem::path cursor) {
 }
 
 std::filesystem::path findCsvDataDir() {
-  std::error_code ec;
-  const auto currentDirectory = std::filesystem::current_path(ec);
-  if (!ec) {
+  std::error_code errorCode;
+  const auto currentDirectory = std::filesystem::current_path(errorCode);
+  if (!errorCode) {
     if (auto dir = findCsvDataDirFrom(currentDirectory)) {
       return *dir;
     }
@@ -126,9 +126,11 @@ std::vector<bte::core::Bar> barsForSchema(std::vector<bte::core::Bar> bars,
 } // namespace
 
 core::Result<std::vector<core::Bar>>
+// Symbol and schema remain separate because they map directly to StreamRequest.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 loadBacktestBars(const QString &symbol, const QString &schemaName,
                  const QDate start, const QDate end,
-                 const core::CancellationToken cancellation) {
+                 const core::CancellationToken &cancellation) {
   try {
     const auto exclusiveEnd = end.addDays(1);
     if (!start.isValid() || !end.isValid() || start > end ||

@@ -37,6 +37,7 @@ namespace {
 
 constexpr auto yearSelectorMinimumWidth = 96;
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QLabel *makeLabel(const QString &text, const QString &objectName,
                   QWidget *parent) {
   auto label = std::make_unique<QLabel>(text, parent);
@@ -103,8 +104,8 @@ QString formatMoney(const double value) {
       value, "$", 2);
 }
 
-QTableWidgetItem *makeItem(QString text) {
-  return std::make_unique<QTableWidgetItem>(std::move(text)).release();
+QTableWidgetItem *makeItem(const QString &text) {
+  return std::make_unique<QTableWidgetItem>(text).release();
 }
 
 QString statusText(const bindings::BacktestOutcome outcome) {
@@ -131,6 +132,12 @@ struct BacktestTab::RunState final {
     watcher.waitForFinished();
   }
 
+  RunState() = default;
+  RunState(const RunState &) = delete;
+  RunState &operator=(const RunState &) = delete;
+  RunState(RunState &&) = delete;
+  RunState &operator=(RunState &&) = delete;
+
   core::CancellationSource cancellation;
   QFutureWatcher<BacktestResult> watcher;
 };
@@ -138,8 +145,8 @@ struct BacktestTab::RunState final {
 BacktestTab::BacktestTab(QWidget *parent)
     : BacktestTab(
           [](bindings::BacktestConfiguration configuration,
-             const core::CancellationToken cancellation) {
-            return bindings::runBacktestConfiguration(std::move(configuration),
+             core::CancellationToken cancellation) {
+            return bindings::runBacktestConfiguration(configuration,
                                                       cancellation);
           },
           parent) {}
@@ -328,7 +335,9 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
 
   QObject::connect(
       run, &QPushButton::clicked, this,
-      [=, this, runner = std::move(runner)]() {
+      [this, tradeLog, status, cash, position, market, equity, pnl, bars, run,
+       symbol, start, end, capital, quantity, watcher,
+       runner = std::move(runner)]() {
         tradeLog->setRowCount(0);
         setLabelText(status, tr("Running…"));
         setLabelText(cash, tr("Cash: --"));
@@ -339,7 +348,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         setLabelText(bars, tr("Bars: --"));
         run->setEnabled(false);
 
-        const auto configuration = bindings::BacktestConfiguration{
+        auto configuration = bindings::BacktestConfiguration{
             .symbol = symbol->currentText(),
             .schema = "ohlcv-1h",
             .startDate = start->date(),

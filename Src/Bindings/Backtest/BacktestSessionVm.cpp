@@ -65,9 +65,11 @@ double priceToDollars(const std::int64_t nanodollars) {
 } // namespace
 
 core::Result<BacktestSnapshot>
+// The scalar inputs are intentionally kept explicit at this starter seam.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
                    const std::int64_t quantityShares,
-                   const core::CancellationToken cancellation) {
+                   const core::CancellationToken &cancellation) {
   const auto normalizedCapital = normalizedCapitalMicrodollars(initialCapital);
   if (!normalizedCapital.ok()) {
     return normalizedCapital.error();
@@ -109,8 +111,8 @@ runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
 }
 
 core::Result<BacktestSnapshot>
-runBacktestConfiguration(BacktestConfiguration configuration,
-                         const core::CancellationToken cancellation) {
+runBacktestConfiguration(const BacktestConfiguration &configuration,
+                         const core::CancellationToken &cancellation) {
   auto bars = loadBacktestBars(configuration.symbol, configuration.schema,
                                configuration.startDate, configuration.endDate,
                                cancellation);

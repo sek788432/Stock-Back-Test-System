@@ -13,7 +13,7 @@ namespace bte::engine {
 
 inline constexpr std::int64_t maximumStarterQuantityShares = 1'000'000'000;
 
-enum class StarterOrderStatus {
+enum class StarterOrderStatus : std::uint8_t {
   filled,
   rejectedInsufficientCash,
   cancelledNoFutureMarketData,
@@ -26,7 +26,7 @@ struct BacktestRequest {
 };
 
 struct BacktestFill {
-  core::Timestamp timestamp{};
+  core::Timestamp timestamp;
   std::int64_t quantityShares = 0;
   std::int64_t priceNanodollars = 0;
   std::int64_t amountMicrodollars = 0;
@@ -50,6 +50,6 @@ struct BacktestResult {
 /// position.
 [[nodiscard]] core::Result<BacktestResult>
 runBacktest(const BacktestRequest &request,
-            core::CancellationToken cancellation = {});
+            const core::CancellationToken &cancellation = {});
 
 } // namespace bte::engine

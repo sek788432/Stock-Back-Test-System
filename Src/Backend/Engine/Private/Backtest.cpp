@@ -89,7 +89,7 @@ buyPriceWithDefaultSlippage(const std::int64_t openNanodollars) {
 
 core::Result<std::int64_t>
 validateRequest(const BacktestRequest &request,
-                const core::CancellationToken cancellation) {
+                const core::CancellationToken &cancellation) {
   if (request.initialCapitalMicrodollars <= 0) {
     return invalidArgument("initial capital must be positive");
   }
@@ -127,7 +127,7 @@ validateRequest(const BacktestRequest &request,
 
 core::Result<BacktestResult>
 runBacktest(const BacktestRequest &request,
-            const core::CancellationToken cancellation) {
+            const core::CancellationToken &cancellation) {
   const auto validation = validateRequest(request, cancellation);
   if (!validation.ok()) {
     return validation.error();

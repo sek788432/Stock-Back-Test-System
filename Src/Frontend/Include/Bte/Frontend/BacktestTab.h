@@ -17,6 +17,10 @@ public:
   explicit BacktestTab(QWidget *parent = nullptr);
   explicit BacktestTab(BacktestRunner runner, QWidget *parent = nullptr);
   ~BacktestTab() override;
+  BacktestTab(const BacktestTab &) = delete;
+  BacktestTab &operator=(const BacktestTab &) = delete;
+  BacktestTab(BacktestTab &&) = delete;
+  BacktestTab &operator=(BacktestTab &&) = delete;
 
 private:
   struct RunState;
