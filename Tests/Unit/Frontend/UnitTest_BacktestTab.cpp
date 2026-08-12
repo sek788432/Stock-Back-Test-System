@@ -1,6 +1,7 @@
 #include "Bte/Frontend/BacktestTab.h"
 
 #include <QCalendarWidget>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDateEdit>
@@ -32,6 +33,13 @@ bte::bindings::BacktestSnapshot filledSnapshot() {
               .price = 110.011,
               .amount = 1'100.11,
           },
+      .fills = {bte::bindings::BacktestFillSnapshot{
+          .timestamp = bte::core::Timestamp{std::chrono::sys_days{
+              std::chrono::year{2024} / 1 / 3}},
+          .quantityShares = 10,
+          .price = 110.011,
+          .amount = 1'100.11,
+      }},
       .initialCapital = 2'000.0,
       .cash = 899.89,
       .marketValue = 1'200.0,
@@ -71,6 +79,8 @@ private slots:
   void runSubmitsEveryVisibleConfigurationField();
   void destructionCancelsAndJoinsActiveRun();
   void workerExceptionIsPresentedAsAnError();
+  void selectableConditionsSubmitTypedPlanToBackend();
+  void selectableConditionStatusNamesItsSelectedStrategy();
 };
 
 void BacktestTabTest::exposesAccessibleRunConfiguration() {
@@ -313,6 +323,91 @@ void BacktestTabTest::workerExceptionIsPresentedAsAnError() {
   QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("unexpected runner failure"),
                            5'000);
   QVERIFY(run->isEnabled());
+}
+
+void BacktestTabTest::selectableConditionsSubmitTypedPlanToBackend() {
+  std::mutex captureMutex;
+  std::optional<bte::bindings::BacktestConfiguration> captured;
+  bte::frontend::BacktestTab tab{
+      [&captureMutex,
+       &captured](bte::bindings::BacktestConfiguration configuration,
+                  bte::core::CancellationToken) {
+        const std::scoped_lock lock{captureMutex};
+        captured = std::move(configuration);
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  auto *buyLogic = tab.findChild<QComboBox *>("backtestBuyLogicCombo");
+  auto *buyMetric = tab.findChild<QComboBox *>("backtestBuyMetricCombo");
+  auto *buyPeriod = tab.findChild<QSpinBox *>("backtestBuyPeriodSpinBox");
+  auto *buyThreshold =
+      tab.findChild<QDoubleSpinBox *>("backtestBuyThresholdSpinBox");
+  auto *buySecond =
+      tab.findChild<QCheckBox *>("backtestBuySecondEnabledCheckBox");
+  auto *buySecondMetric =
+      tab.findChild<QComboBox *>("backtestBuySecondMetricCombo");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(strategy != nullptr);
+  QVERIFY(buyLogic != nullptr);
+  QVERIFY(buyMetric != nullptr);
+  QVERIFY(buyPeriod != nullptr);
+  QVERIFY(buyThreshold != nullptr);
+  QVERIFY(buySecond != nullptr);
+  QVERIFY(buySecondMetric != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+
+  strategy->setCurrentText("Selectable conditions");
+  buyLogic->setCurrentIndex(1);
+  buyMetric->setCurrentText("MACD histogram");
+  buyPeriod->setValue(16);
+  buyThreshold->setValue(60.0);
+  buySecond->setChecked(true);
+  buySecondMetric->setCurrentText("Close change %");
+  QTest::mouseClick(run, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Completed"), 5'000);
+
+  const std::scoped_lock lock{captureMutex};
+  QVERIFY(captured.has_value());
+  QVERIFY(captured->selectableStrategy.has_value());
+  const auto &buy = captured->selectableStrategy->buy;
+  QCOMPARE(buy.logic, bte::strategy::ConditionLogic::any);
+  QCOMPARE(buy.conditions.size(), 2U);
+  QCOMPARE(buy.conditions[0].source, bte::strategy::ConditionSource::indicator);
+  QCOMPARE(buy.conditions[0].indicator.kind,
+           bte::indicators::IndicatorKind::macd);
+  QCOMPARE(buy.conditions[0].indicator.period, 8);
+  QCOMPARE(buy.conditions[0].indicator.secondaryPeriod, 16);
+  QCOMPARE(buy.conditions[0].indicator.signalPeriod, 5);
+  QCOMPARE(buy.conditions[0].threshold, 60.0);
+  QCOMPARE(buy.conditions[0].thresholdDomain,
+           bte::indicators::NumericDomain::price);
+  QCOMPARE(buy.conditions[1].source,
+           bte::strategy::ConditionSource::closeChangePercent);
+  QCOMPARE(buy.conditions[1].thresholdDomain,
+           bte::indicators::NumericDomain::percent);
+}
+
+void BacktestTabTest::selectableConditionStatusNamesItsSelectedStrategy() {
+  bte::frontend::BacktestTab tab{[](bte::bindings::BacktestConfiguration,
+                                    bte::core::CancellationToken) {
+    return bte::core::Result<bte::bindings::BacktestSnapshot>{filledSnapshot()};
+  }};
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(strategy != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+
+  strategy->setCurrentText("Selectable conditions");
+  QTest::mouseClick(run, Qt::LeftButton);
+
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("selectable strategy"),
+                           5'000);
+  QVERIFY(!status->text().contains("starter order"));
 }
 
 } // namespace

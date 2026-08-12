@@ -23,6 +23,7 @@ target_link_libraries(
   bte_bindings
   PUBLIC
     bte::core
+    bte::strategy
     Qt6::Core
   PRIVATE
     bte::data

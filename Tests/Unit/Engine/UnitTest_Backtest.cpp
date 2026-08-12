@@ -2,6 +2,7 @@
 
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Cancellation.h"
+#include "Bte/Strategy/SelectableStrategy.h"
 
 #include <gtest/gtest.h>
 
@@ -97,6 +98,65 @@ TEST(BacktestTest, oneBarCancelsOrderBecauseNoFutureMarketDataExists) {
   EXPECT_FALSE(result.value().fill.has_value());
   EXPECT_EQ(result.value().barsProcessed, 1U);
   EXPECT_EQ(result.value().equityMicrodollars, 1'000'000'000);
+}
+
+TEST(BacktestTest, selectableConditionsExecuteBuyAndSellOnlyAtNextActualOpen) {
+  const auto
+      request =
+          bte::engine::BacktestRequest{
+              .bars =
+                  {
+                      makeFlatBar(2, 100.0),
+                      makeFlatBar(3, 110.0),
+                      makeFlatBar(4, 100.0),
+                      makeFlatBar(5, 90.0),
+                  },
+              .initialCapitalMicrodollars = 2'000'000'000,
+              .quantityShares = 10,
+              .selectableStrategy =
+                  bte::strategy::SelectableStrategyPlan{
+                      .buy =
+                          {
+                              .logic = bte::strategy::ConditionLogic::all,
+                              .conditions = {bte::strategy::Condition{
+                                  .source = bte::strategy::ConditionSource::
+                                      closeChangePercent,
+                                  .comparison =
+                                      bte::strategy::Comparison::greaterThan,
+                                  .threshold = 5.0,
+                                  .thresholdDomain =
+                                      bte::indicators::NumericDomain::percent,
+                              }},
+                          },
+                      .sell =
+                          {
+                              .logic = bte::strategy::ConditionLogic::all,
+                              .conditions =
+                                  {
+                                      bte::strategy::Condition{
+                                          .source =
+                                              bte::strategy::ConditionSource::
+                                                  closeChangePercent,
+                                          .comparison =
+                                              bte::strategy::Comparison::lessThan,
+                                          .threshold = -5.0,
+                                          .thresholdDomain = bte::indicators::NumericDomain::percent,
+                                      }},
+                          },
+                  },
+          };
+
+  const auto result = bte::engine::runBacktest(request);
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.value().fills.size(), 2U);
+  EXPECT_EQ(result.value().fills[0].side, bte::engine::BacktestOrderSide::buy);
+  EXPECT_EQ(result.value().fills[0].timestamp, request.bars[2].ts);
+  EXPECT_EQ(result.value().fills[1].side, bte::engine::BacktestOrderSide::sell);
+  EXPECT_EQ(result.value().fills[1].timestamp, request.bars[3].ts);
+  EXPECT_EQ(result.value().positionShares, 0);
+  EXPECT_EQ(result.value().cashMicrodollars, 1'899'810'000);
+  EXPECT_EQ(result.value().equityMicrodollars, 1'899'810'000);
 }
 
 TEST(BacktestTest, invalidConfigurationAndBarsReturnInvalidArgument) {

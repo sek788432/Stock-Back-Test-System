@@ -6,8 +6,8 @@ This spec defines how a user strategy becomes commands for the project-owned C++
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | No strategy-authoring mode is implemented. The current application replays OHLCV bars only. |
-| **Planned** | Selectable Conditions, Python Script Mode, natural-language proposal flow, validation, Debug Run, versioned templates, and immutable Python runtimes. |
+| **Implemented** | An in-memory typed Selectable Conditions plan validates finite thresholds, fields, and indicator definitions; evaluates flat `all` / `any` buy and sell groups over chronological single-symbol bars; and feeds the limited C++ Backtest path. The Qt Backtest page exposes up to two conditions per buy/sell group. |
+| **Planned** | Saved/versioned plans, nested groups, portfolio gates, sizing, all actions/order types, Python Script Mode, natural-language proposal flow, Debug Run, versioned templates, and immutable Python runtimes. |
 | **Blocked** | No strategy feature may be presented as available until its C++ engine path and required tests exist. Public release also depends on the data-release blockers in `07` §3. |
 
 Status words are factual, not roadmap promises. Only **Implemented** behavior may appear as shipped in user documentation.
@@ -16,9 +16,18 @@ Status words are factual, not roadmap promises. Only **Implemented** behavior ma
 
 ### 2.1 Selectable Conditions
 
+**Current limited implementation.** A condition compares a bar field, the
+percentage close change from the prior actual bar, or one warmed indicator
+output to a finite threshold in the same numeric domain (price, volume,
+percentage, or scalar). Each buy and sell group has one or two rows and an
+explicit `all` / `any` selector. A missing prior close or insufficient
+indicator warm-up does not match. The current engine uses the configured whole
+share quantity, opens long only, and allows a sell group to close that position
+at the next actual open. The plan is not saved yet.
+
 - The saved source of truth is a versioned, typed condition plan, not Python text.
 - Conditions support explicit `all` (AND) or `any` (OR) composition. Nested Boolean groups are planned after V1.
-- The compiler validates fields, indicator parameters, symbols, sizing, and actions before a run.
+- The compiler validates fields, numeric domains, indicator parameters, symbols, sizing, and actions before a run.
 - The plan executes directly in C++ through the same strategy seam as Python commands; it does not invoke an external backtest engine.
 - Generated explanatory Python is read-only and non-authoritative. **Edit as Python** creates an independent Python strategy; edits never mutate or reverse-compile into the original condition plan.
 - Results retain the canonical plan, plan hash, compiler version, and any generated-source hash.

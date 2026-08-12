@@ -64,6 +64,7 @@ ADRs are append-only. To change a decision, write a new ADR that supersedes it. 
 | 0013 | [Harden the CI supply chain](0013-harden-ci-supply-chain.md) | Accepted |
 | 0014 | [Introduce the starter Backtest seam](0014-introduce-the-starter-backtest-seam.md) | Accepted |
 | 0015 | [Run quality locally and publish per-commit coverage](0015-run-quality-locally-and-publish-per-commit-coverage.md) | Accepted |
+| 0016 | [Introduce the selectable-condition Strategy seam](0016-introduce-selectable-condition-strategy.md) | Accepted |
 
 When you add an ADR, add a row here. Keep numbering monotonic — gaps are confusing, never reuse a number.
 

@@ -24,6 +24,8 @@ bte_enable_coverage()
 
 add_subdirectory(Src/Backend/Core)
 add_subdirectory(Src/Backend/Data)
+add_subdirectory(Src/Backend/Indicators)
+add_subdirectory(Src/Backend/Strategy)
 add_subdirectory(Src/Backend/Engine)
 
 if(BTE_BUILD_QT_APP)

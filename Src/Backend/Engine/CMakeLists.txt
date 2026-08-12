@@ -21,6 +21,7 @@ target_link_libraries(
   bte_engine
   PUBLIC
     bte::core
-    bte::data)
+    bte::data
+    bte::strategy)
 
 target_compile_features(bte_engine PUBLIC cxx_std_20)

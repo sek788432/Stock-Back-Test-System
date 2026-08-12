@@ -1,11 +1,12 @@
 # Building the C++ workspace
 
 This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+**.
-Core, Data, the bar-only Replay, and the limited starter Engine build in the
-default preset. Bindings, Frontend, and App targets are implemented behind
-`BTE_BUILD_QT_APP`, including the starter Backtest page. General strategy
-execution, broker/accounting/metrics, and canonical result persistence
-described in Specs 05 and 07 remain planned.
+Core, Data, streaming Indicators, the Selectable Strategy path, the bar-only
+Replay, and the limited Engine build in the default preset. Bindings, Frontend,
+and App targets are implemented behind `BTE_BUILD_QT_APP`, including the
+starter and Selectable Conditions Backtest page. General strategy execution,
+broker/accounting/metrics, and canonical result persistence described in Specs
+05 and 07 remain planned.
 
 ## Prerequisites
 
