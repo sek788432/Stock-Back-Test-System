@@ -19,6 +19,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -80,6 +81,7 @@ private slots:
   void destructionCancelsAndJoinsActiveRun();
   void workerExceptionIsPresentedAsAnError();
   void selectableConditionsSubmitTypedPlanToBackend();
+  void selectableMetricsSubmitTypedPlansToBackend();
   void selectableConditionStatusNamesItsSelectedStrategy();
 };
 
@@ -388,6 +390,117 @@ void BacktestTabTest::selectableConditionsSubmitTypedPlanToBackend() {
            bte::strategy::ConditionSource::closeChangePercent);
   QCOMPARE(buy.conditions[1].thresholdDomain,
            bte::indicators::NumericDomain::percent);
+}
+
+void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
+  struct MetricCase final {
+    QString label;
+    bte::strategy::ConditionSource source;
+    bte::indicators::NumericDomain domain;
+    std::optional<bte::indicators::IndicatorKind> indicatorKind;
+  };
+  const auto metricCases = std::vector<MetricCase>{
+      {"Close change %",
+       bte::strategy::ConditionSource::closeChangePercent,
+       bte::indicators::NumericDomain::percent,
+       {}},
+      {"Close",
+       bte::strategy::ConditionSource::barField,
+       bte::indicators::NumericDomain::price,
+       {}},
+      {"SMA", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::sma},
+      {"EMA", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::ema},
+      {"WMA", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::wma},
+      {"RSI", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::percent,
+       bte::indicators::IndicatorKind::rsi},
+      {"MACD histogram", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::macd},
+      {"Bollinger upper", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::bollingerBands},
+      {"ATR", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::atr},
+      {"ADX", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::percent,
+       bte::indicators::IndicatorKind::adx},
+      {"Stochastic %K", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::percent,
+       bte::indicators::IndicatorKind::stochastic},
+      {"Donchian upper", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::donchian},
+      {"VWAP", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::vwap},
+      {"OBV", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::volume,
+       bte::indicators::IndicatorKind::obv},
+      {"ROC", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::percent,
+       bte::indicators::IndicatorKind::roc},
+      {"Momentum", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::momentum},
+      {"True range", bte::strategy::ConditionSource::indicator,
+       bte::indicators::NumericDomain::price,
+       bte::indicators::IndicatorKind::trueRange},
+      {"Volume",
+       bte::strategy::ConditionSource::barField,
+       bte::indicators::NumericDomain::volume,
+       {}},
+  };
+
+  std::mutex captureMutex;
+  std::optional<bte::bindings::BacktestConfiguration> captured;
+  std::atomic_int runCount = 0;
+  bte::frontend::BacktestTab tab{
+      [&captureMutex, &captured,
+       &runCount](bte::bindings::BacktestConfiguration configuration,
+                  bte::core::CancellationToken) {
+        const std::scoped_lock lock{captureMutex};
+        captured = std::move(configuration);
+        runCount.fetch_add(1);
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  auto *metric = tab.findChild<QComboBox *>("backtestBuyMetricCombo");
+  auto *period = tab.findChild<QSpinBox *>("backtestBuyPeriodSpinBox");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  QVERIFY(strategy != nullptr);
+  QVERIFY(metric != nullptr);
+  QVERIFY(period != nullptr);
+  QVERIFY(run != nullptr);
+
+  strategy->setCurrentText("Selectable conditions");
+  period->setValue(18);
+  for (std::size_t index = 0; index < metricCases.size(); ++index) {
+    const auto &metricCase = metricCases[index];
+    metric->setCurrentText(metricCase.label);
+    QTest::mouseClick(run, Qt::LeftButton);
+    const auto expectedRuns = static_cast<int>(index + 1U);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runCount.load() == expectedRuns && run->isEnabled(), 5'000);
+
+    const std::scoped_lock lock{captureMutex};
+    QVERIFY(captured.has_value());
+    QVERIFY(captured->selectableStrategy.has_value());
+    const auto &condition = captured->selectableStrategy->buy.conditions[0];
+    QCOMPARE(condition.source, metricCase.source);
+    QCOMPARE(condition.thresholdDomain, metricCase.domain);
+    if (metricCase.indicatorKind.has_value()) {
+      QCOMPARE(condition.indicator.kind, metricCase.indicatorKind.value());
+    }
+  }
 }
 
 void BacktestTabTest::selectableConditionStatusNamesItsSelectedStrategy() {
