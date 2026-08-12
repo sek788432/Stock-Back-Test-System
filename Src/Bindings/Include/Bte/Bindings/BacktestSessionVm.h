@@ -6,7 +6,7 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
 #include <QDate>
-#include <QString>
+#include <QtCore/qstring.h>
 
 #include <chrono>
 #include <cstddef>

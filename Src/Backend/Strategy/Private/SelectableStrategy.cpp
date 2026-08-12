@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <math.h>
 #include <memory>
 #include <optional>
-#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>

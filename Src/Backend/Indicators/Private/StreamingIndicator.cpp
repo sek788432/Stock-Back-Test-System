@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <math.h>
 #include <memory>
+#include <stdlib.h>
 #include <string>
 #include <utility>
 #include <vector>

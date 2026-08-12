@@ -1,6 +1,8 @@
 #include "Bte/Frontend/BacktestTab.h"
 
 #include "Bte/Bindings/BacktestSessionVm.h"
+#include "Bte/Indicators/StreamingIndicator.h"
+#include "Bte/Strategy/SelectableStrategy.h"
 
 #include <QAbstractItemView>
 #include <QCalendarWidget>
@@ -9,36 +11,38 @@
 #include <QDateEdit>
 #include <QDateTime>
 #include <QDoubleSpinBox>
-#include <QFont>
-#include <QFuture>
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QGroupBox>
-#include <QHBoxLayout>
 #include <QHeaderView>
-#include <QKeySequence>
 #include <QLabel>
-#include <QLayout>
-#include <QList>
-#include <QLocale>
-#include <QObject>
 #include <QPushButton>
-#include <QString>
 #include <QTableWidget>
-#include <QTimeZone>
 #include <QToolButton>
-#include <QVariant>
 #include <QtConcurrentRun>
 #include <QtCore/Qt>
+#include <QtCore/qlist.h>
+#include <QtCore/qlocale.h>
+#include <QtCore/qobject.h>
+#include <QtCore/qoverload.h>
+#include <QtCore/qstring.h>
+#include <QtCore/qtimezone.h>
+#include <QtCore/qvariant.h>
+#include <QtGui/qfont.h>
+#include <QtGui/qkeysequence.h>
+#include <QtWidgets/qboxlayout.h>
+#include <QtWidgets/qlayout.h>
 #include <algorithm>
 
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <memory>
 #include <optional>
 #include <string>
-#include <type_traits>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 namespace bte::frontend {
 namespace {

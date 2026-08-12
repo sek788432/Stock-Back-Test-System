@@ -5,7 +5,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <math.h>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace bte::bindings {

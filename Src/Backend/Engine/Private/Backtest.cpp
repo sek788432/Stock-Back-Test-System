@@ -7,6 +7,8 @@
 #include <compare>
 #include <cstdint>
 #include <limits>
+#include <math.h>
+#include <memory>
 #include <string>
 #include <utility>
 
