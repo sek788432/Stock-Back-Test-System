@@ -100,6 +100,13 @@ way to prove a public behavior.
 - [ ] Newly proposed but unimplemented checks remain labeled **Planned / not
   merge-blocking**.
 
+## Before requesting CI for C++ changes
+
+- [ ] `./RunTest.sh` passes on the exact committed `HEAD` being submitted.
+- [ ] `./RunQuality.sh --base <base-revision> --head HEAD` passes on that same
+  commit. `--fast` is for iteration and is not sufficient for this item.
+- [ ] Generated coverage reports remain under `Output/` and are not committed.
+
 ## Verified commands currently available
 
 Use the applicable commands from the checked-out repository:
@@ -125,6 +132,13 @@ and planned enforcement status.
 Static analysis and changed-code coverage are merge-blocking. Their exact local
 commands and required tool versions are documented in
 [`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7.
+
+For the complete pre-CI C++ quality workflow, run:
+
+```bash
+./RunTest.sh
+./RunQuality.sh --base origin/main --head HEAD
+```
 
 ## Release changes
 

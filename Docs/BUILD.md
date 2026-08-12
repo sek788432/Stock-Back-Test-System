@@ -17,6 +17,10 @@ Optional:
 
 - **Git** (for FetchContent to download Google Test on first configure)
 - **Qt 6.8+** (Core, Concurrent, Widgets, Charts, and Test when tests are enabled) when configuring with `BTE_BUILD_QT_APP=ON`
+- **Local quality bootstrap:** Homebrew on macOS, or `apt` and `sudo` access on
+  Ubuntu. `RunQuality.sh` installs the CI-compatible LLVM 18 analyzer toolchain,
+  the remaining analyzers, and Python 3.12, then owns a hash-locked Python
+  environment under `Output/QualityVenv/` automatically.
 
 ## Root developer scripts
 
@@ -82,10 +86,27 @@ The `analysis` and `coverage` presets back the merge-blocking quality jobs.
 Analyzer and changed-code coverage commands are documented in
 [`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7.
 
-After a GitHub Actions run, open the run's **Artifacts** section, download
-`coverage-reports`, extract it, and open `coverage.html`. For a local HTML
-report, run the coverage commands from Specs 10 and direct gcovr's
-`--html-details` output to `Output/CoverageReport/index.html`.
+Before pushing C++ work or requesting CI, run the complete local equivalents on
+the committed revision:
+
+```bash
+./RunTest.sh
+./RunQuality.sh --base origin/main --head HEAD
+```
+
+`RunQuality.sh` runs changed-translation-unit clang-tidy, cppcheck, and IWYU,
+whole-tree scan-build, all coverage-instrumented registered tests, the 90%
+changed-line gate, and the 80% changed-branch gate. During iteration,
+`./RunQuality.sh --fast` skips scan-build; it does not replace the complete
+pre-CI run. Its first invocation installs missing quality tools and creates its
+private coverage environment; no activation or `PATH` setup is required.
+Reports are written to `Output/CoverageReport/` and remain untracked.
+
+After a GitHub Actions run, the coverage totals and changed-code gate results
+are rendered on the workflow summary page. For annotated source details, open
+the run's **Artifacts** section, download `coverage-reports`, extract it, and
+open `coverage.html`. The local report is
+`Output/CoverageReport/index.html`.
 
 ## Optional Qt app shell
 

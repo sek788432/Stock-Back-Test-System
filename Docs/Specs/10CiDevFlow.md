@@ -187,6 +187,23 @@ ctest --preset dev-sanitize --no-tests=error
 The sanitizer preset is Implemented / local, not merge-blocking. No repository
 pre-commit configuration or changed-test runner currently exists.
 
+The complete local quality entry point is:
+
+```bash
+./RunQuality.sh --base <base-revision> --head HEAD
+```
+
+It runs the implemented analyzer and coverage commands below, including the
+same 90% changed-line and 80% changed-branch thresholds. Its `--fast` option
+skips whole-tree scan-build for iteration, but the complete default workflow is
+required before pushing applicable C++ changes or requesting CI. Generated
+reports are written below `Output/` and are not checked in. On its first run,
+the command installs missing analyzer packages through Homebrew on macOS or
+`apt` on Ubuntu, selects LLVM 18 to match CI, and creates
+`Output/QualityVenv` from the hash-locked coverage requirements. It invokes
+that environment directly; activation and manual `PATH` changes are
+unnecessary.
+
 The merge-blocking analyzer commands are:
 
 ```bash
@@ -220,6 +237,12 @@ python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-
 diff-cover coverage.xml --compare-branch=<base> --fail-under=90
 python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 80
 ```
+
+CI regenerates these reports for the submitted revision and renders the gcovr
+summary plus changed-code gate results on the GitHub Actions workflow summary
+page. XML, JSON, Markdown, and HTML reports are generated evidence, not source
+artifacts, and remain untracked. The detailed HTML files are also uploaded as
+the `coverage-reports` workflow artifact.
 
 The branch gate uses gcovr's `--decisions` records, so its denominator is
 source-level C++ conditional and switch outcomes on changed lines. Raw GCC

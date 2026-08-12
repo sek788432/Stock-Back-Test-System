@@ -50,7 +50,7 @@ jobs:
         run: cmake --build --preset qt-dev --parallel
 
       - name: Run every registered test
-        run: ctest --preset qt-dev --no-tests=error
+        run: ctest --preset qt-dev --no-tests=error --output-on-failure
 
   project-standards:
     name: Project standards review
@@ -188,14 +188,16 @@ jobs:
           --decisions
           --cobertura coverage.xml
           --json coverage.json
+          --markdown-summary coverage-summary.md
           --html-details coverage.html
 
       - name: Enforce changed-line and changed-branch coverage
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
         run: |
-          diff-cover coverage.xml --compare-branch="$BASE_SHA" --fail-under=90
-          python3 Tools/CheckDiffBranchCoverage.py coverage.json --base "$BASE_SHA" --head "$GITHUB_SHA" --fail-under 80
+          Tools/RunCoverageGates.sh \
+            coverage.xml coverage.json "$BASE_SHA" "$GITHUB_SHA" \
+            "$GITHUB_SHA" coverage-summary.md
 
       - name: Upload coverage reports
         if: always()
@@ -207,6 +209,9 @@ jobs:
             coverage.*.html
             coverage.xml
             coverage.json
+            coverage-summary.md
+            changed-line-coverage.txt
+            changed-branch-coverage.txt
           if-no-files-found: ignore
 
   merge-gate:

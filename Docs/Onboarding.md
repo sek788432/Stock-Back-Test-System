@@ -100,7 +100,16 @@ cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev                           # unit tests
 # Optional: ASan/UBSan on Clang/GNU — cmake --preset dev-sanitize …
+
+# Before pushing C++ changes or requesting CI:
+./RunTest.sh
+./RunQuality.sh --base origin/main --head HEAD
 ```
+
+`RunQuality.sh` is a one-shot command. On its first run it uses Homebrew on
+macOS or `apt` on Ubuntu to install missing analyzers and Python 3.12, then
+creates a private hash-locked environment below `Output/QualityVenv/`.
+Subsequent runs reuse it; no shell activation or `PATH` configuration is needed.
 
 ### Verify
 
@@ -165,7 +174,7 @@ If any are blocked, raise it in the next sync.
 | Symptom                                         | Likely cause                               | Fix                                                                              |
 | ----------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
 | `cmake --preset dev` not found                  | Old CMake                                  | Need 3.24+; `brew upgrade cmake` / install fresh                                 |
-| Sanitizer reports leak in third-party lib       | Suppression missing                        | Add a narrow entry to `Tests/sanitizer-suppressions.txt` and get maintainer review |
+| Sanitizer reports a finding                     | Runtime defect or unsupported dependency   | Treat it as a defect; no sanitizer-suppression file is currently wired into the build |
 | `clang-tidy` reports a project finding          | Required analysis found a rule violation   | Fix it or document a narrow approved suppression; run the exact Spec 10 command  |
 | Qt not found by CMake                           | Qt install path not on `CMAKE_PREFIX_PATH` | Set `CMAKE_PREFIX_PATH` env var or `-DCMAKE_PREFIX_PATH=...`                     |
 | Python pipeline can't find DuckDB               | Missing dep                                | `pip install -r DataFetcher/requirements.txt` inside `.venv`                     |

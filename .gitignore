@@ -76,6 +76,7 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+__pycache__/
 
 # Superpowers brainstorm visual companion (local-only mockups)
 .superpowers/
@@ -87,3 +88,5 @@ Docs/Reviews/
 *.sh
 !Launch.sh
 !RunTest.sh
+!RunQuality.sh
+!Tools/RunCoverageGates.sh
