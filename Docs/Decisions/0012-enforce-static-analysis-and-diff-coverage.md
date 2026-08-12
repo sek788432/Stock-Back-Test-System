@@ -1,6 +1,6 @@
 # 0012 — Enforce static analysis and diff coverage
 
-- **Status**: Accepted
+- **Status**: Superseded in part by 0017
 - **Date**: 2026-08-12
 - **Deciders**: repository maintainer
 - **Supersedes**: —
