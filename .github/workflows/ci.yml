@@ -123,8 +123,8 @@ jobs:
 
       - name: Run clang static analyzer
         run: |
-          scan-build-18 --use-analyzer=clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
-          scan-build-18 --use-analyzer=clang-18 --status-bugs --keep-empty --output Output/scan-build-reports cmake --build Output/scan-build --parallel
+          scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
+          scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty --output Output/scan-build-reports cmake --build Output/scan-build --parallel
 
       - name: Upload scan-build reports
         if: always()

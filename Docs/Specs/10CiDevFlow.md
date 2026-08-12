@@ -188,8 +188,8 @@ CC=clang-18 CXX=clang++-18 cmake --preset analysis -DBTE_BUILD_QT_APP=ON
 python3 Tools/RunStaticAnalysis.py clang-tidy --base <base> --head <head>
 python3 Tools/RunStaticAnalysis.py cppcheck --base <base> --head <head>
 python3 Tools/RunStaticAnalysis.py iwyu --base <base> --head <head>
-scan-build-18 --use-analyzer=clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
-scan-build-18 --use-analyzer=clang-18 --status-bugs --keep-empty --output Output/scan-build-reports cmake --build Output/scan-build --parallel
+scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
+scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty --output Output/scan-build-reports cmake --build Output/scan-build --parallel
 ```
 
 CI pins clang/clang-tidy/clang-tools `1:18.1.3-1ubuntu1`, cppcheck
