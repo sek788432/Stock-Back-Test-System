@@ -277,6 +277,37 @@ TEST(BacktestTest, selectableConditionsPropagateExecutionAndPlanErrors) {
             bte::core::ErrorCode::strategyCompileFailed);
 }
 
+TEST(BacktestTest, selectableConditionsPropagateNonFiniteIndicatorOutput) {
+  auto overflowBar = makeFlatBar(2, 1'000'000'000.0);
+  overflowBar.volume = std::numeric_limits<double>::max();
+  const auto result =
+      bte::engine::runBacktest(
+          {
+              .bars = {overflowBar},
+              .initialCapitalMicrodollars = 1'000'000,
+              .quantityShares = 1,
+              .selectableStrategy =
+                  bte::strategy::SelectableStrategyPlan{
+                      .buy = {.conditions = {bte::strategy::Condition{
+                                  .source =
+                                      bte::strategy::ConditionSource::indicator,
+                                  .comparison =
+                                      bte::strategy::Comparison::greaterThan,
+                                  .threshold = 0.0,
+                                  .indicator =
+                                      {
+                                          .kind = bte::indicators::IndicatorKind::vwap,
+                                          .period = 1,
+                                      },
+                              }}},
+                      .sell = {},
+                  },
+          });
+
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
 TEST(BacktestTest, selectableConditionsPropagateEveryReachableAccountingError) {
   constexpr auto highPrice = 9'000'000'000.0;
   const auto alwaysBuy = bte::strategy::Condition{
