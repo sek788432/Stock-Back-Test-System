@@ -12,7 +12,7 @@ operating_system="${BTE_QUALITY_OS:-$(uname -s)}"
 
 usage() {
   echo "Usage: $0 [--base <revision>] [--head <revision>] [--fast]"
-  echo "  Runs clang-tidy, cppcheck, IWYU, scan-build, and changed-code coverage."
+  echo "  Runs full-project clang-tidy, cppcheck, IWYU, scan-build, and changed-code coverage."
   echo "  --fast skips the slower whole-tree scan-build pass."
 }
 
