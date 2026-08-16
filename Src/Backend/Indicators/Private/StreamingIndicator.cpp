@@ -9,7 +9,9 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#ifdef __APPLE__
 #include <string>
+#endif
 #include <utility>
 #include <vector>
 
