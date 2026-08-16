@@ -47,6 +47,7 @@ TEST(BacktestTest, starterMarketBuyFillsAtNextBarOpenAndMarksFinalEquity) {
       .bars = {makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 120.0)},
       .initialCapitalMicrodollars = 2'000'000'000,
       .quantityShares = 10,
+      .selectableStrategy = {},
   };
 
   const auto result = bte::engine::runBacktest(request);
@@ -70,6 +71,7 @@ TEST(BacktestTest, unaffordableNextOpenRejectsOrderWithoutChangingCash) {
       .bars = {makeBar(2, 50.0, 50.0), makeBar(3, 150.0, 160.0)},
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 10,
+      .selectableStrategy = {},
   };
 
   const auto result = bte::engine::runBacktest(request);
@@ -88,6 +90,7 @@ TEST(BacktestTest, oneBarCancelsOrderBecauseNoFutureMarketDataExists) {
       .bars = {makeBar(2, 100.0, 105.0)},
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   };
 
   const auto result = bte::engine::runBacktest(request);
@@ -353,16 +356,19 @@ TEST(BacktestTest, invalidConfigurationAndBarsReturnInvalidArgument) {
       .bars = validBars,
       .initialCapitalMicrodollars = 0,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto noQuantity = bte::engine::runBacktest({
       .bars = validBars,
       .initialCapitalMicrodollars = 1'000'000,
       .quantityShares = 0,
+      .selectableStrategy = {},
   });
   const auto noBars = bte::engine::runBacktest({
       .bars = {},
       .initialCapitalMicrodollars = 1'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   auto invalidBars = validBars;
   invalidBars[1].high = 1.0;
@@ -370,6 +376,7 @@ TEST(BacktestTest, invalidConfigurationAndBarsReturnInvalidArgument) {
       .bars = invalidBars,
       .initialCapitalMicrodollars = 1'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(noCapital.ok());
@@ -387,6 +394,7 @@ TEST(BacktestTest, quantityAboveStarterLimitIsRejectedAtBoundary) {
       .bars = {makeBar(2, 2.0, 2.0), makeBar(3, 2.0, 2.0)},
       .initialCapitalMicrodollars = 5'000'000'000'000'000,
       .quantityShares = 1'000'000'001,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(result.ok());
@@ -398,6 +406,7 @@ TEST(BacktestTest, maximumStarterQuantityIsAcceptedAtBoundary) {
       .bars = {makeBar(2, 2.0, 2.0), makeBar(3, 2.0, 2.0)},
       .initialCapitalMicrodollars = 5'000'000'000'000'000,
       .quantityShares = 1'000'000'000,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(result.ok());
@@ -415,16 +424,19 @@ TEST(BacktestTest, exactAffordabilityFillsAndOneMicrodollarLessRejects) {
       .bars = bars,
       .initialCapitalMicrodollars = 1'000'100'000,
       .quantityShares = 10,
+      .selectableStrategy = {},
   });
   const auto below = bte::engine::runBacktest({
       .bars = bars,
       .initialCapitalMicrodollars = 1'000'099'999,
       .quantityShares = 10,
+      .selectableStrategy = {},
   });
   const auto above = bte::engine::runBacktest({
       .bars = bars,
       .initialCapitalMicrodollars = 1'000'100'001,
       .quantityShares = 10,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(exact.ok());
@@ -445,6 +457,7 @@ TEST(BacktestTest, minimumCapitalIsAcceptedAtBoundary) {
       .bars = {makeBar(2, 2.0, 2.0), makeBar(3, 2.0, 2.0)},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(result.ok());
@@ -463,11 +476,13 @@ TEST(BacktestTest, duplicateAndDecreasingTimestampsAreRejected) {
       .bars = duplicate,
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto decreasingResult = bte::engine::runBacktest({
       .bars = decreasing,
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(duplicateResult.ok());
@@ -495,6 +510,7 @@ TEST(BacktestTest, priceThatNormalizesToZeroIsRejected) {
       .bars = {tinyBar, nextTinyBar},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(result.ok());
@@ -510,11 +526,13 @@ TEST(BacktestTest, priceConversionRejectsUnsafeBoundaryAndAcceptsBelowIt) {
       .bars = {makeFlatBar(2, exclusivePriceUpperBound)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto safe = bte::engine::runBacktest({
       .bars = {makeFlatBar(2, safePrice)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(unsafe.ok());
@@ -534,6 +552,7 @@ TEST(BacktestTest, everyBarMustBeFiniteAndRepresentableAtTheEngineSeam) {
       .bars = bars,
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   auto infiniteVolumeBars =
       std::vector{makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 110.0)};
@@ -542,6 +561,7 @@ TEST(BacktestTest, everyBarMustBeFiniteAndRepresentableAtTheEngineSeam) {
       .bars = infiniteVolumeBars,
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(result.ok());
@@ -558,12 +578,14 @@ TEST(BacktestTest, checkedArithmeticRejectsSlippageAndMarketValueOverflow) {
       .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, nearMaximumPrice)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto marketValueOverflow = bte::engine::runBacktest({
       .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, 1.0),
                makeFlatBar(4, 9'000'000'000.0)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1'000'000'000,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(slippageOverflow.ok());
@@ -583,6 +605,7 @@ TEST(BacktestTest, subMicrodollarFillRoundsToNearestMicrodollar) {
       .bars = {makeFlatBar(2, 0.0000005), makeFlatBar(3, 0.0000005)},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(result.ok());
@@ -598,11 +621,13 @@ TEST(BacktestTest, priceNormalizationUsesHalfEvenTies) {
       .bars = {makeFlatBar(2, 0.0000000025)},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto tieToOdd = bte::engine::runBacktest({
       .bars = {makeFlatBar(2, 0.0000000035)},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(tieToEven.ok());
@@ -620,6 +645,7 @@ TEST(BacktestTest, requestedStopCancelsBeforeExecution) {
           .bars = {makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 120.0)},
           .initialCapitalMicrodollars = 2'000'000'000,
           .quantityShares = 10,
+          .selectableStrategy = {},
       },
       cancellation.token());
 
