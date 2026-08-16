@@ -55,6 +55,7 @@ TEST(SelectableStrategyTest, allRequiresEveryWarmedConditionBeforeBuying) {
                       },
                   },
           },
+      .sell = {},
   };
   auto created = bte::strategy::SelectableStrategy::create(plan);
   ASSERT_TRUE(created.ok());
@@ -123,6 +124,7 @@ TEST(SelectableStrategyTest, invalidPlansDoNotCreateExecutableStrategies) {
                   bte::strategy::Comparison::greaterThan,
                   std::numeric_limits<double>::infinity())},
           },
+      .sell = {},
   });
   const auto invalidIndicator = bte::strategy::SelectableStrategy::create({
       .buy =
@@ -136,6 +138,7 @@ TEST(SelectableStrategyTest, invalidPlansDoNotCreateExecutableStrategies) {
                       },
               }},
           },
+      .sell = {},
   });
 
   EXPECT_FALSE(noBuy.ok());
@@ -160,6 +163,7 @@ TEST(SelectableStrategyTest, groupsAllowTwoConditionsAndRejectThree) {
                                            10.0),
                   },
           },
+      .sell = {},
   });
   const auto threeConditions = bte::strategy::SelectableStrategy::create({
       .buy =
@@ -174,6 +178,7 @@ TEST(SelectableStrategyTest, groupsAllowTwoConditionsAndRejectThree) {
                                            0.0),
                   },
           },
+      .sell = {},
   });
 
   EXPECT_TRUE(twoConditions.ok());
@@ -198,6 +203,7 @@ TEST(SelectableStrategyTest, incompatibleThresholdDomainIsRejected) {
                       },
                   },
           },
+      .sell = {},
   });
 
   EXPECT_FALSE(invalid.ok());
@@ -236,6 +242,7 @@ TEST(SelectableStrategyTest, comparisonOperatorsUseTypedBarFieldValues) {
                     .barField = bte::indicators::BarField::close,
                 }},
             },
+        .sell = {},
     });
     ASSERT_TRUE(created.ok());
     auto strategy = std::move(created).value();
@@ -254,6 +261,7 @@ TEST(SelectableStrategyTest, rejectsInvalidLogicAndTypedConditionPlans) {
               .conditions = {priceChangeCondition(
                   bte::strategy::Comparison::greaterThan, 1.0)},
           },
+      .sell = {},
   });
   const auto wrongPercentDomain = bte::strategy::SelectableStrategy::create({
       .buy =
@@ -265,6 +273,7 @@ TEST(SelectableStrategyTest, rejectsInvalidLogicAndTypedConditionPlans) {
                   .thresholdDomain = bte::indicators::NumericDomain::price,
               }},
           },
+      .sell = {},
   });
   const auto wrongIndicatorDomain = bte::strategy::SelectableStrategy::create({
       .buy =
@@ -281,27 +290,32 @@ TEST(SelectableStrategyTest, rejectsInvalidLogicAndTypedConditionPlans) {
                       },
               }},
           },
+      .sell = {},
   });
   const auto invalidSource = bte::strategy::SelectableStrategy::create({
       .buy = {.conditions = {bte::strategy::Condition{
                   .source = static_cast<bte::strategy::ConditionSource>(99),
               }}},
+      .sell = {},
   });
   const auto invalidComparison = bte::strategy::SelectableStrategy::create({
       .buy = {.conditions = {bte::strategy::Condition{
                   .comparison = static_cast<bte::strategy::Comparison>(99),
               }}},
+      .sell = {},
   });
   const auto invalidBarField = bte::strategy::SelectableStrategy::create({
       .buy = {.conditions = {bte::strategy::Condition{
                   .barField = static_cast<bte::indicators::BarField>(99),
               }}},
+      .sell = {},
   });
   const auto invalidDomain = bte::strategy::SelectableStrategy::create({
       .buy = {.conditions = {bte::strategy::Condition{
                   .thresholdDomain =
                       static_cast<bte::indicators::NumericDomain>(99),
               }}},
+      .sell = {},
   });
 
   EXPECT_FALSE(invalidLogic.ok());
@@ -362,6 +376,7 @@ TEST(SelectableStrategyTest, moveOperationsPreserveExecutableStrategyState) {
                   .threshold = 5.0,
               }},
           },
+      .sell = {},
   };
   auto initialResult = bte::strategy::SelectableStrategy::create(plan);
   auto replacementResult = bte::strategy::SelectableStrategy::create(plan);
@@ -386,6 +401,7 @@ TEST(SelectableStrategyTest,
               .conditions = {priceChangeCondition(
                   bte::strategy::Comparison::greaterThan, 1.0)},
           },
+      .sell = {},
   });
   ASSERT_TRUE(created.ok());
   auto strategy = std::move(created).value();

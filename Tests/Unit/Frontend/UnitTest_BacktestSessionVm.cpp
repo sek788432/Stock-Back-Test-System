@@ -161,6 +161,7 @@ void BacktestSessionVmTest::configuredRunPreservesDataSourceError() {
       .endDate = QDate{2024, 1, 2},
       .initialCapital = 1'000.0,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   QVERIFY(!result.ok());
@@ -244,6 +245,7 @@ void BacktestSessionVmTest::selectablePlanPresentsNoSignalOutcome() {
                   .threshold = 1'000.0,
               }},
           },
+      .sell = {},
   };
   const auto result = bte::bindings::runBacktestSession(
       {makeBar(2, 100.0, 100.0), makeBar(3, 101.0, 101.0)}, 1'000.0, 1, plan);
@@ -271,6 +273,7 @@ void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
       .endDate = QDate{2018, 5, 3},
       .initialCapital = 100'000.0,
       .quantityShares = 7,
+      .selectableStrategy = {},
   });
 
   QVERIFY(result.ok());

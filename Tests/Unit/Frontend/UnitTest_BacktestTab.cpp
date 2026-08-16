@@ -57,6 +57,7 @@ noFillSnapshot(const bte::bindings::BacktestOutcome outcome) {
   return bte::bindings::BacktestSnapshot{
       .outcome = outcome,
       .fill = {},
+      .fills = {},
       .initialCapital = 100.0,
       .cash = 100.0,
       .marketValue = 0.0,
@@ -578,7 +579,9 @@ void BacktestTabTest::selectableControlsPresentNoSignalAndSellFill() {
   QVERIFY(trades != nullptr);
 
   strategy->setCurrentText("Selectable conditions");
-  sellLogic->setCurrentText("ANY (OR)");
+  const auto sellAnyIndex = sellLogic->findText("Match ANY (OR)");
+  QVERIFY(sellAnyIndex >= 0);
+  sellLogic->setCurrentIndex(sellAnyIndex);
   sellMetric->setCurrentText("ROC");
   sellThreshold->setValue(-2.0);
   QVERIFY(!sellSecondMetric->isEnabled());

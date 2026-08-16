@@ -66,7 +66,8 @@ ADRs are append-only. To change a decision, write a new ADR that supersedes it. 
 | 0015 | [Run quality locally and publish per-commit coverage](0015-run-quality-locally-and-publish-per-commit-coverage.md) | Accepted |
 | 0016 | [Introduce the selectable-condition Strategy seam](0016-introduce-selectable-condition-strategy.md) | Accepted |
 | 0017 | [Raise changed-code coverage gates and update artifact runtime](0017-raise-changed-code-coverage-gates-and-update-artifact-runtime.md) | Accepted |
-| 0018 | [Run full static analysis on manual and scheduled CI](0018-run-full-static-analysis-on-manual-and-scheduled-ci.md) | Accepted |
+| 0018 | [Run full static analysis on manual and scheduled CI](0018-run-full-static-analysis-on-manual-and-scheduled-ci.md) | Superseded by 0019 |
+| 0019 | [Run full static analysis for every gate](0019-run-full-static-analysis-for-every-gate.md) | Accepted |
 
 When you add an ADR, add a row here. Keep numbering monotonic — gaps are confusing, never reuse a number.
 

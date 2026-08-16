@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <functional> // IWYU pragma: keep
 #include <memory>
 #include <optional>
 #include <string>

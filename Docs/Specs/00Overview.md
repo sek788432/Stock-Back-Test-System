@@ -25,9 +25,11 @@ Natural language is an authoring assistant, not an execution mode. Native plugin
 ### Implemented
 
 - C++20 Core, CSV-backed data loading, a basic bar-step replay, Qt replay UI, and JSON replay-summary persistence.
-- A limited C++ starter Engine and Backtest page: one market buy submitted on
-  the first bar, execution at the next actual bar open, fixed slippage,
-  affordability rejection, and final-close open-position marking.
+- A limited C++ Engine and Backtest page with a fixed starter strategy and a
+  Selectable Conditions strategy: flat ALL/ANY buy and sell groups over close,
+  SMA, and EMA comparisons; whole-share market orders; next-actual-bar-open
+  execution; fixed slippage; affordability rejection; final-close
+  open-position marking; and a multi-fill trade log.
 - `DataFetcher/` developer pipeline for Databento ingestion into DuckDB and tracked CSV extraction.
 
 ### Planned
@@ -35,7 +37,9 @@ Natural language is an authoring assistant, not an execution mode. Native plugin
 - General canonical C++ strategy execution, synchronized `MarketSlice`, broker
   and margin modeling, complete accounting/metrics, and deterministic event
   sequencing beyond the limited starter run.
-- Typed C++ Selectable Conditions and an isolated trusted Python worker using the same engine.
+- The complete typed C++ Selectable Conditions contract and an isolated trusted
+  Python worker using the same engine. The implemented conditions slice remains
+  limited to the indicators, comparisons, sizing, and actions listed above.
 - Immutable release snapshots generated from `StockData/Extracted`.
 - Fixed-point accounting and transactional SQLite `.bteresult` files.
 - Complete K-line result replay, screening, packaging, and release-profile retention.

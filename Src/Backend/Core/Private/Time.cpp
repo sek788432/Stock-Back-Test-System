@@ -4,7 +4,7 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip>
-#include <ratio>
+#include <ratio> // IWYU pragma: keep
 #include <sstream>
 #include <system_error>
 

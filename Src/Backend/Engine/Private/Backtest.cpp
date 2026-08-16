@@ -4,6 +4,7 @@
 
 #include "Bte/Core/Result.h"
 
+#include <algorithm> // IWYU pragma: keep
 #include <array>
 #include <cmath>
 #include <compare>

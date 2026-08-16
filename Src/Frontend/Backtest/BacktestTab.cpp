@@ -12,6 +12,7 @@
 #include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFont>
+#include <QFuture> // IWYU pragma: keep
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -20,6 +21,8 @@
 #include <QLabel>
 #include <QLayout>
 #include <QList>
+#include <QLocale>
+#include <QObject>
 #include <QPushButton>
 #include <QString>
 #include <QTableWidget>
@@ -27,9 +30,6 @@
 #include <QVariant>
 #include <QtConcurrentRun>
 #include <QtCore/Qt>
-#include <QtCore/qlocale.h>
-#include <QtCore/qobject.h>
-#include <QtCore/qoverload.h>
 #include <QtCore/qtimezone.h>
 #include <QtGui/qkeysequence.h>
 #include <algorithm>
@@ -40,7 +40,8 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
+#include <tuple>       // IWYU pragma: keep
+#include <type_traits> // IWYU pragma: keep
 #include <utility>
 #include <vector>
 

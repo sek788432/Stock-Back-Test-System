@@ -17,6 +17,9 @@ from unittest import mock
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/ci.yml"
 WORKFLOW_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
+IWYU_MAPPINGS = json.loads(
+    (REPOSITORY_ROOT / "Tools/Iwyu.imp").read_text(encoding="utf-8")
+)
 COVERAGE_REQUIREMENTS = (
     REPOSITORY_ROOT / "Tools/CoverageRequirements.txt"
 ).read_text(encoding="utf-8")
@@ -76,6 +79,23 @@ class CiWorkflowSecurityTest(unittest.TestCase):
 
 
 class StaticAnalysisToolTest(unittest.TestCase):
+    def test_iwyu_maps_platform_headers_to_portable_public_includes(self) -> None:
+        mappings = {tuple(entry["include"]) for entry in IWYU_MAPPINGS}
+        expected = {
+            ("<QtCore/qdebug.h>", "private", "<QDebug>", "public"),
+            ("<QtCore/qlogging.h>", "private", "<QDebug>", "public"),
+            ("<QtCore/qstringliteral.h>", "private", "<QString>", "public"),
+            ("<qcoreevent.h>", "private", "<QEvent>", "public"),
+            ("<qoverload.h>", "private", "<QObject>", "public"),
+            ("<qstringliteral.h>", "private", "<QString>", "public"),
+            ("<qtmetamacros.h>", "private", "<QObject>", "public"),
+            ("<qtypes.h>", "private", "<QtGlobal>", "public"),
+            ("<QtWidgets/qtabwidget.h>", "private", "<QTabWidget>", "public"),
+            ("<QtWidgets/qwidget.h>", "private", "<QWidget>", "public"),
+        }
+
+        self.assertTrue(expected.issubset(mappings))
+
     def test_workflow_uses_supported_scan_build_probe(self) -> None:
         self.assertIn("scan-build-18 --help | sed -n '1p'", WORKFLOW_TEXT)
         self.assertNotIn("scan-build-18 --version", WORKFLOW_TEXT)
@@ -88,15 +108,12 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
         self.assertLess(build, cppcheck)
 
-    def test_manual_and_scheduled_runs_analyze_every_project_translation_unit(self) -> None:
-        self.assertIn(
-            'if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then',
-            WORKFLOW_TEXT,
-        )
+    def test_every_workflow_event_analyzes_every_project_translation_unit(self) -> None:
+        self.assertNotIn("analysis_arguments=()", WORKFLOW_TEXT)
         for analyzer in ("clang-tidy", "cppcheck", "iwyu"):
             with self.subTest(analyzer=analyzer):
                 self.assertIn(
-                    f'python3 Tools/RunStaticAnalysis.py {analyzer} "${{analysis_arguments[@]}}"',
+                    f"run: python3 Tools/RunStaticAnalysis.py {analyzer}",
                     WORKFLOW_TEXT,
                 )
 

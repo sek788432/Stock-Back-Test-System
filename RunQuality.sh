@@ -264,7 +264,7 @@ fi
   exit 2
 }
 
-echo "== Static analysis: ${base}..${head} =="
+echo "== Full-project static analysis: ${head} =="
 analysis_arguments=(-DBTE_BUILD_QT_APP=ON)
 if [[ "$operating_system" == "Darwin" ]]; then
   analysis_arguments+=("-DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)")
@@ -273,9 +273,9 @@ cmake -E remove_directory Output/analysis
 CC="$clang_compiler" CXX="$clangxx_compiler" \
   cmake --preset analysis "${analysis_arguments[@]}"
 cmake --build --preset analysis --parallel
-"$quality_python" Tools/RunStaticAnalysis.py clang-tidy --base "$base" --head "$head"
-"$quality_python" Tools/RunStaticAnalysis.py cppcheck --base "$base" --head "$head"
-"$quality_python" Tools/RunStaticAnalysis.py iwyu --base "$base" --head "$head"
+"$quality_python" Tools/RunStaticAnalysis.py clang-tidy
+"$quality_python" Tools/RunStaticAnalysis.py cppcheck
+"$quality_python" Tools/RunStaticAnalysis.py iwyu
 
 if [[ "$run_scan_build" -eq 1 ]]; then
   cmake -E remove_directory Output/scan-build
