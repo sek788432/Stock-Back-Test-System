@@ -8,15 +8,15 @@ namespace {
 using bte::core::Bar;
 using bte::core::medianPrice;
 using bte::core::SymbolBar;
+using bte::core::Timestamp;
 using bte::core::trueRange;
 using bte::core::typicalPrice;
-using bte::core::Timestamp;
 
 Timestamp makeTs(int64_t msSinceEpoch) {
   return Timestamp{std::chrono::milliseconds{msSinceEpoch}};
 }
 
-}  // namespace
+} // namespace
 
 TEST(BarTest, isValid_returnsTrueForWellFormedPositiveBar) {
   const Bar bar{.ts = makeTs(1),
@@ -130,7 +130,20 @@ TEST(BarTest, trueRange_isHighMinusLow) {
   EXPECT_DOUBLE_EQ(*gotExplicit, 7.0);
 }
 
-TEST(BarTest, trueRange_withPrevClose_prefersDistanceThroughPrevOverIntrabarRange_gapDown) {
+TEST(BarTest, trueRange_withPreviousCloseReturnsNulloptForInvalidBar) {
+  const Bar bar{.ts = makeTs(3),
+                .open = 10.0,
+                .high = 9.0,
+                .low = 10.0,
+                .close = 10.0,
+                .volume = 1.0};
+
+  EXPECT_FALSE(trueRange(bar, 10.0).has_value());
+}
+
+TEST(
+    BarTest,
+    trueRange_withPrevClose_prefersDistanceThroughPrevOverIntrabarRange_gapDown) {
   const Bar bar{.ts = makeTs(4),
                 .open = 98.0,
                 .high = 98.0,
@@ -142,7 +155,9 @@ TEST(BarTest, trueRange_withPrevClose_prefersDistanceThroughPrevOverIntrabarRang
   EXPECT_DOUBLE_EQ(*got, 10.0);
 }
 
-TEST(BarTest, trueRange_withPrevClose_prefersDistanceThroughPrevOverIntrabarRange_gapUp) {
+TEST(
+    BarTest,
+    trueRange_withPrevClose_prefersDistanceThroughPrevOverIntrabarRange_gapUp) {
   const Bar bar{.ts = makeTs(5),
                 .open = 108.0,
                 .high = 115.0,
