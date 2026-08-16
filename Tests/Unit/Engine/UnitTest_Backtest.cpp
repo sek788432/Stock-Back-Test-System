@@ -175,6 +175,7 @@ TEST(BacktestTest,
                           .comparison = bte::strategy::Comparison::greaterThan,
                           .threshold = 20.0,
                       }}},
+              .sell = {},
           },
   });
   const auto pending = bte::engine::runBacktest({
@@ -188,6 +189,7 @@ TEST(BacktestTest,
                           .comparison = bte::strategy::Comparison::greaterThan,
                           .threshold = 7.0,
                       }}},
+              .sell = {},
           },
   });
   const auto rejected = bte::engine::runBacktest({
@@ -201,6 +203,7 @@ TEST(BacktestTest,
                           .comparison = bte::strategy::Comparison::greaterThan,
                           .threshold = 0.0,
                       }}},
+              .sell = {},
           },
   });
 
@@ -244,6 +247,7 @@ TEST(BacktestTest, selectableConditionsPropagateExecutionAndPlanErrors) {
       .selectableStrategy =
           bte::strategy::SelectableStrategyPlan{
               .buy = {.conditions = {alwaysBuy}},
+              .sell = {},
           },
   });
   const auto sellUnderflow = bte::engine::runBacktest({
@@ -287,6 +291,7 @@ TEST(BacktestTest, selectableConditionsPropagateEveryReachableAccountingError) {
       .selectableStrategy =
           bte::strategy::SelectableStrategyPlan{
               .buy = {.conditions = {alwaysBuy}},
+              .sell = {},
           },
   });
   const auto sellAmountOverflow = bte::engine::runBacktest({
@@ -319,6 +324,7 @@ TEST(BacktestTest, selectableConditionsPropagateEveryReachableAccountingError) {
       .selectableStrategy =
           bte::strategy::SelectableStrategyPlan{
               .buy = {.conditions = {alwaysBuy}},
+              .sell = {},
           },
   });
   const auto equityOverflow = bte::engine::runBacktest({
@@ -329,6 +335,7 @@ TEST(BacktestTest, selectableConditionsPropagateEveryReachableAccountingError) {
       .selectableStrategy =
           bte::strategy::SelectableStrategyPlan{
               .buy = {.conditions = {alwaysBuy}},
+              .sell = {},
           },
   });
 
