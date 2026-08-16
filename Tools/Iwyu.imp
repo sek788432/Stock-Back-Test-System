@@ -47,6 +47,7 @@
   { "include": [ "<qnamespace.h>", "private", "<QtCore/Qt>", "public" ] },
   { "include": [ "<qprogressbar.h>", "private", "<QProgressBar>", "public" ] },
   { "include": [ "<qstring.h>", "private", "<QString>", "public" ] },
+  { "include": [ "<qstringliteral.h>", "private", "<QString>", "public" ] },
   { "include": [ "<qtabwidget.h>", "private", "<QTabWidget>", "public" ] },
   { "include": [ "<qvariant.h>", "private", "<QVariant>", "public" ] },
   { "include": [ "<qwidget.h>", "private", "<QWidget>", "public" ] }
