@@ -161,6 +161,7 @@ void BacktestSessionVmTest::configuredRunPreservesDataSourceError() {
       .endDate = QDate{2024, 1, 2},
       .initialCapital = 1'000.0,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   QVERIFY(!result.ok());
@@ -271,6 +272,7 @@ void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
       .endDate = QDate{2018, 5, 3},
       .initialCapital = 100'000.0,
       .quantityShares = 7,
+      .selectableStrategy = {},
   });
 
   QVERIFY(result.ok());
