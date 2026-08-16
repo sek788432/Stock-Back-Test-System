@@ -82,7 +82,6 @@ class StaticAnalysisToolTest(unittest.TestCase):
     def test_iwyu_maps_platform_headers_to_portable_public_includes(self) -> None:
         mappings = {tuple(entry["include"]) for entry in IWYU_MAPPINGS}
         expected = {
-            ("<math>", "private", "<cmath>", "public"),
             ("<QtCore/qdebug.h>", "private", "<QDebug>", "public"),
             ("<QtCore/qlogging.h>", "private", "<QDebug>", "public"),
             ("<QtCore/qstringliteral.h>", "private", "<QString>", "public"),

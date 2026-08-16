@@ -1,5 +1,7 @@
 #pragma once
 
+// IWYU pragma: no_include <math>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>

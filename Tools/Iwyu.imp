@@ -1,7 +1,6 @@
 [
   { "include": [ "<bits/chrono.h>", "private", "<chrono>", "public" ] },
   { "include": [ "<bits/std_abs.h>", "private", "<cmath>", "public" ] },
-  { "include": [ "<math>", "private", "<cmath>", "public" ] },
   { "include": [ "<_ctype.h>", "private", "<cctype>", "public" ] },
   { "include": [ "<_time.h>", "private", "<ctime>", "public" ] },
   { "include": [ "<QtCore/qdebug.h>", "private", "<QDebug>", "public" ] },
