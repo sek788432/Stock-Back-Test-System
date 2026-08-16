@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <gtest/gtest.h>
+#include <limits>
 
 namespace {
 
@@ -56,6 +57,24 @@ TEST(BarTest, isValid_returnsFalseWhenVolumeNegative) {
                 .close = 1.5,
                 .volume = -1.0};
   EXPECT_FALSE(bar.isValid());
+}
+
+TEST(BarTest, isValid_returnsFalseWhenAnyOhlcvValueIsNotFinite) {
+  auto bar = Bar{.ts = makeTs(1),
+                 .open = 1.0,
+                 .high = 2.0,
+                 .low = 0.5,
+                 .close = 1.5,
+                 .volume = 1.0};
+  const auto infinity = std::numeric_limits<double>::infinity();
+
+  for (auto *value :
+       {&bar.open, &bar.high, &bar.low, &bar.close, &bar.volume}) {
+    const auto original = *value;
+    *value = infinity;
+    EXPECT_FALSE(bar.isValid());
+    *value = original;
+  }
 }
 
 TEST(BarTest, typicalPrice_returnsExpectedValueForValidBar) {

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -122,6 +123,26 @@ TEST(StreamingIndicatorTest, invalidDefinitionsAndBarsReturnStructuredErrors) {
   EXPECT_EQ(noPeriod.error().code, bte::core::ErrorCode::invalidArgument);
   EXPECT_EQ(invalidOutput.error().code, bte::core::ErrorCode::invalidArgument);
   EXPECT_EQ(update.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(StreamingIndicatorTest, nonFiniteComputedOutputReturnsStructuredError) {
+  auto created = bte::indicators::StreamingIndicator::create({
+      .kind = bte::indicators::IndicatorKind::vwap,
+      .period = 1,
+  });
+  ASSERT_TRUE(created.ok());
+  auto indicator = std::move(created).value();
+  auto overflowBar = makeBar(2, std::numeric_limits<double>::max());
+  overflowBar.open = std::numeric_limits<double>::max();
+  overflowBar.high = std::numeric_limits<double>::max();
+  overflowBar.low = std::numeric_limits<double>::max();
+  overflowBar.volume = std::numeric_limits<double>::max();
+
+  const auto updated = indicator.update(overflowBar);
+
+  EXPECT_FALSE(updated.ok());
+  EXPECT_EQ(updated.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_FALSE(indicator.latest().has_value());
 }
 
 TEST(StreamingIndicatorTest, rejectsInvalidEnumAndMultiPeriodDefinitions) {
@@ -522,6 +543,30 @@ TEST(StreamingIndicatorTest, resetRestoresWarmupState) {
   ASSERT_TRUE(resetUpdate.ok());
   EXPECT_EQ(indicator.consumedBars(), 1);
   EXPECT_FALSE(resetUpdate.value().has_value());
+}
+
+TEST(StreamingIndicatorTest, moveAssignmentPreservesIndicatorState) {
+  auto sourceResult = bte::indicators::StreamingIndicator::create({
+      .kind = bte::indicators::IndicatorKind::sma,
+      .period = 2,
+  });
+  auto destinationResult = bte::indicators::StreamingIndicator::create({
+      .kind = bte::indicators::IndicatorKind::ema,
+      .period = 3,
+  });
+  ASSERT_TRUE(sourceResult.ok());
+  ASSERT_TRUE(destinationResult.ok());
+  auto source = std::move(sourceResult).value();
+  auto destination = std::move(destinationResult).value();
+
+  ASSERT_TRUE(source.update(makeBar(2, 10.0)).ok());
+  destination = std::move(source);
+  const auto updated = destination.update(makeBar(3, 14.0));
+
+  ASSERT_TRUE(updated.ok());
+  ASSERT_TRUE(updated.value().has_value());
+  EXPECT_DOUBLE_EQ(updated.value()->value, 12.0);
+  EXPECT_EQ(destination.definition().kind, bte::indicators::IndicatorKind::sma);
 }
 
 } // namespace

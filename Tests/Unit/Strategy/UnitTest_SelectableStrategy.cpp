@@ -414,4 +414,47 @@ TEST(SelectableStrategyTest,
   EXPECT_EQ(result.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
+TEST(SelectableStrategyTest, nonFiniteBuyAndSellIndicatorOutputsArePropagated) {
+  const auto overflowCondition = bte::strategy::Condition{
+      .source = bte::strategy::ConditionSource::indicator,
+      .comparison = bte::strategy::Comparison::greaterThan,
+      .threshold = 0.0,
+      .indicator =
+          {
+              .kind = bte::indicators::IndicatorKind::vwap,
+              .period = 1,
+          },
+  };
+  const auto harmlessCondition = bte::strategy::Condition{
+      .source = bte::strategy::ConditionSource::barField,
+      .comparison = bte::strategy::Comparison::greaterThan,
+      .threshold = 0.0,
+  };
+  auto buyResult = bte::strategy::SelectableStrategy::create({
+      .buy = {.conditions = {overflowCondition}},
+      .sell = {},
+  });
+  auto sellResult = bte::strategy::SelectableStrategy::create({
+      .buy = {.conditions = {harmlessCondition}},
+      .sell = {.conditions = {overflowCondition}},
+  });
+  ASSERT_TRUE(buyResult.ok());
+  ASSERT_TRUE(sellResult.ok());
+  auto buyStrategy = std::move(buyResult).value();
+  auto sellStrategy = std::move(sellResult).value();
+  auto overflowBar = makeBar(2, std::numeric_limits<double>::max());
+  overflowBar.open = std::numeric_limits<double>::max();
+  overflowBar.high = std::numeric_limits<double>::max();
+  overflowBar.low = std::numeric_limits<double>::max();
+  overflowBar.volume = std::numeric_limits<double>::max();
+
+  const auto buyUpdate = buyStrategy->onBar(overflowBar);
+  const auto sellUpdate = sellStrategy->onBar(overflowBar);
+
+  EXPECT_FALSE(buyUpdate.ok());
+  EXPECT_FALSE(sellUpdate.ok());
+  EXPECT_EQ(buyUpdate.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(sellUpdate.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
 } // namespace

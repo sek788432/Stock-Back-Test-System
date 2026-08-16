@@ -752,6 +752,11 @@ StreamingIndicator::update(const core::Bar &bar) {
   if (!updated.has_value()) {
     return std::optional<IndicatorValue>{};
   }
+  if (!std::isfinite(*updated)) {
+    impl_->latest.reset();
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "indicator output must be finite");
+  }
   return std::optional<IndicatorValue>{IndicatorValue{
       .value = *updated,
       .domain = indicatorOutputDomain(impl_->definition),

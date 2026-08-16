@@ -59,14 +59,6 @@ core::Result<std::int64_t> checkedAdd(const std::int64_t left,
   return left + right;
 }
 
-core::Result<std::int64_t> checkedSubtract(const std::int64_t left,
-                                           const std::int64_t right) {
-  if (right > 0 && left < std::numeric_limits<std::int64_t>::min() + right) {
-    return invalidArgument("accounting value exceeds the supported range");
-  }
-  return left - right;
-}
-
 core::Result<std::int64_t> checkedMultiply(const std::int64_t left,
                                            const std::int64_t right) {
   if (left != 0 && right > std::numeric_limits<std::int64_t>::max() / left) {
@@ -107,15 +99,12 @@ core::Result<std::int64_t>
 sellPriceWithDefaultSlippage(const std::int64_t openNanodollars) {
   const auto slippage = openNanodollars / slippageDivisor +
                         (openNanodollars % slippageDivisor == 0 ? 0 : 1);
-  const auto adjusted = checkedSubtract(openNanodollars, slippage);
-  if (!adjusted.ok()) {
-    return adjusted.error();
-  }
-  if (adjusted.value() <= 0) {
+  const auto adjusted = openNanodollars - slippage;
+  if (adjusted <= 0) {
     return invalidArgument(
         "sell price is outside the supported range after slippage");
   }
-  return adjusted.value();
+  return adjusted;
 }
 
 core::Result<std::int64_t>
@@ -154,11 +143,9 @@ validateRequest(const BacktestRequest &request,
   return request.initialCapitalMicrodollars;
 }
 
-core::Result<BacktestResult> makeInitialResult(const BacktestRequest &request) {
-  const auto finalPrice = checkedPriceNanodollars(request.bars.back().close);
-  if (!finalPrice.ok()) {
-    return finalPrice.error();
-  }
+BacktestResult makeInitialResult(const BacktestRequest &request) {
+  const auto finalPrice =
+      checkedPriceNanodollars(request.bars.back().close).value();
   return BacktestResult{
       .orderStatus = StarterOrderStatus::cancelledNoFutureMarketData,
       .fill = {},
@@ -168,7 +155,7 @@ core::Result<BacktestResult> makeInitialResult(const BacktestRequest &request) {
       .marketValueMicrodollars = 0,
       .equityMicrodollars = request.initialCapitalMicrodollars,
       .pnlMicrodollars = 0,
-      .finalPriceNanodollars = finalPrice.value(),
+      .finalPriceNanodollars = finalPrice,
       .positionShares = 0,
       .barsProcessed = request.bars.size(),
   };
@@ -209,12 +196,7 @@ executeBuyAtOpen(BacktestResult &result, const core::Bar &bar,
         .rejectedInsufficientCash = true,
     };
   }
-  const auto remainingCash =
-      checkedSubtract(result.cashMicrodollars, amount.value());
-  if (!remainingCash.ok()) {
-    return remainingCash.error();
-  }
-  result.cashMicrodollars = remainingCash.value();
+  result.cashMicrodollars -= amount.value();
   result.positionShares = execution.quantityShares;
   return PendingOrderExecution{.fill = BacktestFill{
                                    .timestamp = bar.ts,
@@ -259,16 +241,13 @@ executeSellAtOpen(BacktestResult &result, const core::Bar &bar,
 core::Result<PendingOrderExecution>
 executePendingOrder(const BacktestOrderSide side, BacktestResult &result,
                     const core::Bar &bar, const std::int64_t quantityShares) {
-  const auto open = checkedPriceNanodollars(bar.open);
-  if (!open.ok()) {
-    return open.error();
-  }
+  const auto open = checkedPriceNanodollars(bar.open).value();
   if (side == BacktestOrderSide::buy) {
     return executeBuyAtOpen(
         result, bar,
-        {.quantityShares = quantityShares, .openNanodollars = open.value()});
+        {.quantityShares = quantityShares, .openNanodollars = open});
   }
-  return executeSellAtOpen(result, bar, open.value());
+  return executeSellAtOpen(result, bar, open);
 }
 
 core::Result<bool> updateFinalPortfolio(BacktestResult &result) {
@@ -286,12 +265,8 @@ core::Result<bool> updateFinalPortfolio(BacktestResult &result) {
     return equity.error();
   }
   result.equityMicrodollars = equity.value();
-  const auto pnl = checkedSubtract(result.equityMicrodollars,
-                                   result.initialCapitalMicrodollars);
-  if (!pnl.ok()) {
-    return pnl.error();
-  }
-  result.pnlMicrodollars = pnl.value();
+  result.pnlMicrodollars =
+      result.equityMicrodollars - result.initialCapitalMicrodollars;
   return true;
 }
 
@@ -325,11 +300,7 @@ core::Result<BacktestResult>
 runSelectableBacktest(const BacktestRequest &request,
                       const strategy::SelectableStrategyPlan &plan,
                       const core::CancellationToken &cancellation) {
-  auto initialized = makeInitialResult(request);
-  if (!initialized.ok()) {
-    return initialized.error();
-  }
-  auto result = std::move(initialized).value();
+  auto result = makeInitialResult(request);
   auto strategy = strategy::SelectableStrategy::create(plan);
   if (!strategy.ok()) {
     return strategy.error();
@@ -374,20 +345,13 @@ runSelectableBacktest(const BacktestRequest &request,
 
 core::Result<BacktestResult>
 runStarterBacktest(const BacktestRequest &request) {
-  auto initialized = makeInitialResult(request);
-  if (!initialized.ok()) {
-    return initialized.error();
-  }
-  auto result = std::move(initialized).value();
+  auto result = makeInitialResult(request);
   if (request.bars.size() == 1U) {
     return result;
   }
 
-  const auto nextOpen = checkedPriceNanodollars(request.bars[1].open);
-  if (!nextOpen.ok()) {
-    return nextOpen.error();
-  }
-  const auto fillPrice = buyPriceWithDefaultSlippage(nextOpen.value());
+  const auto nextOpen = checkedPriceNanodollars(request.bars[1].open).value();
+  const auto fillPrice = buyPriceWithDefaultSlippage(nextOpen);
   if (!fillPrice.ok()) {
     return fillPrice.error();
   }
@@ -413,14 +377,10 @@ runStarterBacktest(const BacktestRequest &request) {
       .priceNanodollars = fillPrice.value(),
       .amountMicrodollars = fillAmount.value(),
   };
-  const auto remainingCash =
-      checkedSubtract(request.initialCapitalMicrodollars, fillAmount.value());
-  if (!remainingCash.ok()) {
-    return remainingCash.error();
-  }
   result.orderStatus = StarterOrderStatus::filled;
   recordFill(result, fill);
-  result.cashMicrodollars = remainingCash.value();
+  result.cashMicrodollars =
+      request.initialCapitalMicrodollars - fillAmount.value();
   result.marketValueMicrodollars = marketValue.value();
   result.positionShares = request.quantityShares;
   const auto finalPortfolio = updateFinalPortfolio(result);
@@ -438,9 +398,6 @@ runBacktest(const BacktestRequest &request,
   const auto validation = validateRequest(request, cancellation);
   if (!validation.ok()) {
     return validation.error();
-  }
-  if (cancellation.isCancellationRequested()) {
-    return cancelled();
   }
   if (request.selectableStrategy.has_value()) {
     return runSelectableBacktest(request, *request.selectableStrategy,

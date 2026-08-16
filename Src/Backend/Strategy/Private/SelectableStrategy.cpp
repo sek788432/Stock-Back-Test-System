@@ -138,21 +138,8 @@ struct SelectableStrategy::Impl final {
   };
 
   explicit Impl(SelectableStrategyPlan configuredPlan)
-      : plan(std::move(configuredPlan)) {}
-
-  [[nodiscard]] core::Result<bool> initialize() {
-    auto buyGroup = makeGroup(plan.buy);
-    if (!buyGroup.ok()) {
-      return buyGroup.error();
-    }
-    auto sellGroup = makeGroup(plan.sell);
-    if (!sellGroup.ok()) {
-      return sellGroup.error();
-    }
-    buy = std::move(buyGroup).value();
-    sell = std::move(sellGroup).value();
-    return true;
-  }
+      : plan(std::move(configuredPlan)), buy(makeGroup(plan.buy)),
+        sell(makeGroup(plan.sell)) {}
 
   [[nodiscard]] core::Result<SelectableStrategySignal>
   onBar(const core::Bar &bar) {
@@ -176,8 +163,7 @@ struct SelectableStrategy::Impl final {
     return signal;
   }
 
-  [[nodiscard]] static core::Result<RuntimeGroup>
-  makeGroup(const ConditionGroup &group) {
+  [[nodiscard]] static RuntimeGroup makeGroup(const ConditionGroup &group) {
     auto runtime = RuntimeGroup{.logic = group.logic, .conditions = {}};
     runtime.conditions.reserve(group.conditions.size());
     for (const auto &condition : group.conditions) {
@@ -188,10 +174,6 @@ struct SelectableStrategy::Impl final {
       if (condition.source == ConditionSource::indicator) {
         auto indicator =
             indicators::StreamingIndicator::create(condition.indicator);
-        if (!indicator.ok()) {
-          return compileError("could not construct condition indicator: " +
-                              indicator.error().message);
-        }
         runtimeCondition.indicator =
             std::make_unique<indicators::StreamingIndicator>(
                 std::move(indicator).value());
@@ -280,10 +262,6 @@ SelectableStrategy::create(SelectableStrategyPlan plan) {
   }
   try {
     auto implementation = std::make_unique<Impl>(std::move(plan));
-    const auto initialized = implementation->initialize();
-    if (!initialized.ok()) {
-      return initialized.error();
-    }
     return std::make_unique<SelectableStrategy>(std::move(implementation));
   } catch (const std::exception &error) {
     return core::makeError(core::ErrorCode::internal,
