@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <compare> // IWYU pragma: keep
 #include <cstddef>
 #include <exception>
 #include <filesystem>

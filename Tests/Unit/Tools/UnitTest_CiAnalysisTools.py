@@ -85,7 +85,11 @@ class StaticAnalysisToolTest(unittest.TestCase):
             ("<QtCore/qdebug.h>", "private", "<QDebug>", "public"),
             ("<QtCore/qlogging.h>", "private", "<QDebug>", "public"),
             ("<QtCore/qstringliteral.h>", "private", "<QString>", "public"),
+            ("<qcoreevent.h>", "private", "<QEvent>", "public"),
+            ("<qoverload.h>", "private", "<QObject>", "public"),
             ("<qstringliteral.h>", "private", "<QString>", "public"),
+            ("<qtmetamacros.h>", "private", "<QObject>", "public"),
+            ("<qtypes.h>", "private", "<QtGlobal>", "public"),
             ("<QtWidgets/qtabwidget.h>", "private", "<QTabWidget>", "public"),
             ("<QtWidgets/qwidget.h>", "private", "<QWidget>", "public"),
         }

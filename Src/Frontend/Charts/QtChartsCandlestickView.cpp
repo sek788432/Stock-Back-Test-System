@@ -8,6 +8,7 @@
 #include <QColor>
 #include <QDateTime>
 #include <QDateTimeAxis>
+#include <QEvent> // IWYU pragma: keep
 #include <QGraphicsLineItem>
 #include <QGraphicsScene>
 #include <QLegend>

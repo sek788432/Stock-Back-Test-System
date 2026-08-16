@@ -41,14 +41,18 @@
   { "include": [ "<qfont.h>", "private", "<QFont>", "public" ] },
   { "include": [ "<qfuture.h>", "private", "<QFuture>", "public" ] },
   { "include": [ "<qgroupbox.h>", "private", "<QGroupBox>", "public" ] },
+  { "include": [ "<qcoreevent.h>", "private", "<QEvent>", "public" ] },
   { "include": [ "<qlayout.h>", "private", "<QLayout>", "public" ] },
   { "include": [ "<qlist.h>", "private", "<QList>", "public" ] },
   { "include": [ "<qlogging.h>", "private", "<QDebug>", "public" ] },
   { "include": [ "<qnamespace.h>", "private", "<QtCore/Qt>", "public" ] },
+  { "include": [ "<qoverload.h>", "private", "<QObject>", "public" ] },
   { "include": [ "<qprogressbar.h>", "private", "<QProgressBar>", "public" ] },
   { "include": [ "<qstring.h>", "private", "<QString>", "public" ] },
   { "include": [ "<qstringliteral.h>", "private", "<QString>", "public" ] },
   { "include": [ "<qtabwidget.h>", "private", "<QTabWidget>", "public" ] },
+  { "include": [ "<qtmetamacros.h>", "private", "<QObject>", "public" ] },
+  { "include": [ "<qtypes.h>", "private", "<QtGlobal>", "public" ] },
   { "include": [ "<qvariant.h>", "private", "<QVariant>", "public" ] },
   { "include": [ "<qwidget.h>", "private", "<QWidget>", "public" ] }
 ]

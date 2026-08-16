@@ -12,6 +12,7 @@
 #include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFont>
+#include <QFuture> // IWYU pragma: keep
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -39,7 +40,8 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
+#include <tuple>       // IWYU pragma: keep
+#include <type_traits> // IWYU pragma: keep
 #include <utility>
 #include <vector>
 

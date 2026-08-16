@@ -1,11 +1,13 @@
 #pragma once
 
+#include "Bte/Core/Bar.h" // IWYU pragma: keep
 #include "Bte/Frontend/IChartView.h"
 
 #include <QObject>
 #include <QWidget>
 
 #include <cstddef>
+#include <span> // IWYU pragma: keep
 
 class QChart;
 class QChartView;

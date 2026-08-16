@@ -5,10 +5,11 @@
 #include "Bte/Bindings/ReplayDataLoader.h"
 #include "Bte/Engine/Backtest.h"
 
+#include <algorithm> // IWYU pragma: keep
 #include <cmath>
 #include <cstdint>
 #include <optional>
-#include <string>
+#include <string> // IWYU pragma: keep
 #include <utility>
 
 namespace bte::bindings {
