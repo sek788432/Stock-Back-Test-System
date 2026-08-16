@@ -1,5 +1,6 @@
 #include "Bte/Frontend/QtChartsCandlestickView.h"
 
+#include <QBrush>
 #include <QCandlestickSeries>
 #include <QCandlestickSet>
 #include <QChart>
@@ -8,20 +9,29 @@
 #include <QDateTime>
 #include <QDateTimeAxis>
 #include <QGraphicsLineItem>
+#include <QGraphicsScene>
 #include <QLegend>
+#include <QLineF>
+#include <QList>
 #include <QMargins>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
+#include <QPoint>
+#include <QRectF>
 #include <QTimeZone>
 #include <QVBoxLayout>
 #include <QValueAxis>
-#include <QWheelEvent>
+#include <QtCore/Qt>
+#include <QtGlobal>
 
 #include <algorithm>
 #include <chrono>
 #include <limits>
 #include <memory>
+#include <span>
+
+#include "Bte/Core/Bar.h"
 
 namespace bte::frontend {
 namespace {
@@ -125,9 +135,9 @@ qreal toEpochMilliseconds(const core::Timestamp timestamp) {
 }
 
 QCandlestickSet *makeCandleSet(const core::Bar &bar) {
-  return std::make_unique<QCandlestickSet>(
-             bar.open, bar.high, bar.low, bar.close,
-             toEpochMilliseconds(bar.ts))
+  return std::make_unique<QCandlestickSet>(bar.open, bar.high, bar.low,
+                                           bar.close,
+                                           toEpochMilliseconds(bar.ts))
       .release();
 }
 

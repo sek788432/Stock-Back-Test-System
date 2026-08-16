@@ -2,10 +2,10 @@
 
 #include "Bte/Frontend/IChartView.h"
 
+#include <QObject>
 #include <QWidget>
 
 #include <cstddef>
-#include <memory>
 
 class QChart;
 class QChartView;

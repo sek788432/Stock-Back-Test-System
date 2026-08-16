@@ -17,6 +17,9 @@ from unittest import mock
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/ci.yml"
 WORKFLOW_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
+IWYU_MAPPINGS = json.loads(
+    (REPOSITORY_ROOT / "Tools/Iwyu.imp").read_text(encoding="utf-8")
+)
 COVERAGE_REQUIREMENTS = (
     REPOSITORY_ROOT / "Tools/CoverageRequirements.txt"
 ).read_text(encoding="utf-8")
@@ -76,6 +79,18 @@ class CiWorkflowSecurityTest(unittest.TestCase):
 
 
 class StaticAnalysisToolTest(unittest.TestCase):
+    def test_iwyu_maps_platform_headers_to_portable_public_includes(self) -> None:
+        mappings = {tuple(entry["include"]) for entry in IWYU_MAPPINGS}
+        expected = {
+            ("<QtCore/qdebug.h>", "private", "<QDebug>", "public"),
+            ("<QtCore/qlogging.h>", "private", "<QDebug>", "public"),
+            ("<QtCore/qstringliteral.h>", "private", "<QString>", "public"),
+            ("<QtWidgets/qtabwidget.h>", "private", "<QTabWidget>", "public"),
+            ("<QtWidgets/qwidget.h>", "private", "<QWidget>", "public"),
+        }
+
+        self.assertTrue(expected.issubset(mappings))
+
     def test_workflow_uses_supported_scan_build_probe(self) -> None:
         self.assertIn("scan-build-18 --help | sed -n '1p'", WORKFLOW_TEXT)
         self.assertNotIn("scan-build-18 --version", WORKFLOW_TEXT)

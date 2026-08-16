@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <compare>
 #include <cstddef>
 #include <exception>
 #include <filesystem>

@@ -578,7 +578,9 @@ void BacktestTabTest::selectableControlsPresentNoSignalAndSellFill() {
   QVERIFY(trades != nullptr);
 
   strategy->setCurrentText("Selectable conditions");
-  sellLogic->setCurrentText("ANY (OR)");
+  const auto sellAnyIndex = sellLogic->findText("Match ANY (OR)");
+  QVERIFY(sellAnyIndex >= 0);
+  sellLogic->setCurrentIndex(sellAnyIndex);
   sellMetric->setCurrentText("ROC");
   sellThreshold->setValue(-2.0);
   QVERIFY(!sellSecondMetric->isEnabled());
