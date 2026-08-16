@@ -57,6 +57,7 @@ noFillSnapshot(const bte::bindings::BacktestOutcome outcome) {
   return bte::bindings::BacktestSnapshot{
       .outcome = outcome,
       .fill = {},
+      .fills = {},
       .initialCapital = 100.0,
       .cash = 100.0,
       .marketValue = 0.0,
