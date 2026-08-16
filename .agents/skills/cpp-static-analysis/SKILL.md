@@ -71,11 +71,10 @@ packages and a private locked Python environment; no activation or manual
 
 ## What analyzer-clean means (G7)
 
-On pull requests and pushes, CI runs clang-tidy, cppcheck, and IWYU on changed
-project translation units. Scheduled and manually dispatched CI runs analyze
-all project translation units. Any reported finding fails the job; there is no
-warning-baseline comparison or weekly debt report. Scan-build analyzes the
-complete configured source tree on every run.
+On every pull request, push, schedule, and manual dispatch, CI runs clang-tidy,
+cppcheck, IWYU, and scan-build across all configured project translation units.
+Any reported finding fails the job; there is no warning-baseline comparison or
+weekly debt report.
 
 ## Reading analyzer output
 
