@@ -245,6 +245,7 @@ void BacktestSessionVmTest::selectablePlanPresentsNoSignalOutcome() {
                   .threshold = 1'000.0,
               }},
           },
+      .sell = {},
   };
   const auto result = bte::bindings::runBacktestSession(
       {makeBar(2, 100.0, 100.0), makeBar(3, 101.0, 101.0)}, 1'000.0, 1, plan);
