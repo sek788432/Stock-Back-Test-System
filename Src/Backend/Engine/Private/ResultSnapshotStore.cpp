@@ -4,12 +4,15 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace bte::engine {
 namespace {
@@ -17,8 +20,8 @@ namespace {
 std::string escapeJson(const std::string_view text) {
   std::string escaped;
   escaped.reserve(text.size());
-  for (const char ch : text) {
-    switch (ch) {
+  for (const char character : text) {
+    switch (character) {
     case '\\':
       escaped += "\\\\";
       break;
@@ -35,7 +38,7 @@ std::string escapeJson(const std::string_view text) {
       escaped += "\\t";
       break;
     default:
-      escaped += ch;
+      escaped += character;
       break;
     }
   }
@@ -51,8 +54,8 @@ std::string snapshotFileStem(const ReplayResultSnapshot &snapshot) {
                      snapshot.strategyArtifactHash;
   std::ranges::replace_if(
       stem,
-      [](const char ch) {
-        return !std::isalnum(static_cast<unsigned char>(ch));
+      [](const char character) {
+        return std::isalnum(static_cast<unsigned char>(character)) == 0;
       },
       '-');
   return stem.empty() ? "replay-result" : stem;
@@ -121,8 +124,8 @@ core::Result<std::string> readAll(const std::filesystem::path &path) {
   return buffer.str();
 }
 
-std::string extractString(const std::string &json, const std::string &key) {
-  const auto pattern = "\"" + key + "\":\"";
+std::string extractString(const std::string &json, const std::string_view key) {
+  const auto pattern = "\"" + std::string{key} + "\":\"";
   const auto start = json.find(pattern);
   if (start == std::string::npos) {
     return {};
@@ -135,8 +138,8 @@ std::string extractString(const std::string &json, const std::string &key) {
   return json.substr(valueStart, valueEnd - valueStart);
 }
 
-double extractDouble(const std::string &json, const std::string &key) {
-  const auto pattern = "\"" + key + "\":";
+double extractDouble(const std::string &json, const std::string_view key) {
+  const auto pattern = "\"" + std::string{key} + "\":";
   const auto start = json.find(pattern);
   if (start == std::string::npos) {
     return 0.0;
@@ -146,7 +149,7 @@ double extractDouble(const std::string &json, const std::string &key) {
   return std::stod(json.substr(valueStart, valueEnd - valueStart));
 }
 
-int extractInt(const std::string &json, const std::string &key) {
+int extractInt(const std::string &json, const std::string_view key) {
   return static_cast<int>(extractDouble(json, key));
 }
 
@@ -189,9 +192,9 @@ metricValues(const std::vector<ReplayResultSummary> &summaries,
 core::Result<std::filesystem::path>
 saveReplayResultSnapshot(const std::filesystem::path &directory,
                          const ReplayResultSnapshot &snapshot) {
-  std::error_code ec;
-  std::filesystem::create_directories(directory, ec);
-  if (ec) {
+  std::error_code errorCode;
+  std::filesystem::create_directories(directory, errorCode);
+  if (errorCode) {
     return core::makeError(core::ErrorCode::permissionDenied,
                            "Cannot create result snapshot directory: " +
                                directory.string());
@@ -210,14 +213,15 @@ saveReplayResultSnapshot(const std::filesystem::path &directory,
 
 core::Result<std::vector<ReplayResultSummary>>
 listReplayResultSnapshots(const std::filesystem::path &directory) {
-  std::error_code ec;
-  if (!std::filesystem::exists(directory, ec)) {
+  std::error_code errorCode;
+  if (!std::filesystem::exists(directory, errorCode)) {
     return std::vector<ReplayResultSummary>{};
   }
 
   std::vector<ReplayResultSummary> summaries;
-  for (const auto &entry : std::filesystem::directory_iterator(directory, ec)) {
-    if (ec) {
+  for (const auto &entry :
+       std::filesystem::directory_iterator(directory, errorCode)) {
+    if (errorCode) {
       return core::makeError(core::ErrorCode::internal,
                              "Cannot enumerate result snapshots: " +
                                  directory.string());

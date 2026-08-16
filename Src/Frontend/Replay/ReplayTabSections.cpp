@@ -3,51 +3,54 @@
 #include "Bte/Frontend/ReplayTab.h"
 
 #include <QAbstractItemView>
+#include <QDateTime>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
+#include <QList>
 #include <QSizePolicy>
+#include <QString>
 #include <QStyle>
-#include <QVBoxLayout>
+#include <QtCore/Qt>
 
 #include <memory>
-#include <utility>
 
 namespace bte::frontend {
 namespace {
 
-QLabel *makeValueLabel(QString text, QString objectName) {
-  auto label = std::make_unique<QLabel>(std::move(text));
-  label->setObjectName(std::move(objectName));
+QLabel *makeValueLabel(const QString &text, const char *objectName) {
+  auto label = std::make_unique<QLabel>(text);
+  label->setObjectName(QString::fromLatin1(objectName));
   label->setAccessibleName(label->objectName());
   label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   label->setMinimumWidth(150);
   return label.release();
 }
 
-QLabel *makeFormLabel(QString text, QString objectName, QWidget *parent) {
-  auto label = std::make_unique<QLabel>(std::move(text), parent);
-  label->setObjectName(std::move(objectName));
+QLabel *makeFormLabel(const QString &text, const char *objectName,
+                      QWidget *parent) {
+  auto label = std::make_unique<QLabel>(text, parent);
+  label->setObjectName(QString::fromLatin1(objectName));
   label->setAccessibleName(label->text());
   return label.release();
 }
 
-QFrame *makePanel(QString objectName, QWidget *parent) {
+QFrame *makePanel(const char *objectName, QWidget *parent) {
   auto frame = std::make_unique<QFrame>(parent);
-  frame->setObjectName(std::move(objectName));
+  frame->setObjectName(QString::fromLatin1(objectName));
   frame->setAccessibleName(frame->objectName());
   frame->setFrameShape(QFrame::StyledPanel);
   frame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   return frame.release();
 }
 
-QToolButton *makeToolButton(QWidget *owner, QStyle::StandardPixmap icon,
-                            QString name, QString tooltip) {
+QToolButton *makeToolButton(QWidget *owner, const QStyle::StandardPixmap icon,
+                            const char *name, const QString &tooltip) {
   auto button = std::make_unique<QToolButton>(owner);
-  button->setObjectName(std::move(name));
+  button->setObjectName(QString::fromLatin1(name));
   button->setAccessibleName(button->objectName());
-  button->setToolTip(std::move(tooltip));
+  button->setToolTip(tooltip);
   button->setIcon(owner->style()->standardIcon(icon));
   return button.release();
 }
@@ -245,8 +248,7 @@ ReplayPortfolioSection makeReplayPortfolioSection(QWidget *owner) {
   section.box->setObjectName("replayPortfolioBox");
   section.box->setAccessibleName("Portfolio status");
 
-  auto *portfolioLayout =
-      std::make_unique<QGridLayout>(section.box).release();
+  auto *portfolioLayout = std::make_unique<QGridLayout>(section.box).release();
   portfolioLayout->setContentsMargins(16, 20, 16, 14);
   portfolioLayout->setHorizontalSpacing(10);
   portfolioLayout->setVerticalSpacing(8);
@@ -283,8 +285,7 @@ ReplayTradeLogSection makeReplayTradeLogSection(QWidget *owner) {
   section.panel->setAccessibleName("Trade log panel");
   section.panel->setFrameShape(QFrame::StyledPanel);
 
-  auto *tradeLogLayout =
-      std::make_unique<QVBoxLayout>(section.panel).release();
+  auto *tradeLogLayout = std::make_unique<QVBoxLayout>(section.panel).release();
   tradeLogLayout->setContentsMargins(10, 10, 10, 10);
   tradeLogLayout->setSpacing(8);
 

@@ -1,10 +1,11 @@
 # 02 — Frontend (Qt)
 
 > **Status:** Partially implemented. The current application contains Qt tab,
-> chart, replay scaffolding, and a starter Backtest page for the limited engine
-> slice documented in `07` §1. Strategy authoring, complete backtest workflows,
-> screening, plugins, and release-quality UX remain planned unless their owning
-> spec says otherwise.
+> chart, replay scaffolding, and a Backtest page for the limited engine slice
+> documented in `07` §1. That page supports the fixed starter strategy and the
+> implemented Selectable Conditions subset; saved-strategy authoring, Python
+> strategies, complete backtest workflows, screening, plugins, and
+> release-quality UX remain planned unless their owning spec says otherwise.
 
 This spec owns the Qt presentation interface: every screen the user sees, chart
 presentation, and how the UI communicates with backend modules without blocking
@@ -92,13 +93,16 @@ editor's current Strategy.
 
 ### 2.2 Backtest tab
 
-The implemented starter page exposes symbol, range, capital, and whole-share
-quantity controls for one fixed starter strategy. It reports the run status,
-cash, position, market value, equity, P&L, processed-bar count, and its optional
-fill. Each range calendar provides a directly selectable year dropdown alongside
-the month control instead of requiring repeated previous/next navigation. This
-is an incremental implementation of the layout below; the complete Run
-Configuration, equity curve, metrics, and sortable trade log remain planned.
+The implemented page exposes symbol, range, capital, and whole-share quantity
+controls plus a strategy selector. The fixed starter strategy remains available;
+the Selectable Conditions option provides flat ALL/ANY buy and sell groups over
+close, SMA, and EMA comparisons. It reports the run status, cash, position,
+market value, equity, P&L, processed-bar count, and every fill in a multi-row
+trade log. Each range calendar provides a directly selectable year dropdown
+alongside the month control instead of requiring repeated previous/next
+navigation. This is an incremental implementation of the layout below; saved
+Run Configurations, the equity curve, complete metrics, and sortable/proxy-model
+trade-log behavior remain planned.
 
 | Region | Content |
 |---|---|

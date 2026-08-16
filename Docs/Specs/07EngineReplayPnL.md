@@ -10,13 +10,15 @@ that reads a Backtest Result and never executes a Strategy or engine event.
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | CSV-backed bar loading; forward/back bar stepping; replay clock controls; candlestick/volume presentation; legacy JSON replay-summary persistence/comparison; and one starter Backtest slice. The starter slice submits a fixed whole-share market buy on the first bar, makes it eligible at the next actual bar open with 1 bp adverse slippage, rejects an unaffordable full fill without changing cash, and marks an open long position at the final close. |
-| **Planned** | Synchronized `MarketSlice`, strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, immutable snapshots, canonical hashes, and SQLite `.bteresult`. |
+| **Implemented** | CSV-backed bar loading; forward/back bar stepping; replay clock controls; candlestick/volume presentation; legacy JSON replay-summary persistence/comparison; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice. A selected buy/sell signal queues a whole-share market order for the next actual bar open, with 1 bp adverse slippage; buy cash failures preserve cash and open positions are marked at final close. |
+| **Planned** | Synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, immutable snapshots, canonical hashes, and SQLite `.bteresult`. |
 | **Blocked** | Public release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
 
-The starter slice is intentionally single-symbol and single-order. It does not
-persist a canonical Backtest Result and is not evidence that the complete engine
-contract below is implemented. Legacy JSON snapshots are implemented current
+The current starter and selectable slices are intentionally single-symbol; the
+selectable path supports only a flat position and whole-quantity long entry or
+exit. Neither slice persists a canonical Backtest Result and neither is
+evidence that the complete engine contract below is implemented. The starter
+slice remains single-order. Legacy JSON snapshots are implemented current
 behavior, not the target result contract.
 
 ### 1.1 Execution modes and scheduling

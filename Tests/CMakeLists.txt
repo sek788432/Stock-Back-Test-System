@@ -32,6 +32,30 @@ target_compile_definitions(
 gtest_discover_tests(bte_data_tests DISCOVERY_TIMEOUT 30)
 
 add_executable(
+  bte_indicators_tests
+  Unit/Indicators/UnitTest_StreamingIndicator.cpp)
+
+target_link_libraries(
+  bte_indicators_tests
+  PRIVATE
+    bte::indicators
+    GTest::gtest_main)
+
+gtest_discover_tests(bte_indicators_tests DISCOVERY_TIMEOUT 30)
+
+add_executable(
+  bte_strategy_tests
+  Unit/Strategy/UnitTest_SelectableStrategy.cpp)
+
+target_link_libraries(
+  bte_strategy_tests
+  PRIVATE
+    bte::strategy
+    GTest::gtest_main)
+
+gtest_discover_tests(bte_strategy_tests DISCOVERY_TIMEOUT 30)
+
+add_executable(
   bte_engine_tests
   Unit/Engine/UnitTest_Backtest.cpp
   Unit/Engine/UnitTest_Replay.cpp

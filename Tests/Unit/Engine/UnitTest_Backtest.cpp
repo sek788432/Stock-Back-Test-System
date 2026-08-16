@@ -2,6 +2,7 @@
 
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Cancellation.h"
+#include "Bte/Strategy/SelectableStrategy.h"
 
 #include <gtest/gtest.h>
 
@@ -46,6 +47,7 @@ TEST(BacktestTest, starterMarketBuyFillsAtNextBarOpenAndMarksFinalEquity) {
       .bars = {makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 120.0)},
       .initialCapitalMicrodollars = 2'000'000'000,
       .quantityShares = 10,
+      .selectableStrategy = {},
   };
 
   const auto result = bte::engine::runBacktest(request);
@@ -69,6 +71,7 @@ TEST(BacktestTest, unaffordableNextOpenRejectsOrderWithoutChangingCash) {
       .bars = {makeBar(2, 50.0, 50.0), makeBar(3, 150.0, 160.0)},
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 10,
+      .selectableStrategy = {},
   };
 
   const auto result = bte::engine::runBacktest(request);
@@ -87,6 +90,7 @@ TEST(BacktestTest, oneBarCancelsOrderBecauseNoFutureMarketDataExists) {
       .bars = {makeBar(2, 100.0, 105.0)},
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   };
 
   const auto result = bte::engine::runBacktest(request);
@@ -99,6 +103,289 @@ TEST(BacktestTest, oneBarCancelsOrderBecauseNoFutureMarketDataExists) {
   EXPECT_EQ(result.value().equityMicrodollars, 1'000'000'000);
 }
 
+TEST(BacktestTest, selectableConditionsExecuteBuyAndSellOnlyAtNextActualOpen) {
+  const auto
+      request =
+          bte::engine::BacktestRequest{
+              .bars =
+                  {
+                      makeFlatBar(2, 100.0),
+                      makeFlatBar(3, 110.0),
+                      makeFlatBar(4, 100.0),
+                      makeFlatBar(5, 90.0),
+                  },
+              .initialCapitalMicrodollars = 2'000'000'000,
+              .quantityShares = 10,
+              .selectableStrategy =
+                  bte::strategy::SelectableStrategyPlan{
+                      .buy =
+                          {
+                              .logic = bte::strategy::ConditionLogic::all,
+                              .conditions = {bte::strategy::Condition{
+                                  .source = bte::strategy::ConditionSource::
+                                      closeChangePercent,
+                                  .comparison =
+                                      bte::strategy::Comparison::greaterThan,
+                                  .threshold = 5.0,
+                                  .thresholdDomain =
+                                      bte::indicators::NumericDomain::percent,
+                              }},
+                          },
+                      .sell =
+                          {
+                              .logic = bte::strategy::ConditionLogic::all,
+                              .conditions =
+                                  {
+                                      bte::strategy::Condition{
+                                          .source =
+                                              bte::strategy::ConditionSource::
+                                                  closeChangePercent,
+                                          .comparison =
+                                              bte::strategy::Comparison::lessThan,
+                                          .threshold = -5.0,
+                                          .thresholdDomain = bte::indicators::NumericDomain::percent,
+                                      }},
+                          },
+                  },
+          };
+
+  const auto result = bte::engine::runBacktest(request);
+
+  ASSERT_TRUE(result.ok());
+  ASSERT_EQ(result.value().fills.size(), 2U);
+  EXPECT_EQ(result.value().fills[0].side, bte::engine::BacktestOrderSide::buy);
+  EXPECT_EQ(result.value().fills[0].timestamp, request.bars[2].ts);
+  EXPECT_EQ(result.value().fills[1].side, bte::engine::BacktestOrderSide::sell);
+  EXPECT_EQ(result.value().fills[1].timestamp, request.bars[3].ts);
+  EXPECT_EQ(result.value().positionShares, 0);
+  EXPECT_EQ(result.value().cashMicrodollars, 1'899'810'000);
+  EXPECT_EQ(result.value().equityMicrodollars, 1'899'810'000);
+}
+
+TEST(BacktestTest,
+     selectableConditionsReportNoSignalPendingAndRejectedOutcomes) {
+  const auto noSignal = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 10.0), makeFlatBar(3, 10.0)},
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {bte::strategy::Condition{
+                          .source = bte::strategy::ConditionSource::barField,
+                          .comparison = bte::strategy::Comparison::greaterThan,
+                          .threshold = 20.0,
+                      }}},
+              .sell = {},
+          },
+  });
+  const auto pending = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 5.0), makeFlatBar(3, 10.0)},
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {bte::strategy::Condition{
+                          .source = bte::strategy::ConditionSource::barField,
+                          .comparison = bte::strategy::Comparison::greaterThan,
+                          .threshold = 7.0,
+                      }}},
+              .sell = {},
+          },
+  });
+  const auto rejected = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 10.0), makeFlatBar(3, 10.0)},
+      .initialCapitalMicrodollars = 1,
+      .quantityShares = 1,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {bte::strategy::Condition{
+                          .source = bte::strategy::ConditionSource::barField,
+                          .comparison = bte::strategy::Comparison::greaterThan,
+                          .threshold = 0.0,
+                      }}},
+              .sell = {},
+          },
+  });
+
+  ASSERT_TRUE(noSignal.ok());
+  ASSERT_TRUE(pending.ok());
+  ASSERT_TRUE(rejected.ok());
+  EXPECT_EQ(noSignal.value().orderStatus,
+            bte::engine::StarterOrderStatus::completedNoSignal);
+  EXPECT_EQ(pending.value().orderStatus,
+            bte::engine::StarterOrderStatus::cancelledNoFutureMarketData);
+  EXPECT_EQ(rejected.value().orderStatus,
+            bte::engine::StarterOrderStatus::rejectedInsufficientCash);
+  const auto expectNoFill = [](const bte::engine::BacktestResult &result,
+                               const std::int64_t initialCapital) {
+    EXPECT_FALSE(result.fill.has_value());
+    EXPECT_TRUE(result.fills.empty());
+    EXPECT_EQ(result.positionShares, 0);
+    EXPECT_EQ(result.cashMicrodollars, initialCapital);
+    EXPECT_EQ(result.marketValueMicrodollars, 0);
+    EXPECT_EQ(result.equityMicrodollars, initialCapital);
+    EXPECT_EQ(result.pnlMicrodollars, 0);
+  };
+  expectNoFill(noSignal.value(), 1'000'000'000);
+  expectNoFill(pending.value(), 1'000'000'000);
+  expectNoFill(rejected.value(), 1);
+}
+
+TEST(BacktestTest, selectableConditionsPropagateExecutionAndPlanErrors) {
+  constexpr auto exclusivePriceUpperBound =
+      9'223'372'036'854'775'808.0 / 1'000'000'000.0;
+  const auto nearMaximumPrice = std::nextafter(exclusivePriceUpperBound, 0.0);
+  const auto alwaysBuy = bte::strategy::Condition{
+      .source = bte::strategy::ConditionSource::barField,
+      .comparison = bte::strategy::Comparison::greaterThan,
+      .threshold = 0.0,
+  };
+  const auto buyOverflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, nearMaximumPrice)},
+      .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
+      .quantityShares = 1,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {alwaysBuy}},
+              .sell = {},
+          },
+  });
+  const auto sellUnderflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 0.000000001), makeFlatBar(3, 0.000000001),
+               makeFlatBar(4, 0.000000001)},
+      .initialCapitalMicrodollars = 1,
+      .quantityShares = 1,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {alwaysBuy}},
+              .sell = {.conditions = {alwaysBuy}},
+          },
+  });
+  const auto invalidPlan = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, 1.0)},
+      .initialCapitalMicrodollars = 1'000'000,
+      .quantityShares = 1,
+      .selectableStrategy = bte::strategy::SelectableStrategyPlan{},
+  });
+
+  EXPECT_FALSE(buyOverflow.ok());
+  EXPECT_FALSE(sellUnderflow.ok());
+  EXPECT_FALSE(invalidPlan.ok());
+  EXPECT_EQ(buyOverflow.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(sellUnderflow.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(invalidPlan.error().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+}
+
+TEST(BacktestTest, selectableConditionsPropagateNonFiniteIndicatorOutput) {
+  auto overflowBar = makeFlatBar(2, 1'000'000'000.0);
+  overflowBar.volume = std::numeric_limits<double>::max();
+  const auto result =
+      bte::engine::runBacktest(
+          {
+              .bars = {overflowBar},
+              .initialCapitalMicrodollars = 1'000'000,
+              .quantityShares = 1,
+              .selectableStrategy =
+                  bte::strategy::SelectableStrategyPlan{
+                      .buy = {.conditions = {bte::strategy::Condition{
+                                  .source =
+                                      bte::strategy::ConditionSource::indicator,
+                                  .comparison =
+                                      bte::strategy::Comparison::greaterThan,
+                                  .threshold = 0.0,
+                                  .indicator =
+                                      {
+                                          .kind = bte::indicators::IndicatorKind::vwap,
+                                          .period = 1,
+                                      },
+                              }}},
+                      .sell = {},
+                  },
+          });
+
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(BacktestTest, selectableConditionsPropagateEveryReachableAccountingError) {
+  constexpr auto highPrice = 9'000'000'000.0;
+  const auto alwaysBuy = bte::strategy::Condition{
+      .source = bte::strategy::ConditionSource::barField,
+      .comparison = bte::strategy::Comparison::greaterThan,
+      .threshold = 0.0,
+  };
+  const auto buyAmountOverflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 0.000000001), makeFlatBar(3, highPrice)},
+      .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
+      .quantityShares = 1'000'000'000,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {alwaysBuy}},
+              .sell = {},
+          },
+  });
+  const auto sellAmountOverflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 0.000000001), makeFlatBar(3, 0.000000001),
+               makeFlatBar(4, highPrice)},
+      .initialCapitalMicrodollars = 3'000'000,
+      .quantityShares = 1'000'000'000,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {alwaysBuy}},
+              .sell = {.conditions = {alwaysBuy}},
+          },
+  });
+  const auto sellCashOverflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 0.000000001), makeFlatBar(3, 0.000000001),
+               makeFlatBar(4, 10.0)},
+      .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
+      .quantityShares = 1,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {alwaysBuy}},
+              .sell = {.conditions = {alwaysBuy}},
+          },
+  });
+  const auto marketValueOverflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 0.000000001), makeFlatBar(3, 0.000000001),
+               makeFlatBar(4, highPrice)},
+      .initialCapitalMicrodollars = 3'000'000,
+      .quantityShares = 1'000'000'000,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {alwaysBuy}},
+              .sell = {},
+          },
+  });
+  const auto equityOverflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 0.000000001), makeFlatBar(3, 0.000000001),
+               makeFlatBar(4, highPrice)},
+      .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
+      .quantityShares = 1'000,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {alwaysBuy}},
+              .sell = {},
+          },
+  });
+
+  EXPECT_FALSE(buyAmountOverflow.ok());
+  EXPECT_FALSE(sellAmountOverflow.ok());
+  EXPECT_FALSE(sellCashOverflow.ok());
+  EXPECT_FALSE(marketValueOverflow.ok());
+  EXPECT_FALSE(equityOverflow.ok());
+  EXPECT_EQ(buyAmountOverflow.error().code,
+            bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(sellAmountOverflow.error().code,
+            bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(sellCashOverflow.error().code,
+            bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(marketValueOverflow.error().code,
+            bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(equityOverflow.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
 TEST(BacktestTest, invalidConfigurationAndBarsReturnInvalidArgument) {
   auto validBars =
       std::vector{makeBar(2, 100.0, 100.0), makeBar(3, 101.0, 102.0)};
@@ -107,16 +394,19 @@ TEST(BacktestTest, invalidConfigurationAndBarsReturnInvalidArgument) {
       .bars = validBars,
       .initialCapitalMicrodollars = 0,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto noQuantity = bte::engine::runBacktest({
       .bars = validBars,
       .initialCapitalMicrodollars = 1'000'000,
       .quantityShares = 0,
+      .selectableStrategy = {},
   });
   const auto noBars = bte::engine::runBacktest({
       .bars = {},
       .initialCapitalMicrodollars = 1'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   auto invalidBars = validBars;
   invalidBars[1].high = 1.0;
@@ -124,6 +414,7 @@ TEST(BacktestTest, invalidConfigurationAndBarsReturnInvalidArgument) {
       .bars = invalidBars,
       .initialCapitalMicrodollars = 1'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(noCapital.ok());
@@ -141,6 +432,7 @@ TEST(BacktestTest, quantityAboveStarterLimitIsRejectedAtBoundary) {
       .bars = {makeBar(2, 2.0, 2.0), makeBar(3, 2.0, 2.0)},
       .initialCapitalMicrodollars = 5'000'000'000'000'000,
       .quantityShares = 1'000'000'001,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(result.ok());
@@ -152,6 +444,7 @@ TEST(BacktestTest, maximumStarterQuantityIsAcceptedAtBoundary) {
       .bars = {makeBar(2, 2.0, 2.0), makeBar(3, 2.0, 2.0)},
       .initialCapitalMicrodollars = 5'000'000'000'000'000,
       .quantityShares = 1'000'000'000,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(result.ok());
@@ -169,16 +462,19 @@ TEST(BacktestTest, exactAffordabilityFillsAndOneMicrodollarLessRejects) {
       .bars = bars,
       .initialCapitalMicrodollars = 1'000'100'000,
       .quantityShares = 10,
+      .selectableStrategy = {},
   });
   const auto below = bte::engine::runBacktest({
       .bars = bars,
       .initialCapitalMicrodollars = 1'000'099'999,
       .quantityShares = 10,
+      .selectableStrategy = {},
   });
   const auto above = bte::engine::runBacktest({
       .bars = bars,
       .initialCapitalMicrodollars = 1'000'100'001,
       .quantityShares = 10,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(exact.ok());
@@ -199,6 +495,7 @@ TEST(BacktestTest, minimumCapitalIsAcceptedAtBoundary) {
       .bars = {makeBar(2, 2.0, 2.0), makeBar(3, 2.0, 2.0)},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(result.ok());
@@ -217,11 +514,13 @@ TEST(BacktestTest, duplicateAndDecreasingTimestampsAreRejected) {
       .bars = duplicate,
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto decreasingResult = bte::engine::runBacktest({
       .bars = decreasing,
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(duplicateResult.ok());
@@ -249,6 +548,7 @@ TEST(BacktestTest, priceThatNormalizesToZeroIsRejected) {
       .bars = {tinyBar, nextTinyBar},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(result.ok());
@@ -264,11 +564,13 @@ TEST(BacktestTest, priceConversionRejectsUnsafeBoundaryAndAcceptsBelowIt) {
       .bars = {makeFlatBar(2, exclusivePriceUpperBound)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto safe = bte::engine::runBacktest({
       .bars = {makeFlatBar(2, safePrice)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(unsafe.ok());
@@ -288,6 +590,7 @@ TEST(BacktestTest, everyBarMustBeFiniteAndRepresentableAtTheEngineSeam) {
       .bars = bars,
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   auto infiniteVolumeBars =
       std::vector{makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 110.0)};
@@ -296,6 +599,7 @@ TEST(BacktestTest, everyBarMustBeFiniteAndRepresentableAtTheEngineSeam) {
       .bars = infiniteVolumeBars,
       .initialCapitalMicrodollars = 1'000'000'000,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(result.ok());
@@ -312,12 +616,14 @@ TEST(BacktestTest, checkedArithmeticRejectsSlippageAndMarketValueOverflow) {
       .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, nearMaximumPrice)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto marketValueOverflow = bte::engine::runBacktest({
       .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, 1.0),
                makeFlatBar(4, 9'000'000'000.0)},
       .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
       .quantityShares = 1'000'000'000,
+      .selectableStrategy = {},
   });
 
   EXPECT_FALSE(slippageOverflow.ok());
@@ -337,6 +643,7 @@ TEST(BacktestTest, subMicrodollarFillRoundsToNearestMicrodollar) {
       .bars = {makeFlatBar(2, 0.0000005), makeFlatBar(3, 0.0000005)},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(result.ok());
@@ -352,11 +659,13 @@ TEST(BacktestTest, priceNormalizationUsesHalfEvenTies) {
       .bars = {makeFlatBar(2, 0.0000000025)},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
   const auto tieToOdd = bte::engine::runBacktest({
       .bars = {makeFlatBar(2, 0.0000000035)},
       .initialCapitalMicrodollars = 1,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   ASSERT_TRUE(tieToEven.ok());
@@ -374,6 +683,7 @@ TEST(BacktestTest, requestedStopCancelsBeforeExecution) {
           .bars = {makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 120.0)},
           .initialCapitalMicrodollars = 2'000'000'000,
           .quantityShares = 10,
+          .selectableStrategy = {},
       },
       cancellation.token());
 

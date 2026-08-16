@@ -1,11 +1,15 @@
 #include "Bte/Bindings/BacktestSessionVm.h"
 
+// IWYU pragma: no_include <math>
+
 #include "Bte/Bindings/ReplayDataLoader.h"
 #include "Bte/Engine/Backtest.h"
 
+#include <algorithm> // IWYU pragma: keep
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <string> // IWYU pragma: keep
 #include <utility>
 
 namespace bte::bindings {
@@ -50,8 +54,20 @@ BacktestOutcome toViewOutcome(const engine::StarterOrderStatus status) {
     return BacktestOutcome::rejectedInsufficientCash;
   case engine::StarterOrderStatus::cancelledNoFutureMarketData:
     return BacktestOutcome::cancelledNoFutureMarketData;
+  case engine::StarterOrderStatus::completedNoSignal:
+    return BacktestOutcome::completedNoSignal;
   }
   return BacktestOutcome::cancelledNoFutureMarketData;
+}
+
+BacktestFillSide toViewSide(const engine::BacktestOrderSide side) {
+  switch (side) {
+  case engine::BacktestOrderSide::buy:
+    return BacktestFillSide::buy;
+  case engine::BacktestOrderSide::sell:
+    return BacktestFillSide::sell;
+  }
+  return BacktestFillSide::buy;
 }
 
 double moneyToDollars(const std::int64_t microdollars) {
@@ -70,6 +86,18 @@ core::Result<BacktestSnapshot>
 runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
                    const std::int64_t quantityShares,
                    const core::CancellationToken &cancellation) {
+  return runBacktestSession(std::move(bars), initialCapital, quantityShares,
+                            std::nullopt, cancellation);
+}
+
+core::Result<BacktestSnapshot>
+// The scalar inputs are intentionally kept explicit at this starter seam.
+runBacktestSession(
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    std::vector<core::Bar> bars, const double initialCapital,
+    const std::int64_t quantityShares,
+    std::optional<strategy::SelectableStrategyPlan> selectableStrategy,
+    const core::CancellationToken &cancellation) {
   const auto normalizedCapital = normalizedCapitalMicrodollars(initialCapital);
   if (!normalizedCapital.ok()) {
     return normalizedCapital.error();
@@ -79,6 +107,7 @@ runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
       .bars = std::move(bars),
       .initialCapitalMicrodollars = normalizedCapital.value(),
       .quantityShares = quantityShares,
+      .selectableStrategy = std::move(selectableStrategy),
   };
   auto engineResult = engine::runBacktest(request, cancellation);
   if (!engineResult.ok()) {
@@ -89,23 +118,28 @@ runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
   auto snapshot = BacktestSnapshot{
       .outcome = toViewOutcome(result.orderStatus),
       .fill = {},
+      .fills = {},
       .initialCapital = moneyToDollars(result.initialCapitalMicrodollars),
       .cash = moneyToDollars(result.cashMicrodollars),
       .marketValue = moneyToDollars(result.marketValueMicrodollars),
       .equity = moneyToDollars(result.equityMicrodollars),
       .pnl = moneyToDollars(result.pnlMicrodollars),
       .finalPrice = priceToDollars(result.finalPriceNanodollars),
-      .positionShares =
-          result.fill.has_value() ? result.fill->quantityShares : 0,
+      .positionShares = result.positionShares,
       .barsProcessed = result.barsProcessed,
   };
-  if (result.fill.has_value()) {
-    snapshot.fill = BacktestFillSnapshot{
-        .timestamp = result.fill->timestamp,
-        .quantityShares = result.fill->quantityShares,
-        .price = priceToDollars(result.fill->priceNanodollars),
-        .amount = moneyToDollars(result.fill->amountMicrodollars),
-    };
+  snapshot.fills.reserve(result.fills.size());
+  for (const auto &fill : result.fills) {
+    snapshot.fills.push_back({
+        .timestamp = fill.timestamp,
+        .side = toViewSide(fill.side),
+        .quantityShares = fill.quantityShares,
+        .price = priceToDollars(fill.priceNanodollars),
+        .amount = moneyToDollars(fill.amountMicrodollars),
+    });
+  }
+  if (!snapshot.fills.empty()) {
+    snapshot.fill = snapshot.fills.front();
   }
   return snapshot;
 }
@@ -121,7 +155,8 @@ runBacktestConfiguration(const BacktestConfiguration &configuration,
   }
   return runBacktestSession(std::move(bars).value(),
                             configuration.initialCapital,
-                            configuration.quantityShares, cancellation);
+                            configuration.quantityShares,
+                            configuration.selectableStrategy, cancellation);
 }
 
 } // namespace bte::bindings

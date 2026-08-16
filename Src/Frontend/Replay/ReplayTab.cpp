@@ -10,16 +10,25 @@
 #include <QComboBox>
 #include <QDateEdit>
 #include <QDoubleSpinBox>
+#include <QFrame>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
+#include <QObject>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QString>
 #include <QTimer>
 #include <QToolButton>
-#include <QVBoxLayout>
+#include <QtCore/Qt>
 
 #include <memory>
+#include <span>
+#include <vector>
+
+#include "Bte/Core/Bar.h"
 
 namespace bte::frontend {
 using bte::bindings::loadReplayBars;

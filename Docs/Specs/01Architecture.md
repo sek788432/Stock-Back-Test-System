@@ -4,9 +4,9 @@ This spec defines module seams and ownership. [ADR 0011](../Decisions/0011-own-t
 
 ## 1. Status
 
-- **Implemented:** Core, CSV Data, basic Replay, a limited starter Engine,
-  Bindings, Frontend, and App targets exist. The Qt shell includes its own
-  Backtest page and is optional at configure time.
+- **Implemented:** Core, CSV Data, Indicators, Selectable Strategy, basic
+  Replay, a limited Engine, Bindings, Frontend, and App targets exist. The Qt
+  shell includes its own Backtest page and is optional at configure time.
 - **Planned:** the complete module graph below, general Strategy/`MarketSlice`
   seam, Python worker, snapshot builder, complete broker/accounting/metrics,
   canonical results, and `.bteresult` persistence.

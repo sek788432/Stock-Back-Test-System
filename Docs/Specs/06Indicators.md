@@ -9,8 +9,8 @@ recompute executable strategy decisions.
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | No production indicator module exists. |
-| **Planned** | The interface, catalog, registry, warm-up, history, chart snapshots, and Python exposure defined here. |
+| **Implemented** | `StreamingIndicator` provides validated construction, chronological update, `latest`, consumed-bar count, and reset. It implements SMA, EMA, WMA, RSI, MACD, Bollinger bands, ATR, ADX, stochastic, Donchian, rolling VWAP, OBV, ROC, momentum, true range, and bar-field outputs for the Selectable Conditions path. Its per-bar update uses preconfigured state only. |
+| **Planned** | Registry-by-name construction, bounded display history, checkpointing, session-reset VWAP, crossover composition, chart snapshots, and Python exposure. |
 | **Blocked** | No indicator may be labelled available until its implementation and required tests land. |
 
 ## 2. Contract
@@ -41,12 +41,14 @@ The planned narrow interface provides update, latest typed value, bounded histor
 | Crossover | Above, below, or no-cross event using prior and current values. |
 | Bar field | Open, high, low, close, or volume passthrough. |
 
-Keltner, CCI, MFI, Parabolic SAR, Ichimoku, and user/plugin indicators are future scope and must remain labelled **Planned**.
+Crossover composition, Keltner, CCI, MFI, Parabolic SAR, Ichimoku, and
+user/plugin indicators are future scope and must remain labelled **Planned**.
 
 ## 4. Values, history, and precision
 
 - Internal analytics may use `double`; authoritative accounting types remain the fixed-point types in `07` §7.
-- Price-like, quantity-like, rate-like, and Boolean outputs retain their domain type at the C++ seam.
+- `IndicatorValue` carries both a finite `double` and its price, volume,
+  percentage, or scalar domain at the C++ seam.
 - Python receives finite `float` values for warmed indicators and `None` before warm-up.
 - Selectable Conditions compare typed values and reject incompatible operands at compile time.
 - History defaults to a bounded 4,096-value ring for display. An indicator retains any larger internal window needed for correctness.

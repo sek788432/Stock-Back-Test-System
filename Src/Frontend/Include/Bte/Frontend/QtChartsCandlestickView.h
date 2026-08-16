@@ -1,11 +1,13 @@
 #pragma once
 
+#include "Bte/Core/Bar.h" // IWYU pragma: keep
 #include "Bte/Frontend/IChartView.h"
 
+#include <QObject>
 #include <QWidget>
 
 #include <cstddef>
-#include <memory>
+#include <span> // IWYU pragma: keep
 
 class QChart;
 class QChartView;
@@ -27,7 +29,6 @@ public:
 
   [[nodiscard]] std::size_t candleCount() const noexcept;
 
-public slots:
   void zoomIn();
   void zoomOut();
   void resetZoom();

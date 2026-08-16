@@ -40,6 +40,9 @@ private slots:
   void configuredRunPreservesDataSourceError();
   void filledSnapshotPreservesNextBarTimestamp();
   void capitalUsesHalfEvenRoundingAtTheMinimumBoundary();
+  void selectablePlanPresentsBothBuyAndSellFills();
+  void selectablePlanPresentsNoSignalOutcome();
+  void invalidSelectablePlanPreservesCompileError();
   void configuredRunComposesTrackedDataAndEngine();
 };
 
@@ -158,6 +161,7 @@ void BacktestSessionVmTest::configuredRunPreservesDataSourceError() {
       .endDate = QDate{2024, 1, 2},
       .initialCapital = 1'000.0,
       .quantityShares = 1,
+      .selectableStrategy = {},
   });
 
   QVERIFY(!result.ok());
@@ -196,6 +200,71 @@ void BacktestSessionVmTest::capitalUsesHalfEvenRoundingAtTheMinimumBoundary() {
   QCOMPARE(roundsToMinimum.value().initialCapital, 0.000001);
 }
 
+void BacktestSessionVmTest::selectablePlanPresentsBothBuyAndSellFills() {
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy =
+          {
+              .conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::closeChangePercent,
+                  .comparison = bte::strategy::Comparison::greaterThan,
+                  .threshold = 5.0,
+                  .thresholdDomain = bte::indicators::NumericDomain::percent,
+              }},
+          },
+      .sell =
+          {
+              .conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::closeChangePercent,
+                  .comparison = bte::strategy::Comparison::lessThan,
+                  .threshold = -5.0,
+                  .thresholdDomain = bte::indicators::NumericDomain::percent,
+              }},
+          },
+  };
+  const auto result = bte::bindings::runBacktestSession(
+      {makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 110.0),
+       makeBar(4, 100.0, 100.0), makeBar(5, 90.0, 90.0)},
+      2'000.0, 10, plan);
+
+  QVERIFY(result.ok());
+  QCOMPARE(result.value().outcome, bte::bindings::BacktestOutcome::filled);
+  QCOMPARE(result.value().fills.size(), 2U);
+  QCOMPARE(result.value().fills[0].side, bte::bindings::BacktestFillSide::buy);
+  QCOMPARE(result.value().fills[1].side, bte::bindings::BacktestFillSide::sell);
+  QCOMPARE(result.value().positionShares, 0);
+  QCOMPARE(result.value().cash, 1'899.81);
+}
+
+void BacktestSessionVmTest::selectablePlanPresentsNoSignalOutcome() {
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy =
+          {
+              .conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::barField,
+                  .comparison = bte::strategy::Comparison::greaterThan,
+                  .threshold = 1'000.0,
+              }},
+          },
+      .sell = {},
+  };
+  const auto result = bte::bindings::runBacktestSession(
+      {makeBar(2, 100.0, 100.0), makeBar(3, 101.0, 101.0)}, 1'000.0, 1, plan);
+
+  QVERIFY(result.ok());
+  QCOMPARE(result.value().outcome,
+           bte::bindings::BacktestOutcome::completedNoSignal);
+  QVERIFY(result.value().fills.empty());
+}
+
+void BacktestSessionVmTest::invalidSelectablePlanPreservesCompileError() {
+  const auto result = bte::bindings::runBacktestSession(
+      {makeBar(2, 100.0, 100.0), makeBar(3, 101.0, 101.0)}, 1'000.0, 1,
+      bte::strategy::SelectableStrategyPlan{});
+
+  QVERIFY(!result.ok());
+  QCOMPARE(result.error().code, bte::core::ErrorCode::strategyCompileFailed);
+}
+
 void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
   const auto result = bte::bindings::runBacktestConfiguration({
       .symbol = "AAPL",
@@ -204,6 +273,7 @@ void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
       .endDate = QDate{2018, 5, 3},
       .initialCapital = 100'000.0,
       .quantityShares = 7,
+      .selectableStrategy = {},
   });
 
   QVERIFY(result.ok());
