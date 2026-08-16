@@ -736,9 +736,7 @@ StreamingIndicator::create(const IndicatorDefinition &definition) {
   try {
     return StreamingIndicator{std::make_unique<Impl>(validated.value())};
   } catch (const std::exception &error) {
-    return core::makeError(core::ErrorCode::internal,
-                           std::string{"could not allocate indicator state: "} +
-                               error.what());
+    return core::makeError(core::ErrorCode::internal, error.what());
   }
 }
 

@@ -264,9 +264,7 @@ SelectableStrategy::create(SelectableStrategyPlan plan) {
     auto implementation = std::make_unique<Impl>(std::move(plan));
     return std::make_unique<SelectableStrategy>(std::move(implementation));
   } catch (const std::exception &error) {
-    return core::makeError(core::ErrorCode::internal,
-                           std::string{"could not allocate strategy state: "} +
-                               error.what());
+    return core::makeError(core::ErrorCode::internal, error.what());
   }
 }
 
