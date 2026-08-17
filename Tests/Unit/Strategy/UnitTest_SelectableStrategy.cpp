@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <limits>
+#include <string>
 
 namespace {
 
@@ -149,6 +150,23 @@ TEST(SelectableStrategyTest, invalidPlansDoNotCreateExecutableStrategies) {
             bte::core::ErrorCode::strategyCompileFailed);
   EXPECT_EQ(invalidIndicator.error().code,
             bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_NE(invalidIndicator.error().message.find("buy condition group"),
+            std::string::npos);
+  EXPECT_NE(invalidIndicator.error().message.find(
+                "indicator period must be between 1 and 10000"),
+            std::string::npos);
+  ASSERT_EQ(invalidIndicator.error().causes.size(), 1U);
+  EXPECT_EQ(invalidIndicator.error().causes.front().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_NE(invalidIndicator.error().causes.front().message.find(
+                "condition has an invalid indicator"),
+            std::string::npos);
+  ASSERT_EQ(invalidIndicator.error().causes.front().causes.size(), 1U);
+  EXPECT_EQ(invalidIndicator.error().causes.front().causes.front().code,
+            bte::core::ErrorCode::invalidArgument);
+  EXPECT_NE(invalidIndicator.error().causes.front().causes.front().message.find(
+                "indicator period must be between 1 and 10000"),
+            std::string::npos);
 }
 
 TEST(SelectableStrategyTest, groupsAllowTwoConditionsAndRejectThree) {
@@ -364,6 +382,51 @@ TEST(SelectableStrategyTest, invalidSellPlanIsRejectedAfterValidBuyPlan) {
   EXPECT_FALSE(invalidSell.ok());
   EXPECT_EQ(invalidSell.error().code,
             bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_NE(invalidSell.error().message.find("sell condition group"),
+            std::string::npos);
+  EXPECT_NE(invalidSell.error().message.find(
+                "indicator period must be between 1 and 10000"),
+            std::string::npos);
+  ASSERT_EQ(invalidSell.error().causes.size(), 1U);
+  EXPECT_EQ(invalidSell.error().causes.front().code,
+            bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_NE(invalidSell.error().causes.front().message.find(
+                "condition has an invalid indicator"),
+            std::string::npos);
+}
+
+TEST(SelectableStrategyTest,
+     indicatorPeriodAcceptsMaximumAndRejectsNextValueDuringConstruction) {
+  const auto maximum = bte::strategy::SelectableStrategy::create({
+      .buy = {.conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::indicator,
+                  .indicator =
+                      {
+                          .kind = bte::indicators::IndicatorKind::sma,
+                          .period = bte::indicators::maximumIndicatorPeriod,
+                      },
+              }}},
+      .sell = {},
+  });
+  const auto tooLarge = bte::strategy::SelectableStrategy::create({
+      .buy = {.conditions = {priceChangeCondition(
+                  bte::strategy::Comparison::greaterThan, 1.0)}},
+      .sell = {.conditions = {bte::strategy::Condition{
+                   .source = bte::strategy::ConditionSource::indicator,
+                   .indicator =
+                       {
+                           .kind = bte::indicators::IndicatorKind::sma,
+                           .period =
+                               bte::indicators::maximumIndicatorPeriod + 1,
+                       },
+               }}},
+  });
+
+  EXPECT_TRUE(maximum.ok());
+  EXPECT_FALSE(tooLarge.ok());
+  EXPECT_EQ(tooLarge.error().code, bte::core::ErrorCode::strategyCompileFailed);
+  EXPECT_NE(tooLarge.error().message.find("sell condition group"),
+            std::string::npos);
 }
 
 TEST(SelectableStrategyTest, moveOperationsPreserveExecutableStrategyState) {

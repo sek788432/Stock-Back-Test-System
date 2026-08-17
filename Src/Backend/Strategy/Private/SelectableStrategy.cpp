@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -63,6 +64,22 @@ isNumericDomain(const indicators::NumericDomain domain) noexcept {
                          std::move(message));
 }
 
+[[nodiscard]] core::Error withContext(const core::Error &error,
+                                      const std::string_view context) {
+  auto contextual =
+      core::makeError(error.code, std::string{context} + ": " + error.message);
+  contextual.causes.push_back(error);
+  return contextual;
+}
+
+[[nodiscard]] core::Error
+compileErrorWithCause(const core::Error &error,
+                      const std::string_view context) {
+  auto contextual = compileError(std::string{context} + ": " + error.message);
+  contextual.causes.push_back(error);
+  return contextual;
+}
+
 [[nodiscard]] core::Result<Condition>
 validateCondition(const Condition &condition) {
   if (!isSource(condition.source) || !isComparison(condition.comparison) ||
@@ -88,16 +105,6 @@ validateCondition(const Condition &condition) {
           "condition threshold domain does not match close-change percentage");
     }
     return condition;
-  }
-  const auto indicator =
-      indicators::StreamingIndicator::create(condition.indicator);
-  if (!indicator.ok()) {
-    return compileError("condition has an invalid indicator: " +
-                        indicator.error().message);
-  }
-  if (indicators::indicatorOutputDomain(condition.indicator) !=
-      condition.thresholdDomain) {
-    return compileError("condition threshold domain does not match indicator");
   }
   return condition;
 }
@@ -138,8 +145,21 @@ struct SelectableStrategy::Impl final {
   };
 
   explicit Impl(SelectableStrategyPlan configuredPlan)
-      : plan(std::move(configuredPlan)), buy(makeGroup(plan.buy)),
-        sell(makeGroup(plan.sell)) {}
+      : plan(std::move(configuredPlan)) {}
+
+  [[nodiscard]] core::Result<bool> initialize() {
+    auto buyGroup = makeGroup(plan.buy, true, "buy condition group");
+    if (!buyGroup.ok()) {
+      return buyGroup.error();
+    }
+    auto sellGroup = makeGroup(plan.sell, false, "sell condition group");
+    if (!sellGroup.ok()) {
+      return sellGroup.error();
+    }
+    buy = std::move(buyGroup).value();
+    sell = std::move(sellGroup).value();
+    return true;
+  }
 
   [[nodiscard]] core::Result<SelectableStrategySignal>
   onBar(const core::Bar &bar) {
@@ -163,7 +183,13 @@ struct SelectableStrategy::Impl final {
     return signal;
   }
 
-  [[nodiscard]] static RuntimeGroup makeGroup(const ConditionGroup &group) {
+  [[nodiscard]] static core::Result<RuntimeGroup>
+  makeGroup(const ConditionGroup &group, const bool required,
+            const std::string_view context) {
+    const auto validation = validateGroup(group, required);
+    if (!validation.ok()) {
+      return withContext(validation.error(), context);
+    }
     auto runtime = RuntimeGroup{.logic = group.logic, .conditions = {}};
     runtime.conditions.reserve(group.conditions.size());
     for (const auto &condition : group.conditions) {
@@ -174,6 +200,22 @@ struct SelectableStrategy::Impl final {
       if (condition.source == ConditionSource::indicator) {
         auto indicator =
             indicators::StreamingIndicator::create(condition.indicator);
+        if (!indicator.ok()) {
+          const auto constructionError =
+              indicator.error().code == core::ErrorCode::invalidArgument
+                  ? compileErrorWithCause(indicator.error(),
+                                          "condition has an invalid indicator")
+                  : withContext(indicator.error(),
+                                "could not construct condition indicator");
+          return withContext(constructionError, context);
+        }
+        if (indicators::indicatorOutputDomain(condition.indicator) !=
+            condition.thresholdDomain) {
+          return withContext(
+              compileError(
+                  "condition threshold domain does not match indicator"),
+              context);
+        }
         runtimeCondition.indicator =
             std::make_unique<indicators::StreamingIndicator>(
                 std::move(indicator).value());
@@ -252,16 +294,12 @@ SelectableStrategy::operator=(SelectableStrategy &&) noexcept = default;
 
 core::Result<std::unique_ptr<SelectableStrategy>>
 SelectableStrategy::create(SelectableStrategyPlan plan) {
-  const auto buyValidation = validateGroup(plan.buy, true);
-  if (!buyValidation.ok()) {
-    return buyValidation.error();
-  }
-  const auto sellValidation = validateGroup(plan.sell, false);
-  if (!sellValidation.ok()) {
-    return sellValidation.error();
-  }
   try {
     auto implementation = std::make_unique<Impl>(std::move(plan));
+    const auto initialized = implementation->initialize();
+    if (!initialized.ok()) {
+      return initialized.error();
+    }
     return std::make_unique<SelectableStrategy>(std::move(implementation));
   } catch (const std::exception &error) {
     return core::makeError(core::ErrorCode::internal, error.what());
