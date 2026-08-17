@@ -5,7 +5,6 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
 #include <memory>
-#include <utility>
 
 namespace bte::strategy::detail {
 
@@ -14,10 +13,7 @@ using IndicatorFactory = core::Result<indicators::StreamingIndicator> (*)(
 
 struct SelectableStrategyTestAccess final {
   [[nodiscard]] static core::Result<std::unique_ptr<SelectableStrategy>>
-  create(SelectableStrategyPlan plan, IndicatorFactory indicatorFactory) {
-    return SelectableStrategy::createWithIndicatorFactory(std::move(plan),
-                                                          indicatorFactory);
-  }
+  create(SelectableStrategyPlan plan, IndicatorFactory indicatorFactory);
 };
 
 } // namespace bte::strategy::detail

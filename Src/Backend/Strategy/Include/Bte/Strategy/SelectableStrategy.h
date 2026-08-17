@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <utility>
 #include <vector>
 
 namespace bte::strategy {
@@ -64,10 +63,7 @@ struct SelectableStrategySignal {
 class SelectableStrategy final {
 public:
   [[nodiscard]] static core::Result<std::unique_ptr<SelectableStrategy>>
-  create(SelectableStrategyPlan plan) {
-    return createWithIndicatorFactory(std::move(plan),
-                                      &indicators::StreamingIndicator::create);
-  }
+  create(SelectableStrategyPlan plan);
 
   ~SelectableStrategy();
   SelectableStrategy(SelectableStrategy &&) noexcept;

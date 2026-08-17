@@ -312,6 +312,19 @@ SelectableStrategy::createWithIndicatorFactory(
   }
 }
 
+core::Result<std::unique_ptr<SelectableStrategy>>
+SelectableStrategy::create(SelectableStrategyPlan plan) {
+  return createWithIndicatorFactory(std::move(plan),
+                                    &indicators::StreamingIndicator::create);
+}
+
+core::Result<std::unique_ptr<SelectableStrategy>>
+detail::SelectableStrategyTestAccess::create(
+    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory) {
+  return SelectableStrategy::createWithIndicatorFactory(std::move(plan),
+                                                        indicatorFactory);
+}
+
 core::Result<SelectableStrategySignal>
 SelectableStrategy::onBar(const core::Bar &bar) {
   return impl_->onBar(bar);
