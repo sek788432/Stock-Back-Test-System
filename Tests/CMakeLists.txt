@@ -53,6 +53,11 @@ target_link_libraries(
     bte::strategy
     GTest::gtest_main)
 
+target_include_directories(
+  bte_strategy_tests
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Strategy/Private")
+
 gtest_discover_tests(bte_strategy_tests DISCOVERY_TIMEOUT 30)
 
 add_executable(

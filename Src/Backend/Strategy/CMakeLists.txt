@@ -2,6 +2,7 @@ add_library(
   bte_strategy
   STATIC
     Include/Bte/Strategy/SelectableStrategy.h
+    Private/SelectableStrategyDetail.h
     Private/SelectableStrategy.cpp)
 
 add_library(bte::strategy ALIAS bte_strategy)

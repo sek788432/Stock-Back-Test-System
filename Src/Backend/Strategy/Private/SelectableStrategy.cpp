@@ -1,5 +1,7 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
+#include "SelectableStrategyDetail.h"
+
 // IWYU pragma: no_include <math>
 
 #include <algorithm>
@@ -9,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -58,9 +61,15 @@ isNumericDomain(const indicators::NumericDomain domain) noexcept {
   return false;
 }
 
-[[nodiscard]] core::Error compileError(std::string message) {
-  return core::makeError(core::ErrorCode::strategyCompileFailed,
-                         std::move(message));
+[[nodiscard]] core::Error compileError(
+    std::string message,
+    const core::ErrorCode code = core::ErrorCode::strategyCompileFailed,
+    const core::Error *const cause = nullptr) {
+  auto error = core::makeError(code, std::move(message));
+  if (cause != nullptr) {
+    error.causes.push_back(*cause);
+  }
+  return error;
 }
 
 [[nodiscard]] core::Result<Condition>
@@ -88,16 +97,6 @@ validateCondition(const Condition &condition) {
           "condition threshold domain does not match close-change percentage");
     }
     return condition;
-  }
-  const auto indicator =
-      indicators::StreamingIndicator::create(condition.indicator);
-  if (!indicator.ok()) {
-    return compileError("condition has an invalid indicator: " +
-                        indicator.error().message);
-  }
-  if (indicators::indicatorOutputDomain(condition.indicator) !=
-      condition.thresholdDomain) {
-    return compileError("condition threshold domain does not match indicator");
   }
   return condition;
 }
@@ -137,9 +136,24 @@ struct SelectableStrategy::Impl final {
     std::vector<RuntimeCondition> conditions;
   };
 
-  explicit Impl(SelectableStrategyPlan configuredPlan)
-      : plan(std::move(configuredPlan)), buy(makeGroup(plan.buy)),
-        sell(makeGroup(plan.sell)) {}
+  explicit Impl(SelectableStrategyPlan configuredPlan,
+                const detail::IndicatorFactory configuredIndicatorFactory)
+      : plan(std::move(configuredPlan)),
+        indicatorFactory(configuredIndicatorFactory) {}
+
+  [[nodiscard]] core::Result<bool> initialize() {
+    auto buyGroup = makeGroup(plan.buy, true, "buy condition group");
+    if (!buyGroup.ok()) {
+      return buyGroup.error();
+    }
+    auto sellGroup = makeGroup(plan.sell, false, "sell condition group");
+    if (!sellGroup.ok()) {
+      return sellGroup.error();
+    }
+    buy = std::move(buyGroup).value();
+    sell = std::move(sellGroup).value();
+    return true;
+  }
 
   [[nodiscard]] core::Result<SelectableStrategySignal>
   onBar(const core::Bar &bar) {
@@ -163,7 +177,15 @@ struct SelectableStrategy::Impl final {
     return signal;
   }
 
-  [[nodiscard]] static RuntimeGroup makeGroup(const ConditionGroup &group) {
+  [[nodiscard]] core::Result<RuntimeGroup>
+  makeGroup(const ConditionGroup &group, const bool required,
+            const std::string_view context) const {
+    const auto validation = validateGroup(group, required);
+    if (!validation.ok()) {
+      return compileError(std::string{context} + ": " +
+                              validation.error().message,
+                          validation.error().code, &validation.error());
+    }
     auto runtime = RuntimeGroup{.logic = group.logic, .conditions = {}};
     runtime.conditions.reserve(group.conditions.size());
     for (const auto &condition : group.conditions) {
@@ -172,8 +194,28 @@ struct SelectableStrategy::Impl final {
           .indicator = {},
       };
       if (condition.source == ConditionSource::indicator) {
-        auto indicator =
-            indicators::StreamingIndicator::create(condition.indicator);
+        auto indicator = indicatorFactory(condition.indicator);
+        if (!indicator.ok()) {
+          const auto constructionError =
+              indicator.error().code == core::ErrorCode::invalidArgument
+                  ? compileError("condition has an invalid indicator: " +
+                                     indicator.error().message,
+                                 core::ErrorCode::strategyCompileFailed,
+                                 &indicator.error())
+                  : compileError("could not construct condition indicator: " +
+                                     indicator.error().message,
+                                 indicator.error().code, &indicator.error());
+          return compileError(std::string{context} + ": " +
+                                  constructionError.message,
+                              constructionError.code, &constructionError);
+        }
+        if (indicators::indicatorOutputDomain(condition.indicator) !=
+            condition.thresholdDomain) {
+          const auto domainError = compileError(
+              "condition threshold domain does not match indicator");
+          return compileError(std::string{context} + ": " + domainError.message,
+                              domainError.code, &domainError);
+        }
         runtimeCondition.indicator =
             std::make_unique<indicators::StreamingIndicator>(
                 std::move(indicator).value());
@@ -236,6 +278,7 @@ struct SelectableStrategy::Impl final {
   }
 
   SelectableStrategyPlan plan;
+  detail::IndicatorFactory indicatorFactory;
   RuntimeGroup buy;
   RuntimeGroup sell;
   std::optional<double> previousClose;
@@ -251,21 +294,34 @@ SelectableStrategy &
 SelectableStrategy::operator=(SelectableStrategy &&) noexcept = default;
 
 core::Result<std::unique_ptr<SelectableStrategy>>
-SelectableStrategy::create(SelectableStrategyPlan plan) {
-  const auto buyValidation = validateGroup(plan.buy, true);
-  if (!buyValidation.ok()) {
-    return buyValidation.error();
-  }
-  const auto sellValidation = validateGroup(plan.sell, false);
-  if (!sellValidation.ok()) {
-    return sellValidation.error();
-  }
+SelectableStrategy::createWithIndicatorFactory(
+    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory) {
   try {
-    auto implementation = std::make_unique<Impl>(std::move(plan));
+    auto implementation = std::make_unique<SelectableStrategy::Impl>(
+        std::move(plan), indicatorFactory);
+    const auto initialized = implementation->initialize();
+    if (!initialized.ok()) {
+      return initialized.error();
+    }
     return std::make_unique<SelectableStrategy>(std::move(implementation));
   } catch (const std::exception &error) {
     return core::makeError(core::ErrorCode::internal, error.what());
   }
+}
+
+core::Result<std::unique_ptr<SelectableStrategy>>
+SelectableStrategy::create(SelectableStrategyPlan plan) {
+  auto strategy = createWithIndicatorFactory(
+      std::move(plan), &indicators::StreamingIndicator::create);
+  return strategy;
+}
+
+core::Result<std::unique_ptr<SelectableStrategy>>
+detail::SelectableStrategyTestAccess::create(
+    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory) {
+  auto strategy = SelectableStrategy::createWithIndicatorFactory(
+      std::move(plan), indicatorFactory);
+  return strategy;
 }
 
 core::Result<SelectableStrategySignal>
