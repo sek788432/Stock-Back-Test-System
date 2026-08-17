@@ -61,25 +61,15 @@ isNumericDomain(const indicators::NumericDomain domain) noexcept {
   return false;
 }
 
-[[nodiscard]] core::Error compileError(std::string message) {
-  return core::makeError(core::ErrorCode::strategyCompileFailed,
-                         std::move(message));
-}
-
-[[nodiscard]] core::Error withContext(const core::Error &error,
-                                      const std::string_view context) {
-  auto contextual =
-      core::makeError(error.code, std::string{context} + ": " + error.message);
-  contextual.causes.push_back(error);
-  return contextual;
-}
-
-[[nodiscard]] core::Error
-compileErrorWithCause(const core::Error &error,
-                      const std::string_view context) {
-  auto contextual = compileError(std::string{context} + ": " + error.message);
-  contextual.causes.push_back(error);
-  return contextual;
+[[nodiscard]] core::Error compileError(
+    std::string message,
+    const core::ErrorCode code = core::ErrorCode::strategyCompileFailed,
+    const core::Error *const cause = nullptr) {
+  auto error = core::makeError(code, std::move(message));
+  if (cause != nullptr) {
+    error.causes.push_back(*cause);
+  }
+  return error;
 }
 
 [[nodiscard]] core::Result<Condition>
@@ -192,7 +182,9 @@ struct SelectableStrategy::Impl final {
             const std::string_view context) const {
     const auto validation = validateGroup(group, required);
     if (!validation.ok()) {
-      return withContext(validation.error(), context);
+      return compileError(std::string{context} + ": " +
+                              validation.error().message,
+                          validation.error().code, &validation.error());
     }
     auto runtime = RuntimeGroup{.logic = group.logic, .conditions = {}};
     runtime.conditions.reserve(group.conditions.size());
@@ -206,18 +198,23 @@ struct SelectableStrategy::Impl final {
         if (!indicator.ok()) {
           const auto constructionError =
               indicator.error().code == core::ErrorCode::invalidArgument
-                  ? compileErrorWithCause(indicator.error(),
-                                          "condition has an invalid indicator")
-                  : withContext(indicator.error(),
-                                "could not construct condition indicator");
-          return withContext(constructionError, context);
+                  ? compileError("condition has an invalid indicator: " +
+                                     indicator.error().message,
+                                 core::ErrorCode::strategyCompileFailed,
+                                 &indicator.error())
+                  : compileError("could not construct condition indicator: " +
+                                     indicator.error().message,
+                                 indicator.error().code, &indicator.error());
+          return compileError(std::string{context} + ": " +
+                                  constructionError.message,
+                              constructionError.code, &constructionError);
         }
         if (indicators::indicatorOutputDomain(condition.indicator) !=
             condition.thresholdDomain) {
-          return withContext(
-              compileError(
-                  "condition threshold domain does not match indicator"),
-              context);
+          const auto domainError = compileError(
+              "condition threshold domain does not match indicator");
+          return compileError(std::string{context} + ": " + domainError.message,
+                              domainError.code, &domainError);
         }
         runtimeCondition.indicator =
             std::make_unique<indicators::StreamingIndicator>(
