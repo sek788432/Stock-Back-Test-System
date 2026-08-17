@@ -314,15 +314,17 @@ SelectableStrategy::createWithIndicatorFactory(
 
 core::Result<std::unique_ptr<SelectableStrategy>>
 SelectableStrategy::create(SelectableStrategyPlan plan) {
-  return createWithIndicatorFactory(std::move(plan),
-                                    &indicators::StreamingIndicator::create);
+  auto strategy = createWithIndicatorFactory(
+      std::move(plan), &indicators::StreamingIndicator::create);
+  return strategy;
 }
 
 core::Result<std::unique_ptr<SelectableStrategy>>
 detail::SelectableStrategyTestAccess::create(
     SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory) {
-  return SelectableStrategy::createWithIndicatorFactory(std::move(plan),
-                                                        indicatorFactory);
+  auto strategy = SelectableStrategy::createWithIndicatorFactory(
+      std::move(plan), indicatorFactory);
+  return strategy;
 }
 
 core::Result<SelectableStrategySignal>
