@@ -1,5 +1,7 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
+#include "SelectableStrategyDetail.h"
+
 // IWYU pragma: no_include <math>
 
 #include <algorithm>
@@ -144,8 +146,10 @@ struct SelectableStrategy::Impl final {
     std::vector<RuntimeCondition> conditions;
   };
 
-  explicit Impl(SelectableStrategyPlan configuredPlan)
-      : plan(std::move(configuredPlan)) {}
+  explicit Impl(SelectableStrategyPlan configuredPlan,
+                const detail::IndicatorFactory configuredIndicatorFactory)
+      : plan(std::move(configuredPlan)),
+        indicatorFactory(configuredIndicatorFactory) {}
 
   [[nodiscard]] core::Result<bool> initialize() {
     auto buyGroup = makeGroup(plan.buy, true, "buy condition group");
@@ -183,9 +187,9 @@ struct SelectableStrategy::Impl final {
     return signal;
   }
 
-  [[nodiscard]] static core::Result<RuntimeGroup>
+  [[nodiscard]] core::Result<RuntimeGroup>
   makeGroup(const ConditionGroup &group, const bool required,
-            const std::string_view context) {
+            const std::string_view context) const {
     const auto validation = validateGroup(group, required);
     if (!validation.ok()) {
       return withContext(validation.error(), context);
@@ -198,8 +202,7 @@ struct SelectableStrategy::Impl final {
           .indicator = {},
       };
       if (condition.source == ConditionSource::indicator) {
-        auto indicator =
-            indicators::StreamingIndicator::create(condition.indicator);
+        auto indicator = indicatorFactory(condition.indicator);
         if (!indicator.ok()) {
           const auto constructionError =
               indicator.error().code == core::ErrorCode::invalidArgument
@@ -278,6 +281,7 @@ struct SelectableStrategy::Impl final {
   }
 
   SelectableStrategyPlan plan;
+  detail::IndicatorFactory indicatorFactory;
   RuntimeGroup buy;
   RuntimeGroup sell;
   std::optional<double> previousClose;
@@ -293,9 +297,11 @@ SelectableStrategy &
 SelectableStrategy::operator=(SelectableStrategy &&) noexcept = default;
 
 core::Result<std::unique_ptr<SelectableStrategy>>
-SelectableStrategy::create(SelectableStrategyPlan plan) {
+SelectableStrategy::createWithIndicatorFactory(
+    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory) {
   try {
-    auto implementation = std::make_unique<Impl>(std::move(plan));
+    auto implementation = std::make_unique<SelectableStrategy::Impl>(
+        std::move(plan), indicatorFactory);
     const auto initialized = implementation->initialize();
     if (!initialized.ok()) {
       return initialized.error();
@@ -304,6 +310,19 @@ SelectableStrategy::create(SelectableStrategyPlan plan) {
   } catch (const std::exception &error) {
     return core::makeError(core::ErrorCode::internal, error.what());
   }
+}
+
+core::Result<std::unique_ptr<SelectableStrategy>>
+SelectableStrategy::create(SelectableStrategyPlan plan) {
+  return createWithIndicatorFactory(std::move(plan),
+                                    &indicators::StreamingIndicator::create);
+}
+
+core::Result<std::unique_ptr<SelectableStrategy>>
+detail::SelectableStrategyTestAccess::create(
+    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory) {
+  return SelectableStrategy::createWithIndicatorFactory(std::move(plan),
+                                                        indicatorFactory);
 }
 
 core::Result<SelectableStrategySignal>

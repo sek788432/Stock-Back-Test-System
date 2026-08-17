@@ -1,6 +1,7 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
 #include "Bte/Core/Bar.h"
+#include "SelectableStrategyDetail.h"
 
 #include <gtest/gtest.h>
 
@@ -33,6 +34,12 @@ priceChangeCondition(const bte::strategy::Comparison comparison,
       .threshold = threshold,
       .thresholdDomain = bte::indicators::NumericDomain::percent,
   };
+}
+
+bte::core::Result<bte::indicators::StreamingIndicator>
+failIndicatorConstruction(const bte::indicators::IndicatorDefinition &) {
+  return bte::core::makeError(bte::core::ErrorCode::internal,
+                              "simulated indicator allocation failure");
 }
 
 TEST(SelectableStrategyTest, allRequiresEveryWarmedConditionBeforeBuying) {
@@ -427,6 +434,38 @@ TEST(SelectableStrategyTest,
   EXPECT_EQ(tooLarge.error().code, bte::core::ErrorCode::strategyCompileFailed);
   EXPECT_NE(tooLarge.error().message.find("sell condition group"),
             std::string::npos);
+}
+
+TEST(SelectableStrategyTest,
+     indicatorConstructionFailurePreservesInternalErrorAndCauseChain) {
+  const auto failed =
+      bte::strategy::detail::SelectableStrategyTestAccess::create(
+          {
+              .buy = {.conditions = {bte::strategy::Condition{
+                          .source = bte::strategy::ConditionSource::indicator,
+                          .indicator =
+                              {
+                                  .kind = bte::indicators::IndicatorKind::sma,
+                                  .period = 2,
+                              },
+                      }}},
+              .sell = {},
+          },
+          &failIndicatorConstruction);
+
+  ASSERT_FALSE(failed.ok());
+  EXPECT_EQ(failed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_NE(failed.error().message.find("buy condition group"),
+            std::string::npos);
+  ASSERT_EQ(failed.error().causes.size(), 1U);
+  EXPECT_NE(failed.error().causes.front().message.find(
+                "could not construct condition indicator"),
+            std::string::npos);
+  ASSERT_EQ(failed.error().causes.front().causes.size(), 1U);
+  EXPECT_EQ(failed.error().causes.front().causes.front().code,
+            bte::core::ErrorCode::internal);
+  EXPECT_EQ(failed.error().causes.front().causes.front().message,
+            "simulated indicator allocation failure");
 }
 
 TEST(SelectableStrategyTest, moveOperationsPreserveExecutableStrategyState) {

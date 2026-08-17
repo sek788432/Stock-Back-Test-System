@@ -11,6 +11,10 @@
 
 namespace bte::strategy {
 
+namespace detail {
+struct SelectableStrategyTestAccess;
+}
+
 inline constexpr std::size_t maximumConditionsPerGroup = 2;
 
 enum class ConditionLogic : std::uint8_t { all, any };
@@ -72,6 +76,14 @@ public:
 
 private:
   struct Impl;
+  using IndicatorFactory = core::Result<indicators::StreamingIndicator> (*)(
+      const indicators::IndicatorDefinition &definition);
+
+  [[nodiscard]] static core::Result<std::unique_ptr<SelectableStrategy>>
+  createWithIndicatorFactory(SelectableStrategyPlan plan,
+                             IndicatorFactory indicatorFactory);
+
+  friend struct detail::SelectableStrategyTestAccess;
 
 public:
   explicit SelectableStrategy(std::unique_ptr<Impl> impl) noexcept;
