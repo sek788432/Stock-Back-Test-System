@@ -10,6 +10,7 @@
 #include <functional>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -58,7 +59,7 @@ std::string snapshotFileStem(const ReplayResultSnapshot &snapshot) {
         return std::isalnum(static_cast<unsigned char>(character)) == 0;
       },
       '-');
-  return stem.empty() ? "replay-result" : stem;
+  return stem;
 }
 
 std::string toJson(const ReplayResultSnapshot &snapshot) {
@@ -115,8 +116,8 @@ std::string toJson(const ReplayResultSnapshot &snapshot) {
 core::Result<std::string> readAll(const std::filesystem::path &path) {
   std::ifstream input{path};
   if (!input) {
-    return core::makeError(core::ErrorCode::notFound,
-                           "Result snapshot file not found: " + path.string());
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Cannot read result snapshot: " + path.string());
   }
 
   std::ostringstream buffer;
@@ -214,19 +215,23 @@ saveReplayResultSnapshot(const std::filesystem::path &directory,
 core::Result<std::vector<ReplayResultSummary>>
 listReplayResultSnapshots(const std::filesystem::path &directory) {
   std::error_code errorCode;
-  if (!std::filesystem::exists(directory, errorCode)) {
+  const auto directoryExists = std::filesystem::exists(directory, errorCode);
+  if (errorCode) {
+    return core::makeError(core::ErrorCode::internal,
+                           "Cannot inspect result snapshot directory: " +
+                               directory.string());
+  }
+  if (!directoryExists) {
     return std::vector<ReplayResultSummary>{};
   }
 
   std::vector<ReplayResultSummary> summaries;
-  for (const auto &entry :
-       std::filesystem::directory_iterator(directory, errorCode)) {
-    if (errorCode) {
-      return core::makeError(core::ErrorCode::internal,
-                             "Cannot enumerate result snapshots: " +
-                                 directory.string());
-    }
+  auto iterator = std::filesystem::directory_iterator{directory, errorCode};
+  const auto end = std::filesystem::directory_iterator{};
+  while (iterator != end) {
+    const auto &entry = *iterator;
     if (!entry.is_regular_file() || entry.path().extension() != ".json") {
+      iterator.increment(errorCode);
       continue;
     }
 
@@ -234,17 +239,33 @@ listReplayResultSnapshots(const std::filesystem::path &directory) {
     if (!contents.ok()) {
       return contents.error();
     }
-    summaries.push_back(ReplayResultSummary{
-        .path = entry.path(),
-        .symbol = extractString(contents.value(), "symbol"),
-        .schemaName = extractString(contents.value(), "schemaName"),
-        .strategyName = extractString(contents.value(), "strategyName"),
-        .totalReturn = extractDouble(contents.value(), "totalReturn"),
-        .maxDrawdown = extractDouble(contents.value(), "maxDrawdown"),
-        .winRate = extractDouble(contents.value(), "winRate"),
-        .tradeCount = extractInt(contents.value(), "tradeCount"),
-        .finalEquity = extractDouble(contents.value(), "finalEquity"),
-    });
+    try {
+      summaries.push_back(ReplayResultSummary{
+          .path = entry.path(),
+          .symbol = extractString(contents.value(), "symbol"),
+          .schemaName = extractString(contents.value(), "schemaName"),
+          .strategyName = extractString(contents.value(), "strategyName"),
+          .totalReturn = extractDouble(contents.value(), "totalReturn"),
+          .maxDrawdown = extractDouble(contents.value(), "maxDrawdown"),
+          .winRate = extractDouble(contents.value(), "winRate"),
+          .tradeCount = extractInt(contents.value(), "tradeCount"),
+          .finalEquity = extractDouble(contents.value(), "finalEquity"),
+      });
+    } catch (const std::invalid_argument &error) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Malformed result snapshot " +
+                                 entry.path().string() + ": " + error.what());
+    } catch (const std::out_of_range &error) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Malformed result snapshot " +
+                                 entry.path().string() + ": " + error.what());
+    }
+    iterator.increment(errorCode);
+  }
+  if (errorCode) {
+    return core::makeError(core::ErrorCode::internal,
+                           "Cannot enumerate result snapshots: " +
+                               directory.string());
   }
 
   std::ranges::sort(summaries, {}, &ReplayResultSummary::path);

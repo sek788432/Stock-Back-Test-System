@@ -9,6 +9,7 @@
 #include <array>
 #include <chrono>
 #include <limits>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -40,6 +41,17 @@ bte::core::Result<bte::indicators::StreamingIndicator>
 failIndicatorConstruction(const bte::indicators::IndicatorDefinition &) {
   return bte::core::makeError(bte::core::ErrorCode::internal,
                               "simulated indicator allocation failure");
+}
+
+bte::core::Result<bte::indicators::StreamingIndicator>
+throwDuringIndicatorConstruction(const bte::indicators::IndicatorDefinition &) {
+  throw std::runtime_error{"simulated indicator factory exception"};
+}
+
+bte::core::Result<bte::indicators::StreamingIndicator>
+throwUnknownDuringIndicatorConstruction(
+    const bte::indicators::IndicatorDefinition &) {
+  throw 7;
 }
 
 TEST(SelectableStrategyTest, allRequiresEveryWarmedConditionBeforeBuying) {
@@ -466,6 +478,53 @@ TEST(SelectableStrategyTest,
             bte::core::ErrorCode::internal);
   EXPECT_EQ(failed.error().causes.front().causes.front().message,
             "simulated indicator allocation failure");
+}
+
+TEST(SelectableStrategyTest,
+     indicatorFactoryExceptionIsContainedAtTheStrategyBoundary) {
+  const auto failed =
+      bte::strategy::detail::SelectableStrategyTestAccess::create(
+          {
+              .buy = {.conditions = {bte::strategy::Condition{
+                          .source = bte::strategy::ConditionSource::indicator,
+                          .indicator =
+                              {
+                                  .kind = bte::indicators::IndicatorKind::sma,
+                                  .period = 2,
+                              },
+                      }}},
+              .sell = {},
+          },
+          &throwDuringIndicatorConstruction);
+
+  ASSERT_FALSE(failed.ok());
+  EXPECT_EQ(failed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_EQ(failed.error().message, "simulated indicator factory exception");
+}
+
+TEST(SelectableStrategyTest,
+     unknownIndicatorFactoryExceptionIsContainedAtTheStrategyBoundary) {
+  bte::core::Result<std::unique_ptr<bte::strategy::SelectableStrategy>> failed{
+      bte::core::makeError(bte::core::ErrorCode::internal, "not called")};
+
+  EXPECT_NO_THROW(
+      failed = bte::strategy::detail::SelectableStrategyTestAccess::create(
+          {
+              .buy = {.conditions = {bte::strategy::Condition{
+                          .source = bte::strategy::ConditionSource::indicator,
+                          .indicator =
+                              {
+                                  .kind = bte::indicators::IndicatorKind::sma,
+                                  .period = 2,
+                              },
+                      }}},
+              .sell = {},
+          },
+          &throwUnknownDuringIndicatorConstruction));
+
+  ASSERT_FALSE(failed.ok());
+  EXPECT_EQ(failed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_EQ(failed.error().message, "indicator factory failed");
 }
 
 TEST(SelectableStrategyTest, moveOperationsPreserveExecutableStrategyState) {

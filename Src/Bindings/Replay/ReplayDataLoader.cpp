@@ -11,7 +11,6 @@
 #include <chrono>
 #include <compare> // IWYU pragma: keep
 #include <cstddef>
-#include <exception>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -25,10 +24,7 @@ namespace {
 std::optional<std::filesystem::path>
 findCsvDataDirFrom(std::filesystem::path cursor) {
   std::error_code errorCode;
-  cursor = std::filesystem::absolute(cursor, errorCode);
-  if (errorCode) {
-    return std::nullopt;
-  }
+  cursor = std::filesystem::absolute(cursor);
 
   while (!cursor.empty()) {
     auto candidate = cursor / "StockData" / "Extracted";
@@ -49,24 +45,25 @@ findCsvDataDirFrom(std::filesystem::path cursor) {
 std::filesystem::path findCsvDataDir() {
   std::error_code errorCode;
   const auto currentDirectory = std::filesystem::current_path(errorCode);
+  std::vector<std::filesystem::path> searchRoots;
+  searchRoots.reserve(4);
   if (!errorCode) {
-    if (auto dir = findCsvDataDirFrom(currentDirectory)) {
-      return *dir;
+    searchRoots.push_back(currentDirectory);
+  }
+  searchRoots.emplace_back(
+      QCoreApplication::applicationDirPath().toStdString());
+#ifdef BTE_SOURCE_DIR
+  searchRoots.emplace_back(BTE_SOURCE_DIR);
+#endif
+  searchRoots.emplace_back(__FILE__);
+  auto dataDirectory = std::filesystem::path{"StockData"} / "Extracted";
+  for (const auto &root : searchRoots) {
+    if (auto directory = findCsvDataDirFrom(root)) {
+      dataDirectory = *directory;
+      break;
     }
   }
-  if (auto dir = findCsvDataDirFrom(
-          QCoreApplication::applicationDirPath().toStdString())) {
-    return *dir;
-  }
-#ifdef BTE_SOURCE_DIR
-  if (auto dir = findCsvDataDirFrom(BTE_SOURCE_DIR)) {
-    return *dir;
-  }
-#endif
-  if (auto dir = findCsvDataDirFrom(__FILE__)) {
-    return *dir;
-  }
-  return std::filesystem::path{"StockData"} / "Extracted";
+  return dataDirectory;
 }
 
 bte::core::Timestamp timestampFromDate(const QDate date) {
@@ -174,10 +171,6 @@ loadBacktestBars(const QString &symbol, const QString &schemaName,
       bars.push_back(*bar);
     }
     return barsForSchema(std::move(bars), schemaName);
-  } catch (const std::exception &error) {
-    return core::makeError(core::ErrorCode::internal,
-                           std::string{"backtest data loading failed: "} +
-                               error.what());
   } catch (...) {
     return core::makeError(core::ErrorCode::internal,
                            "backtest data loading failed");

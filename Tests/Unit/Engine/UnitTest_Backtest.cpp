@@ -625,16 +625,39 @@ TEST(BacktestTest, checkedArithmeticRejectsSlippageAndMarketValueOverflow) {
       .quantityShares = 1'000'000'000,
       .selectableStrategy = {},
   });
+  const auto fillAmountOverflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, 9'000'000'000.0)},
+      .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
+      .quantityShares = 1'000'000'000,
+      .selectableStrategy = {},
+  });
+  const auto finalEquityOverflow = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, 1.0),
+               makeFlatBar(4, 9'000'000'000.0)},
+      .initialCapitalMicrodollars = std::numeric_limits<std::int64_t>::max(),
+      .quantityShares = 1,
+      .selectableStrategy = {},
+  });
 
   EXPECT_FALSE(slippageOverflow.ok());
   EXPECT_FALSE(marketValueOverflow.ok());
+  EXPECT_FALSE(fillAmountOverflow.ok());
+  EXPECT_FALSE(finalEquityOverflow.ok());
   EXPECT_EQ(slippageOverflow.error().code,
             bte::core::ErrorCode::invalidArgument);
   EXPECT_EQ(marketValueOverflow.error().code,
             bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(fillAmountOverflow.error().code,
+            bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(finalEquityOverflow.error().code,
+            bte::core::ErrorCode::invalidArgument);
   EXPECT_NE(slippageOverflow.error().message.find("accounting value"),
             std::string::npos);
   EXPECT_NE(marketValueOverflow.error().message.find("accounting value"),
+            std::string::npos);
+  EXPECT_NE(fillAmountOverflow.error().message.find("accounting value"),
+            std::string::npos);
+  EXPECT_NE(finalEquityOverflow.error().message.find("accounting value"),
             std::string::npos);
 }
 

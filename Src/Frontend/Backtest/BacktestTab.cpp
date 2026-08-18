@@ -64,52 +64,50 @@ void setLabelText(QLabel *label, const QString &text) {
   label->setAccessibleName(text);
 }
 
-QComboBox *addYearSelector(QDateEdit *dateEdit, const QString &objectName) {
+void addYearSelector(QDateEdit *dateEdit, const QString &objectName) {
   auto *calendar = dateEdit->calendarWidget();
   auto *yearButton =
       calendar->findChild<QToolButton *>("qt_calendar_yearbutton");
-  if (yearButton == nullptr) {
-    return nullptr;
+  auto *navigationBar =
+      yearButton == nullptr ? nullptr : yearButton->parentWidget();
+  auto *navigationLayout =
+      navigationBar == nullptr
+          ? nullptr
+          : qobject_cast<QHBoxLayout *>(navigationBar->layout());
+  if (yearButton != nullptr && navigationLayout != nullptr) {
+    auto yearSelector = std::make_unique<QComboBox>(navigationBar);
+    yearSelector->setObjectName(objectName);
+    yearSelector->setAccessibleName(BacktestTab::tr("Calendar year"));
+    yearSelector->setMinimumWidth(yearSelectorMinimumWidth);
+    yearSelector->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    const auto minimumYear = dateEdit->minimumDate().year();
+    const auto maximumYear = dateEdit->maximumDate().year();
+    for (auto year = minimumYear; year <= maximumYear; ++year) {
+      yearSelector->addItem(QString::number(year), year);
+    }
+
+    auto *selector = yearSelector.get();
+    const auto yearButtonIndex = navigationLayout->indexOf(yearButton);
+    navigationLayout->insertWidget(yearButtonIndex, yearSelector.release());
+    yearButton->hide();
+
+    QObject::connect(selector, &QComboBox::currentIndexChanged, calendar,
+                     [calendar, selector](const int index) {
+                       if (index >= 0) {
+                         calendar->setCurrentPage(
+                             selector->itemData(index).toInt(),
+                             calendar->monthShown());
+                       }
+                     });
+    QObject::connect(calendar, &QCalendarWidget::currentPageChanged, selector,
+                     [selector, minimumYear](const int year, const int) {
+                       const QSignalBlocker blocker{selector};
+                       selector->setCurrentIndex(year - minimumYear);
+                     });
+
+    const QSignalBlocker blocker{selector};
+    selector->setCurrentIndex(calendar->yearShown() - minimumYear);
   }
-  auto *navigationBar = yearButton->parentWidget();
-  auto *navigationLayout = qobject_cast<QHBoxLayout *>(navigationBar->layout());
-  if (navigationLayout == nullptr) {
-    return nullptr;
-  }
-
-  auto yearSelector = std::make_unique<QComboBox>(navigationBar);
-  yearSelector->setObjectName(objectName);
-  yearSelector->setAccessibleName(BacktestTab::tr("Calendar year"));
-  yearSelector->setMinimumWidth(yearSelectorMinimumWidth);
-  yearSelector->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-  const auto minimumYear = dateEdit->minimumDate().year();
-  const auto maximumYear = dateEdit->maximumDate().year();
-  for (auto year = minimumYear; year <= maximumYear; ++year) {
-    yearSelector->addItem(QString::number(year), year);
-  }
-
-  auto *selector = yearSelector.get();
-  const auto yearButtonIndex = navigationLayout->indexOf(yearButton);
-  navigationLayout->insertWidget(yearButtonIndex, yearSelector.release());
-  yearButton->hide();
-
-  QObject::connect(selector, &QComboBox::currentIndexChanged, calendar,
-                   [calendar, selector](const int index) {
-                     if (index >= 0) {
-                       calendar->setCurrentPage(
-                           selector->itemData(index).toInt(),
-                           calendar->monthShown());
-                     }
-                   });
-  QObject::connect(calendar, &QCalendarWidget::currentPageChanged, selector,
-                   [selector, minimumYear](const int year, const int) {
-                     const QSignalBlocker blocker{selector};
-                     selector->setCurrentIndex(year - minimumYear);
-                   });
-
-  const QSignalBlocker blocker{selector};
-  selector->setCurrentIndex(calendar->yearShown() - minimumYear);
-  return selector;
 }
 
 QString formatMoney(const double value) {
@@ -126,19 +124,18 @@ QString statusText(const bindings::BacktestOutcome outcome,
   const auto strategyName = selectableConditions
                                 ? BacktestTab::tr("selectable strategy")
                                 : BacktestTab::tr("starter order");
-  switch (outcome) {
-  case bindings::BacktestOutcome::filled:
+  if (outcome == bindings::BacktestOutcome::filled) {
     return BacktestTab::tr("Completed — %1 filled").arg(strategyName);
-  case bindings::BacktestOutcome::rejectedInsufficientCash:
+  }
+  if (outcome == bindings::BacktestOutcome::rejectedInsufficientCash) {
     return BacktestTab::tr("Completed — %1 rejected: insufficient cash")
         .arg(strategyName);
-  case bindings::BacktestOutcome::cancelledNoFutureMarketData:
+  }
+  if (outcome == bindings::BacktestOutcome::cancelledNoFutureMarketData) {
     return BacktestTab::tr("Completed — %1 cancelled: no future market data")
         .arg(strategyName);
-  case bindings::BacktestOutcome::completedNoSignal:
-    return BacktestTab::tr("Completed — no selectable condition matched");
   }
-  return BacktestTab::tr("Completed");
+  return BacktestTab::tr("Completed — no selectable condition matched");
 }
 
 enum class ConditionMetric : std::uint8_t {

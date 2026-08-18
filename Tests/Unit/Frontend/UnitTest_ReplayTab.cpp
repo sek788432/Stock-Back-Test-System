@@ -13,6 +13,7 @@
 #include <QScrollBar>
 #include <QTableWidget>
 #include <QTest>
+#include <QTimer>
 #include <QToolButton>
 #include <QtGlobal>
 
@@ -32,6 +33,8 @@ private slots:
   void initialCapitalChangeUpdatesPortfolioSnapshot();
   void playAdvancesReplay();
   void pauseStopsReplayAdvance();
+  void speedSelectionsUpdatePlaybackInterval();
+  void emptyAndCompletedPlaybackBoundariesRemainStable();
   void rendersNonBlankReplaySnapshot();
   void compactViewportCanScrollToTradeLog();
 };
@@ -293,6 +296,66 @@ void ReplayTabTest::pauseStopsReplayAdvance() {
   QTest::qWait(250);
 
   QCOMPARE(chartView->candleCount(), pausedCount);
+}
+
+void ReplayTabTest::speedSelectionsUpdatePlaybackInterval() {
+  bte::frontend::ReplayTab tab;
+  auto *speedCombo = tab.findChild<QComboBox *>("replaySpeedCombo");
+  auto *timer = tab.findChild<QTimer *>("replayPlaybackTimer");
+  QVERIFY(speedCombo != nullptr);
+  QVERIFY(timer != nullptr);
+
+  speedCombo->setCurrentText("5x");
+  QCOMPARE(timer->interval(), 200);
+  speedCombo->setCurrentText("10x");
+  QCOMPARE(timer->interval(), 100);
+  speedCombo->setCurrentText("max");
+  QCOMPARE(timer->interval(), 0);
+  speedCombo->setCurrentText("1x");
+  QCOMPARE(timer->interval(), 1000);
+}
+
+void ReplayTabTest::emptyAndCompletedPlaybackBoundariesRemainStable() {
+  bte::frontend::ReplayTab tab;
+  auto *schemaCombo = tab.findChild<QComboBox *>("replaySchemaCombo");
+  auto *startDate = tab.findChild<QDateEdit *>("replayStartDateEdit");
+  auto *endDate = tab.findChild<QDateEdit *>("replayEndDateEdit");
+  auto *stepBackButton = tab.findChild<QToolButton *>("replayStepBackButton");
+  auto *stepForwardButton =
+      tab.findChild<QToolButton *>("replayStepForwardButton");
+  auto *playPauseButton = tab.findChild<QToolButton *>("replayPlayPauseButton");
+  auto *chartView = tab.findChild<bte::frontend::QtChartsCandlestickView *>(
+      "replayCandlestickChartView");
+  QVERIFY(schemaCombo != nullptr);
+  QVERIFY(startDate != nullptr);
+  QVERIFY(endDate != nullptr);
+  QVERIFY(stepBackButton != nullptr);
+  QVERIFY(stepForwardButton != nullptr);
+  QVERIFY(playPauseButton != nullptr);
+  QVERIFY(chartView != nullptr);
+
+  schemaCombo->setCurrentText("ohlcv-1d");
+  startDate->setDate(QDate{2018, 5, 1});
+  endDate->setDate(QDate{2018, 5, 1});
+  QCOMPARE(chartView->candleCount(), 0U);
+
+  QTest::mouseClick(stepBackButton, Qt::LeftButton);
+  QCOMPARE(chartView->candleCount(), 0U);
+  QTest::mouseClick(stepForwardButton, Qt::LeftButton);
+  QCOMPARE(chartView->candleCount(), 1U);
+  QTest::mouseClick(stepForwardButton, Qt::LeftButton);
+  QCOMPARE(chartView->candleCount(), 1U);
+
+  QTest::mouseClick(playPauseButton, Qt::LeftButton);
+  QCOMPARE(chartView->candleCount(), 1U);
+  QCOMPARE(playPauseButton->text(), QString{"Play"});
+
+  startDate->setDate(QDate{2035, 1, 1});
+  endDate->setDate(QDate{2035, 1, 1});
+  QCOMPARE(chartView->candleCount(), 0U);
+  QTest::mouseClick(playPauseButton, Qt::LeftButton);
+  QCOMPARE(chartView->candleCount(), 0U);
+  QCOMPARE(playPauseButton->text(), QString{"Play"});
 }
 
 void ReplayTabTest::rendersNonBlankReplaySnapshot() {

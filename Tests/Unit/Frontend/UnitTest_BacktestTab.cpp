@@ -81,6 +81,8 @@ private slots:
   void runSubmitsEveryVisibleConfigurationField();
   void destructionCancelsAndJoinsActiveRun();
   void workerExceptionIsPresentedAsAnError();
+  void unknownWorkerExceptionIsPresentedAsAnError();
+  void defaultRunnerExecutesTrackedBars();
   void selectableConditionsSubmitTypedPlanToBackend();
   void selectableMetricsSubmitTypedPlansToBackend();
   void selectableConditionStatusNamesItsSelectedStrategy();
@@ -326,6 +328,38 @@ void BacktestTabTest::workerExceptionIsPresentedAsAnError() {
 
   QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("unexpected runner failure"),
                            5'000);
+  QVERIFY(run->isEnabled());
+}
+
+void BacktestTabTest::unknownWorkerExceptionIsPresentedAsAnError() {
+  bte::frontend::BacktestTab tab{
+      [](bte::bindings::BacktestConfiguration, bte::core::CancellationToken)
+          -> bte::core::Result<bte::bindings::BacktestSnapshot> { throw 7; }};
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+
+  QTest::mouseClick(run, Qt::LeftButton);
+
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("backtest worker failed"),
+                           5'000);
+  QVERIFY(run->isEnabled());
+}
+
+void BacktestTabTest::defaultRunnerExecutesTrackedBars() {
+  bte::frontend::BacktestTab tab;
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  auto *bars = tab.findChild<QLabel *>("backtestBarsLabel");
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(bars != nullptr);
+
+  QTest::mouseClick(run, Qt::LeftButton);
+
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Completed"), 5'000);
+  QVERIFY(!bars->text().contains("--"));
   QVERIFY(run->isEnabled());
 }
 

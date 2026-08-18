@@ -44,21 +44,22 @@ isNumericDomain(const indicators::NumericDomain domain) noexcept {
   if (value.domain != condition.thresholdDomain) {
     return false;
   }
-  switch (comparison) {
-  case Comparison::greaterThan:
+  if (comparison == Comparison::greaterThan) {
     return value.value > condition.threshold;
-  case Comparison::greaterThanOrEqual:
-    return value.value >= condition.threshold;
-  case Comparison::lessThan:
-    return value.value < condition.threshold;
-  case Comparison::lessThanOrEqual:
-    return value.value <= condition.threshold;
-  case Comparison::equal:
-    return value.value == condition.threshold;
-  case Comparison::notEqual:
-    return value.value != condition.threshold;
   }
-  return false;
+  if (comparison == Comparison::greaterThanOrEqual) {
+    return value.value >= condition.threshold;
+  }
+  if (comparison == Comparison::lessThan) {
+    return value.value < condition.threshold;
+  }
+  if (comparison == Comparison::lessThanOrEqual) {
+    return value.value <= condition.threshold;
+  }
+  if (comparison == Comparison::equal) {
+    return value.value == condition.threshold;
+  }
+  return value.value != condition.threshold;
 }
 
 [[nodiscard]] core::Error compileError(
@@ -260,10 +261,10 @@ struct SelectableStrategy::Impl final {
   [[nodiscard]] std::optional<indicators::IndicatorValue>
   valueFor(const RuntimeCondition &condition,
            const core::Bar &bar) const noexcept {
-    switch (condition.condition.source) {
-    case ConditionSource::barField:
+    if (condition.condition.source == ConditionSource::barField) {
       return indicators::barFieldValue(bar, condition.condition.barField);
-    case ConditionSource::closeChangePercent:
+    }
+    if (condition.condition.source == ConditionSource::closeChangePercent) {
       if (!previousClose.has_value() || *previousClose == 0.0) {
         return std::nullopt;
       }
@@ -271,10 +272,8 @@ struct SelectableStrategy::Impl final {
           .value = 100.0 * (bar.close - *previousClose) / *previousClose,
           .domain = indicators::NumericDomain::percent,
       };
-    case ConditionSource::indicator:
-      return condition.indicator->latest();
     }
-    return std::nullopt;
+    return condition.indicator->latest();
   }
 
   SelectableStrategyPlan plan;
@@ -306,6 +305,9 @@ SelectableStrategy::createWithIndicatorFactory(
     return std::make_unique<SelectableStrategy>(std::move(implementation));
   } catch (const std::exception &error) {
     return core::makeError(core::ErrorCode::internal, error.what());
+  } catch (...) {
+    return core::makeError(core::ErrorCode::internal,
+                           "indicator factory failed");
   }
 }
 
