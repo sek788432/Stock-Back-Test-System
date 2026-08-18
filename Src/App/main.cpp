@@ -2,7 +2,7 @@
 
 #include <QApplication>
 #include <QList>
-#include <QObject>
+#include <QObject> // IWYU pragma: keep
 #include <QString>
 #include <QTimer>
 #include <QtCore/qcoreapplication.h>

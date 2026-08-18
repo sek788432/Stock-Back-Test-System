@@ -14,7 +14,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <string>
+#include <string> // IWYU pragma: keep
 #include <system_error>
 #include <utility>
 
