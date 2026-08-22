@@ -11,7 +11,7 @@ description: >-
 
 # Static Analysis
 
-Static analysis runs locally, in CI (G7 of Docs/Specs/10), and on demand. The
+Static analysis runs locally, in CI (`Docs/Specs/10CiDevFlow.md` §2), and on demand. The
 repository does not currently install a pre-commit hook. Local and CI execution
 use the same checked-in analyzer and coverage configuration.
 
@@ -19,17 +19,17 @@ use the same checked-in analyzer and coverage configuration.
 
 | Tool | What it catches | Required? |
 |---|---|---|
-| `clang-format` | formatting drift | planned, not merge-blocking |
-| `clang-tidy` | bug-pattern lints, modernize-* checks, naming | yes (G7) |
-| `clang static analyzer` (`scan-build`) | data-flow bugs (null deref, use-after-free, leaks) | yes (G7) |
-| `cppcheck` | extra coverage of patterns clang-tidy misses | yes (G7) |
-| `include-what-you-use` (IWYU) | unused / missing includes | yes (G7) |
-| `clang -fsanitize=address,undefined` (`dev-sanitize`) | runtime bugs caught at test-time | implemented locally, not merge-blocking |
-| `clang -fsanitize=thread` | data races | planned, not implemented |
+| `clang-format` | formatting drift | yes, project-standards gate |
+| `clang-tidy` | bug-pattern lints, modernize-* checks, naming | yes (§2) |
+| `clang static analyzer` (`scan-build`) | data-flow bugs (null deref, use-after-free, leaks) | yes (§2) |
+| `cppcheck` | extra coverage of patterns clang-tidy misses | yes (§2) |
+| `include-what-you-use` (IWYU) | unused / missing includes | yes (§2) |
+| `clang -fsanitize=address,undefined` (`dev-sanitize`) | runtime bugs caught at test-time | yes, sanitizer matrix |
+| `clang -fsanitize=thread` (`dev-tsan`) | data races | yes, sanitizer matrix |
 
-The implemented merge-blocking analyzers and coverage gate are orchestrated
-locally by `RunQuality.sh`. The sanitizer preset is local-only; TSan and explicit
-clang-format enforcement remain planned. See `Docs/Specs/10CiDevFlow.md` for the
+The implemented merge-blocking analyzer, format, and coverage gates are
+orchestrated locally by `RunQuality.sh`. The sanitizer presets are separate CI
+jobs and local CMake presets. See `Docs/Specs/10CiDevFlow.md` for the
 authoritative implemented-versus-planned status.
 
 ## Files that own the configuration
@@ -38,7 +38,7 @@ authoritative implemented-versus-planned status.
 |---|---|
 | `.clang-format` | format rules (column width, brace style, spacing) |
 | `.clang-tidy` | lint checks enabled + per-check options (naming case, etc.) |
-| `Cmake/Sanitizers.cmake` | which sanitizers each preset enables |
+| `CMake/Sanitizers.cmake` | which sanitizers each preset enables |
 | `Tools/Iwyu.imp` | IWYU mapping file (Qt, std, third-party) |
 | `Cppcheck.suppressions` | cppcheck false-positive suppressions |
 
@@ -56,10 +56,15 @@ If you change one of these files, the PR description must explain why, and it re
 # Faster iteration: skips whole-tree scan-build only; the other analyzers stay full-project.
 ./RunQuality.sh --fast --base origin/main --head HEAD
 
-# Optional local ASan/UBSan run.
+# Local ASan/UBSan/LSan run matching one sanitizer matrix entry.
 cmake --preset dev-sanitize
 cmake --build --preset dev-sanitize --parallel
 ctest --preset dev-sanitize --no-tests=error
+
+# Local TSan run matching the other sanitizer matrix entry.
+cmake --preset dev-tsan
+cmake --build --preset dev-tsan --parallel
+ctest --preset dev-tsan --no-tests=error
 ```
 
 Run the complete, non-`--fast` command on the committed `HEAD` before pushing
@@ -69,11 +74,14 @@ database under `Output/analysis`, and coverage reports are generated under
 packages and a private locked Python environment; no activation or manual
 `PATH` setup is required.
 
-## What analyzer-clean means (G7)
+## What analyzer-clean means
 
-Every CI event and every `RunQuality.sh` invocation runs clang-tidy, cppcheck,
-IWYU, and scan-build across all project translation units. Any reported finding
-fails the job; there is no warning-baseline comparison or weekly debt report.
+Every CI event and the complete default `RunQuality.sh` invocation check
+clang-format and run clang-tidy, cppcheck, IWYU, and scan-build across all
+project translation units. `RunQuality.sh --fast` skips only scan-build. CI
+additionally runs the complete registered non-Qt test suite under both
+sanitizer configurations. Any finding fails its job; there is no warning
+baseline comparison or weekly debt report.
 
 ## Reading analyzer output
 
@@ -138,6 +146,9 @@ Checks: >
   performance-*,
   portability-*,
   readability-*,
+  misc-const-correctness,
+  misc-definitions-in-headers,
+  misc-header-include-cycle,
   -modernize-use-trailing-return-type,        # too noisy on this codebase
   -readability-named-parameter,               # gtest fixtures need unnamed params
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,  # span/iterator interop
@@ -173,7 +184,7 @@ Before requesting review, confirm:
 
 - [ ] `./RunTest.sh` passes on the submitted commit
 - [ ] `./RunQuality.sh --base <base> --head HEAD` passes without `--fast`
-- [ ] Optional applicable `ctest --preset dev-sanitize` passes
+- [ ] Applicable `ctest --preset dev-sanitize` and `ctest --preset dev-tsan` pass
 - [ ] All `// NOLINT` and suppression entries justified in PR description
 
 CI repeats the checks against the submitted SHA; it is the verifier, not the

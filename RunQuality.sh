@@ -90,11 +90,11 @@ has_command() {
 has_llvm_18_toolchain() {
   case "$operating_system" in
     Darwin)
-      has_command clang clang++ clang-tidy && \
+      has_command clang clang++ clang-format clang-tidy && \
         clang --version 2>/dev/null | grep -Eq 'version 18([. ]|$)'
       ;;
     Linux)
-      has_command clang-18 clang++-18 clang-tidy-18
+      has_command clang-18 clang++-18 clang-format-18 clang-tidy-18
       ;;
     *)
       return 1
@@ -161,7 +161,8 @@ bootstrap_system_tools() {
       echo "== First-run setup: installing quality tools with apt =="
       "${apt_prefix[@]}" apt-get update
       "${apt_prefix[@]}" apt-get install --yes \
-        clang-18 clang-tidy-18 clang-tools-18 cppcheck iwyu python3.12 python3.12-venv
+        clang-18 clang-format-18 clang-tidy-18 clang-tools-18 cppcheck iwyu \
+        python3.12 python3.12-venv
       ;;
     *)
       echo "Automatic quality-tool setup is not supported on $operating_system." >&2
@@ -249,6 +250,7 @@ bootstrap_python_tools
 find_command cmake >/dev/null
 find_command ctest >/dev/null
 find_command clang-tidy-18 clang-tidy >/dev/null
+find_command clang-format-18 clang-format >/dev/null
 find_command cppcheck >/dev/null
 find_command iwyu_tool.py iwyu_tool >/dev/null
 clang_compiler="$(find_command clang-18 clang)"
@@ -263,6 +265,10 @@ fi
   echo "The bootstrapped quality environment does not contain gcovr." >&2
   exit 2
 }
+
+echo "== Project standards and clang-format: ${head} =="
+"$quality_python" Tools/CheckProjectStandards.py \
+  --full-tree --clang-format --base "$base" --head "$head"
 
 echo "== Full-project static analysis: ${head} =="
 analysis_arguments=(-DBTE_BUILD_QT_APP=ON)

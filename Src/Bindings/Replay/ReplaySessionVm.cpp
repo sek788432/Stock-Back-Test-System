@@ -20,7 +20,7 @@ public:
     if (consumed_ >= static_cast<std::int64_t>(bars_.size())) {
       return std::nullopt;
     }
-    return bars_[consumed_++];
+    return bars_[static_cast<std::size_t>(consumed_++)];
   }
 
   [[nodiscard]] std::int64_t totalBars() const noexcept override {

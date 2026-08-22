@@ -93,8 +93,8 @@ way to prove a public behavior.
 - [ ] The tool or workflow exists in the submitted tree and its documented
   command matches the implementation.
 - [ ] Tool behavior has positive, negative, and boundary tests where applicable.
-- [ ] `python3 Tools/CheckProjectStandards.py --full-tree --base <base> --head
-  <head>` passes for committed revisions.
+- [ ] `python3 Tools/CheckProjectStandards.py --full-tree --clang-format --base
+  <base> --head <head>` passes for committed revisions.
 - [ ] The complete workflow was run on a real branch when changing an
   implemented merge gate.
 - [ ] Newly proposed but unimplemented checks remain labeled **Planned / not
@@ -117,15 +117,19 @@ cmake --build --preset qt-dev --parallel
 ctest --preset qt-dev --no-tests=error
 ```
 
-The sanitizer preset also exists for applicable local C++ work:
+Both merge-blocking sanitizer configurations are available locally:
 
 ```bash
 cmake --preset dev-sanitize
 cmake --build --preset dev-sanitize --parallel
 ctest --preset dev-sanitize --no-tests=error
+
+cmake --preset dev-tsan
+cmake --build --preset dev-tsan --parallel
+ctest --preset dev-tsan --no-tests=error
 ```
 
-Sanitizers are not currently a merge-blocking workflow job. See
+Sanitizers are merge-blocking workflow jobs. See
 [`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) for the exact implemented
 and planned enforcement status.
 

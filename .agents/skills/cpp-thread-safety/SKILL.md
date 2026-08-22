@@ -177,7 +177,9 @@ const State& state() const {
 
 ## Memory leak prevention
 
-The repo's CI runs **AddressSanitizer + LeakSanitizer + UBSan** on the `dev` preset (Docs/Specs/09 §1.2). The sanitizers will catch leaks at test exit. To pass:
+The repo's sanitizer CI matrix runs **AddressSanitizer + LeakSanitizer +
+UBSan** with `dev-sanitize`, and TSan separately with `dev-tsan`. The sanitizers
+catch leaks, undefined behavior, and data races during registered tests. To pass:
 
 1. Every owning resource is RAII (above).
 2. Cycles in `std::shared_ptr` are forbidden. Use `std::weak_ptr` for back-references.
@@ -190,16 +192,19 @@ The repo's CI runs **AddressSanitizer + LeakSanitizer + UBSan** on the `dev` pre
 When iterating locally on threading-sensitive code:
 
 ```bash
-cmake --preset dev          # has ASan + UBSan + LeakSan + debug Qt
-cmake --build --preset dev
-ctest --preset dev          # sanitizers fire on any violation, test fails
+cmake --preset dev-sanitize
+cmake --build --preset dev-sanitize --parallel
+ctest --preset dev-sanitize --no-tests=error
 
 # For races specifically (ASan and TSan can't combine):
-cmake --preset dev-tsan     # adds -fsanitize=thread, drops ASan
-ctest --preset dev-tsan
+cmake --preset dev-tsan
+cmake --build --preset dev-tsan --parallel
+ctest --preset dev-tsan --no-tests=error
 ```
 
-If a sanitizer fires, **do not suppress** the report. The bug is real until proven otherwise. Suppressions in `Tests/sanitizer-suppressions.txt` require CODEOWNER approval and an `until:` date.
+If a sanitizer fires, **do not suppress** the report. No sanitizer suppression
+file is wired into the repository; adding one requires a focused tooling change
+and maintainer approval.
 
 ## Verification before committing
 
@@ -208,6 +213,6 @@ If a sanitizer fires, **do not suppress** the report. The bug is real until prov
 3. Did you use `std::thread`? → use `std::jthread` (or justify).
 4. Did you cross a thread boundary with raw pointers or non-trivial types not registered as Qt metatype? → use a snapshot value type.
 5. Did you add a `volatile` for synchronization? → use `std::atomic`.
-6. Did `ctest --preset dev` pass with no sanitizer reports?
+6. Did both applicable sanitizer presets pass with no reports?
 
 If yes to all, the change is good. Otherwise, fix before committing.

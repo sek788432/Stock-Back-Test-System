@@ -26,13 +26,14 @@ pull requests, pushes to `main`, a weekly schedule, and manual dispatch.
 | Workflow job | Verified behavior | Status |
 | --- | --- | --- |
 | `all-tests` | Installs Qt 6.9 with Qt Charts; configures and builds the `qt-dev` preset with tests and compiler warnings as errors; runs every registered CTest test on Ubuntu and macOS. | Implemented / merge-blocking |
-| `project-standards` | Runs `Tools/CheckProjectStandards.py --full-tree` against the submitted Git revision on Ubuntu. | Implemented / merge-blocking |
-| `static-analysis` | Configures the complete Qt source tree with Clang 18 and runs clang-tidy, cppcheck, IWYU, and scan-build across every project translation unit on every event. Analyzer findings fail the job; scan-build reports are uploaded. | Implemented / merge-blocking |
+| `project-standards` | Runs `Tools/CheckProjectStandards.py --full-tree --clang-format` against the submitted Git revision on Ubuntu, including repository policy, module-direction, suppression, and formatting checks. | Implemented / merge-blocking |
+| `static-analysis` | Configures the complete Qt source tree with Clang 18 and stronger warnings, then runs clang-tidy (including selected `misc-*` checks), cppcheck, IWYU, and scan-build across every project translation unit on every event. Analyzer findings fail the job; scan-build reports are uploaded. | Implemented / merge-blocking |
+| `sanitizers` | Builds and runs every registered non-Qt CTest test with Clang 18 in separate ASan/UBSan/LSan and TSan matrix entries. Any sanitizer report fails the job. | Implemented / merge-blocking |
 | `coverage` | Builds and runs all registered tests with coverage instrumentation; requires 98% changed-line coverage and 90% changed-branch coverage; uploads gcovr reports. | Implemented / merge-blocking |
-| `merge-gate` | Fails unless both matrix test runs, project standards, static analysis, and changed-code coverage succeed. Its display name is `Merge gate (all required checks)`. | Implemented / merge-blocking |
+| `merge-gate` | Fails unless both matrix test runs, project standards, static analysis, both sanitizer entries, and changed-code coverage succeed. Its display name is `Merge gate (all required checks)`. | Implemented / merge-blocking |
 
 The workflow does **not** currently run Windows, DataFetcher pytest, mutation
-testing, ruff, explicit format checks, sanitizers, TSan, or a determinism
+testing, ruff, Clazy, CodeQL, a custom Clang AST policy plugin, or a determinism
 fixture comparison.
 
 Every external action is pinned to a full commit SHA, checkout credentials are
@@ -54,24 +55,50 @@ UTF-8 files from the exact `--head` commit and skips binary files.
 It currently checks:
 
 - trailing whitespace;
-- selected banned C++ spellings, including `using namespace std`, raw
-  allocation/deallocation, selected C string/output functions, manual
-  `lock()`/`unlock()`, and detached threads;
+- banned modern-style C++ spellings, including `using namespace std`, raw
+  allocation/deallocation, C arrays, recognized built-in C-style casts,
+  unscoped enums, `NULL`, `typedef`, `goto`, function-like macros, and selected
+  C string/output functions; the exact `main(int, char*[])` entrypoint ABI is
+  the only checked C-array exception;
+- banned ownership and concurrency spellings, including `std::auto_ptr`,
+  `std::thread`, `pthread_create`, manual `lock()`/`unlock()`, detached threads,
+  `volatile`, and `std::vector<bool>`;
+- `#pragma once` in every project-owned C++ header below `Src/`;
+- direct `Bte/<Module>/...` include directions against the implemented module
+  dependency map;
+- narrow clang-tidy suppressions that name exact checks and end in `: reason`;
+- clang-format 18 drift across every project-owned C++ source/header blob when
+  `--clang-format` is supplied in full-tree mode;
 - task comments in source/configuration that lack `ISSUE-NNN`;
 - literal/identical assertion patterns that its regular expressions recognize;
 - registration of tracked `UnitTest_*.cpp` and `UnitTest_*.py` files in CMake;
 - a registered unit-test file for each newly introduced top-level source
   module.
 
-It does not parse C++ or Python semantics, prove public-behavior coverage, find
-every empty or mock-only test, or replace compilation and runtime tests. Its own
-Python unit tests are registered in CTest as `bte_project_standards_tests`.
+The five `cpp-*` skill families have the following enforcement boundary:
+
+| Skill | Direct project-standards coverage | Other required evidence |
+| --- | --- | --- |
+| `cpp-modern-style` | Banned spellings, C arrays/casts, scoped enums, function macros, `#pragma once`, and path conventions. | clang-tidy enforces naming and syntax-aware modernize rules; API suitability remains reviewable. |
+| `cpp-oop-design` | Module/test layout, direct include direction, and path conventions. | Compiler/analyzer jobs enforce dependency-visible correctness; responsibility, abstraction depth, and pattern choice require review. |
+| `cpp-performance` | Unconditionally forbidden spellings such as `std::vector<bool>`. | clang-tidy/cppcheck enforce syntax-aware performance findings; hot-path relevance and benchmark evidence require review. |
+| `cpp-static-analysis` | Direct textual rules, suppression hygiene, and clang-format 18. | The required `static-analysis` job runs clang-tidy, cppcheck, IWYU, and scan-build over all translation units. |
+| `cpp-thread-safety` | Raw allocation, manual locks, detached/legacy threads, pthread creation, `volatile`, and legacy ownership types. | Concurrency analyzers plus separate ASan/UBSan/LSan and TSan test jobs are merge-blocking. |
+
+The checker masks C++ comments and literals before matching these token rules.
+The enforcement split is recorded by
+[ADR 0020](../Decisions/0020-expand-cpp-skill-standards-enforcement.md).
+It does not parse C++ or Python semantics, prove public-behavior coverage,
+identify every ownership or OOP design mistake, establish that an operation is
+in a hot path, find every empty or mock-only test, or replace compilation,
+analyzer, runtime, benchmark, and reviewer evidence. Its own Python unit tests
+are registered in CTest as `bte_project_standards_tests`.
 
 For two committed revisions, run:
 
 ```bash
 python3 Tools/CheckProjectStandards.py \
-  --full-tree --base <base-revision> --head <head-revision>
+  --full-tree --clang-format --base <base-revision> --head <head-revision>
 ```
 
 The `--full-tree` form requires `--head`; it does not audit uncommitted files.
@@ -153,9 +180,10 @@ The following work is explicitly unimplemented:
 - Semantic anti-cheat analysis.
 - Public-behavior parity, including positive/negative/boundary parity.
 - Mutation testing.
-- clang-format and ruff-format enforcement.
+- ruff-format enforcement.
 - ruff analysis.
-- ASan, UBSan, LSan, and TSan workflow jobs.
+- Clazy analysis for Qt-specific correctness and performance findings.
+- CodeQL analysis and a custom Clang AST policy plugin.
 - Canonical functional-result fixture comparison.
 - Repository-verifiable reviewer and branch-protection policy checks.
 
@@ -176,15 +204,19 @@ cmake --build --preset qt-dev --parallel
 ctest --preset qt-dev --no-tests=error
 ```
 
-For applicable C++ changes, a sanitizer preset is available locally:
+The two merge-blocking sanitizer configurations are also available locally:
 
 ```bash
 cmake --preset dev-sanitize
 cmake --build --preset dev-sanitize --parallel
 ctest --preset dev-sanitize --no-tests=error
+
+cmake --preset dev-tsan
+cmake --build --preset dev-tsan --parallel
+ctest --preset dev-tsan --no-tests=error
 ```
 
-The sanitizer preset is Implemented / local, not merge-blocking. No repository
+The sanitizer presets are Implemented / merge-blocking. No repository
 pre-commit configuration or changed-test runner currently exists.
 
 The complete local quality entry point is:
@@ -220,7 +252,8 @@ The analysis build materializes Qt-generated translation units referenced by
 the compilation database before cppcheck loads that database. All events omit
 diff arguments, so every analyzer covers all project translation units.
 
-CI pins clang/clang-tidy/clang-tools `1:18.1.3-1ubuntu1`, cppcheck
+CI pins clang/clang-format/clang-tidy/clang-tools and the Clang runtime
+`1:18.1.3-1ubuntu1`, cppcheck
 `2.13.0-2ubuntu3`, and IWYU `8.21-1build2` on Ubuntu 24.04. The complete Python
 coverage dependency closure—including gcovr `8.5`, diff-cover `10.0.0`, Jinja2
 `3.1.6`, and MarkupSafe `3.0.3`—and artifact hashes are recorded in

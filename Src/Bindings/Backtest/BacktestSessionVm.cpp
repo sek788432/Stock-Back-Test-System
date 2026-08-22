@@ -76,7 +76,7 @@ double priceToDollars(const std::int64_t nanodollars) {
 
 core::Result<BacktestSnapshot>
 // The scalar inputs are intentionally kept explicit at this starter seam.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): stable public seam
 runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
                    const std::int64_t quantityShares,
                    const core::CancellationToken &cancellation) {
@@ -87,7 +87,7 @@ runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
 core::Result<BacktestSnapshot>
 // The scalar inputs are intentionally kept explicit at this starter seam.
 runBacktestSession(
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): stable public seam
     std::vector<core::Bar> bars, const double initialCapital,
     const std::int64_t quantityShares,
     std::optional<strategy::SelectableStrategyPlan> selectableStrategy,

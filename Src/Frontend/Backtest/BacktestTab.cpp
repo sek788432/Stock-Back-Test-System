@@ -50,7 +50,7 @@ namespace {
 
 constexpr auto yearSelectorMinimumWidth = 96;
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): distinct Qt fields
 QLabel *makeLabel(const QString &text, const QString &objectName,
                   QWidget *parent) {
   auto label = std::make_unique<QLabel>(text, parent);

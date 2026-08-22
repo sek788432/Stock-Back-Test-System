@@ -77,6 +77,29 @@ class CiWorkflowSecurityTest(unittest.TestCase):
         )
         self.assertNotIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", self.workflow)
 
+    def test_project_standards_uses_pinned_clang_format_18(self) -> None:
+        standards_job = self.workflow.split("  project-standards:", 1)[1].split(
+            "  static-analysis:", 1
+        )[0]
+
+        self.assertIn("clang-format-18=1:18.1.3-1ubuntu1", standards_job)
+        self.assertIn("--full-tree", standards_job)
+        self.assertIn("--clang-format", standards_job)
+
+    def test_sanitizer_matrix_is_pinned_and_merge_blocking(self) -> None:
+        sanitizer_job = self.workflow.split("  sanitizers:", 1)[1].split(
+            "  merge-gate:", 1
+        )[0]
+        merge_gate = self.workflow.split("  merge-gate:", 1)[1]
+
+        self.assertIn("clang-18=1:18.1.3-1ubuntu1", sanitizer_job)
+        self.assertIn("libclang-rt-18-dev=1:18.1.3-1ubuntu1", sanitizer_job)
+        self.assertIn("- dev-sanitize", sanitizer_job)
+        self.assertIn("- dev-tsan", sanitizer_job)
+        self.assertIn('ASAN_OPTIONS: detect_leaks=1:halt_on_error=1', sanitizer_job)
+        self.assertIn("- sanitizers", merge_gate)
+        self.assertIn("needs.sanitizers.result", merge_gate)
+
 
 class StaticAnalysisToolTest(unittest.TestCase):
     def test_iwyu_maps_platform_headers_to_portable_public_includes(self) -> None:
