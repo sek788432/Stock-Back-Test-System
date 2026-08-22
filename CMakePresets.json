@@ -40,6 +40,14 @@
       }
     },
     {
+      "name": "dev-tsan",
+      "inherits": "base",
+      "displayName": "Development + ThreadSanitizer (Clang/GNU)",
+      "cacheVariables": {
+        "BTE_THREAD_SANITIZER": "ON"
+      }
+    },
+    {
       "name": "analysis",
       "inherits": "base",
       "displayName": "Static analysis",
@@ -79,6 +87,10 @@
       "configurePreset": "dev-sanitize"
     },
     {
+      "name": "dev-tsan",
+      "configurePreset": "dev-tsan"
+    },
+    {
       "name": "analysis",
       "configurePreset": "analysis"
     },
@@ -109,6 +121,13 @@
     {
       "name": "dev-sanitize",
       "configurePreset": "dev-sanitize",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "dev-tsan",
+      "configurePreset": "dev-tsan",
       "output": {
         "outputOnFailure": true
       }

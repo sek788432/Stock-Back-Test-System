@@ -1,5 +1,7 @@
 #include "Bte/Frontend/BacktestTab.h"
 
+#include "WaitUntil.h"
+
 #include <QCalendarWidget>
 #include <QCheckBox>
 #include <QComboBox>
@@ -164,7 +166,8 @@ void BacktestTabTest::runExecutesOffTheUiThreadAndDisplaysFill() {
 
   QTest::mouseClick(run, Qt::LeftButton);
 
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Completed"), 5'000);
+  QVERIFY(bte::test::waitUntil(
+      [&status] { return status->text().contains("Completed"); }));
   QVERIFY(ranOffUiThread);
   QVERIFY(run->isEnabled());
   QVERIFY(!equity->text().contains("--"));
@@ -204,11 +207,12 @@ void BacktestTabTest::failedRunClearsPriorResultAndPreservesError() {
   QVERIFY(trades != nullptr);
 
   QTest::mouseClick(run, Qt::LeftButton);
-  QTRY_COMPARE_WITH_TIMEOUT(trades->rowCount(), 1, 5'000);
+  QVERIFY(bte::test::waitUntil([&trades] { return trades->rowCount() == 1; }));
+  QCOMPARE(trades->rowCount(), 1);
   QTest::mouseClick(run, Qt::LeftButton);
 
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("source file is missing"),
-                           5'000);
+  QVERIFY(bte::test::waitUntil(
+      [&status] { return status->text().contains("source file is missing"); }));
   QCOMPARE(trades->rowCount(), 0);
   QVERIFY(cash->text().contains("--"));
   QVERIFY(equity->text().contains("--"));
@@ -233,7 +237,9 @@ void BacktestTabTest::presentsRejectedAndCancelledOutcomes() {
     QVERIFY(trades != nullptr);
 
     QTest::mouseClick(run, Qt::LeftButton);
-    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(expectedText), 5'000);
+    QVERIFY(bte::test::waitUntil([&status, expectedText] {
+      return status->text().contains(expectedText);
+    }));
     QCOMPARE(trades->rowCount(), 0);
   };
 
@@ -276,7 +282,8 @@ void BacktestTabTest::runSubmitsEveryVisibleConfigurationField() {
   capital->setValue(12'345.67);
   quantity->setValue(321);
   QTest::mouseClick(run, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Completed"), 5'000);
+  QVERIFY(bte::test::waitUntil(
+      [&status] { return status->text().contains("Completed"); }));
 
   const std::scoped_lock lock{captureMutex};
   QVERIFY(captured.has_value());
@@ -306,7 +313,7 @@ void BacktestTabTest::destructionCancelsAndJoinsActiveRun() {
   auto *run = tab->findChild<QPushButton *>("backtestRunButton");
   QVERIFY(run != nullptr);
   QTest::mouseClick(run, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(started.load(), 5'000);
+  QVERIFY(bte::test::waitUntil([&started] { return started.load(); }));
 
   tab.reset();
 
@@ -326,8 +333,9 @@ void BacktestTabTest::workerExceptionIsPresentedAsAnError() {
 
   QTest::mouseClick(run, Qt::LeftButton);
 
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("unexpected runner failure"),
-                           5'000);
+  QVERIFY(bte::test::waitUntil([&status] {
+    return status->text().contains("unexpected runner failure");
+  }));
   QVERIFY(run->isEnabled());
 }
 
@@ -342,8 +350,8 @@ void BacktestTabTest::unknownWorkerExceptionIsPresentedAsAnError() {
 
   QTest::mouseClick(run, Qt::LeftButton);
 
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("backtest worker failed"),
-                           5'000);
+  QVERIFY(bte::test::waitUntil(
+      [&status] { return status->text().contains("backtest worker failed"); }));
   QVERIFY(run->isEnabled());
 }
 
@@ -358,7 +366,8 @@ void BacktestTabTest::defaultRunnerExecutesTrackedBars() {
 
   QTest::mouseClick(run, Qt::LeftButton);
 
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Completed"), 5'000);
+  QVERIFY(bte::test::waitUntil(
+      [&status] { return status->text().contains("Completed"); }));
   QVERIFY(!bars->text().contains("--"));
   QVERIFY(run->isEnabled());
 }
@@ -405,7 +414,8 @@ void BacktestTabTest::selectableConditionsSubmitTypedPlanToBackend() {
   buySecond->setChecked(true);
   buySecondMetric->setCurrentText("Close change %");
   QTest::mouseClick(run, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Completed"), 5'000);
+  QVERIFY(bte::test::waitUntil(
+      [&status] { return status->text().contains("Completed"); }));
 
   const std::scoped_lock lock{captureMutex};
   QVERIFY(captured.has_value());
@@ -530,8 +540,9 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
     metric->setCurrentText(metricCase.label);
     QTest::mouseClick(run, Qt::LeftButton);
     const auto expectedRuns = static_cast<int>(index + 1U);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        runCount.load() == expectedRuns && run->isEnabled(), 5'000);
+    QVERIFY(bte::test::waitUntil([&runCount, expectedRuns, &run] {
+      return runCount.load() == expectedRuns && run->isEnabled();
+    }));
 
     const std::scoped_lock lock{captureMutex};
     QVERIFY(captured.has_value());
@@ -561,8 +572,8 @@ void BacktestTabTest::selectableConditionStatusNamesItsSelectedStrategy() {
   strategy->setCurrentText("Selectable conditions");
   QTest::mouseClick(run, Qt::LeftButton);
 
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("selectable strategy"),
-                           5'000);
+  QVERIFY(bte::test::waitUntil(
+      [&status] { return status->text().contains("selectable strategy"); }));
   QVERIFY(!status->text().contains("starter order"));
 }
 
@@ -624,8 +635,9 @@ void BacktestTabTest::selectableControlsPresentNoSignalAndSellFill() {
   sellSecondThreshold->setValue(20.0);
   QVERIFY(sellSecondMetric->isEnabled());
   QTest::mouseClick(run, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("no selectable condition"),
-                           5'000);
+  QVERIFY(bte::test::waitUntil([&status] {
+    return status->text().contains("no selectable condition");
+  }));
   {
     const std::scoped_lock lock{captureMutex};
     QVERIFY(captured.has_value());
@@ -644,7 +656,8 @@ void BacktestTabTest::selectableControlsPresentNoSignalAndSellFill() {
   }
 
   QTest::mouseClick(run, Qt::LeftButton);
-  QTRY_COMPARE_WITH_TIMEOUT(trades->rowCount(), 1, 5'000);
+  QVERIFY(bte::test::waitUntil([&trades] { return trades->rowCount() == 1; }));
+  QCOMPARE(trades->rowCount(), 1);
   QCOMPARE(trades->item(0, 1)->text(), QString{"Sell"});
 }
 

@@ -63,12 +63,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-format-18=1:18.1.3-1ubuntu1
+          clang-format-18 --version
+
       - name: Review the full repository against project standards
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
         run: >-
           python3 Tools/CheckProjectStandards.py
           --full-tree
+          --clang-format
           --base "$BASE_SHA"
           --head "$GITHUB_SHA"
 
@@ -208,6 +215,48 @@ jobs:
             changed-branch-coverage.txt
           if-no-files-found: ignore
 
+  sanitizers:
+    name: Sanitizers (${{ matrix.preset }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        preset:
+          - dev-sanitize
+          - dev-tsan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install Clang sanitizer runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            clang-18=1:18.1.3-1ubuntu1 \
+            libclang-rt-18-dev=1:18.1.3-1ubuntu1
+          clang-18 --version
+
+      - name: Configure sanitizer tests
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: >-
+          cmake --preset "${{ matrix.preset }}"
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+
+      - name: Build sanitizer tests
+        run: cmake --build --preset "${{ matrix.preset }}" --parallel
+
+      - name: Run sanitizer tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure
+
   merge-gate:
     name: Merge gate (all required checks)
     if: always()
@@ -216,14 +265,15 @@ jobs:
       - all-tests
       - static-analysis
       - coverage
+      - sanitizers
     runs-on: ubuntu-latest
     steps:
       - name: Reject failed or cancelled checks
-        if: needs.all-tests.result != 'success' || needs.project-standards.result != 'success' || needs.static-analysis.result != 'success' || needs.coverage.result != 'success'
+        if: needs.all-tests.result != 'success' || needs.project-standards.result != 'success' || needs.static-analysis.result != 'success' || needs.coverage.result != 'success' || needs.sanitizers.result != 'success'
         run: |
-          echo "Tests, standards, static analysis, and changed-code coverage must pass before merge."
+          echo "Tests, standards, analysis, sanitizers, and changed-code coverage must pass before merge."
           exit 1
 
       - name: Approve successful checks
-        if: needs.all-tests.result == 'success' && needs.project-standards.result == 'success' && needs.static-analysis.result == 'success' && needs.coverage.result == 'success'
-        run: echo "Tests, standards, static analysis, and changed-code coverage passed."
+        if: needs.all-tests.result == 'success' && needs.project-standards.result == 'success' && needs.static-analysis.result == 'success' && needs.coverage.result == 'success' && needs.sanitizers.result == 'success'
+        run: echo "Tests, standards, analysis, sanitizers, and changed-code coverage passed."

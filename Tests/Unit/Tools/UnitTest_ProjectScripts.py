@@ -130,6 +130,8 @@ class ProjectScriptsTest(unittest.TestCase):
             "clang-18",
             "clang++",
             "clang++-18",
+            "clang-format",
+            "clang-format-18",
             "clang-tidy",
             "clang-tidy-18",
             "cmake",
@@ -195,6 +197,10 @@ fi
         self.assertIn("python3 Tools/RunStaticAnalysis.py clang-tidy", commands)
         self.assertIn("python3 Tools/RunStaticAnalysis.py cppcheck", commands)
         self.assertIn("python3 Tools/RunStaticAnalysis.py iwyu", commands)
+        self.assertIn(
+            "python3 Tools/CheckProjectStandards.py --full-tree --clang-format --base base-sha --head head-sha",
+            commands,
+        )
         self.assertIn("cmake -E remove_directory Output/analysis", commands)
         self.assertIn("ctest --preset coverage --no-tests=error", commands)
         self.assertIn(
@@ -254,6 +260,7 @@ fi
     def test_run_quality_propagates_tool_failures_without_success_message(self) -> None:
         script = self.copy_script("RunQuality.sh")
         for failure in (
+            "CheckProjectStandards.py",
             "clang-tidy",
             "cppcheck",
             "iwyu",
@@ -318,6 +325,7 @@ fi
             "brew",
             "clang",
             "clang++",
+            "clang-format",
             "clang-tidy",
             "cmake",
             "cppcheck",

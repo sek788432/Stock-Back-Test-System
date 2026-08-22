@@ -114,6 +114,7 @@ std::string toJson(const ReplayResultSnapshot &snapshot) {
 }
 
 core::Result<std::string> readAll(const std::filesystem::path &path) {
+  // NOLINTNEXTLINE(misc-const-correctness): reads mutate stream state
   std::ifstream input{path};
   if (!input) {
     return core::makeError(core::ErrorCode::permissionDenied,

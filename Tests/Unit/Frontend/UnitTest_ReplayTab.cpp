@@ -2,6 +2,8 @@
 
 #include "Bte/Frontend/QtChartsCandlestickView.h"
 
+#include "WaitUntil.h"
+
 #include <QComboBox>
 #include <QDateEdit>
 #include <QDoubleSpinBox>
@@ -271,7 +273,9 @@ void ReplayTabTest::playAdvancesReplay() {
   speedCombo->setCurrentText("10x");
   QTest::mouseClick(playPauseButton, Qt::LeftButton);
 
-  QTRY_VERIFY_WITH_TIMEOUT(chartView->candleCount() > 1U, 1000);
+  QVERIFY(bte::test::waitUntil(
+      [&chartView] { return chartView->candleCount() > 1U; },
+      std::chrono::milliseconds{1'000}));
   QVERIFY(progress->value() > 0);
 }
 
@@ -289,7 +293,9 @@ void ReplayTabTest::pauseStopsReplayAdvance() {
 
   speedCombo->setCurrentText("10x");
   QTest::mouseClick(playPauseButton, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(chartView->candleCount() > 2U, 1000);
+  QVERIFY(bte::test::waitUntil(
+      [&chartView] { return chartView->candleCount() > 2U; },
+      std::chrono::milliseconds{1'000}));
 
   QTest::mouseClick(playPauseButton, Qt::LeftButton);
   const auto pausedCount = chartView->candleCount();

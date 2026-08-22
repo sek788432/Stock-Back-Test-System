@@ -130,7 +130,7 @@ std::vector<bte::core::Bar> barsForSchema(std::vector<bte::core::Bar> &&bars,
 
 core::Result<std::vector<core::Bar>>
 // Symbol and schema remain separate because they map directly to StreamRequest.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): distinct request fields
 loadBacktestBars(const QString &symbol, const QString &schemaName,
                  const QDate start, const QDate end,
                  const core::CancellationToken &cancellation) {
