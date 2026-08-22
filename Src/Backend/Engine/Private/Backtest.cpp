@@ -31,9 +31,6 @@ core::Error cancelled() {
 }
 
 core::Result<std::int64_t> checkedPriceNanodollars(const double price) {
-  if (!std::isfinite(price) || price <= 0.0) {
-    return invalidArgument("bar price is outside the supported range");
-  }
   const auto scaledPrice = price * nanodollarsPerDollar;
   if (!std::isfinite(scaledPrice) || scaledPrice <= 0.0 ||
       scaledPrice >= int64ExclusiveUpperBound) {
@@ -210,9 +207,6 @@ executeBuyAtOpen(BacktestResult &result, const core::Bar &bar,
 core::Result<PendingOrderExecution>
 executeSellAtOpen(BacktestResult &result, const core::Bar &bar,
                   const std::int64_t openNanodollars) {
-  if (result.positionShares == 0) {
-    return PendingOrderExecution{};
-  }
   const auto price = sellPriceWithDefaultSlippage(openNanodollars);
   if (!price.ok()) {
     return price.error();

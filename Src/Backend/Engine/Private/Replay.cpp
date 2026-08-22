@@ -49,7 +49,7 @@ void Replay::reset() {
     currentBarIndex_ = 0;
     return;
   }
-  (void)stream_->seek(0);
+  stream_->reset();
   currentBarIndex_ = 0;
 }
 

@@ -18,6 +18,7 @@ private slots:
   void loadBacktestBars_preservesMissingFileError();
   void loadBacktestBars_returnsSuccessfulEmptyRange();
   void loadBacktestBars_validatesDateRangeBoundaries();
+  void loadBacktestBars_findsManagedDataFromAnUnrelatedWorkingDirectory();
   void loadBacktestBars_doesNotThrowWhenCurrentDirectoryDisappears();
   void loadBacktestBars_honorsRequestedCancellation();
 };
@@ -62,11 +63,15 @@ void ReplayDataLoaderTest::loadBacktestBars_preservesMissingFileError() {
 }
 
 void ReplayDataLoaderTest::loadBacktestBars_returnsSuccessfulEmptyRange() {
-  const auto result = bte::bindings::loadBacktestBars(
+  const auto hourly = bte::bindings::loadBacktestBars(
       "AAPL", "ohlcv-1h", QDate{2035, 1, 1}, QDate{2035, 1, 2});
+  const auto daily = bte::bindings::loadBacktestBars(
+      "AAPL", "ohlcv-1d", QDate{2035, 1, 1}, QDate{2035, 1, 2});
 
-  QVERIFY(result.ok());
-  QVERIFY(result.value().empty());
+  QVERIFY(hourly.ok());
+  QVERIFY(hourly.value().empty());
+  QVERIFY(daily.ok());
+  QVERIFY(daily.value().empty());
 }
 
 void ReplayDataLoaderTest::loadBacktestBars_validatesDateRangeBoundaries() {
@@ -82,6 +87,21 @@ void ReplayDataLoaderTest::loadBacktestBars_validatesDateRangeBoundaries() {
   QVERIFY(maximum.ok());
   QCOMPARE(invalid.error().code, bte::core::ErrorCode::invalidArgument);
   QCOMPARE(reversed.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+void ReplayDataLoaderTest::
+    loadBacktestBars_findsManagedDataFromAnUnrelatedWorkingDirectory() {
+  const auto original = std::filesystem::current_path();
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  std::filesystem::current_path(temporary.path().toStdString());
+
+  const auto result = bte::bindings::loadBacktestBars(
+      "AAPL", "ohlcv-1h", QDate{2018, 5, 1}, QDate{2018, 5, 1});
+
+  std::filesystem::current_path(original);
+  QVERIFY(result.ok());
+  QVERIFY(!result.value().empty());
 }
 
 void ReplayDataLoaderTest::

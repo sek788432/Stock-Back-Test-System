@@ -47,27 +47,21 @@ normalizedCapitalMicrodollars(const double initialCapital) {
 }
 
 BacktestOutcome toViewOutcome(const engine::StarterOrderStatus status) {
-  switch (status) {
-  case engine::StarterOrderStatus::filled:
+  if (status == engine::StarterOrderStatus::filled) {
     return BacktestOutcome::filled;
-  case engine::StarterOrderStatus::rejectedInsufficientCash:
-    return BacktestOutcome::rejectedInsufficientCash;
-  case engine::StarterOrderStatus::cancelledNoFutureMarketData:
-    return BacktestOutcome::cancelledNoFutureMarketData;
-  case engine::StarterOrderStatus::completedNoSignal:
-    return BacktestOutcome::completedNoSignal;
   }
-  return BacktestOutcome::cancelledNoFutureMarketData;
+  if (status == engine::StarterOrderStatus::rejectedInsufficientCash) {
+    return BacktestOutcome::rejectedInsufficientCash;
+  }
+  if (status == engine::StarterOrderStatus::cancelledNoFutureMarketData) {
+    return BacktestOutcome::cancelledNoFutureMarketData;
+  }
+  return BacktestOutcome::completedNoSignal;
 }
 
 BacktestFillSide toViewSide(const engine::BacktestOrderSide side) {
-  switch (side) {
-  case engine::BacktestOrderSide::buy:
-    return BacktestFillSide::buy;
-  case engine::BacktestOrderSide::sell:
-    return BacktestFillSide::sell;
-  }
-  return BacktestFillSide::buy;
+  return side == engine::BacktestOrderSide::buy ? BacktestFillSide::buy
+                                                : BacktestFillSide::sell;
 }
 
 double moneyToDollars(const std::int64_t microdollars) {

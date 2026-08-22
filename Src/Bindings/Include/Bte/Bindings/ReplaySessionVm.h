@@ -46,7 +46,7 @@ public:
 
 private:
   [[nodiscard]] ReplayPortfolioSnapshot makePortfolioSnapshot() const noexcept;
-  void rebuildReplayAtCurrentIndex();
+  void rewindReplayToCurrentIndex();
 
   std::vector<bte::core::Bar> bars_;
   std::vector<bte::core::Bar> visibleBars_;

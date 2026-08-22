@@ -1,6 +1,5 @@
 #include "Bte/Bindings/ReplaySessionVm.h"
 
-#include "Bte/Core/Time.h"
 #include "Bte/Data/BarStream.h"
 #include "Bte/Engine/Replay.h"
 
@@ -8,7 +7,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
 #include <utility>
 
 namespace {
@@ -33,29 +31,7 @@ public:
     return consumed_;
   }
 
-  [[nodiscard]] bte::core::DateRange range() const noexcept override {
-    return {};
-  }
-
-  [[nodiscard]] std::string symbol() const override { return {}; }
-
-  [[nodiscard]] std::string schemaName() const override { return {}; }
-
-  [[nodiscard]] std::optional<bte::core::Bar>
-  at(const std::int64_t barIndex) const override {
-    if (barIndex < 0 || barIndex >= static_cast<std::int64_t>(bars_.size())) {
-      return std::nullopt;
-    }
-    return bars_[barIndex];
-  }
-
-  bool seek(const std::int64_t barIndex) noexcept override {
-    if (barIndex < 0 || barIndex > static_cast<std::int64_t>(bars_.size())) {
-      return false;
-    }
-    consumed_ = barIndex;
-    return true;
-  }
+  void reset() noexcept override { consumed_ = 0; }
 
 private:
   std::vector<bte::core::Bar> bars_;
@@ -82,7 +58,8 @@ void ReplaySessionVm::reset(std::vector<bte::core::Bar> bars) {
   bars_ = std::move(bars);
   visibleBars_.clear();
   currentIndex_ = 0;
-  rebuildReplayAtCurrentIndex();
+  replay_ = std::make_unique<bte::engine::Replay>(
+      std::make_unique<ReplayVectorBarStream>(bars_));
 }
 
 bool ReplaySessionVm::stepForward() {
@@ -108,7 +85,7 @@ bool ReplaySessionVm::stepBack() {
 
   visibleBars_.pop_back();
   currentIndex_ = visibleBars_.size();
-  rebuildReplayAtCurrentIndex();
+  rewindReplayToCurrentIndex();
   return true;
 }
 
@@ -155,14 +132,10 @@ ReplaySessionVm::makePortfolioSnapshot() const noexcept {
   };
 }
 
-void ReplaySessionVm::rebuildReplayAtCurrentIndex() {
-  replay_ = std::make_unique<bte::engine::Replay>(
-      std::make_unique<ReplayVectorBarStream>(bars_));
+void ReplaySessionVm::rewindReplayToCurrentIndex() {
+  replay_->reset();
   for (std::size_t index = 0; index < currentIndex_; ++index) {
-    if (!replay_->step().has_value()) {
-      currentIndex_ = bars_.size();
-      return;
-    }
+    (void)replay_->step();
   }
 }
 

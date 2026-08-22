@@ -155,6 +155,15 @@ if(BTE_BUILD_QT_APP)
     PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+  add_test(
+    NAME bte_app_startup_smoke
+    COMMAND stockBacktester --smoke-test -platform offscreen)
+  set_tests_properties(
+    bte_app_startup_smoke
+    PROPERTIES
+      TIMEOUT 5
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
   add_executable(
     bte_frontend_chart_tests
     Unit/Frontend/UnitTest_QtChartsCandlestickView.cpp)

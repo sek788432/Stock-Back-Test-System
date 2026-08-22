@@ -488,17 +488,14 @@ struct StreamingIndicator::Impl final {
     }
     const auto line = *fast - *slow;
     const auto signal = signalEma.update(line);
-    switch (definition.output) {
-    case IndicatorOutput::value:
+    if (definition.output == IndicatorOutput::value) {
       return line;
-    case IndicatorOutput::signal:
-      return signal;
-    case IndicatorOutput::histogram:
-      return signal.has_value() ? std::optional<double>{line - *signal}
-                                : std::nullopt;
-    default:
-      return std::nullopt;
     }
+    if (definition.output == IndicatorOutput::signal) {
+      return signal;
+    }
+    return signal.has_value() ? std::optional<double>{line - *signal}
+                              : std::nullopt;
   }
 
   [[nodiscard]] std::optional<double>
@@ -520,23 +517,22 @@ struct StreamingIndicator::Impl final {
     const auto deviation = std::sqrt(variance);
     const auto upper = mean + 2.0 * deviation;
     const auto lower = mean - 2.0 * deviation;
-    switch (definition.output) {
-    case IndicatorOutput::upper:
+    if (definition.output == IndicatorOutput::upper) {
       return upper;
-    case IndicatorOutput::middle:
+    }
+    if (definition.output == IndicatorOutput::middle) {
       return mean;
-    case IndicatorOutput::lower:
+    }
+    if (definition.output == IndicatorOutput::lower) {
       return lower;
-    case IndicatorOutput::width:
+    }
+    if (definition.output == IndicatorOutput::width) {
       return mean == 0.0 ? std::nullopt
                          : std::optional<double>{(upper - lower) / mean};
-    case IndicatorOutput::percentB:
-      return upper == lower
-                 ? std::optional<double>{0.5}
-                 : std::optional<double>{(input - lower) / (upper - lower)};
-    default:
-      return std::nullopt;
     }
+    return upper == lower
+               ? std::optional<double>{0.5}
+               : std::optional<double>{(input - lower) / (upper - lower)};
   }
 
   [[nodiscard]] std::optional<double> updateAtr(const core::Bar &bar) noexcept {
@@ -612,16 +608,13 @@ struct StreamingIndicator::Impl final {
     }
     const auto upper = highWindow.front();
     const auto lower = lowWindow.front();
-    switch (definition.output) {
-    case IndicatorOutput::upper:
+    if (definition.output == IndicatorOutput::upper) {
       return upper;
-    case IndicatorOutput::middle:
-      return (upper + lower) / 2.0;
-    case IndicatorOutput::lower:
-      return lower;
-    default:
-      return std::nullopt;
     }
+    if (definition.output == IndicatorOutput::middle) {
+      return (upper + lower) / 2.0;
+    }
+    return lower;
   }
 
   [[nodiscard]] std::optional<double>

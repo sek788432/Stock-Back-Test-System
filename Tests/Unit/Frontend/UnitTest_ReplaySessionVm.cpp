@@ -10,7 +10,8 @@
 namespace {
 
 bte::core::Bar makeBar(const int day, const double close) {
-  using namespace std::chrono;
+  using std::chrono::sys_days;
+  using std::chrono::year;
   return bte::core::Bar{
       .ts = bte::core::Timestamp{sys_days{year{2024} / 1 / day}},
       .open = close - 1.0,
@@ -29,6 +30,8 @@ private slots:
   void stepForwardAdvancesWindowAndSnapshot();
   void stepBackRewindsWindowAndSnapshot();
   void initialCapitalChangeRefreshesCashAndEquity();
+  void emptyAndExhaustedSessionsRejectForwardSteps();
+  void negativeInitialCapitalClampsToZero();
 };
 
 void ReplaySessionVmTest::resetLoadsBarsAndInitialPortfolio() {
@@ -97,6 +100,32 @@ void ReplaySessionVmTest::initialCapitalChangeRefreshesCashAndEquity() {
   QCOMPARE(snapshot.pnl, 0.0);
   QCOMPARE(snapshot.hasLastPrice, true);
   QCOMPARE(snapshot.lastPrice, 185.0);
+}
+
+void ReplaySessionVmTest::emptyAndExhaustedSessionsRejectForwardSteps() {
+  bte::bindings::ReplaySessionVm vm;
+
+  QVERIFY(!vm.stepForward());
+  vm.reset({});
+  QCOMPARE(vm.totalBars(), 0U);
+  QCOMPARE(vm.progressPercent(), 0);
+  QVERIFY(!vm.stepForward());
+
+  vm.reset({makeBar(2, 185.0)});
+  QVERIFY(vm.stepForward());
+  QCOMPARE(vm.progressPercent(), 100);
+  QVERIFY(!vm.stepForward());
+  QCOMPARE(vm.currentIndex(), 1U);
+}
+
+void ReplaySessionVmTest::negativeInitialCapitalClampsToZero() {
+  bte::bindings::ReplaySessionVm vm;
+
+  vm.setInitialCapital(-0.01);
+
+  QCOMPARE(vm.initialCapital(), 0.0);
+  QCOMPARE(vm.portfolioSnapshot().cash, 0.0);
+  QCOMPARE(vm.portfolioSnapshot().equity, 0.0);
 }
 
 } // namespace

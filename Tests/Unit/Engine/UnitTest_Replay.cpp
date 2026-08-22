@@ -10,14 +10,14 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
 namespace {
 
 bte::core::Bar makeBar(const int day, const double close) {
-  using namespace std::chrono;
+  using std::chrono::sys_days;
+  using std::chrono::year;
   return bte::core::Bar{
       .ts = bte::core::Timestamp{sys_days{year{2024} / 1 / day}},
       .open = close - 1.0,
@@ -44,24 +44,8 @@ public:
     return static_cast<std::int64_t>(bars_.size());
   }
   std::int64_t consumed() const noexcept override { return consumed_; }
-  bte::core::DateRange range() const noexcept override { return {}; }
-  std::string symbol() const override { return "AAPL"; }
-  std::string schemaName() const override { return "ohlcv-1d"; }
 
-  std::optional<bte::core::Bar> at(const std::int64_t barIndex) const override {
-    if (barIndex < 0 || barIndex >= static_cast<std::int64_t>(bars_.size())) {
-      return std::nullopt;
-    }
-    return bars_[barIndex];
-  }
-
-  bool seek(const std::int64_t barIndex) noexcept override {
-    if (barIndex < 0 || barIndex > static_cast<std::int64_t>(bars_.size())) {
-      return false;
-    }
-    consumed_ = barIndex;
-    return true;
-  }
+  void reset() noexcept override { consumed_ = 0; }
 
 private:
   std::vector<bte::core::Bar> bars_;
@@ -89,6 +73,23 @@ TEST(ReplayClockTest, intervalForSpeedMultiplier_matchesPlaybackContract) {
 
   clock.setSpeedMultiplier(0.0);
   EXPECT_EQ(clock.waitInterval(), std::chrono::milliseconds{0});
+
+  clock.setSpeedMultiplier(-5.0);
+  EXPECT_DOUBLE_EQ(clock.speedMultiplier(), 0.0);
+  EXPECT_EQ(clock.waitInterval(), std::chrono::milliseconds{0});
+}
+
+TEST(ReplayTest, nullStreamIsAStableCompletedReplay) {
+  bte::engine::Replay replay{nullptr};
+
+  EXPECT_FALSE(replay.step().has_value());
+  EXPECT_EQ(replay.currentBarIndex(), 0);
+  EXPECT_EQ(replay.totalBars(), 0);
+  EXPECT_TRUE(replay.done());
+
+  replay.reset();
+  EXPECT_EQ(replay.currentBarIndex(), 0);
+  EXPECT_TRUE(replay.done());
 }
 
 TEST(ReplayTest, step_returnsOneDeterministicProgressSnapshotPerBar) {
