@@ -714,7 +714,8 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
        buySecondMetric, buySecondComparison, buySecondThreshold,
        buySecondPeriod, sellLogic, sellMetric, sellComparison, sellThreshold,
        sellPeriod, sellSecondEnabled, sellSecondMetric, sellSecondComparison,
-       sellSecondThreshold, sellSecondPeriod, runner = std::move(runner)]() {
+       sellSecondThreshold, sellSecondPeriod,
+       executeBacktest = std::move(runner)]() {
         tradeLog->setRowCount(0);
         setLabelText(status, tr("Running…"));
         setLabelText(cash, tr("Cash: --"));
@@ -725,7 +726,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         setLabelText(bars, tr("Bars: --"));
         run->setEnabled(false);
 
-        auto configuration = bindings::BacktestConfiguration{
+        auto backtestConfiguration = bindings::BacktestConfiguration{
             .symbol = symbol->currentText(),
             .schema = "ohlcv-1h",
             .startDate = start->date(),
@@ -758,25 +759,27 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
             }
             return group;
           };
-          configuration.selectableStrategy = strategy::SelectableStrategyPlan{
-              .buy = makeGroup(buyLogic, buyMetric, buyComparison, buyThreshold,
-                               buyPeriod, buySecondEnabled, buySecondMetric,
-                               buySecondComparison, buySecondThreshold,
-                               buySecondPeriod),
-              .sell = makeGroup(sellLogic, sellMetric, sellComparison,
+          backtestConfiguration.selectableStrategy =
+              strategy::SelectableStrategyPlan{
+                  .buy = makeGroup(buyLogic, buyMetric, buyComparison,
+                                   buyThreshold, buyPeriod, buySecondEnabled,
+                                   buySecondMetric, buySecondComparison,
+                                   buySecondThreshold, buySecondPeriod),
+                  .sell =
+                      makeGroup(sellLogic, sellMetric, sellComparison,
                                 sellThreshold, sellPeriod, sellSecondEnabled,
                                 sellSecondMetric, sellSecondComparison,
                                 sellSecondThreshold, sellSecondPeriod),
-          };
+              };
         }
         runState_->selectableConditions =
-            configuration.selectableStrategy.has_value();
+            backtestConfiguration.selectableStrategy.has_value();
         runState_->cancellation = core::CancellationSource{};
         const auto cancellation = runState_->cancellation.token();
-        watcher->setFuture(
-            QtConcurrent::run([runner, configuration, cancellation]() mutable {
+        watcher->setFuture(QtConcurrent::run(
+            [executeBacktest, backtestConfiguration, cancellation]() mutable {
               try {
-                return runner(configuration, cancellation);
+                return executeBacktest(backtestConfiguration, cancellation);
               } catch (const std::exception &error) {
                 return core::Result<bindings::BacktestSnapshot>{core::makeError(
                     core::ErrorCode::internal,
