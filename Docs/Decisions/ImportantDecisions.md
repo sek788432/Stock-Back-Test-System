@@ -58,29 +58,29 @@ historical chronology is actually needed.
 ## C++ and Qt desktop boundary
 
 **Current decision.** Build the cross-platform desktop application in C++20
-with Qt 6 Widgets and the currently implemented Qt Charts view, using CMake as
-build authority. Backend modules remain plain C++ and Qt-independent; Bindings
-translates backend values into Qt-facing view models.
+with Qt 6 Widgets, using CMake as build authority. Qt Charts remains a
+development-only implementation; distribution uses a project-owned `QPainter`
+chart behind `IChartView`. Backend modules remain plain C++ and Qt-independent;
+Bindings translates backend values into Qt-facing view models.
 
 **Why.** The application needs one Windows/macOS/Linux codebase, a performant
 engine, mature desktop packaging, and backend tests that do not instantiate Qt.
 
 **Important rejected alternatives.** Electron/Tauri was rejected because it
 adds a web runtime and IPC around a C++ engine. QML was rejected because a
-form-heavy application would add another language and theming surface. Custom
-rendering and smaller native toolkits were rejected because they increase UI,
-charting, packaging, or platform-maintenance work.
+form-heavy application would add another language and theming surface.
+Distributing Qt Charts under GPL/commercial terms and adding another third-party
+chart dependency were rejected because they conflict with the intended
+Apache-2.0 distribution or add another maintenance surface.
 
 **Consequences.** Qt stays outside Core, Data, Strategy, Indicators, Engine,
-Metrics, and Results. Qt Charts is GPLv3/commercial rather than LGPL, so it may
-remain only as the development implementation and must be replaced with an
-LGPL-compatible or project-owned chart before distribution. Chart
-implementations remain behind an interface so replacement does not force an
-engine redesign.
+Metrics, and Results. Qt Charts must not enter the Apache-2.0 distribution.
+Chart implementations remain behind an interface so replacement does not force
+an engine redesign.
 
-**Owning specification.** [`01Architecture.md`](../Specs/01Architecture.md),
-[`02FrontendQt.md`](../Specs/02FrontendQt.md), and
-[`09BuildDistributionLauncher.md`](../Specs/09BuildDistributionLauncher.md).
+**Owning specification.** [`Architecture.md`](../Specs/Architecture.md),
+[`FrontendQt.md`](../Specs/FrontendQt.md), and
+[`BuildDistribution.md`](../Specs/BuildDistribution.md).
 
 ## Engine and release-data authority
 
@@ -113,13 +113,13 @@ baselines, not the release contract. A public data-bearing release stays
 blocked until redistribution rights and a verified split manifest exist. A
 separate updater is not a V1 dependency.
 
-**Owning specification.** [`00Overview.md`](../Specs/00Overview.md),
-[`01Architecture.md`](../Specs/01Architecture.md),
-[`03BackendCore.md`](../Specs/03BackendCore.md),
-[`04DataLayer.md`](../Specs/04DataLayer.md),
-[`05StrategyAuthoring.md`](../Specs/05StrategyAuthoring.md),
-[`07EngineReplayPnL.md`](../Specs/07EngineReplayPnL.md), and
-[`09BuildDistributionLauncher.md`](../Specs/09BuildDistributionLauncher.md).
+**Owning specification.** [`Overview.md`](../Specs/Overview.md),
+[`Architecture.md`](../Specs/Architecture.md),
+[`BackendCore.md`](../Specs/BackendCore.md),
+[`DataLayer.md`](../Specs/DataLayer.md),
+[`StrategyAuthoring.md`](../Specs/StrategyAuthoring.md),
+[`EngineReplayPnL.md`](../Specs/EngineReplayPnL.md), and
+[`BuildDistribution.md`](../Specs/BuildDistribution.md).
 
 ## Agent authority and repository layout
 
@@ -151,7 +151,7 @@ only explicit conventional-name exceptions.
 
 **Owning specification.**
 [`Docs/Governance/AGENTS.md`](../Governance/AGENTS.md) and
-[`10CiDevFlow.md`](../Specs/10CiDevFlow.md).
+[`CiDevFlow.md`](../Specs/CiDevFlow.md).
 
 ## Incremental strategy and engine seams
 
@@ -165,8 +165,8 @@ next-actual-bar orders. Frontend and Bindings remain presentation adapters.
 **Why.** A complete horizontal engine design would create many unexercised
 interfaces before a usable path exists. Putting policy in Qt, Bindings, or
 Engine would duplicate authoring semantics and violate module ownership. A
-typed plan can serve the UI now and later support persistence, screening, and
-equivalence tests.
+typed plan can serve the UI now and later support persistence and equivalence
+tests.
 
 **Important rejected alternatives.** Implementing the complete engine before a
 page was rejected because feedback would be delayed. Executing trades in the
@@ -180,10 +180,10 @@ explicitly limited and regression-tested. New abstractions must arrive with a
 real second caller or adapter and complete contract tests. Indicator warm-up
 never fabricates values, and a signal cannot fill on the bar that produced it.
 
-**Owning specification.** [`01Architecture.md`](../Specs/01Architecture.md),
-[`05StrategyAuthoring.md`](../Specs/05StrategyAuthoring.md),
-[`06Indicators.md`](../Specs/06Indicators.md), and
-[`07EngineReplayPnL.md`](../Specs/07EngineReplayPnL.md).
+**Owning specification.** [`Architecture.md`](../Specs/Architecture.md),
+[`StrategyAuthoring.md`](../Specs/StrategyAuthoring.md),
+[`Indicators.md`](../Specs/Indicators.md), and
+[`EngineReplayPnL.md`](../Specs/EngineReplayPnL.md).
 
 ## Layered merge-blocking quality gates
 
@@ -220,7 +220,7 @@ pin maintenance. GPL cppcheck remains CI/developer-only and is not distributed
 with the application. Gate changes require an approved update to this entry,
 the owning specification, focused tests, and review.
 
-**Owning specification.** [`10CiDevFlow.md`](../Specs/10CiDevFlow.md).
+**Owning specification.** [`CiDevFlow.md`](../Specs/CiDevFlow.md).
 
 ## Maintenance rules
 

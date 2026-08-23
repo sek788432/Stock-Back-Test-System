@@ -57,7 +57,7 @@ on it or makes its defect newly reachable.
 Read the following before forming findings:
 
 1. `Docs/Governance/AGENTS.md` and `Docs/DefinitionOfDone.md`.
-2. `README.md`, `Docs/Specs/00Overview.md`, and each module spec affected by the
+2. `README.md`, `Docs/Specs/Overview.md`, and each module spec affected by the
    impact closure.
 3. Applicable entries in `Docs/Decisions/ImportantDecisions.md` and the
    originating issue, PRD, or user-supplied acceptance criteria when available.
@@ -134,7 +134,7 @@ as unavailable and do not invent a threshold.
 
 ## 5. Run every applicable verified check
 
-Discover commands from the checked-out repository and `Docs/Specs/10CiDevFlow.md`.
+Discover commands from the checked-out repository and `Docs/Specs/CiDevFlow.md`.
 For the current repository, the baseline full registered-test workflow is:
 
 ```bash

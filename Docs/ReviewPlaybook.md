@@ -55,7 +55,7 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] The logic does what the code says. Walk through edge cases mentally: empty inputs, one-element inputs, max-size inputs, concurrent inputs.
 - [ ] Off-by-ones, NaN, divide-by-zero, integer overflow handled where they can occur.
 - [ ] Error paths handled — no swallowed `Result<T>::error()`, no silent failure.
-- [ ] No look-ahead bias in trading code (Specs/07 §4.1 — a new order cannot
+- [ ] No look-ahead bias in trading code (`Specs/EngineReplayPnL.md` §4.1 — a new order cannot
   fill on the observed slice; market orders fill at the next actual open).
 
 ### Tests
@@ -63,7 +63,7 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] Every affected public behavior has positive, negative, and meaningful boundary coverage, or a concrete explanation for a non-applicable category.
 - [ ] Every bug fix or intentional behavior change has a regression test that distinguishes old and new behavior.
 - [ ] Test names describe the **invariant** being checked, not the implementation (`testRsiWilderSmoothingMatchesReference` not `testRsi`).
-- [ ] No anti-cheat patterns (Specs/10 §4).
+- [ ] No anti-cheat patterns (`Specs/CiDevFlow.md` §4).
 - [ ] Mentally apply mutation: "if I changed `+` to `-` here, would a test catch it?"
 - [ ] Fixtures are minimal — small enough to read, big enough to be interesting.
 
@@ -72,7 +72,7 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] Single responsibility per type / function.
 - [ ] Public API minimal — would I shrink it before adding to it?
 - [ ] No premature abstractions for "future flexibility" (YAGNI).
-- [ ] Module dependency graph respected (Specs/01 §1).
+- [ ] Module dependency graph respected (`Specs/Architecture.md` §2).
 - [ ] Right design pattern used — and used because the situation calls for it, not for its own sake (`cpp-oop-design`).
 
 ### Threading and memory
@@ -88,7 +88,8 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] No new heap allocations in documented hot paths.
 - [ ] No `std::map` where `std::unordered_map` is appropriate.
 - [ ] No `std::function` or virtual call inserted in tight loops.
-- [ ] If the PR claims a perf win, are there nanobench numbers?
+- [ ] If the PR claims a performance change, is there reproducible before/after
+  evidence from a checked-in benchmark or documented measurement?
 
 ### Style and skills compliance
 
@@ -120,7 +121,7 @@ Example:
 
 ```
 blocking: this allocation is in the engine bar loop
-(Specs/07 §9 budget). Move the std::vector outside the
+(`Specs/EngineReplayPnL.md` §9 budget). Move the `std::vector` outside the
 loop and reserve(), or pass in a scratch buffer.
 ```
 
@@ -164,11 +165,8 @@ If you can't approve but don't want to block, request changes with an explanatio
 If two reviewers leave conflicting `blocking:` comments, the author shouldn't have to mediate. Default protocol:
 
 1. Reviewers thread it out in the PR until they converge.
-2. If they can't, escalate to the topic owner listed in
-   [`TeamOwnershipAndProductPillars.md`](TeamOwnershipAndProductPillars.md).
-3. If no person is assigned, or the topic owner is one of the reviewers,
-   escalate to the repo maintainer.
-4. If the resolution passes all three decision tests in
+2. If they cannot resolve it, escalate to a repository maintainer.
+3. If the resolution passes all three decision tests in
    [`Governance/AGENTS.md`](Governance/AGENTS.md) §5, or changes an implemented
    merge gate, update the applicable entry in
    [`Decisions/ImportantDecisions.md`](Decisions/ImportantDecisions.md) and its

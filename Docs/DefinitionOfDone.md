@@ -132,12 +132,12 @@ ctest --preset dev-tsan --no-tests=error
 ```
 
 Sanitizers are merge-blocking workflow jobs. See
-[`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) for the exact implemented
+[`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) for the exact implemented
 and planned enforcement status.
 
 Static analysis and changed-code coverage are merge-blocking. Their exact local
 commands and required tool versions are documented in
-[`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7.
+[`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) §7.
 
 For the complete pre-CI C++ quality workflow, run:
 

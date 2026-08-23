@@ -1,4 +1,4 @@
-# 01 — Architecture
+# Architecture
 
 This spec defines module seams and ownership. The living decisions record the
 rationale for the [C++/Qt desktop boundary](../Decisions/ImportantDecisions.md#c-and-qt-desktop-boundary)
@@ -34,16 +34,15 @@ SnapshotBuilder ──► Data + Core
 - **Core** owns shared value types, time, checked arithmetic, and `Result<T>`.
 - **Data** exposes immutable market slices and history from a Release Snapshot.
 - **Indicators** owns chronology-safe streaming calculations.
-- **Strategy** exposes one narrow command-producing interface for Selectable Conditions, Python, and native adapters.
+- **Strategy** exposes one narrow command-producing interface for Selectable
+  Conditions and Python worker commands.
 - **Engine** owns event order, execution, portfolio, risk, and run lifecycle.
 - **Metrics** derives values from canonical engine records.
 - **Results** owns transactional `.bteresult` persistence and snapshot references.
 - **Bindings** translates backend values to queued Qt-facing values; Frontend never reaches into engine internals.
 
-A separate launcher is not a V1 module. Any later updater or repair launcher
-requires maintainer approval, an update to the living important-decisions
-document, and coordinated owning-spec changes; it remains outside the engine
-dependency graph.
+An updater, launcher, repair service, native plugin host, AI action router, and
+advanced multi-run scheduler are not V1 modules.
 
 ## 3. Engine and strategy seam
 
@@ -73,16 +72,16 @@ Rules:
 - Cross-thread values are immutable or uniquely owned.
 - Every worker is RAII-owned and cooperatively cancellable; detached threads are forbidden.
 - The Python worker cannot be the authoritative owner of a fill, position, balance, or result.
-- V1 starts with one active Backtest. Any later advanced concurrency creates one
-  isolated engine/worker state per run and is bounded by CPU and aggregate
-  history budgets; it never shares mutable strategy, indicator, or portfolio
-  state between runs.
+- V1 permits one active Backtest. Advanced multi-run concurrency is outside the
+  accepted scope rather than a latent extension contract.
 
 ## 5. Data and result seam
 
 - Release execution reads an immutable snapshot produced from tracked `StockData/Extracted`.
 - DuckDB is a developer ingestion/verification store owned by `DataFetcher/`; it is not a user-selectable release data source.
-- Results reference content-addressed Data Segments and immutable runtime profiles.
+- Results reference content-addressed Data Segments. When Python ran, they
+  retain Runtime Profile identity and hash metadata for provenance, but replay
+  does not require that profile to be installed and does not pin it.
 - One run produces one versioned SQLite `.bteresult` file through staging, transactions, validation, and atomic promotion.
 - K-line Replay combines persisted canonical events with retained snapshot segments; it does not duplicate OHLCV into each result.
 

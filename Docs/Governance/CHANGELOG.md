@@ -2,7 +2,9 @@
 
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Current compatibility surfaces include the application, strategy API, result schema, and data manifest. Historical entries below may mention superseded Lua or plugin experiments; they do not define current architecture.
+Current compatibility surfaces include the application, Strategy API, result
+schema, and data manifest. Git history preserves superseded experiments; this
+living changelog describes only the maintained product direction.
 
 ## [Unreleased]
 
@@ -19,18 +21,23 @@ Current compatibility surfaces include the application, strategy API, result sch
   Selectable Conditions, a trusted isolated Python worker, immutable Release
   Snapshots, fixed-point accounting, and transactional `.bteresult` files.
 - Distinguished implemented, planned, blocked, and non-normative behavior across
-  product, CI, release, and stock-screening documentation.
+  product, CI, and release documentation; the protected StockScreening proposal
+  subtree remains non-canonical pending separate review.
 - Distinguished Paced Backtest engine execution from K-line Replay presentation
   so result playback cannot be mistaken for a second execution engine.
+- Replaced numeric specification filenames with descriptive names so the
+  canonical set can evolve without artificial ordering or renumbering.
+- Defined separate Strategy and Result libraries, the five-condition responsive
+  editor boundary, managed Python worker/runtime limits, immutable data-segment
+  identity, durable-result compatibility, and release packaging contracts.
 
 ### Fixed
 - (none)
 
 ### Removed
-- (none)
-
-### Plugin ABI
-- Not yet declared. Will be `1` at first release.
+- Native-plugin and AI-assisted authoring specifications; neither is an
+  accepted product capability.
+- Obsolete K-line roadmap and organizational ownership guidance.
 
 ### Strategy API
 - Not yet declared. The first implemented Python strategy contract will declare
@@ -55,10 +62,6 @@ Format:
 
 ### Removed
 - ...
-
-### Plugin ABI
-- unchanged from previous release
-- OR bumped to N — link the applicable living important-decision entry
 
 ### Strategy API
 - unchanged

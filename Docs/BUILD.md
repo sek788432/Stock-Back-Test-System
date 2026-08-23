@@ -85,7 +85,7 @@ cd Output && ctest --output-on-failure
 
 The `analysis` and `coverage` presets back the merge-blocking quality jobs.
 Analyzer and changed-code coverage commands are documented in
-[`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7.
+[`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) §7.
 
 Before pushing C++ work or requesting CI, run the complete local equivalents on
 the committed revision:
@@ -135,7 +135,7 @@ configuring.
 | `CMake/Sanitizers.cmake`   | ASan/UBSan when `BTE_SANITIZERS=ON`               |
 | `Src/Backend/Core/Include/Bte/Core/` | Public headers (e.g. `Bar.h`)                       |
 | `Src/Backend/Core/Private/`           | Implementation `.cpp` files for Core              |
-| `Tests/`                   | Google Test sources (`UnitTest_<Thing>.cpp`; see Docs/Specs/03 §1) |
+| `Tests/`                   | Google Test sources (`UnitTest_<Thing>.cpp`; see `Docs/Specs/BackendCore.md` §2) |
 
 ## Turning tests off
 

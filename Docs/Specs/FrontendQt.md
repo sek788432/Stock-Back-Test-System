@@ -1,11 +1,13 @@
-# 02 — Frontend (Qt)
+# Frontend (Qt)
 
 > **Status:** Partially implemented. The current application contains Qt tab,
 > chart, replay scaffolding, and a Backtest page for the limited engine slice
-> documented in `07` §1. That page supports the fixed starter strategy and the
+> documented in [`EngineReplayPnL.md`](EngineReplayPnL.md) §1. That page supports the fixed starter strategy and the
 > implemented Selectable Conditions subset; saved-strategy authoring, Python
-> strategies, complete backtest workflows, screening, plugins, and
+> strategies, complete backtest workflows, durable results, and
 > release-quality UX remain planned unless their owning spec says otherwise.
+> The current shell also displays unsupported Screener, Plugins, and Logs
+> placeholders; their removal is approved for the applicable code phase.
 
 This spec owns the Qt presentation interface: every screen the user sees, chart
 presentation, and how the UI communicates with backend modules without blocking
@@ -13,10 +15,11 @@ or acquiring engine authority.
 
 ---
 
-## 1. Framework choice — Qt 6, Widgets + Qt Charts
+## 1. Framework choice — Qt 6 Widgets
 
-The checked-in CMake contract requires **Qt 6.8+** with **Widgets** and **Qt
-Charts**; the current CI workflow installs Qt 6.9.x. Version claims must follow
+The checked-in development baseline requires **Qt 6.8+** with **Widgets** and
+currently uses **Qt Charts**; the current CI workflow installs Qt 6.9.x.
+Version claims must follow
 those files rather than an unpinned "current LTS" label.
 
 ### Why Widgets, not QML?
@@ -34,23 +37,14 @@ dashboards, dialogs), **Widgets wins on maintenance**. The current replay uses
 Qt Charts inside a `QChartView`; no repository benchmark establishes an
 animation or point-count performance contract.
 
-### Why Qt Charts (not QCustomPlot, not custom QPainter)?
+### Chart direction
 
-You asked for "good-looking and easy to maintain". Trade-offs:
-
-| Library | Look | Performance | License | Maintenance |
-|---|---|---|---|---|
-| **Qt Charts** (development implementation) | Modern, themeable, antialiased, dark-mode aware out of the box. Built-in `QCandlestickSeries`, `QLineSeries`, axes, legends. | No repository benchmark establishes a supported point budget. | **GPLv3 or commercial; must not ship in the Apache-2.0 release.** | Same release cadence as Qt. |
-| QCustomPlot | Engineering look, less "modern". Excellent. | Excellent — single-header, tens of thousands of points without breaking a sweat. | **GPLv3 or paid commercial.** This is a real liability if you ever want to ship closed-source. | Single maintainer; very mature but third-party. |
-| Custom QPainter / Qt Quick Scene Graph | Anything you can paint. | As good as you make it. | Inherits Qt. | **Months of work** for proper trading-grade rendering (axes, crosshair, scaling, perf). Not worth it now. |
-
-**Development implementation: Qt Charts.** Before distribution, replace it with
-an LGPL-compatible or project-owned chart implementation. The chart layer is
-hidden behind an `IChartView` interface (see §4), so replacement is contained.
-
-We layer simple visual polish on top:
-- Custom `QPalette` with two named themes (Light / Dark) loaded from QSS.
-- Crosshair, candle hover tooltip, and trade markers drawn as a `QGraphicsItem` overlay on top of `QChartView` — Qt Charts exposes `mapToValue` so this is straightforward.
+Qt Charts remains an implemented development baseline but cannot ship in the
+Apache-2.0 distribution under its GPL/commercial terms. The accepted release
+direction is a project-owned `QPainter` implementation behind `IChartView`.
+It uses a 70/30 candlestick-to-volume split, initially presents 120 bars, and
+caps the visible window at exactly 1,000 bars. The replacement must land with
+functional, accessibility, and performance tests before distribution.
 
 ---
 
@@ -61,7 +55,7 @@ We layer simple visual polish on top:
 │ File   Strategy   Data   View   Help                                  │
 ├───────────────────────────────────────────────────────────────────────┤
 │ ┌─ Tabs ──────────────────────────────────────────────────────────┐   │
-│ │ [Strategies] [Backtest] [Replay] [Screener] [Plugins] [Logs]    │   │
+│ │ [Strategies] [Backtest] [Results] [Replay]                   │   │
 │ ├─────────────────────────────────────────────────────────────────┤   │
 │ │                                                                 │   │
 │ │                  (active tab content)                           │   │
@@ -73,34 +67,36 @@ We layer simple visual polish on top:
 
 ### 2.1 Strategies tab
 
-A two-pane view:
-- **Left** — list of saved strategies (from `<userData>/strategies/`).
-- **Right** — editor for the selected strategy.
-
-Editor has **three visible modes** (two concrete artifact types):
+A two-pane view contains a saved Strategy library and editor. The library and
+storage contract are defined by
+[`BacktestReplayProduct.md`](BacktestReplayProduct.md). Editor modes are:
 
 1. **Selectable Conditions** (default) — form-driven rows for typed indicators,
-   filters, portfolio gates, sizing, and actions with flat **ALL / ANY** logic.
-   The saved artifact is the versioned typed plan owned by Spec 05, not generated
-   Python.
+   supported fields, comparisons, whole-share sizing, and current actions with
+   flat **ALL / ANY** logic. Each buy and sell group supports one to five rows.
+   The saved artifact is the versioned typed plan owned by
+   [`StrategyAuthoring.md`](StrategyAuthoring.md), not generated Python.
 2. **Python Script Strategy** — code editor with diagnostics and **Validate
-   Strategy**, using the contract in Spec 05 rather than a UI-specific compiler
+   Strategy**, using the authoring contract rather than a UI-specific compiler
    interface.
-3. **AI candidate import** — provider-neutral preview/diff and explicit
-   acceptance. No candidate auto-runs, and V1 contains no direct provider chat
-   or credential flow (`12`). Acceptance creates an ordinary conditions or
-   Python artifact.
 
-The editor can create a Run Configuration and start a Backtest. **Open in
-Replay** is enabled only for an existing Backtest Result; it never executes the
-editor's current Strategy.
+At widths of at least 1100 px, buy and sell groups are side by side; narrower
+layouts stack them. A group scrolls vertically inside its panel when its content
+exceeds the larger of 420 px or 40% of the viewport. Headers and Add controls
+remain sticky; rows are compact and keyboard-reorderable; horizontal scrolling
+is forbidden. Nested groups, portfolio gates, generated Python, and **Edit as
+Python** are outside scope.
+
+**Use in Backtest** fills the Backtest page with the selected immutable Strategy
+version. It does not start a run. Replay is entered from a stored Result.
 
 ### 2.2 Backtest tab
 
 The implemented page exposes symbol, range, capital, and whole-share quantity
 controls plus a strategy selector. The fixed starter strategy remains available;
 the Selectable Conditions option provides flat ALL/ANY buy and sell groups over
-close, SMA, and EMA comparisons. It reports the run status, cash, position,
+bar fields, close-change percentage, and the implemented indicator catalog. It
+reports the run status, cash, position,
 market value, equity, P&L, processed-bar count, and every fill in a multi-row
 trade log. Each range calendar provides a directly selectable year dropdown
 alongside the month control instead of requiring repeated previous/next
@@ -115,7 +111,8 @@ trade-log behavior remain planned.
 | Right side panel | Summary metrics: total return, CAGR, Sharpe, max drawdown, win rate, # trades, exposure. |
 | Bottom | Sortable trade log table (`QTableView` + `QSortFilterProxyModel`). |
 
-**Cross-link.** A dedicated CTA (toolbar or footer button) SHOULD deep-link results into Replay so users can reconcile fills on the candlestick chart (`11` §1).
+**Cross-link.** A completed or diagnostic stored Result has a dedicated **Open
+Replay** action.
 
 ### 2.3 Replay tab — current baseline and target result playback
 
@@ -165,34 +162,20 @@ Interactions:
   referenced bars; seeking never reconstructs fills by rerunning the engine.
 - **Trade markers** — green up-triangle for buys, red down-triangle for sells, click to see fill details.
 - **Cursor inspector** — hover any candle to see OHLCV + active indicators in a side popup.
-- **Volume pane** — histogram under the candles, sharing the categorical axis window (`11` §1).
+- **Volume pane** — histogram under the candles, sharing the visible window.
 
-### 2.4 Screener tab
+### 2.4 Results tab
 
-The universe picker and predicate builder reuse accepted strategy-authoring
-concepts where their semantics match (`11` §4):
+The Results page is separate from Strategies. Its proxy-model table shows the
+stored result's Strategy, universe, timeframe, range, status, completion time,
+valid total return, result-schema version, canonical-hash state, and data
+availability. Actions are Show Details, Open Replay, Compare, Export, Import,
+Move to Trash, and Restore. Filters cover Strategy, universe/symbol, timeframe,
+status, and date, with separate Active and 30-day Trash views.
 
-| Region | Content |
-| --- | --- |
-| Top | Technical and fundamental fields only when verified Release Snapshot metadata exists; Python and AI remain planned. |
-| Builder | Reuses typed Selectable Conditions where semantics match. Any future Python or AI path must follow Specs 05 and 12. |
-| Logic | **Match ALL** vs **Match ANY** selector for typed built-in rows (maps to canonical `all` / `any`). |
-| Actions | **Run Screener**, export (CSV/clipboard). |
-| Results | `QTableView` with rank, symbol, company, price, change %, market cap, sector — plus optional performance/sector summary views in later milestones. |
-
-### 2.5 Plugins tab
-
-No Plugins tab is shipped in V1. If the future native-plugin system in Spec 08
-is implemented, the UI begins with explicit file selection, hash display, trust
-confirmation, ABI validation, and negotiated-capability display. It must not
-scan and execute arbitrary libraries automatically, advertise plugin Strategy
-execution, or invent a manifest interface before the ABI exists.
-
-### 2.6 Logs tab
-
-The planned Logs tab presents bounded structured application and Strategy logs
-from the application data directory. Its exact file/schema contract remains
-unimplemented and must not be treated as a current public interface.
+Imports are untrusted data. The UI validates them without executing embedded
+source. **Open Replay** remains disabled with a structured reason when the
+result or referenced data is invalid or unavailable.
 
 ---
 
@@ -216,10 +199,12 @@ unimplemented and must not be treated as a current public interface.
 
 ## 4. Chart abstraction
 
-The implemented
+The implemented development
 [`IChartView`](../../Src/Frontend/Include/Bte/Frontend/IChartView.h) seam has
 three operations: replace the visible bar window, append one bar, and clear
-markers. `QtChartsCandlestickView` is its current adapter.
+markers. `QtChartsCandlestickView` is its current adapter. The accepted release
+adapter is project-owned `QPainter`; it must not leak rendering types into the
+backend or alter persisted ordering.
 
 Indicator overlays, persisted fill/corporate-action markers, crosshair state,
 and result seeking are planned interface additions. Add them only with their
@@ -232,14 +217,14 @@ result values rather than asking the chart to execute engine logic.
 
 | What | Location contract | Format/status |
 |---|---|---|
-| Strategies | OS-appropriate application data directory | Versioned typed condition artifacts or Python source plus versioned metadata; exact schema is owned by `05` |
-| Screener presets | OS-appropriate application data directory | Planned typed universe/predicate artifacts; Python/runtime references only if that mode is promoted |
-| Backtest Results | OS-appropriate application data directory | Target `.bteresult`; current legacy summaries remain JSON until migrated (`07`) |
+| Strategies | `QStandardPaths::AppLocalDataLocation/Strategies/{Active,Trash}` | UUIDv7 `.btestrategy` typed plan or Python source plus versioned metadata |
+| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Active,Trash}` | UUIDv7 `.bteresult`; current legacy JSON summaries are an approved removal target |
+| Data and runtimes | `QStandardPaths::AppLocalDataLocation/{DataSegments,RuntimeProfiles}` | Immutable referenced content |
 | Settings and layout | OS-appropriate application data directory | Planned UI-only state; never a mutable market-data path |
 
-One future Core path resolver owns these locations and must be redirectable in
-tests. No public resolver name or subdirectory layout is accepted until its
-implementation exists.
+One future Core path resolver owns these locations and is redirectable in tests.
+Writers stage, validate, flush, and atomically rename artifacts on the same
+filesystem.
 
 ---
 
@@ -260,17 +245,22 @@ their exact paths are not a current contract.
 ## 8. Accessibility
 
 - Every widget has `accessibleName`.
-- Every action has a keyboard shortcut. Replay tab shortcuts: `Space` play/pause, `→` step, `←` step back, `1`/`5`/`9`/`0` set speed.
+- Every action is keyboard-accessible. Replay shortcuts include `Space`
+  play/pause and arrow-key stepping.
 - Color choices for buy/sell markers also use shape (▲/▼) so colorblind users still distinguish.
 
 ---
 
 ## 9. Tests
 
-- `Tests/Unit/Frontend/` uses Qt Test:
-  - Smoke test: open each tab, ensure no crashes.
-  - Replay state machine: simulate signals, assert UI labels update.
-  - Strategy editor: invalid conditions or Python surface validation errors.
-    AI-candidate smoke: **Run Backtest** stays disabled until the user accepts a
-    complete imported candidate into an editor and normal validation succeeds.
-- Visual regression on charts is **out of scope** for now; we eyeball it.
+Current registered frontend tests cover the application shell, current Backtest
+page, bar-only Replay page/state, Qt Charts adapter, and Bindings view models.
+They do not prove saved Strategy/Result libraries, the five-row editor, Python
+authoring, or the project-owned release chart.
+
+Those accepted future behaviors require positive, negative, and boundary tests
+for one/five/six condition rows, invalid conditions, responsive layout, inner
+scroll threshold, keyboard reorder, Python validation, Result import,
+hash/schema failures, Trash/Restore, atomic recovery, and **Open Replay**
+eligibility. The release chart also requires deterministic render-geometry,
+interaction, and accessibility tests; visual inspection alone is not evidence.

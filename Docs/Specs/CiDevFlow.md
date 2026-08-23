@@ -1,4 +1,4 @@
-# 10 — CI and Development Flow
+# CI and Development Flow
 
 ## 1. Status and authority
 

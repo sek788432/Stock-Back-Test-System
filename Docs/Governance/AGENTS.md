@@ -18,12 +18,11 @@ Whenever you start a task here, read these in order. Don't skip — every sectio
 
 1. **This file** (you're reading it).
 2. **[`README.md`](../../README.md)** — what the project is.
-3. **[`Docs/Specs/00Overview.md`](../Specs/00Overview.md)** — system architecture and end-to-end flow.
-4. **The relevant numbered spec** (numbers `01`–`12`) for the module you are
-   touching. Use the exact filenames in
+3. **[`Docs/Specs/Overview.md`](../Specs/Overview.md)** — system architecture and end-to-end flow.
+4. **The relevant descriptive specification** for the module you are touching.
+   Use the exact current filenames in
    [`Docs/Specs/README.md`](../Specs/README.md), including
-   **`11StockScreenerKLineProduct.md`** for replay, authoring surfaces, or
-   screener scope.
+   **`BacktestReplayProduct.md`** for strategy, Backtest, Result, or Replay UI.
 5. **[`.agents/skills/`](../../.agents/skills/)** — the repository's only project-skill directory, containing both repository-specific C++ rules and shared engineering and productivity workflows. Hosts that do not auto-discover this convention must still read a relevant `SKILL.md` when its description matches the task. Repository instructions take precedence over skill guidance.
 6. **[`Docs/DefinitionOfDone.md`](../DefinitionOfDone.md)** — what "done" means in this repo. **You do not declare a task done until every box on this checklist is true.**
 7. **[`Docs/Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md)** — the single living record of important decisions that still constrain the project.
@@ -43,12 +42,12 @@ practical; do not rely on skill activation alone.
 | #   | Rule                                                                                                                                                                                                                                                                                                          |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | H1  | Never commit secrets. `.env` is gitignored; the only acceptable secret file in the tree is `.env.example` with placeholder values.                                                                                                                                                                            |
-| H2  | Never mutate project-managed market data from the application. V1 runtime reads immutable, release-built snapshots derived from `StockData/Extracted`; snapshot creation is a separate release process (`Docs/Specs/04`). |
-| H3  | Never break functional determinism. Identical immutable inputs must produce identical canonical functional records and the same `canonicalResultHash` (`Docs/Specs/07` §9). SQLite page layout, local paths, wall-clock metadata, and other non-functional container bytes are excluded. Any intentional semantic change requires a regression test, an explained canonical-fixture update once that gate exists, and reviewer approval. |
+| H2  | Never mutate project-managed market data from the application. V1 runtime reads immutable, release-built snapshots derived from `StockData/Extracted`; snapshot creation is a separate release process (`Docs/Specs/DataLayer.md`). |
+| H3  | Never break functional determinism. Identical immutable inputs must produce identical canonical functional records and the same `canonicalResultHash` (`Docs/Specs/EngineReplayPnL.md` §9). SQLite page layout, local paths, wall-clock metadata, and other non-functional container bytes are excluded. Any intentional semantic change requires a regression test, an explained canonical-fixture update once that gate exists, and reviewer approval. |
 | H4  | Never add `new` / `delete` / `malloc` / `free` to C++. Use RAII (`unique_ptr`, `shared_ptr`, `jthread`, `scoped_lock`). See skill `cpp-thread-safety`.                                                                                                                                                        |
-| H5  | Never throw exceptions across module boundaries. Return the repository's `bte::core::Result<T>` error contract (`Docs/Specs/03` §6). |
+| H5  | Never throw exceptions across module boundaries. Return the repository's `bte::core::Result<T>` error contract (`Docs/Specs/BackendCore.md` §6). |
 | H6  | Never use `using namespace std;` anywhere. Never use C-style casts in C++ (`(int)x`). See skill `cpp-modern-style`.                                                                                                                                                                                           |
-| H7  | Never write a test that passes trivially. Tests must exercise real production behavior and contain meaningful assertions. The implemented standards checker rejects only the limited patterns documented in `Docs/Specs/10`; semantic anti-cheat and mutation checks are planned, not current merge gates. |
+| H7  | Never write a test that passes trivially. Tests must exercise real production behavior and contain meaningful assertions. The implemented standards checker rejects only the limited patterns documented in `Docs/Specs/CiDevFlow.md`; semantic anti-cheat and mutation checks are planned, not current merge gates. |
 | H8  | Never claim a task is done until the Definition of Done passes ([`../DefinitionOfDone.md`](../DefinitionOfDone.md)). "I think it works" is not done.                                                                                                                                                      |
 | H9  | Never add a dependency without justifying it in the PR description, naming the package and version, and confirming its license is compatible (see §6 below).                                                                                                                                                  |
 | H10 | Never disable, bypass, or weaken an implemented merge gate to land a change. A change to a merge gate requires an approved entry in the living important-decisions document, a focused tooling change, and review; there is no undocumented override. |
@@ -92,7 +91,7 @@ unrequested implementation.
 7. **Run applicable verified checks.** Use only commands that exist in the
    checked-out tree. For applicable C++ changes, run `./RunTest.sh` and the
    complete `./RunQuality.sh --base <base-revision> --head HEAD` workflow before
-   pushing or requesting CI. `Docs/Specs/10` separates current merge gates from
+   pushing or requesting CI. `Docs/Specs/CiDevFlow.md` separates current merge gates from
    planned checks.
 8. **Verify the applicable Definition of Done.** Mark non-applicable items with
    a reason; never claim an unrun or nonexistent check passed.
@@ -159,10 +158,10 @@ Apply the tests especially when a change:
 
 - introduces a new third-party dependency,
 - changes a public API that crosses a module boundary,
-- changes the public plugin or Python strategy API (`Docs/Specs/05`, `08`),
-- changes the immutable market-snapshot contract (`Docs/Specs/04`),
-- changes any CI gate (`Docs/Specs/10`),
-- adds a new module to the dependency graph (`Docs/Specs/01` §1),
+- changes the public Python strategy API (`Docs/Specs/StrategyAuthoring.md`),
+- changes the immutable market-snapshot contract (`Docs/Specs/DataLayer.md`),
+- changes any CI gate (`Docs/Specs/CiDevFlow.md`),
+- adds a new module to the dependency graph (`Docs/Specs/Architecture.md` §2),
 - has more than one reasonable answer.
 
 An implemented merge-gate change always requires an entry under H10. For any
@@ -182,7 +181,10 @@ behavior-preserving refactors), an important-decision entry is not needed.
 
 ## 6. Adding dependencies
 
-Default answer: **don't add one**. The C++20 standard library is large; the existing vcpkg manifest is curated.
+Default answer: **don't add one**. The C++20 standard library is large. This
+repository currently pins C++ dependencies through checked-in CMake/
+`FetchContent` configuration and Python dependencies through workflow-specific
+requirements files; no `vcpkg.json` exists.
 
 If you must:
 
@@ -191,14 +193,16 @@ If you must:
 2. Verify the license is compatible:
    - **Allowed**: MIT, BSD (2/3-clause), Apache-2.0, MPL-2.0, ISC, Boost, zlib, LGPL (dynamically linked only).
    - **Forbidden without an explicit team decision**: GPL-2.0, GPL-3.0, AGPL, SSPL, custom "non-commercial" licenses.
-3. Add to `vcpkg.json` (C++) or `requirements.txt` (Python), pinning to an exact version.
+3. Update the actual owning dependency file discovered in the checkout, pinning
+   an immutable CMake source revision or exact Python version and regenerating
+   any checked-in hash lock through its documented workflow.
 4. Add a one-line entry in [`../Decisions/Dependencies.md`](../Decisions/Dependencies.md) (`name | version | license | reason`).
 
 ---
 
 ## 7. Testing rules
 
-[`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md) defines the formal
+[`../Specs/CiDevFlow.md`](../Specs/CiDevFlow.md) defines the formal
 contract and its current enforcement status. Every affected public behavior
 requires all three categories below:
 
@@ -241,10 +245,10 @@ Default to the safer choice:
   `Src/<Module>/Include/Bte/<Module>/` tree. Search the checked-out module layout
   before naming a new path.
 - Don't know whether to use `unique_ptr` or `shared_ptr`? → `unique_ptr`. Refactor only when shared ownership is required.
-- Don't know if a function should be in `Core` or `Data`? → put it where its dependencies live (`Docs/Specs/01` §1 graph).
+- Don't know if a function should be in `Core` or `Data`? → put it where its dependencies live (`Docs/Specs/Architecture.md` §2 graph).
 - Don't know whether to write a test? → write one. The bar is positive,
   negative, and boundary unit coverage for every affected public behavior
-  (`Docs/Specs/10`).
+  (`Docs/Specs/CiDevFlow.md`).
 - Don't know if a choice belongs in the living important-decisions document? →
   stop and ask the maintainer; do not create a historical record by default.
 - Don't know what "done" looks like? → re-read [`../DefinitionOfDone.md`](../DefinitionOfDone.md).
@@ -292,7 +296,7 @@ before EOD that day. **Verbal decisions don't exist.**
 
 Quick mental pass. If you can answer "yes" to all, you're ready:
 
-- [ ] I read the relevant numbered spec using its exact filename from
+- [ ] I read the relevant descriptive spec using its exact filename from
   [`../Specs/README.md`](../Specs/README.md).
 - [ ] My change respects the hard rules in §2.
 - [ ] Every affected public behavior has positive, negative, and boundary unit tests.

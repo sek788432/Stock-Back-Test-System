@@ -13,11 +13,10 @@ In this order:
 1. `README.md` — what this is.
 2. [`Governance/AGENTS.md`](Governance/AGENTS.md) — how to behave (applies to humans too).
 3. [`Governance/CONTRIBUTING.md`](Governance/CONTRIBUTING.md) — process.
-4. [`Specs/00Overview.md`](Specs/00Overview.md) and [`Specs/README.md`](Specs/README.md) — system design.
-5. [`TeamOwnershipAndProductPillars.md`](TeamOwnershipAndProductPillars.md) — topic owners and product pillars (organizational; optional on day one).
-6. [`DefinitionOfDone.md`](DefinitionOfDone.md) — what "done" means.
+4. [`Specs/Overview.md`](Specs/Overview.md) and [`Specs/README.md`](Specs/README.md) — system design.
+5. [`DefinitionOfDone.md`](DefinitionOfDone.md) — what "done" means.
 
-If you only have time to read three, read [`Governance/AGENTS.md`](Governance/AGENTS.md), [`Specs/00Overview.md`](Specs/00Overview.md), and [`DefinitionOfDone.md`](DefinitionOfDone.md).
+If you only have time to read three, read [`Governance/AGENTS.md`](Governance/AGENTS.md), [`Specs/Overview.md`](Specs/Overview.md), and [`DefinitionOfDone.md`](DefinitionOfDone.md).
 
 ### Get access
 
@@ -63,7 +62,7 @@ sudo apt install -y build-essential cmake ninja-build git \
 For other distros, install the equivalents. Clang 17+ is preferred; GCC 13+ also works.
 
 The coverage job also uses the pinned Python tools `gcovr==8.5` and
-`diff-cover==10.0.0`. See [`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7 for
+`diff-cover==10.0.0`. See [`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) §7 for
 the analyzer and coverage commands.
 
 #### Windows
@@ -89,7 +88,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate                    # Windows: .venv\Scripts\activate
 pip install -r DataFetcher/requirements.txt
 
-# C++ build (see Docs/BUILD.md + Docs/Specs/09)
+# C++ build (see Docs/BUILD.md + Docs/Specs/BuildDistribution.md)
 ./RunTest.sh                                 # all registered backend and Qt tests
 # or manually, matching the current CI Qt build:
 cmake --preset qt-dev -DBTE_BUILD_TESTS=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
@@ -175,7 +174,7 @@ If any are blocked, raise it in the next sync.
 | ----------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
 | `cmake --preset dev` not found                  | Old CMake                                  | Need 3.24+; `brew upgrade cmake` / install fresh                                 |
 | Sanitizer reports a finding                     | Runtime defect or unsupported dependency   | Treat it as a defect; no sanitizer-suppression file is currently wired into the build |
-| `clang-tidy` reports a project finding          | Required analysis found a rule violation   | Fix it or document a narrow approved suppression; run the exact Spec 10 command  |
+| `clang-tidy` reports a project finding          | Required analysis found a rule violation   | Fix it or document a narrow approved suppression; run the exact CI specification command  |
 | Qt not found by CMake                           | Qt install path not on `CMAKE_PREFIX_PATH` | Set `CMAKE_PREFIX_PATH` env var or `-DCMAKE_PREFIX_PATH=...`                     |
 | Python pipeline can't find DuckDB               | Missing dep                                | `pip install -r DataFetcher/requirements.txt` inside `.venv`                     |
 | First configure cannot fetch GoogleTest         | Network unavailable                         | Restore network access or use an already populated FetchContent cache            |

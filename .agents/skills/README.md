@@ -48,9 +48,9 @@ apply even when an agent host does not support skill discovery.
 | Question | Primary source |
 |---|---|
 | How should this C++ loop or API be written? | `cpp-modern-style` |
-| Where does this module belong? | [`Docs/Specs/01Architecture.md`](../../Docs/Specs/01Architecture.md) |
-| How should this strategy type plug in? | [`Docs/Specs/05StrategyAuthoring.md`](../../Docs/Specs/05StrategyAuthoring.md) and `cpp-oop-design` |
-| What are the CI gates? | [`Docs/Specs/10CiDevFlow.md`](../../Docs/Specs/10CiDevFlow.md) |
+| Where does this module belong? | [`Docs/Specs/Architecture.md`](../../Docs/Specs/Architecture.md) |
+| How should this strategy type plug in? | [`Docs/Specs/StrategyAuthoring.md`](../../Docs/Specs/StrategyAuthoring.md) and `cpp-oop-design` |
+| What are the CI gates? | [`Docs/Specs/CiDevFlow.md`](../../Docs/Specs/CiDevFlow.md) |
 | Is this code thread-safe? | `cpp-thread-safety` |
 | Does this allocation matter? | `cpp-performance` |
 | What does this analyzer warning mean? | `cpp-static-analysis` |

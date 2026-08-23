@@ -7,7 +7,7 @@ becomes part of a release profile.
 | Name | Version | License | Status | Used by | Reason | Decision |
 |---|---|---|---|---|---|---|
 | Qt 6 Core, Concurrent, Widgets, and Test | CMake minimum 6.8; CI 6.9.x | LGPL-3 / Commercial | Implemented, optional app build | Bindings, Frontend, App, tests | Cross-platform desktop UI, owned asynchronous runs, and Qt tests | [Desktop boundary](ImportantDecisions.md#c-and-qt-desktop-boundary) |
-| Qt Charts | CMake minimum 6.8; CI 6.9.x | GPL-3.0 / Commercial | Implemented, development-only; must not ship in the Apache-2.0 release | Frontend, Qt tests | Current candlestick chart implementation pending replacement with an LGPL-compatible or project-owned chart before distribution | [Desktop boundary](ImportantDecisions.md#c-and-qt-desktop-boundary) |
+| Qt Charts | CMake minimum 6.8; CI 6.9.x | GPL-3.0 / Commercial | Implemented, development-only; must not ship in the Apache-2.0 release | Frontend, Qt tests | Current candlestick chart pending replacement by the accepted project-owned `QPainter` chart | [Desktop boundary](ImportantDecisions.md#c-and-qt-desktop-boundary) |
 | GoogleTest | 1.14.0 | BSD-3-Clause | Implemented | C++ tests | Unit-test framework | — |
 | LLVM/Clang analysis tools | 18.1.3-1ubuntu1 | Apache-2.0 WITH LLVM-exception | Implemented, CI/developer-only | Static-analysis and formatting workflows | clang-format, clang-tidy, scan-build, and sanitizer toolchains | [Quality gates](ImportantDecisions.md#layered-merge-blocking-quality-gates) |
 | cppcheck | 2.13.0-2ubuntu3 | GPL-3.0-or-later | Implemented, CI/developer-only; not distributed | Static-analysis workflow | Independent C++ static analysis | [Quality gates](ImportantDecisions.md#layered-merge-blocking-quality-gates) |
@@ -22,7 +22,7 @@ becomes part of a release profile.
 | pandas (Python) | 2.3.3 | BSD-3-Clause | Implemented, developer-only | DataFetcher | Tabular extraction | — |
 | SQLite | Pin before implementation | Public domain | Planned | Results | Transactional `.bteresult` container | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
 | CPython | Pin per immutable runtime profile | PSF-2.0 | Planned | PythonStrategyRunner | Trusted isolated Python Script Strategy runtime | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
-| NumPy, pandas, SciPy, statsmodels, scikit-learn, Matplotlib, Seaborn, PyArrow | Pin each per immutable runtime profile | Verify each release manifest | Planned | `stockbt` runtime | Curated numerical, research, ML, plotting, and columnar tools; no arbitrary pip | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
+| NumPy and pandas | Pin each per immutable runtime profile | BSD-3-Clause | Planned | `stockbt` runtime | Approved numerical and tabular packages; no arbitrary pip or broader research stack | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
 
 Tooling is listed only when present. Semantic test-intent auditing, mutation
 testing, Clazy, CodeQL, and a custom Clang AST policy plugin remain planned

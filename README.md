@@ -9,7 +9,7 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 > long-only orders eligible at the next actual bar open. Persistence, complete
 > order/accounting, the managed Python worker, immutable release snapshots, and
 > `.bteresult` remain planned. See
-> [`Docs/Specs/11StockScreenerKLineProduct.md`](Docs/Specs/11StockScreenerKLineProduct.md)
+> [`Docs/Specs/BacktestReplayProduct.md`](Docs/Specs/BacktestReplayProduct.md)
 > for exact capability status.
 
 > **Engine authority:** the accepted trading engine is project-owned C++.

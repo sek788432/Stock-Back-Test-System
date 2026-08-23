@@ -1,4 +1,4 @@
-# 03 — Backend Core
+# Backend Core
 
 Core defines the small, dependency-light vocabulary shared by backend modules. This file owns time, financial scalar types, base market/order values, errors, and run status.
 

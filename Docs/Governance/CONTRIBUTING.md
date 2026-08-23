@@ -19,13 +19,13 @@ If you're a **human contributor**, read this file and [`../Onboarding.md`](../On
    trade-off; implemented merge-gate changes always require an entry.
 5. Add positive, negative, and boundary unit tests for every affected public
    behavior; bug fixes and behavior changes also need regression tests
-   ([`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md)).
+   ([`../Specs/CiDevFlow.md`](../Specs/CiDevFlow.md)).
 6. Run the applicable verified local commands from
    [`../DefinitionOfDone.md`](../DefinitionOfDone.md).
 7. Open a PR using the template; fill every section.
 8. Confirm [`../DefinitionOfDone.md`](../DefinitionOfDone.md) passes.
 9. Wait for the required CI and reviews configured in GitHub. Repository files
-   do not prove the current branch-protection or auto-merge settings (`Specs/10`).
+   do not prove the current branch-protection or auto-merge settings (`Specs/CiDevFlow.md`).
 
 ---
 
@@ -34,7 +34,7 @@ If you're a **human contributor**, read this file and [`../Onboarding.md`](../On
 | You want to... | Read |
 |---|---|
 | Set up your dev environment | [`../Onboarding.md`](../Onboarding.md) |
-| Understand the architecture | [`../Specs/00Overview.md`](../Specs/00Overview.md) |
+| Understand the architecture | [`../Specs/Overview.md`](../Specs/Overview.md) |
 | Find the spec for a module | [`../Specs/README.md`](../Specs/README.md) |
 | Know what coding rules apply | [`../../.agents/skills/README.md`](../../.agents/skills/README.md) |
 | Know what "done" looks like | [`../DefinitionOfDone.md`](../DefinitionOfDone.md) |
@@ -66,12 +66,13 @@ Conventional Commit types we use:
 | `perf` | performance improvement (must include benchmark numbers in body) |
 | `chore` | tooling, deps, CI, build |
 
-Example body for a `perf` change:
+Example body for a `perf` change (use the actual checked-in benchmark or
+documented measurement; the numbers and tool label below are illustrative):
 
 ```
 perf(indicators): avoid heap alloc in RSI update path
 
-Before: 124 ns/op (nanobench, M1, release)
+Before: 124 ns/op (documented benchmark, Apple Silicon, release preset)
 After:   38 ns/op
 Verified determinism fixture unchanged.
 ```
@@ -86,9 +87,9 @@ The binding sources are:
 2. The repository-specific C++ skills in [`../../.agents/skills/`](../../.agents/skills/README.md).
 
 The checked-in `.clang-tidy` configuration and full-tree clang-format check are
-enforced by merge-blocking CI jobs (`Specs/10`).
+enforced by merge-blocking CI jobs (`Specs/CiDevFlow.md`).
 
-Naming (recap from `cpp-modern-style` and [`../Specs/03BackendCore.md`](../Specs/03BackendCore.md) §1):
+Naming (recap from `cpp-modern-style` and [`../Specs/BackendCore.md`](../Specs/BackendCore.md) §2):
 - Variables / methods / namespaces: `lowerCamelCase`.
 - Types: `UpperCamelCase`.
 - Private members: trailing underscore.
@@ -114,7 +115,7 @@ A PR must:
 
 Changed-line and changed-branch coverage are merge gates. Semantic anti-cheat,
 public-behavior parity, and mutation enforcement remain planned. See
-[`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md) for exact status.
+[`../Specs/CiDevFlow.md`](../Specs/CiDevFlow.md) for exact status.
 
 ---
 

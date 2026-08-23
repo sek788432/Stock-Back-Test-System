@@ -32,7 +32,9 @@ Code in this repo is C++20. Every new function, class, or change must look like 
 ### Directory names
 
 - **New repository / module directories** use **UpperCamelCase**, aligned with file naming: e.g. `Src/`, `Docs/`, `Docs/Governance/`, `Tests/`, `Backend/Core/`. CMake’s out-of-source binary tree uses **`Output/`** (see root `CMakePresets.json`; preset dirs like `Output/dev`), not lowercase `build/`.
-- Existing tooling folders (e.g. `Cmake/`, `.github/`) follow historical layout; prefer UpperCamelCase for **new** sibling directories.
+- Existing tooling folders (for example `CMake/` and `.github/`) follow their
+  checked-in conventions; prefer UpperCamelCase for new project-owned sibling
+  directories.
 
 - Header guard: `#pragma once` always.
 - All code lives under namespace `bte::<module>`.
@@ -47,7 +49,7 @@ Code in this repo is C++20. Every new function, class, or change must look like 
 | `NULL` / `0` for ptr | `nullptr` |
 | `typedef` | `using` |
 | `enum X { ... }` | `enum class X { ... }` (always scoped) |
-| `sprintf` / `printf` / `fprintf` | `std::format`, `fmt::format`, `spdlog` |
+| `sprintf` / `printf` / `fprintf` | typed standard-library conversion/formatting or the implemented stream/logging seam |
 | `strcpy` / `strcat` / `strlen` on strings | `std::string`, `std::string_view` |
 | `const char*` parameter | `std::string_view` (read-only) or `const std::string&` (must own) |
 | Output params (`f(int& out)`) | Return value (`int f()`), `std::pair`, `std::tuple`, struct, or `std::optional` |
@@ -68,7 +70,7 @@ Use these by default; reach for them before reaching for older equivalents.
 - `std::string_view` for non-owning string views.
 - `std::optional<T>` for "maybe a value" (no in-band sentinels like `-1`).
 - `std::variant<A, B>` for sum types (no tagged unions, no inheritance hierarchies for two-state values).
-- `std::expected<T, E>` if available; otherwise this repo's `bte::core::Result<T, Error>` (see Docs/Specs/03).
+- This repository's fixed-error `bte::core::Result<T>` (see `Docs/Specs/BackendCore.md`).
 - `std::chrono` for all time. Never use `time_t` or seconds-as-int.
 - `std::filesystem::path` for paths. Never `const char*` or `std::string` for filesystem names.
 
@@ -107,9 +109,12 @@ consteval auto buildLookupTable();
 
 ### Format and logging
 
-- `std::format("{} bars from {}", n, sym)` — never `sprintf`.
-- `spdlog::info("...")` from the relevant `bte::core::log::*` logger.
-- Never log raw `errno` — wrap into `bte::core::Error`.
+- Prefer typed standard-library formatting when the checked-in toolchain
+  supports it; otherwise use existing streams or `std::to_chars` as appropriate.
+- Search for and reuse an implemented logging seam. Do not introduce or name a
+  logging dependency that is absent from the checkout.
+- Never expose raw `errno`; translate failures into `bte::core::Error` at the
+  owning boundary.
 
 ## Pointer policy
 
@@ -133,11 +138,13 @@ Never use `auto_ptr` (gone), never `boost::shared_ptr` (we have std), never raw 
   3. Third-party headers (alphabetical).
   4. Project headers (alphabetical).
 - No `using namespace std;` ever, in any scope. Use it for short typedef-like aliases inside functions only when needed.
-- Public headers go in `Src/Backend/<Module>/Include/Bte/<Module>/`. Private headers stay under `Src/`.
+- Public headers go in the owning module's `Include/Bte/<Module>/` tree under
+  `Src/Backend`, `Src/Bindings`, or `Src/Frontend` as the checked-in layout
+  requires. Private headers stay within that module and are not installed.
 
 ## Error handling
 
-This repo uses **no exceptions across module boundaries** (Docs/Specs/01 §4). Public APIs return `bte::core::Result<T, Error>`. Internal helpers may throw; the boundary catches and wraps.
+This repo uses **no exceptions across module boundaries** (`Docs/Specs/Architecture.md` §6). Public APIs return `bte::core::Result<T>`. Internal helpers may throw; the boundary catches and wraps.
 
 ```cpp
 [[nodiscard]] core::Result<int64_t> rowCount(...) const;     // good
@@ -145,7 +152,7 @@ int64_t rowCount(...) const;  // bad: hides failure
 int64_t rowCount(..., bool* ok); // bad: out param, C-style
 ```
 
-Never use error codes returned by reference. Never use `errno`. Never throw across `extern "C"` plugin boundaries.
+Never use error codes returned by reference or `errno` as a module contract.
 
 ## Comments
 
@@ -158,7 +165,8 @@ Never use error codes returned by reference. Never use `errno`. Never throw acro
 If you must edit a function that violates these rules:
 
 1. Fix the violation in your touched lines (cheap).
-2. If broader cleanup is needed, leave a `// TODO(bte-modernize): ...` comment and open an issue.
+2. If broader cleanup is outside scope, open a focused issue without adding a
+   stale TODO/FIXME promise to the code.
 3. Do not silently leave new code in legacy style "to match surroundings".
 
 ## Verification
@@ -170,4 +178,4 @@ Before completing any C++ change:
 3. Confirm no banned idioms above appear in your diff.
 4. Confirm naming matches rules above.
 
-If `cpp-static-analysis` skill is also active, follow its tooling instructions. If not, see `Docs/Specs/10_CI_Dev_Flow.md` §3.
+If `cpp-static-analysis` skill is also active, follow its tooling instructions. If not, see `Docs/Specs/CiDevFlow.md`.

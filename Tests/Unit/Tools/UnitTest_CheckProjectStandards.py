@@ -530,7 +530,7 @@ class AuditPathConventionsTest(unittest.TestCase):
         violations = audit_path_conventions(
             {
                 Path("AGENTS.md"),
-                Path("Docs/Specs/10CiDevFlow.md"),
+                Path("Docs/Specs/CiDevFlow.md"),
                 Path("StockData/Extracted/BRK_B.csv"),
                 Path("Tests/Unit/Core/UnitTest_Bar.cpp"),
             }

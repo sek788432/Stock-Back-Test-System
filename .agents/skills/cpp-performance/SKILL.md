@@ -16,12 +16,14 @@ description: >-
 
 Performance work is **measure → fix → re-measure**, not "I think this is faster". Every claim has a number behind it.
 
-This repo has performance budgets in Docs/Specs/07 §9. Hot paths are:
+The accepted measurable performance budget is in `Docs/Specs/DataLayer.md`.
+The engine specification identifies behavior whose implementation may become a
+hot path but does not itself define a numeric budget. Relevant paths are:
 
-- **Engine bar loop** (Docs/Specs/07 §4): `data → indicators → strategy → broker → portfolio` per bar.
-- **Indicators `update()`** (Docs/Specs/06): O(1) amortized; no allocation after warm-up.
-- **Replay tick**: 1ms-class to keep ≥ 60 bars/sec at max speed.
-- **Data prefetch**: must outpace the consumer.
+- **Engine bar loop** (`Docs/Specs/EngineReplayPnL.md` §2): one canonical event sequence per slice.
+- **Indicators `update()`** (`Docs/Specs/Indicators.md`): O(1) amortized; no allocation after warm-up.
+- **Replay presentation** and **Data prefetch** become hot paths only when a
+  checked-in benchmark or profile identifies them as such.
 
 Code that runs once at startup or rarely is **not** a hot path. Don't micro-optimize it.
 
@@ -33,7 +35,7 @@ When reading or writing C++, scan for these. Each one needs justification or a f
 
 | Smell | Why it's slow | Fix |
 |---|---|---|
-| `std::map` for hot lookups | tree, ~3× slower than hash for typical sizes | `std::unordered_map` (or `boost::unordered_flat_map`, `absl::flat_hash_map` if vendored) |
+| `std::map` for measured hot lookups that do not need ordering | tree traversal and poor locality | consider `std::unordered_map` after measuring and reviewing determinism |
 | `std::list` / `std::forward_list` | terrible cache locality | `std::vector`, `std::deque` |
 | `std::unordered_map<std::string, V>` with frequent lookup by `string_view` | allocates a temporary `std::string` per lookup unless using transparent hashers | use heterogeneous lookup with `transparent` hasher/equal |
 | Linear `std::find` on a sorted container | O(n) when O(log n) is free | `std::ranges::lower_bound` / `binary_search` |
@@ -42,7 +44,12 @@ When reading or writing C++, scan for these. Each one needs justification or a f
 
 ### Copies and allocations
 
-**Outside hot paths**, redundant or otherwise “unnecessary” copies are **permitted** when they simplify an API or control flow: pass-by-value parameters for small trivial types (`Bar`, IDs, scalars), extra named temporaries for readability, returning structs by value, etc. Reserve strict copy avoidance for the bar loop, `IIndicator::update()`, replay ticks, data prefetch, and other paths treated as hot in **Docs/DEFINITION_OF_DONE.md** — or when the payload is large (strings, containers).
+**Outside hot paths**, redundant or otherwise “unnecessary” copies are
+**permitted** when they simplify an API or control flow: pass-by-value
+parameters for small trivial values, named temporaries, and returned structs.
+Reserve strict copy avoidance for measured hot paths identified under
+[`Docs/DefinitionOfDone.md`](../../../Docs/DefinitionOfDone.md), or when the
+payload is large.
 
 | Smell | Fix |
 |---|---|
@@ -72,7 +79,7 @@ When reading or writing C++, scan for these. Each one needs justification or a f
 |---|---|
 | Two nested loops where one is hash-able | hashmap → O(n) |
 | Re-sort the same data each bar | sort once, then update incrementally |
-| Recompute an SMA/EMA from scratch every bar | use the rolling indicator API (Docs/Specs/06) — never recompute |
+| Recompute an SMA/EMA from scratch every bar | use the rolling indicator API (`Docs/Specs/Indicators.md`) — never recompute |
 | `std::sort` followed by `std::unique` | `std::set` if order doesn't matter; or sort+unique only if you need it once |
 | `std::accumulate` in a hot loop with default `+` on `double` over a long sequence | use Kahan summation or pairwise summation if precision matters |
 
@@ -80,8 +87,8 @@ When reading or writing C++, scan for these. Each one needs justification or a f
 
 | Smell | Fix |
 |---|---|
-| `std::cout` / `printf` in hot loop | `spdlog` async sink, or batch and flush |
-| DuckDB query per bar | one query, stream the result (Docs/Specs/04 §3.2) |
+| Per-record console or file output in a hot loop | batch structured records and flush outside the loop using an implemented logging seam |
+| DuckDB query per bar | release execution streams immutable segments; DuckDB is developer-only (`Docs/Specs/DataLayer.md`) |
 | File open/close per bar | hold the handle for the lifetime of the run |
 | `std::ifstream` line-by-line with operator>> | `std::getline` + parse, or memory-map for huge files |
 | JSON parsed once per bar | parse once at strategy init |
@@ -120,46 +127,36 @@ Add a cache only when:
 2. The cache hit rate is provably > 50% on real workloads.
 3. Cache invalidation has a defined trigger (data version bump, time bound, LRU).
 
-Existing repo caches:
+Accepted cache constraints:
 
-- `bteData::DataSource` keeps a 5-second range cache and an LRU bar-chunk cache (Docs/Specs/04 §6).
-- Indicators keep `history()` ring buffers (Docs/Specs/06 §6).
-- Engine keeps `PortfolioCheckpoint` every N bars (Docs/Specs/07 §5.2).
+- Cache only when the owning spec and a measured caller define an invalidation and memory policy.
+- Planned indicators use bounded display history (`Docs/Specs/Indicators.md` §4).
+- Replay checkpoints are persisted engine records, not a license to invent an in-memory cache contract.
 
 If you're proposing a new cache, write down: keys, eviction policy, max size, invalidation trigger, expected hit rate. No "future work" caches.
 
 ## Compile-time levers
 
-- Build with `-O3 -DNDEBUG` for benchmarks. Never benchmark `Debug` builds — meaningless.
-- Enable LTO: `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`.
-- Hot helpers: mark `inline` (header) or use `[[gnu::always_inline]]` (sparingly, with measurement).
-- `[[likely]]` / `[[unlikely]]` only after profiling shows a branch is mispredicted.
-- `constexpr` / `consteval` whenever possible — moves work to compile time.
+Use a checked-in optimized preset for measurements. Do not invent compiler
+flags, enable LTO, force inlining, or add branch hints without before/after
+evidence and verification on the supported toolchain.
 
 ## Measurement
 
-Repo uses **nanobench** (vendored, single header) in `Tests/Bench/`. For any perf claim:
+No checked-in benchmark framework currently exists. For a performance claim,
+use a repository benchmark when one is added or document a reproducible command,
+fixture identity, machine/runner class, build preset, repetitions, and raw
+before/after samples in the PR. Do not invent a benchmark target or dependency.
 
-```cpp
-#include <nanobench.h>
-
-ankerl::nanobench::Bench()
-    .epochs(50)
-    .run("smaUpdate", [&] {
-        ankerl::nanobench::doNotOptimizeAway(sma.value());
-        sma.update(nextBar());
-    });
-```
-
-Output a markdown table in the PR description. Compare before/after on the same machine, same build flags, with `cpufreq` set to performance mode if on Linux.
-
-CI smoke perf gate (Docs/Specs/07 §9): a fixture run must complete within budget; regressions fail the run.
+Do not call a performance budget merge-blocking until `Docs/Specs/CiDevFlow.md`
+and the checked-in workflow both say it is implemented.
 
 ## Profile, don't guess
 
 Before "optimizing", profile:
 
-- Linux: `perf record -g ./stockBacktester_bench` then `perf report`.
+- Linux: use `perf record -g` with an executable discovered in the checkout,
+  then inspect it with `perf report`; do not copy an illustrative target name.
 - macOS: Instruments → Time Profiler → attach to process.
 - Windows: WPA / VTune.
 
@@ -175,8 +172,9 @@ If the bottleneck isn't where you thought, your optimization plan changes. Don't
 
 ## Verification before committing
 
-1. Did you change anything in a documented hot path? → run the relevant nanobench, paste numbers in PR.
-2. Did you add an allocation in `IIndicator::update()` or `Engine::run()` body? → justify or remove.
+1. Did you change a documented or measured hot path? → run the verified
+   benchmark or provide the reproducible measurement above.
+2. Did you add an allocation inside a per-bar or per-slice loop? → justify or remove.
 3. Did you add a `std::function` / virtual call inside a tight loop? → replace.
 4. Did you introduce a `std::map`? → was `std::unordered_map` considered?
-5. Does the determinism test still pass byte-identical (Docs/Specs/07 §8)? Optimizations sometimes change FP order.
+5. Does the canonical determinism test still pass (`Docs/Specs/EngineReplayPnL.md` §9)? Optimizations sometimes change FP order.

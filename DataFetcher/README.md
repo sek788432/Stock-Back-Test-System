@@ -2,7 +2,8 @@
 
 Python tooling that fetches Databento OHLCV aggregates into DuckDB and exports CSV snapshots. This module is the **only writer** to `StockData/MarketData.duckdb`. The database is a developer ingestion/verification store; the V1 release design builds an immutable snapshot from the extracted CSV inputs.
 
-For the system architecture, see [`Docs/Specs/`](../Docs/Specs/README.md) (in particular [`04DataLayer.md`](../Docs/Specs/04DataLayer.md)).
+For the system architecture, see [`Docs/Specs/`](../Docs/Specs/README.md) (in
+particular [`DataLayer.md`](../Docs/Specs/DataLayer.md)).
 
 ---
 
