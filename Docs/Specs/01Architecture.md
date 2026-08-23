@@ -39,7 +39,9 @@ SnapshotBuilder ──► Data + Core
 - **Bindings** translates backend values to queued Qt-facing values; Frontend never reaches into engine internals.
 
 A separate launcher is not a V1 module. Any later updater or repair launcher
-requires a new ADR and remains outside the engine dependency graph.
+requires maintainer approval, an update to the living important-decisions
+document, and coordinated owning-spec changes; it remains outside the engine
+dependency graph.
 
 ## 3. Engine and strategy seam
 

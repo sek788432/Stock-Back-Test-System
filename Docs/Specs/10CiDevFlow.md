@@ -286,7 +286,8 @@ exception and cleanup paths that do not correspond to testable source branches.
 ## 8. Gate changes and failures
 
 - Never disable or bypass an implemented merge gate to land a change.
-- Changing a CI gate requires an ADR, focused tooling tests, and review.
+- Changing a CI gate requires an approved living important-decisions entry,
+  focused tooling tests, and review.
 - A failing required test is fixed in production or in the test; it is not
   commented out or silently skipped.
 - A temporary skip must reference an open issue and remain visible to reviewers;

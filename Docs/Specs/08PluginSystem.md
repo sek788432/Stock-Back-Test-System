@@ -28,7 +28,10 @@ Native plugins are a future extension seam for capabilities that cannot reasonab
 - Downloading or updating plugins from the application.
 - Hot reload while a backtest is running.
 
-These exclusions protect deterministic replay and the managed-data contract. Adding one requires an ADR and coordinated changes to the data, engine, persistence, release, and threat-model specs.
+These exclusions protect deterministic replay and the managed-data contract.
+Adding one requires maintainer approval, an update to the living
+important-decisions document, and coordinated changes to the data, engine,
+persistence, release, and threat-model specs.
 
 ## Future load flow
 

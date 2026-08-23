@@ -13,7 +13,10 @@ If you're a **human contributor**, read this file and [`../Onboarding.md`](../On
 1. Pick or open an issue.
 2. Branch from `main`: `feature/<short-name>`, `fix/<short-name>`, etc.
 3. Make small, focused commits with [Conventional Commits](https://www.conventionalcommits.org/) messages.
-4. For non-trivial changes: open an [ADR](../Decisions/) first.
+4. Resolve every ambiguity with the maintainer. Update the [living
+   important-decisions document](../Decisions/ImportantDecisions.md) first when
+   the choice is hard to reverse, surprising without context, and a real
+   trade-off; implemented merge-gate changes always require an entry.
 5. Add positive, negative, and boundary unit tests for every affected public
    behavior; bug fixes and behavior changes also need regression tests
    ([`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md)).
@@ -37,7 +40,7 @@ If you're a **human contributor**, read this file and [`../Onboarding.md`](../On
 | Know what "done" looks like | [`../DefinitionOfDone.md`](../DefinitionOfDone.md) |
 | Review someone's PR | [`../ReviewPlaybook.md`](../ReviewPlaybook.md) |
 | Cut a release | [`../ReleaseProcess.md`](../ReleaseProcess.md) |
-| Record a design decision | [`../Decisions/`](../Decisions/) |
+| Record an important design decision | [`../Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md) |
 | Configure AI assistants | [`AGENTS.md`](AGENTS.md) |
 
 ---
@@ -82,9 +85,8 @@ The binding sources are:
 1. The repository hard rules in [`AGENTS.md`](AGENTS.md).
 2. The repository-specific C++ skills in [`../../.agents/skills/`](../../.agents/skills/README.md).
 
-The checked-in `.clang-tidy` configuration is enforced by the merge-blocking
-static-analysis job. Explicit clang-format enforcement remains planned
-(`Specs/10`).
+The checked-in `.clang-tidy` configuration and full-tree clang-format check are
+enforced by merge-blocking CI jobs (`Specs/10`).
 
 Naming (recap from `cpp-modern-style` and [`../Specs/03BackendCore.md`](../Specs/03BackendCore.md) §1):
 - Variables / methods / namespaces: `lowerCamelCase`.
@@ -130,25 +132,31 @@ Reviewer checklist is in [`../ReviewPlaybook.md`](../ReviewPlaybook.md). Authors
 |---|---|
 | Bug | GitHub Issue (`bug` template) |
 | Feature idea | GitHub Issue (`feature` template) |
-| Design discussion | ADR PR in [`../Decisions/`](../Decisions/) |
+| Design discussion | Issue or PR discussion; update [`../Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md) when the three-part §5 threshold applies |
 | Code change | Pull Request |
 | Question about a spec | Comment on the spec file in a PR or issue |
-| Quick chat | Team sync chat — but **if it shaped a decision, write it down in an ADR or PR comment.** Verbal decisions don't exist. |
+| Quick chat | Team sync chat — but **if it shaped an important decision, update the living document through a reviewed change.** Verbal decisions don't exist. |
 | Outage on `main` | Sync chat first, issue with `priority:high` immediately after |
 
-The weekly sync is for roadmap and ambiguous questions. Decisions made there are backfilled into ADRs or PR comments same day.
+The weekly sync is for roadmap and ambiguous questions. Important decisions
+made there are backfilled into the living document through a reviewed change
+the same day.
 
 ---
 
 ## Adding a dependency
 
-See [`AGENTS.md` §6](AGENTS.md). Default answer is no. If yes, ADR + license check + version pin + entry in [`../Decisions/Dependencies.md`](../Decisions/Dependencies.md).
+See [`AGENTS.md` §6](AGENTS.md). Default answer is no. If yes: maintainer
+approval, an important-decision update when the choice meets §5, a license
+check, an exact version pin, and an entry in
+[`../Decisions/Dependencies.md`](../Decisions/Dependencies.md).
 
 ---
 
 ## Security / secrets
 
-- Never commit secrets. `.env` is gitignored; `.env.example` is the canonical placeholder.
+- Never commit secrets. `.env` is gitignored. If a tracked placeholder template
+  is added, it must be `.env.example` and contain no real credentials.
 - Databento API keys: each contributor uses their own key in their local `.env`.
 - Code-signing keys, GPG keys, GitHub Actions secrets: managed by the repo lead. Don't reference them from code paths a fork could hit.
 

@@ -13,9 +13,9 @@ Repository instructions always take precedence over skill guidance.
 | Layer | Canonical location | Purpose |
 |---|---|---|
 | Hard invariants | [`Docs/Governance/AGENTS.md` §2](../../Docs/Governance/AGENTS.md) | Always-read, non-negotiable repository rules |
-| Product and architecture contracts | [`Docs/Specs/`](../../Docs/Specs/README.md) and [`Docs/Decisions/`](../../Docs/Decisions/README.md) | Defines required behavior and accepted decisions |
+| Product and architecture contracts | [`Docs/Specs/`](../../Docs/Specs/README.md) and [`ImportantDecisions.md`](../../Docs/Decisions/ImportantDecisions.md) | Defines required behavior and active important decisions |
 | Task-specific workflows | This `.agents/skills/` directory | Detailed guidance loaded only when a skill matches the task |
-| Mechanical enforcement (currently partial) | [`.github/workflows/`](../../.github/workflows/) and [`tools/`](../../tools/) | Detects the covered subset without relying on agent memory |
+| Mechanical enforcement (currently partial) | [`.github/workflows/`](../../.github/workflows/) and [`Tools/`](../../Tools/) | Detects the covered subset without relying on agent memory |
 
 Do not make a non-negotiable rule live only in a skill. Put its concise,
 authoritative form in `Docs/Governance/AGENTS.md`, keep implementation detail in
@@ -48,9 +48,9 @@ apply even when an agent host does not support skill discovery.
 | Question | Primary source |
 |---|---|
 | How should this C++ loop or API be written? | `cpp-modern-style` |
-| Where does this module belong? | [`Docs/Specs/01_Architecture.md`](../../Docs/Specs/01_Architecture.md) |
-| How should this strategy type plug in? | [`Docs/Specs/05_Strategy_Authoring.md`](../../Docs/Specs/05_Strategy_Authoring.md) and `cpp-oop-design` |
-| What are the CI gates? | [`Docs/Specs/10_CI_Dev_Flow.md`](../../Docs/Specs/10_CI_Dev_Flow.md) |
+| Where does this module belong? | [`Docs/Specs/01Architecture.md`](../../Docs/Specs/01Architecture.md) |
+| How should this strategy type plug in? | [`Docs/Specs/05StrategyAuthoring.md`](../../Docs/Specs/05StrategyAuthoring.md) and `cpp-oop-design` |
+| What are the CI gates? | [`Docs/Specs/10CiDevFlow.md`](../../Docs/Specs/10CiDevFlow.md) |
 | Is this code thread-safe? | `cpp-thread-safety` |
 | Does this allocation matter? | `cpp-performance` |
 | What does this analyzer warning mean? | `cpp-static-analysis` |
@@ -68,12 +68,21 @@ apply even when an agent host does not support skill discovery.
 These files are a vendored snapshot. They do not update automatically. Review
 upstream changes and commit a new pinned snapshot deliberately.
 
-The `setup-matt-pocock-skills` skill is installed but has not been run. Invoke
-it explicitly if the repository should adopt the optional issue-tracker,
-triage-label, and domain-document configuration used by that collection.
+### Issue #53 retirement transition
 
-Local adaptation: `setup-matt-pocock-skills` uses the repository's canonical
-`AGENTS.md` and never creates or edits host-specific instruction files.
+The phase-1 disposition retires these optional workflow packages. Do not invoke
+or treat their contents as current guidance while their catalog consumers are
+being removed:
+
+- `ask-matt`, `code-review`, `grill-me`, `grill-with-docs`, `handoff`, and
+  `implement`;
+- `improve-codebase-architecture`, `setup-matt-pocock-skills`, `teach`, and
+  `to-spec`;
+- `to-tickets`, `triage`, `wayfinder`, and `writing-great-skills`.
+
+They remain tracked only until the approved documentation-cleanup phase removes
+the packages and their remaining references atomically. Repository governance,
+canonical specs, and retained skills are authoritative during the transition.
 
 ## Invocation and maintenance
 

@@ -1,6 +1,8 @@
 # Team Ownership and Product Pillars
 
-> **Status:** Organizational guidance. The canonical specifications define behavior.
+> **Status:** Organizational guidance. The canonical specifications define
+> behavior. Actual human assignments are **Blocked** pending a maintainer
+> decision; the labels below name responsibility areas, not assigned people.
 
 ## Working rule
 
@@ -45,7 +47,9 @@ Owners define narrow contracts and test against frozen or in-memory fixtures so 
 - Follow [`Specs/README.md`](Specs/README.md), [`Governance/AGENTS.md`](Governance/AGENTS.md), and [`DefinitionOfDone.md`](DefinitionOfDone.md).
 - Public behavior requires positive, negative, and meaningful boundary unit tests.
 - Every bug fix or behavior change requires a regression test.
-- Data, strategy, engine, results, and replay compatibility changes are coordinated through specs and ADRs.
+- Data, strategy, engine, results, and replay compatibility changes are
+  coordinated through their owning specs and, when the three-part governance
+  threshold applies, the living important-decisions document.
 - Planned checks must be listed as not implemented until automation exists.
 
 Ownership changes update this document; behavioral changes update the owning spec.

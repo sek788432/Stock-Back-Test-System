@@ -55,12 +55,13 @@ Overlapping documents summarize these concerns but do not redefine them.
 - **Implemented:** code and automated verification exist in the repository.
 - **Accepted design:** normative behavior for implementation, but not necessarily shipped.
 - **Planned / not implemented:** not available and not an active CI gate.
-- **Proposal / non-normative:** exploration only; do not implement without promotion into a canonical spec or ADR.
+- **Proposal / non-normative:** exploration only; do not implement without promotion into a canonical spec and, when required by governance, the living important-decisions document.
 
 ## Change rules
 
 - Change the owning spec in the same PR as behavior.
-- Add or amend an ADR for architectural decisions and dependency changes.
+- Resolve material ambiguity with the maintainer. Update the living
+  important-decisions document when the governance threshold applies.
 - Engine-semantic changes require deterministic fixture updates and regression tests.
 - Never describe a planned check as merge-blocking until the workflow actually enforces it.
 - Temporary investigations belong in ignored `Docs/Reviews/` and must be folded into canonical docs before merge.

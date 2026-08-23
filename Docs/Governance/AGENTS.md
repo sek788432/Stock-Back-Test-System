@@ -19,10 +19,14 @@ Whenever you start a task here, read these in order. Don't skip — every sectio
 1. **This file** (you're reading it).
 2. **[`README.md`](../../README.md)** — what the project is.
 3. **[`Docs/Specs/00Overview.md`](../Specs/00Overview.md)** — system architecture and end-to-end flow.
-4. **The relevant `Docs/Specs/0X_*.md`** (numbers `01`–`12`) for the module you're touching — use **`11StockScreenerKLineProduct.md`** when changing replay, authoring surfaces, or screener scope. Full index in [`Docs/Specs/README.md`](../Specs/README.md).
+4. **The relevant numbered spec** (numbers `01`–`12`) for the module you are
+   touching. Use the exact filenames in
+   [`Docs/Specs/README.md`](../Specs/README.md), including
+   **`11StockScreenerKLineProduct.md`** for replay, authoring surfaces, or
+   screener scope.
 5. **[`.agents/skills/`](../../.agents/skills/)** — the repository's only project-skill directory, containing both repository-specific C++ rules and shared engineering and productivity workflows. Hosts that do not auto-discover this convention must still read a relevant `SKILL.md` when its description matches the task. Repository instructions take precedence over skill guidance.
 6. **[`Docs/DefinitionOfDone.md`](../DefinitionOfDone.md)** — what "done" means in this repo. **You do not declare a task done until every box on this checklist is true.**
-7. **[`Docs/Decisions/`](../Decisions/)** — Architecture Decision Records. Read the ADRs that touch your area before making design choices.
+7. **[`Docs/Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md)** — the living record of important decisions that still constrain the project. Until issue #53 phase 3 completes, also use the temporary index in [`Docs/Decisions/README.md`](../Decisions/README.md) to read every still-active portion of accepted numbered decisions relevant to the touched area, whether or not an owning spec already links it. Those portions remain authoritative until atomically migrated. Do not add or amend a numbered ADR.
 
 ---
 
@@ -47,14 +51,14 @@ practical; do not rely on skill activation alone.
 | H7  | Never write a test that passes trivially. Tests must exercise real production behavior and contain meaningful assertions. The implemented standards checker rejects only the limited patterns documented in `Docs/Specs/10`; semantic anti-cheat and mutation checks are planned, not current merge gates. |
 | H8  | Never claim a task is done until the Definition of Done passes ([`../DefinitionOfDone.md`](../DefinitionOfDone.md)). "I think it works" is not done.                                                                                                                                                      |
 | H9  | Never add a dependency without justifying it in the PR description, naming the package and version, and confirming its license is compatible (see §6 below).                                                                                                                                                  |
-| H10 | Never disable, bypass, or weaken an implemented merge gate to land a change. A change to a merge gate requires an ADR, a focused tooling change, and review; there is no undocumented override. |
+| H10 | Never disable, bypass, or weaken an implemented merge gate to land a change. A change to a merge gate requires an approved entry in the living important-decisions document, a focused tooling change, and review; there is no undocumented override. |
 | H11 | Never invent file paths, class names, library APIs, commands, tools, or CI checks. Search the checked-out repository and distinguish implemented behavior from planned design. |
 | H12 | Never silently change indentation, line endings, or formatting outside your diff. Run `clang-format` / `ruff format` only on touched files.                                                                                                                                                                   |
 | H13 | Project-owned C++ headers use `#pragma once` and repository naming/layout. Do not use C arrays, `NULL`, `typedef`, unscoped enums, C stdio/string APIs, C-style casts, `goto`, function-like macros, `std::auto_ptr`, `std::vector<bool>`, or output parameters in project-owned interfaces. Isolate and document narrow exceptions required by `main`, an external C ABI, or a framework boundary. |
 | H14 | Use `std::chrono` for time and `std::filesystem::path` for paths in project-owned C++ APIs. Mark fallible `Result`-returning APIs `[[nodiscard]]`; never use `errno` as a module error contract.                                                                                                                     |
 | H15 | Never use manual mutex `lock()`/`unlock()`, `std::thread`, `pthread_create`, detached threads, or `volatile` for synchronization. Never call `QWidget` methods from a worker thread. Use scoped locks, `std::jthread` with cancellation, immutable/value snapshots, and queued Qt delivery.                                                        |
 | H16 | Static-analysis and sanitizer suppressions must be narrow, name the exact check, include a reason, and have maintainer approval. Never blanket-disable a check or suppress a sanitizer finding merely to make a gate pass.                                                                                       |
-| H17 | Project-owned directory names and file stems use PascalCase. Exact external-tool conventions, numbered ADR slugs, `UnitTest_<Thing>` files, entrypoints, and domain-data identifiers are the only exceptions documented by ADR 0010. Every unit-test suite lives under `Tests/Unit/<Module>/`. |
+| H17 | Project-owned directory names and file stems use PascalCase. Exact external-tool conventions, `UnitTest_<Thing>` files, entrypoints, and domain-data identifiers are the documented exceptions; the rationale remains in [ADR 0010](../Decisions/0010-enforce-pascal-case-paths-and-unit-test-layout.md) until phase 3 migrates it. The numbered kebab-case ADR files remain a temporary issue #53 migration-source exception only until phase 3 removes the archive and checker exemption atomically. Every unit-test suite lives under `Tests/Unit/<Module>/`. |
 | H18 | Before pushing or otherwise requesting CI for a change that touches C++ code, build wiring, C++ tests, or C++ quality tooling, run `./RunTest.sh` and then `./RunQuality.sh --base <base-revision> --head HEAD`. Both must pass on the exact committed `HEAD` being submitted. Do not use a CI run as the first quality check. |
 
 ---
@@ -65,14 +69,15 @@ Use the smallest loop that matches the requested authority. Do not turn an
 inspection request into a code change or a documentation request into an
 unrequested implementation.
 
-1. **Read context.** Read this file, the relevant specs and ADRs, the matching
+1. **Read context.** Read this file, the relevant specs and active important decisions, the matching
    skills, and the Definition of Done.
 2. **Classify the task.** Decide whether it is inspection/advice, documentation,
    code behavior, bug fix, refactor, CI/tooling, or release work.
 3. **Inspect before asserting.** Search the current tree, including relevant
    uncommitted files. Do not infer that a documented tool or feature exists.
-4. **Plan proportionately.** State a short plan for non-trivial work. Write an
-   ADR first when §5 requires one.
+4. **Plan proportionately.** State a short plan for non-trivial work. Obtain the
+   maintainer decision and update the living important-decisions document first
+   when §5 requires it.
 5. **Change only the authorized scope.** Preserve unrelated and user-owned
    changes.
 6. **Test according to impact.**
@@ -134,9 +139,23 @@ One concern per PR. If you found unrelated bugs while working, file issues; don'
 
 ---
 
-## 5. When to write an ADR
+## 5. When to record an important decision
 
-Open an Architecture Decision Record ([`../Decisions/`](../Decisions/)) **before** writing code if your change:
+The project keeps one living record at
+[`../Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md).
+Use the `grilling` workflow to resolve every ambiguous product, compatibility,
+retention, or specification choice with the maintainer before implementation.
+
+Add or update an important-decision entry only when all three tests pass:
+
+1. **Hard to reverse:** the choice materially constrains future work and would
+   have a meaningful cost to change.
+2. **Surprising without context:** a future contributor could not reliably
+   infer the rationale from the owning spec and implementation.
+3. **Real trade-off:** more than one reasonable answer existed and the rejected
+   alternatives remain important to understand.
+
+Apply the tests especially when a change:
 
 - introduces a new third-party dependency,
 - changes a public API that crosses a module boundary,
@@ -146,9 +165,18 @@ Open an Architecture Decision Record ([`../Decisions/`](../Decisions/)) **before
 - adds a new module to the dependency graph (`Docs/Specs/01` §1),
 - has more than one reasonable answer.
 
-The ADR template lives at [`../Decisions/0001-record-architecture-decisions.md`](../Decisions/0001-record-architecture-decisions.md). Number it sequentially. Reference it from your PR.
+An implemented merge-gate change always requires an entry under H10. For any
+other listed category that does not pass all three tests, explain why an entry
+is unnecessary in the PR.
 
-For small mechanical changes (typos, version bumps with no API change, refactors that preserve behavior), an ADR is not needed.
+Each entry contains only the current decision, why it was chosen, important
+rejected alternatives and why, consequences, and the owning specification.
+Update an entry in place when the current decision changes. Remove it when it
+no longer constrains the project; Git history preserves chronology. Do not add
+numbered, append-only, superseded, or deprecated decision files.
+
+For small mechanical changes (typos, version bumps with no API change,
+behavior-preserving refactors), an important-decision entry is not needed.
 
 ---
 
@@ -158,7 +186,8 @@ Default answer: **don't add one**. The C++20 standard library is large; the exis
 
 If you must:
 
-1. Add an ADR (see §5).
+1. Add or update an important-decision entry when the dependency choice meets
+   the threshold in §5.
 2. Verify the license is compatible:
    - **Allowed**: MIT, BSD (2/3-clause), Apache-2.0, MPL-2.0, ISC, Boost, zlib, LGPL (dynamically linked only).
    - **Forbidden without an explicit team decision**: GPL-2.0, GPL-3.0, AGPL, SSPL, custom "non-commercial" licenses.
@@ -197,9 +226,10 @@ TEST(Foo, DISABLED_real)                    // (f) silent disable, no ISSUE-### 
 ```
 
 The current line-oriented standards checker catches only a subset of these
-patterns. Semantic anti-cheat, public-behavior parity, coverage, and mutation
-testing remain target-state checks but are not yet mechanically enforced.
-Review tests for intent instead of treating a green checker as proof.
+patterns. Changed-line and changed-branch coverage are mechanically enforced;
+semantic anti-cheat, public-behavior parity, and mutation testing remain
+target-state checks. Review tests for intent instead of treating green
+mechanical checks as proof.
 
 ---
 
@@ -215,7 +245,8 @@ Default to the safer choice:
 - Don't know whether to write a test? → write one. The bar is positive,
   negative, and boundary unit coverage for every affected public behavior
   (`Docs/Specs/10`).
-- Don't know if a change needs an ADR? → write a short one. ADRs are cheap.
+- Don't know if a choice belongs in the living important-decisions document? →
+  stop and ask the maintainer; do not create a historical record by default.
 - Don't know what "done" looks like? → re-read [`../DefinitionOfDone.md`](../DefinitionOfDone.md).
 
 If, after reading the relevant docs, you still don't know — **ask** in the PR description or as a draft PR. Don't guess and ship.
@@ -245,13 +276,15 @@ This is a small (4–8 people) hybrid team. Defaults:
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Bug report                          | GitHub Issue (template)                                                                                 |
 | Feature request                     | GitHub Issue (template)                                                                                 |
-| Design proposal                     | ADR PR in [`../Decisions/`](../Decisions/)                                                              |
+| Design proposal                     | Issue or PR discussion, then an approved update to [`../Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md) when §5 applies |
 | Code change                         | PR with template filled                                                                                 |
-| Question about a spec / ADR         | GitHub Discussion **or** comment on the spec/ADR file                                                   |
-| Quick clarification                 | Sync chat (whatever the team uses) — but if it shaped a decision, write it down in an ADR or PR comment |
+| Question about a spec / decision    | GitHub Discussion **or** comment on the owning spec or important-decisions entry                         |
+| Quick clarification                 | Sync chat (whatever the team uses) — but if it shaped an important decision, update the living document or record it in the PR pending approval |
 | Outage / something broken on `main` | Sync chat first, then issue with `priority:high`                                                        |
 
-The weekly sync is for ambiguous questions and roadmap. Anything decided there must be backfilled into an ADR or PR before EOD that day. **Verbal decisions don't exist.**
+The weekly sync is for ambiguous questions and roadmap. Any important decision
+made there must be added to the living document through a reviewed change
+before EOD that day. **Verbal decisions don't exist.**
 
 ---
 
@@ -259,7 +292,8 @@ The weekly sync is for ambiguous questions and roadmap. Anything decided there m
 
 Quick mental pass. If you can answer "yes" to all, you're ready:
 
-- [ ] I read the relevant `Docs/Specs/0X_*.md` for the area I changed.
+- [ ] I read the relevant numbered spec using its exact filename from
+  [`../Specs/README.md`](../Specs/README.md).
 - [ ] My change respects the hard rules in §2.
 - [ ] Every affected public behavior has positive, negative, and boundary unit tests.
 - [ ] Every bug fix or intentional public-behavior change has a regression test.
@@ -269,7 +303,7 @@ Quick mental pass. If you can answer "yes" to all, you're ready:
 - [ ] My commit messages are Conventional Commits.
 - [ ] I filled out the PR template completely (no blank fields).
 - [ ] I worked through the Definition of Done.
-- [ ] I added or updated an ADR if the change qualifies (§5).
+- [ ] I added or updated the living important-decisions document if the change qualifies (§5).
 - [ ] I followed the relevant project skills in [`../../.agents/skills/`](../../.agents/skills/) and did not introduce any banned patterns from the repository-specific C++ skills there.
 
 If yes, ship it.

@@ -80,7 +80,8 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] No raw `new` / `delete`, no raw `mutex.lock()`.
 - [ ] All resources RAII.
 - [ ] Cross-thread comms via immutable snapshots or queued signals.
-- [ ] If concurrency changed, applicable local sanitizer evidence is present; TSan is not currently a repository CI gate.
+- [ ] If concurrency changed, applicable local sanitizer evidence is present;
+  TSan is a merge-blocking repository CI gate.
 
 ### Performance
 
@@ -165,8 +166,13 @@ If two reviewers leave conflicting `blocking:` comments, the author shouldn't ha
 1. Reviewers thread it out in the PR until they converge.
 2. If they can't, escalate to the topic owner listed in
    [`TeamOwnershipAndProductPillars.md`](TeamOwnershipAndProductPillars.md).
-3. If the topic owner is one of them, escalate to the repo maintainer.
-4. Whatever the resolution, **write it down in an ADR** if the disagreement was about design (so future PRs don't re-litigate).
+3. If no person is assigned, or the topic owner is one of the reviewers,
+   escalate to the repo maintainer.
+4. If the resolution passes all three decision tests in
+   [`Governance/AGENTS.md`](Governance/AGENTS.md) §5, or changes an implemented
+   merge gate, update the applicable entry in
+   [`Decisions/ImportantDecisions.md`](Decisions/ImportantDecisions.md) and its
+   owning spec so future PRs do not re-litigate it.
 
 ---
 

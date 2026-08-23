@@ -8,15 +8,16 @@ that does not apply; never claim that an unrun or nonexistent check passed.
 
 - [ ] **Authorized scope:** the change addresses the requested concern and
   preserves unrelated and user-owned work.
-- [ ] **Context:** the relevant specs, ADRs, project skills, and
-  [`Governance/AGENTS.md`](Governance/AGENTS.md) were read.
+- [ ] **Context:** the relevant specs, active important decisions, project
+  skills, and [`Governance/AGENTS.md`](Governance/AGENTS.md) were read.
 - [ ] **Status truth:** documentation identifies behavior as Implemented,
   Planned, or Blocked and does not describe planned tooling as enforced.
 - [ ] **Self-review:** the complete diff was reviewed hunk by hunk.
 - [ ] **Repository hygiene:** no secrets, dead commented-out code, generated
   build output, or task comments without an `ISSUE-NNN` reference were added.
-- [ ] **Traceability:** the PR references its issue or ADR, or explains why one
-  is unnecessary.
+- [ ] **Traceability:** the PR references its issue and any affected entry in
+  the living important-decisions document, or explains why an entry is
+  unnecessary.
 - [ ] **History:** the branch and commit messages follow the repository's PR
   conventions when a branch or commit is part of the task.
 
@@ -27,7 +28,8 @@ that does not apply; never claim that an unrun or nonexistent check passed.
   parser is available.
 - [ ] Related indexes and canonical cross-references are updated.
 - [ ] The change introduces no contradiction with a more authoritative spec or
-  ADR; any intentional supersession is explicit.
+  active important decision; any intentional decision change updates both the
+  living entry and its owning spec.
 - [ ] Build, runtime, and code-test sections are marked `N/A — docs-only` rather
   than falsely checked.
 

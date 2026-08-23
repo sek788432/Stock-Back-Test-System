@@ -42,7 +42,8 @@ change correctly:
 - declarations, definitions, public interfaces, implementations, and callers;
 - module dependencies and CMake/build/test registration;
 - tests, fixtures, mocks, persisted schemas, and generated artifacts;
-- relevant specs, ADRs, README files, examples, and user-facing documentation;
+- relevant specs, active important decisions, README files, examples, and
+  user-facing documentation;
 - concurrency, ownership, error, determinism, and performance contracts touched
   indirectly by the change.
 
@@ -58,8 +59,11 @@ Read the following before forming findings:
 1. `Docs/Governance/AGENTS.md` and `Docs/DefinitionOfDone.md`.
 2. `README.md`, `Docs/Specs/00Overview.md`, and each module spec affected by the
    impact closure.
-3. Applicable ADRs and the originating issue, PRD, or user-supplied acceptance
-   criteria when available.
+3. Applicable entries in `Docs/Decisions/ImportantDecisions.md` and the
+   originating issue, PRD, or user-supplied acceptance criteria when available.
+   Until issue #53 phase 3 completes, use `Docs/Decisions/README.md` to read
+   every still-active portion of accepted numbered decisions relevant to the
+   touched area, whether or not an owning spec links it.
 4. For any C++ in the range or impact closure, fully read and apply all five:
    - `.agents/skills/cpp-modern-style/SKILL.md`
    - `.agents/skills/cpp-oop-design/SKILL.md`
@@ -67,10 +71,10 @@ Read the following before forming findings:
    - `.agents/skills/cpp-static-analysis/SKILL.md`
    - `.agents/skills/cpp-thread-safety/SKILL.md`
 
-Repository governance, current specs, ADRs, and the checked-out implementation
-override stale or conflicting skill examples. Verify every path, preset, script,
-and claimed gate in the checkout before using it. Never describe planned tooling
-as implemented or merge-blocking.
+Repository governance, current specs, active important decisions, and the
+checked-out implementation override stale or conflicting skill examples.
+Verify every path, preset, script, and claimed gate in the checkout before
+using it. Never describe planned tooling as implemented or merge-blocking.
 
 ## 4. Run three independent review axes
 
@@ -84,7 +88,8 @@ another reviewer's conclusions.
 Review all changed production code and its impact closure for:
 
 - functional correctness, failure paths, compatibility, and regressions;
-- spec and ADR conformance, module dependency direction, and public contracts;
+- spec and active-decision conformance, module dependency direction, and public
+  contracts;
 - every applicable rule from the five C++ skills, including modern C++20 style,
   RAII, ownership, interface depth, composition, thread safety, error handling,
   complexity, allocation, hot paths, and deterministic behavior;
@@ -103,13 +108,16 @@ Review every changed document plus related authoritative documentation. Check:
 - Implemented, Planned, Blocked, local-only, and merge-blocking labels against
   the checked-out tree;
 - names, paths, commands, defaults, examples, links, anchors, and diagrams;
-- consistency among README files, specs, ADRs, public headers, UI text, and test
-  expectations;
+- consistency among README files, specs, active important decisions, public
+  headers, UI text, and test expectations;
 - whether implementation changes require documentation updates, and whether
   documentation changes promise implementation that does not exist.
 
-Treat higher-authority governance, specs, and accepted ADRs as controlling.
-Flag contradictions in either direction.
+Treat higher-authority governance, specs, and active important decisions as
+controlling. During the issue #53 transition, every relevant still-active
+portion of an accepted numbered decision remains authoritative until migrated,
+whether or not an owning spec links it. Flag contradictions in either
+direction.
 
 ### Tests and verification axis
 
