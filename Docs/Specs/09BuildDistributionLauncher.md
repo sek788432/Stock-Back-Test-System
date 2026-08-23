@@ -25,6 +25,8 @@ The exact commands live in [`../BUILD.md`](../BUILD.md); this spec defines the p
 Each installer will contain:
 
 - the application and required shared libraries;
+- an LGPL-compatible or project-owned chart implementation; the development-only
+  Qt Charts implementation must not be included in the Apache-2.0 release;
 - a project-managed Python runtime and pinned packages used by strategy execution;
 - Python strategy templates and API metadata;
 - the validated immutable Release Snapshot built from approved tracked

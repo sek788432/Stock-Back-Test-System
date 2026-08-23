@@ -61,9 +61,6 @@ Read the following before forming findings:
    impact closure.
 3. Applicable entries in `Docs/Decisions/ImportantDecisions.md` and the
    originating issue, PRD, or user-supplied acceptance criteria when available.
-   Until issue #53 phase 3 completes, use `Docs/Decisions/README.md` to read
-   every still-active portion of accepted numbered decisions relevant to the
-   touched area, whether or not an owning spec links it.
 4. For any C++ in the range or impact closure, fully read and apply all five:
    - `.agents/skills/cpp-modern-style/SKILL.md`
    - `.agents/skills/cpp-oop-design/SKILL.md`
@@ -114,10 +111,7 @@ Review every changed document plus related authoritative documentation. Check:
   documentation changes promise implementation that does not exist.
 
 Treat higher-authority governance, specs, and active important decisions as
-controlling. During the issue #53 transition, every relevant still-active
-portion of an accepted numbered decision remains authoritative until migrated,
-whether or not an owning spec links it. Flag contradictions in either
-direction.
+controlling. Flag contradictions in either direction.
 
 ### Tests and verification axis
 

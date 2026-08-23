@@ -1,6 +1,8 @@
 # 01 — Architecture
 
-This spec defines module seams and ownership. [ADR 0011](../Decisions/0011-own-the-engine-and-release-data-contract.md) supersedes the Rule + Lua architecture while preserving ADR 0002's C++20/Qt desktop decision.
+This spec defines module seams and ownership. The living decisions record the
+rationale for the [C++/Qt desktop boundary](../Decisions/ImportantDecisions.md#c-and-qt-desktop-boundary)
+and the [project-owned engine](../Decisions/ImportantDecisions.md#engine-and-release-data-authority).
 
 ## 1. Status
 

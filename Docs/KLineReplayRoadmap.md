@@ -102,10 +102,12 @@ Phase 1 demo target:
 
 ## Phase 2 - Production Data And Replay Results
 
-> **Current disposition:** Superseded target. ADR 0011 replaced direct runtime
-> DuckDB access and generic replay-result snapshots with immutable Release
-> Snapshots and transactional `.bteresult` Backtest Results. The issue links are
-> retained as historical context, not accepted implementation instructions.
+> **Current disposition:** Superseded target. The
+> [engine and release-data decision](Decisions/ImportantDecisions.md#engine-and-release-data-authority)
+> replaced direct runtime DuckDB access and generic replay-result snapshots
+> with immutable Release Snapshots and transactional `.bteresult` Backtest
+> Results. The issue links are retained as historical context, not accepted
+> implementation instructions.
 
 Goal: connect replay to production-style data and persist completed Backtest
 Results for later comparison. Durable Backtest Results are separate from
@@ -137,7 +139,7 @@ Portfolio and trades:
 
 | Issue | Type | Task | Outcome |
 | --- | --- | --- | --- |
-| [#11](https://github.com/sek788432/Stock-Back-Test-System/issues/11) | BE | Historical read-only DuckDB `DataSource` | **Superseded by ADR 0011:** replace with an immutable Release Snapshot reader. |
+| [#11](https://github.com/sek788432/Stock-Back-Test-System/issues/11) | BE | Historical read-only DuckDB `DataSource` | **Superseded:** replace with an immutable Release Snapshot reader. |
 | [#19](https://github.com/sek788432/Stock-Back-Test-System/issues/19) | BE | Persist replay results | Re-scope to transactional `.bteresult` output and canonical hash validation. |
 | [#12](https://github.com/sek788432/Stock-Back-Test-System/issues/12) | BE | Portfolio snapshots and trade markers | Replay can emit cash, position, equity, PnL, and buy/sell marker data. |
 | [#13](https://github.com/sek788432/Stock-Back-Test-System/issues/13) | FE | Portfolio strip and trade log | Replay UI displays portfolio state, trade rows, and chart markers. |

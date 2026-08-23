@@ -86,8 +86,8 @@ The five `cpp-*` skill families have the following enforcement boundary:
 | `cpp-thread-safety` | Raw allocation, manual locks, detached/legacy threads, pthread creation, `volatile`, and legacy ownership types. | Concurrency analyzers plus separate ASan/UBSan/LSan and TSan test jobs are merge-blocking. |
 
 The checker masks C++ comments and literals before matching these token rules.
-The enforcement split is recorded by
-[ADR 0020](../Decisions/0020-expand-cpp-skill-standards-enforcement.md).
+The enforcement split is recorded by the
+[living quality-gate decision](../Decisions/ImportantDecisions.md#layered-merge-blocking-quality-gates).
 It does not parse C++ or Python semantics, prove public-behavior coverage,
 identify every ownership or OOP design mistake, establish that an operation is
 in a hot path, find every empty or mock-only test, or replace compilation,

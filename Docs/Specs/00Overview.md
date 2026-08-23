@@ -1,6 +1,9 @@
 # 00 — Overview and Flow
 
-This is the entry point for the desktop backtester. Detailed module contracts live in Specs `01`–`12`; [ADR 0011](../Decisions/0011-own-the-engine-and-release-data-contract.md) records the governing architecture.
+This is the entry point for the desktop backtester. Detailed module contracts
+live in Specs `01`–`12`; the
+[engine and release-data decision](../Decisions/ImportantDecisions.md#engine-and-release-data-authority)
+records the governing rationale.
 
 ## 1. Product
 

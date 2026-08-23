@@ -41,7 +41,6 @@ CONVENTIONAL_FILE_NAMES = {
 }
 PASCAL_CASE_NAME = re.compile(r"[A-Z][A-Za-z0-9]*")
 NUMBERED_PASCAL_CASE_NAME = re.compile(r"\d{2}[A-Z][A-Za-z0-9]*")
-ADR_FILE_NAME = re.compile(r"\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
 UNIT_TEST_FILE_NAME = re.compile(r"UnitTest_[A-Z][A-Za-z0-9]*\.(?:cpp|py)")
 
 
@@ -602,8 +601,6 @@ def is_conventional_file(path: Path) -> bool:
     if path.name.startswith(".") or path.name in CONVENTIONAL_FILE_NAMES:
         return True
     if path.parts[0] in {".agents", ".github"}:
-        return True
-    if path.parent == Path("Docs", "Decisions") and ADR_FILE_NAME.fullmatch(path.name):
         return True
     if UNIT_TEST_FILE_NAME.fullmatch(path.name):
         return True

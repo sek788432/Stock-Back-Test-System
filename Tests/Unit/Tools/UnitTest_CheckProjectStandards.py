@@ -531,13 +531,19 @@ class AuditPathConventionsTest(unittest.TestCase):
             {
                 Path("AGENTS.md"),
                 Path("Docs/Specs/10CiDevFlow.md"),
-                Path("Docs/Decisions/0010-enforce-pascal-case-paths-and-unit-test-layout.md"),
                 Path("StockData/Extracted/BRK_B.csv"),
                 Path("Tests/Unit/Core/UnitTest_Bar.cpp"),
             }
         )
 
         self.assertEqual(violations, [])
+
+    def test_rejects_numbered_kebab_case_decision_archive_name(self) -> None:
+        violations = audit_path_conventions(
+            {Path("Docs/Decisions/0010-old-decision.md")}
+        )
+
+        self.assertEqual([violation.rule for violation in violations], ["PATH001"])
 
     def test_rejects_unit_test_outside_unit_tree(self) -> None:
         violations = audit_path_conventions(

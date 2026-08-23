@@ -11,7 +11,7 @@ Current compatibility surfaces include the application, strategy API, result sch
 - AI-agent skills (`.agents/skills/`) for modern C++, thread safety, performance, OOP/design, static analysis, and shared engineering workflows.
 - Collaboration docs grouped under `Docs/Governance/` (`AGENTS.md`, `CONTRIBUTING.md`, `CHANGELOG.md`) plus `Docs/Onboarding.md`, `Docs/DefinitionOfDone.md`, `Docs/ReviewPlaybook.md`, and `Docs/ReleaseProcess.md`. The Apache-2.0 `LICENSE` and thin `AGENTS.md`/`CLAUDE.md` adapters remain at the repository root.
 - Restructured: `Specs/` moved to `Docs/Specs/`; root `README.md` slimmed to point at module READMEs; long DataFetcher content moved to `DataFetcher/README.md`.
-- ADR framework (`Docs/Decisions/`) with an indexed decision history and explicit supersession metadata.
+- Living important-decisions record and dependency inventory under `Docs/Decisions/`.
 - Bug and feature issue templates plus a structured PR template.
 
 ### Changed
@@ -58,9 +58,9 @@ Format:
 
 ### Plugin ABI
 - unchanged from previous release
-- OR bumped to N — see ADR NNNN
+- OR bumped to N — link the applicable living important-decision entry
 
 ### Strategy API
 - unchanged
-- OR bumped to N — see ADR NNNN
+- OR bumped to N — link the applicable living important-decision entry
 -->

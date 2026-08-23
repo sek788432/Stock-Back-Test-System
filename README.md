@@ -39,7 +39,7 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 | `Src/` | C++ backend modules, Qt bindings/frontend, and application shell. Build instructions: [`Docs/BUILD.md`](Docs/BUILD.md). |
 | [`Docs/Specs/`](Docs/Specs/README.md) | System architecture and module specs. |
 | [`Docs/Governance/`](Docs/Governance/) | `AGENTS.md`, `CONTRIBUTING.md`, and `CHANGELOG.md`; the Apache-2.0 project license is at repository root. |
-| [`Docs/Decisions/`](Docs/Decisions/) | Living important decisions and the dependency inventory; numbered ADRs remain temporary phase-3 migration sources. |
+| [`Docs/Decisions/`](Docs/Decisions/) | Living important decisions and the dependency inventory. |
 | [`.agents/skills/`](.agents/skills/README.md) | The canonical project skills for AI agents, including repository-specific C++ rules. |
 | [`.github/`](.github/) | PR/issue templates and the implemented CI workflow. |
 

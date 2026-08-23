@@ -27,10 +27,12 @@ those files rather than an unpinned "current LTS" label.
 | Engineer ramp-up if you already know C++ | ★★★★★ | ★★★ (JS + property bindings) |
 | Tooling on all 3 OSes (Designer, Creator) | mature | mature |
 | Performance for tabular data and forms | ★★★★★ | ★★★★ |
-| Performance for animated charts at 60 fps | ★★★★ (with Qt Charts + GL backend) | ★★★★★ |
 | Easy maintenance for one developer | ★★★★★ | ★★★ (JS + C++ split is more files) |
 
-For a single-developer desktop tool that is form-heavy (strategy editor, dashboards, dialogs) and has one animated view (replay), **Widgets wins on maintenance**. We use Qt Charts inside a `QChartView` for the chart — that one view is fast enough.
+For a single-developer desktop tool that is form-heavy (strategy editor,
+dashboards, dialogs), **Widgets wins on maintenance**. The current replay uses
+Qt Charts inside a `QChartView`; no repository benchmark establishes an
+animation or point-count performance contract.
 
 ### Why Qt Charts (not QCustomPlot, not custom QPainter)?
 
@@ -38,11 +40,13 @@ You asked for "good-looking and easy to maintain". Trade-offs:
 
 | Library | Look | Performance | License | Maintenance |
 |---|---|---|---|---|
-| **Qt Charts** (chosen) | Modern, themeable, antialiased, dark-mode aware out of the box. Built-in `QCandlestickSeries`, `QLineSeries`, axes, legends. | Good up to ~5–10k visible points; we **only ever render the visible window** (200–500 candles), so this is a non-issue. | LGPL/Commercial — same license as Qt itself. **No new license to manage.** | Same release cadence as Qt LTS; if Qt is supported, Charts is supported. |
+| **Qt Charts** (development implementation) | Modern, themeable, antialiased, dark-mode aware out of the box. Built-in `QCandlestickSeries`, `QLineSeries`, axes, legends. | No repository benchmark establishes a supported point budget. | **GPLv3 or commercial; must not ship in the Apache-2.0 release.** | Same release cadence as Qt. |
 | QCustomPlot | Engineering look, less "modern". Excellent. | Excellent — single-header, tens of thousands of points without breaking a sweat. | **GPLv3 or paid commercial.** This is a real liability if you ever want to ship closed-source. | Single maintainer; very mature but third-party. |
 | Custom QPainter / Qt Quick Scene Graph | Anything you can paint. | As good as you make it. | Inherits Qt. | **Months of work** for proper trading-grade rendering (axes, crosshair, scaling, perf). Not worth it now. |
 
-**Decision: Qt Charts.** The reasoning is licensing simplicity (no new GPL constraint), zero third-party dependency to track, and the performance ceiling is irrelevant when we always windowed-render. If we ever need pro-grade tick replay (1-minute bars over 10 years all visible), we revisit; the chart layer is hidden behind a `IChartView` interface (see §4) so swapping is a contained change.
+**Development implementation: Qt Charts.** Before distribution, replace it with
+an LGPL-compatible or project-owned chart implementation. The chart layer is
+hidden behind an `IChartView` interface (see §4), so replacement is contained.
 
 We layer simple visual polish on top:
 - Custom `QPalette` with two named themes (Light / Dark) loaded from QSS.
