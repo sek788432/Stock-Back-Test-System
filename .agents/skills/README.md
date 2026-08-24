@@ -59,14 +59,22 @@ apply even when an agent host does not support skill discovery.
 
 | Skill | Purpose |
 |---|---|
+| [`code-review`](code-review/SKILL.md) | Review a diff independently against repository standards and its originating specification |
 | [`codebase-design`](codebase-design/SKILL.md) | Design deeper module interfaces and seams |
 | [`diagnosing-bugs`](diagnosing-bugs/SKILL.md) | Build a reproducible diagnosis loop |
 | [`domain-modeling`](domain-modeling/SKILL.md) | Maintain domain language and important decisions |
+| [`grill-me`](grill-me/SKILL.md) | Start an explicit maintainer grilling session |
+| [`grill-with-docs`](grill-with-docs/SKILL.md) | Grill a decision while maintaining domain documentation |
 | [`grilling`](grilling/SKILL.md) | Resolve material ambiguity with the maintainer |
+| [`implement`](implement/SKILL.md) | Implement approved specifications or tickets with tests and review |
+| [`improve-codebase-architecture`](improve-codebase-architecture/SKILL.md) | Find and visualize deep-module architecture opportunities |
 | [`prototype`](prototype/SKILL.md) | Answer a bounded logic or Qt UI design question |
 | [`research`](research/SKILL.md) | Capture primary-source technical research |
 | [`resolving-merge-conflicts`](resolving-merge-conflicts/SKILL.md) | Resolve an active merge or rebase safely |
 | [`tdd`](tdd/SKILL.md) | Develop behavior through a red-green test loop |
+| [`teach`](teach/SKILL.md) | Build a persistent, evidence-based teaching workspace |
+| [`to-spec`](to-spec/SKILL.md) | Turn an established conversation into an issue-tracker specification |
+| [`writing-great-skills`](writing-great-skills/SKILL.md) | Reference the vocabulary and principles for predictable skills |
 
 ## Vendored skill provenance
 
