@@ -8,7 +8,7 @@ becomes part of a release profile.
 |---|---|---|---|---|---|---|
 | Qt 6 Core, Concurrent, Widgets, and Test | CMake minimum 6.8; CI 6.9.x | LGPL-3 / Commercial | Implemented, optional app build | Bindings, Frontend, App, tests | Cross-platform desktop UI, owned asynchronous runs, and Qt tests | [Desktop boundary](ImportantDecisions.md#c-and-qt-desktop-boundary) |
 | Qt Charts | CMake minimum 6.8; CI 6.9.x | GPL-3.0 / Commercial | Implemented, development-only; must not ship in the Apache-2.0 release | Frontend, Qt tests | Current candlestick chart pending replacement by the accepted project-owned `QPainter` chart | [Desktop boundary](ImportantDecisions.md#c-and-qt-desktop-boundary) |
-| GoogleTest | 1.14.0 | BSD-3-Clause | Implemented | C++ tests | Unit-test framework | — |
+| GoogleTest | 1.14.0 (`f8d7d77c06936315286eb55f8de22cd23c188571`) | BSD-3-Clause | Implemented | C++ tests | Unit-test framework | — |
 | LLVM/Clang analysis tools | 18.1.3-1ubuntu1 | Apache-2.0 WITH LLVM-exception | Implemented, CI/developer-only | Static-analysis and formatting workflows | clang-format, clang-tidy, scan-build, and sanitizer toolchains | [Quality gates](ImportantDecisions.md#layered-merge-blocking-quality-gates) |
 | cppcheck | 2.13.0-2ubuntu3 | GPL-3.0-or-later | Implemented, CI/developer-only; not distributed | Static-analysis workflow | Independent C++ static analysis | [Quality gates](ImportantDecisions.md#layered-merge-blocking-quality-gates) |
 | include-what-you-use | 8.21-1build2 | NCSA | Implemented, CI/developer-only | Static-analysis workflow | Missing and unused include analysis | [Quality gates](ImportantDecisions.md#layered-merge-blocking-quality-gates) |
