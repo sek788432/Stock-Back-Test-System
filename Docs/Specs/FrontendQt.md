@@ -201,8 +201,8 @@ result or referenced data is invalid or unavailable.
 
 The implemented development
 [`IChartView`](../../Src/Frontend/Include/Bte/Frontend/IChartView.h) seam has
-three operations: replace the visible bar window, append one bar, and clear
-markers. `QtChartsCandlestickView` is its current adapter. The accepted release
+two operations: replace the visible bar window and append one bar.
+`QtChartsCandlestickView` is its current adapter. The accepted release
 adapter is project-owned `QPainter`; it must not leak rendering types into the
 backend or alter persisted ordering.
 

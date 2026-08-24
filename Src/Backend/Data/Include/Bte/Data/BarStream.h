@@ -5,7 +5,6 @@
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
 
-#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -15,15 +14,11 @@
 namespace bte::data {
 
 struct StreamRequest {
-  enum class Source : std::uint8_t { automatic, duckdb, csv };
-
   std::string symbol;
   std::string schemaName;
   core::DateRange range{};
   std::filesystem::path csvDir =
       std::filesystem::path{"StockData"} / "Extracted";
-  int prefetchBars = 4096;
-  Source source = Source::automatic;
 };
 
 class BarStream {
@@ -52,23 +47,14 @@ public:
   open(const StreamRequest &request,
        const core::CancellationToken &cancellation = {});
 
-  CsvBarStream(ConstructionKey, std::string symbol, std::string schemaName,
-               core::DateRange range, std::vector<core::Bar> bars);
+  CsvBarStream(ConstructionKey, std::vector<core::Bar> bars);
 
   [[nodiscard]] std::optional<core::Bar> next() override;
   [[nodiscard]] std::int64_t totalBars() const noexcept override;
   [[nodiscard]] std::int64_t consumed() const noexcept override;
   void reset() noexcept override;
-  [[nodiscard]] core::DateRange range() const noexcept;
-  [[nodiscard]] const std::string &symbol() const noexcept;
-  [[nodiscard]] const std::string &schemaName() const noexcept;
-  [[nodiscard]] std::optional<core::Bar> at(std::int64_t barIndex) const;
-  [[nodiscard]] bool seek(std::int64_t barIndex) noexcept;
 
 private:
-  std::string symbol_;
-  std::string schemaName_;
-  core::DateRange range_{};
   std::vector<core::Bar> bars_;
   std::int64_t consumed_ = 0;
 };
