@@ -11,7 +11,7 @@ in [`EngineReplayPnL.md`](EngineReplayPnL.md).
 |---|---|---|
 | K-line bar playback | **Implemented with known gaps** | Tracked hourly CSV bars and daily aggregation support candlesticks, volume, play, pause, step, and speed. Other displayed timeframe choices are unsupported. |
 | Current replay portfolio strip | **Implemented placeholder** | It shows initial values, not trade-driven accounting. |
-| Legacy JSON replay summaries | **Implemented legacy; removal approved** | They are not `.bteresult` artifacts and will be removed in the applicable code phase with tests. |
+| Legacy JSON replay summaries | **Removed** | No runtime or test path remains; durable `.bteresult` storage is still not implemented. |
 | Starter Backtest page | **Implemented limited slice** | One symbol/range, fixed starter or limited Selectable Conditions, whole-share long-only market behavior, and next-actual-bar execution. |
 | Saved strategies and results | **Accepted design / not implemented** | Separate Strategy and Result libraries follow the contracts below. |
 | Python Strategy, Debug Run, durable results, and result replay | **Accepted design / not implemented** | No shipped worker or `.bteresult` path exists yet. |
@@ -22,10 +22,10 @@ The UI, README, release notes, and screenshots must preserve these distinctions.
 ## Application navigation
 
 The accepted product has separate **Strategies**, **Backtest**, **Results**, and
-**Replay** pages. The current shell still contains placeholder Screener,
-Plugins, and Logs tabs; their removal is approved for the applicable code phase.
-They are not supported capabilities. AI authoring and a canonical Stock
-Screener remain outside accepted scope.
+**Replay** pages. The current shell exposes exactly those four pages;
+Strategies and Results remain placeholders until their accepted libraries are
+implemented. AI authoring and a canonical Stock Screener remain outside
+accepted scope.
 
 - **Strategies** stores reusable authoring artifacts. A saved strategy can fill
   the strategy section of the Backtest page but never starts a run by itself.

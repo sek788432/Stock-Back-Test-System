@@ -6,8 +6,8 @@
 > implemented Selectable Conditions subset; saved-strategy authoring, Python
 > strategies, complete backtest workflows, durable results, and
 > release-quality UX remain planned unless their owning spec says otherwise.
-> The current shell also displays unsupported Screener, Plugins, and Logs
-> placeholders; their removal is approved for the applicable code phase.
+> The current shell exposes Strategies, Backtest, Results, and Replay;
+> Strategies and Results are placeholders for their accepted future pages.
 
 This spec owns the Qt presentation interface: every screen the user sees, chart
 presentation, and how the UI communicates with backend modules without blocking
@@ -218,7 +218,7 @@ result values rather than asking the chart to execute engine logic.
 | What | Location contract | Format/status |
 |---|---|---|
 | Strategies | `QStandardPaths::AppLocalDataLocation/Strategies/{Active,Trash}` | UUIDv7 `.btestrategy` typed plan or Python source plus versioned metadata |
-| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Active,Trash}` | UUIDv7 `.bteresult`; current legacy JSON summaries are an approved removal target |
+| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Active,Trash}` | Planned UUIDv7 `.bteresult`; no durable result format is currently implemented |
 | Data and runtimes | `QStandardPaths::AppLocalDataLocation/{DataSegments,RuntimeProfiles}` | Immutable referenced content |
 | Settings and layout | OS-appropriate application data directory | Planned UI-only state; never a mutable market-data path |
 

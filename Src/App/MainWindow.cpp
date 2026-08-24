@@ -92,11 +92,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   tabs_->addTab(makePlaceholderTab(tr("Strategies")), tr("Strategies"));
   tabs_->addTab(std::make_unique<frontend::BacktestTab>(tabs_).release(),
                 tr("Backtest"));
+  tabs_->addTab(makePlaceholderTab(tr("Results")), tr("Results"));
   tabs_->addTab(std::make_unique<frontend::ReplayTab>(tabs_).release(),
                 tr("Replay"));
-  tabs_->addTab(makePlaceholderTab(tr("Screener")), tr("Screener"));
-  tabs_->addTab(makePlaceholderTab(tr("Plugins")), tr("Plugins"));
-  tabs_->addTab(makePlaceholderTab(tr("Logs")), tr("Logs"));
   tabs_->setCurrentIndex(1);
   setCentralWidget(tabs_);
 

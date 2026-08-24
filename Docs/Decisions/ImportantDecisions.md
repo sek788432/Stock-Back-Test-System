@@ -108,8 +108,9 @@ non-functional.
 
 **Consequences.** DuckDB and DataFetcher remain developer ingestion tools.
 Python isolation protects application stability but is not a security sandbox.
-Existing floating-point bars and legacy JSON replay summaries are migration
-baselines, not the release contract. A public data-bearing release stays
+Existing floating-point bars remain an incremental baseline. The former legacy
+JSON replay summaries were removed rather than retained as a competing result
+contract. A public data-bearing release stays
 blocked until redistribution rights and a verified split manifest exist. A
 separate updater is not a V1 dependency.
 

@@ -28,7 +28,7 @@ multi-run concurrency are outside the accepted product scope.
 
 ### Implemented
 
-- C++20 Core, CSV-backed data loading, a basic bar-step replay, Qt replay UI, and JSON replay-summary persistence.
+- C++20 Core, CSV-backed data loading, a basic bar-step replay, and Qt replay UI.
 - A limited C++ Engine and Backtest page with a fixed starter strategy and a
   Selectable Conditions strategy: flat ALL/ANY buy and sell groups over bar
   fields, close-change percentage, and the implemented indicator catalog;

@@ -10,7 +10,7 @@ that reads a Backtest Result and never executes a Strategy or engine event.
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | CSV-backed bar loading; forward/back bar stepping; replay clock controls; candlestick/volume presentation; legacy JSON replay-summary persistence/comparison pending its approved code-phase removal; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice. A selected buy/sell signal queues a whole-share market order for the next actual bar open, with 1 bp adverse slippage; buy cash failures preserve cash and open positions are marked at final close. |
+| **Implemented** | CSV-backed bar loading; forward/back bar stepping; replay clock controls; candlestick/volume presentation; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice. A selected buy/sell signal queues a whole-share market order for the next actual bar open, with 1 bp adverse slippage; buy cash failures preserve cash and open positions are marked at final close. |
 | **Planned** | Synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, immutable snapshots, canonical hashes, and SQLite `.bteresult`. |
 | **Blocked** | Public release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
 
@@ -18,8 +18,8 @@ The current starter and selectable slices are intentionally single-symbol; the
 selectable path supports only a flat position and whole-quantity long entry or
 exit. Neither slice persists a canonical Backtest Result and neither is
 evidence that the complete engine contract below is implemented. The starter
-slice remains single-order. Legacy JSON snapshots are implemented current
-behavior, not the target result contract.
+slice remains single-order. No durable result format is currently implemented;
+the removed legacy JSON summary was not the target result contract.
 
 ### 1.1 Execution modes and scheduling
 

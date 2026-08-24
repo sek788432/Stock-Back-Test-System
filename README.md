@@ -3,8 +3,8 @@
 A cross-platform C++ desktop application for backtesting and replaying stock trading strategies, with a Python pipeline that ingests Databento OHLCV bars into DuckDB.
 
 > **Current status:** the repository implements CSV-backed K-line playback,
-> legacy replay summaries, a streaming technical-indicator catalog, and a limited
-> Selectable Conditions path. The Backtest page can combine up to two typed buy
+> a streaming technical-indicator catalog, and a limited Selectable Conditions
+> path. The Backtest page can combine up to two typed buy
 > conditions and two typed sell conditions with ALL/ANY logic; signals are
 > long-only orders eligible at the next actual bar open. Persistence, complete
 > order/accounting, the managed Python worker, immutable release snapshots, and
