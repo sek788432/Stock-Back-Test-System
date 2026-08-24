@@ -34,9 +34,31 @@ Code in this repo must be **easy to maintain six months from now**. That means:
 
 Default to **composition**. Inherit only to expose polymorphism.
 
-For example, keep a condition evaluator as an owned collaborator of a concrete
-strategy instead of creating a base class solely to share evaluator helpers.
-This is design guidance, not a declaration of repository API names.
+The snippets in this skill are illustrative C++20, not declarations of
+repository APIs. Before using a name in production code, find the owning spec
+and implemented header or introduce the type through the normal design review.
+
+```cpp
+class ConditionEvaluator final {
+public:
+    [[nodiscard]] bool evaluate(const Input& input) const;
+};
+
+class SelectablePolicy final {
+public:
+    explicit SelectablePolicy(ConditionEvaluator evaluator)
+        : evaluator_{std::move(evaluator)} {}
+
+    [[nodiscard]] bool accepts(const Input& input) const {
+        return evaluator_.evaluate(input);
+    }
+
+private:
+    ConditionEvaluator evaluator_;
+};
+
+// Do not create BasePolicyWithEvaluator solely to share evaluator helpers.
+```
 
 When you find yourself adding a 3rd level of inheritance, stop. Refactor to composition.
 
@@ -100,11 +122,37 @@ When to apply: you have an algorithm with multiple variants, callers choose at r
 
 Construction logic lives in one place; callers don't know concrete types.
 
+```cpp
+enum class SmoothingKind { simple, exponential };
+
+class Smoother {
+public:
+    virtual ~Smoother() = default;
+    [[nodiscard]] virtual double update(double value) = 0;
+};
+
+[[nodiscard]] std::unique_ptr<Smoother>
+makeSmoother(SmoothingKind kind);
+```
+
 When to apply: configuration selects among at least two implemented concrete types.
 
 ### Observer (Qt signals/slots)
 
 Decoupled notification.
+
+```cpp
+class ProgressEmitter final : public QObject {
+    Q_OBJECT
+
+signals:
+    void progressChanged(ProgressSnapshot snapshot);
+};
+```
+
+For cross-thread delivery, register the snapshot metatype and use a queued
+connection as required by `cpp-thread-safety`; the observer pattern does not
+make direct widget access from a worker safe.
 
 When to apply: backend produces events; multiple UI views consume them; producer doesn't know about consumers.
 
@@ -181,11 +229,56 @@ in the checkout; this skill does not declare them.
 
 Wrap a type to add behavior, preserving the interface.
 
+```cpp
+class Reader {
+public:
+    virtual ~Reader() = default;
+    [[nodiscard]] virtual std::optional<Record> next() = 0;
+};
+
+class CountingReader final : public Reader {
+public:
+    explicit CountingReader(Reader& inner) noexcept : inner_{inner} {}
+
+    [[nodiscard]] std::optional<Record> next() override {
+        auto record = inner_.next();
+        if (record.has_value()) {
+            ++count_;
+        }
+        return record;
+    }
+
+private:
+    Reader& inner_;
+    std::size_t count_ = 0;
+};
+```
+
+The required reference makes null impossible; the wrapped reader must outlive
+the decorator. Use owned composition instead when that lifetime is not already
+guaranteed by the caller.
+
 When to apply: cross-cutting concerns (logging, metrics, retries) without modifying the wrapped class.
 
 ### Templated policy classes (compile-time strategy)
 
 When the variant is known at compile time and is in a hot path, prefer policy classes over virtual.
+
+```cpp
+template <typename FillPolicy>
+class Simulator final {
+public:
+    explicit Simulator(FillPolicy fillPolicy)
+        : fillPolicy_{std::move(fillPolicy)} {}
+
+    [[nodiscard]] Fill apply(const Order& order, const Quote& quote) const {
+        return fillPolicy_(order, quote);
+    }
+
+private:
+    FillPolicy fillPolicy_;
+};
+```
 
 When to apply: hot path, fixed at compile time, you can afford the binary size.
 

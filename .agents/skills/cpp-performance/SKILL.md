@@ -148,6 +148,45 @@ use a repository benchmark when one is added or document a reproducible command,
 fixture identity, machine/runner class, build preset, repetitions, and raw
 before/after samples in the PR. Do not invent a benchmark target or dependency.
 
+This framework-free timing skeleton is illustrative C++20, not a repository
+benchmark API. It shows repeated raw-sample capture; a real benchmark must also
+use a deterministic fixture, consume observable output, warm up when justified,
+and report the environment described above.
+
+```cpp
+template <typename Value>
+struct TimingSamples final {
+    std::vector<std::chrono::nanoseconds> durations;
+    std::vector<Value> outputs;
+};
+
+template <typename Operation>
+    requires(!std::same_as<std::remove_cvref_t<
+                               std::invoke_result_t<Operation&>>,
+                           void> &&
+             std::movable<std::remove_cvref_t<
+                 std::invoke_result_t<Operation&>>> &&
+             std::constructible_from<
+                 std::remove_cvref_t<std::invoke_result_t<Operation&>>,
+                 std::invoke_result_t<Operation&>>)
+[[nodiscard]] auto measureSamples(Operation operation, std::size_t repetitions) {
+    using Value = std::remove_cvref_t<std::invoke_result_t<Operation&>>;
+    TimingSamples<Value> samples;
+    samples.durations.reserve(repetitions);
+    samples.outputs.reserve(repetitions);
+
+    for (std::size_t index = 0; index < repetitions; ++index) {
+        const auto startedAt = std::chrono::steady_clock::now();
+        Value output{std::invoke(operation)};
+        const auto finishedAt = std::chrono::steady_clock::now();
+        samples.durations.push_back(finishedAt - startedAt);
+        samples.outputs.push_back(std::move(output));
+    }
+
+    return samples;
+}
+```
+
 Do not call a performance budget merge-blocking until `Docs/Specs/CiDevFlow.md`
 and the checked-in workflow both say it is implemented.
 

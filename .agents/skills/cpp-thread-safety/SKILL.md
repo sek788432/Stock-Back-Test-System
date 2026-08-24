@@ -56,6 +56,44 @@ Define copy/move/destructor only when wrapping a non-RAII resource required by
 an implemented module. Then explicitly default or delete the applicable special
 members and document the ownership contract.
 
+Illustrative wrapper—the names below are not repository APIs:
+
+The platform-specific `closeHandle` operation in this pattern must be
+non-throwing; a destructor or move assignment must not leak a close failure as
+an exception.
+
+```cpp
+class NativeHandle final {
+public:
+    explicit NativeHandle(Handle value) noexcept : value_{value} {}
+    ~NativeHandle() { reset(); }
+
+    NativeHandle(const NativeHandle&) = delete;
+    NativeHandle& operator=(const NativeHandle&) = delete;
+
+    NativeHandle(NativeHandle&& other) noexcept
+        : value_{std::exchange(other.value_, invalidHandle)} {}
+
+    NativeHandle& operator=(NativeHandle&& other) noexcept {
+        if (this != &other) {
+            reset();
+            value_ = std::exchange(other.value_, invalidHandle);
+        }
+        return *this;
+    }
+
+private:
+    void reset() noexcept {
+        if (value_ != invalidHandle) {
+            closeHandle(value_);
+            value_ = invalidHandle;
+        }
+    }
+
+    Handle value_ = invalidHandle;
+};
+```
+
 ## Cross-thread communication
 
 ### Default: pass by value or immutable snapshot
@@ -76,6 +114,29 @@ If you genuinely need shared mutable state, the rules are:
 4. Use `std::shared_mutex` if reads dominate and writes are rare. Otherwise `std::mutex`.
 5. For one-time init, use `std::call_once` + `std::once_flag`, not double-checked locking.
 
+Illustrative synchronized value—the type names are deliberately generic:
+
+```cpp
+class SnapshotCache final {
+public:
+    void replace(Snapshot snapshot) {
+        std::scoped_lock lock{mutex_};
+        snapshot_ = std::move(snapshot);
+    }
+
+    [[nodiscard]] Snapshot read() const {
+        std::scoped_lock lock{mutex_};
+        return snapshot_;
+    }
+
+private:
+    // Synchronization protocol: every access to snapshot_ holds mutex_; this
+    // class acquires no other lock and invokes no callback while it is held.
+    mutable std::mutex mutex_;
+    Snapshot snapshot_;
+};
+```
+
 ### Atomics
 
 Use `std::atomic<T>` for primitive shared state (counters, flags). Never roll your own with `volatile` — `volatile` is **not** a synchronization primitive in C++.
@@ -93,6 +154,30 @@ Long-running work uses `std::stop_token` (paired with `std::jthread` or `std::st
 
 Check cancellation at bounded intervals and translate it through the actual
 owning module's `bte::core::Result<T>` error contract.
+
+```cpp
+enum class ConsumeStatus { completed, cancelled };
+
+template <typename Next, typename Consume>
+[[nodiscard]] ConsumeStatus consumeUntilStopped(std::stop_token stopToken,
+                                                Next next,
+                                                Consume consume) {
+    while (!stopToken.stop_requested()) {
+        auto value = next(stopToken);
+        if (!value.has_value()) {
+            return stopToken.stop_requested() ? ConsumeStatus::cancelled
+                                              : ConsumeStatus::completed;
+        }
+        consume(*value, stopToken);
+    }
+    return ConsumeStatus::cancelled;
+}
+```
+
+This example shows cancellation placement and an explicit outcome. Both
+callbacks must cooperate with the supplied token and return within the
+owning contract's bounded interval. Production code must translate the outcome
+into the owning module's documented `bte::core::Result<T>` cancellation error.
 
 Python worker hooks use the deadline and cooperative-then-forced cancellation
 contract in `Docs/Specs/StrategyAuthoring.md` §4.
