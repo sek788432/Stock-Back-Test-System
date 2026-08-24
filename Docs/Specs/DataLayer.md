@@ -4,13 +4,66 @@ This spec owns market-data provenance, release snapshots, chronology-safe access
 
 ## 1. Status
 
-- **Implemented:** `DataFetcher/` writes DuckDB and extracts CSV; C++ `CsvBarStream` reads tracked `StockData/Extracted/<SYMBOL>.csv` files into memory.
+- **Implemented:** `DataFetcher/` writes DuckDB and extracts per-symbol CSV;
+  C++ `CsvBarStream` reads tracked files under `StockData/Extracted` into
+  memory. The direct reader currently supports symbols whose CSV filename stem
+  exactly equals the canonical symbol; dotted-symbol exports are a known gap.
 - **Planned:** release snapshot builder, immutable segment reader,
   streaming/prefetch, synchronized multi-symbol slices, calendar/split
   manifests, and retention.
 - **Blocked for public release:** redistribution rights for derived market data and a verified redistribution-cleared split manifest are not recorded.
 
 The existing CSV reader is a development baseline. It is not yet the release snapshot implementation and currently materializes a complete file.
+
+## 1.1 V1 data flow
+
+V1 separates **developer data preparation** from **application data access**.
+The handoff between them is the reviewed CSV set under
+`StockData/Extracted/`; DuckDB is not a V1 runtime dependency.
+
+```text
+Databento Historical API
+        |
+        |  DataFetcher/FetchDatabento.py
+        v
+StockData/MarketData.duckdb
+  mutable developer ingestion and verification store
+        |
+        |  DataFetcher/GetFromDb.py
+        v
+StockData/Extracted/<FILE-STEM>.csv
+  reviewed V1 data input
+        |
+        +--> current implementation: CsvBarStream reads CSV directly
+        |
+        `--> accepted release V1: release CI builds an immutable Release Snapshot
+```
+
+The boundary has these consequences:
+
+1. `FetchDatabento.py` acquires Databento bars and validates/upserts them into
+   `StockData/MarketData.duckdb` for developer use.
+2. `GetFromDb.py` exports the selected DuckDB rows to one CSV per symbol under
+   `StockData/Extracted/`. Its current filename mapping replaces `.` with `_`,
+   so `BRK.B` is written to `BRK_B.csv`; the row retains canonical symbol
+   `BRK.B`.
+3. The current C++ implementation reads CSV through `CsvBarStream`, which opens
+   `<requested-symbol>.csv` and requires every row's symbol to equal that
+   request. It does not open DuckDB or contact Databento. Because it does not
+   yet reverse or otherwise resolve the export filename mapping, dotted symbols
+   such as `BF.B` and `BRK.B` are not loadable through this direct reader.
+4. The accepted release V1 also starts from the reviewed extracted CSV files,
+   but release CI converts them into the immutable, content-addressed Release
+   Snapshot described below. The packaged application reads that snapshot, not
+   the mutable developer DuckDB file.
+5. Updating DuckDB alone cannot change application or release inputs. A change
+   becomes a candidate V1 input only after re-extraction, validation, review,
+   and inclusion of the resulting CSV revision.
+
+The planned Release Snapshot uses the canonical symbol stored in each validated
+row/manifest entry; an extract filename is transport metadata and cannot define
+snapshot identity. Snapshot building must reject ambiguous filename mappings
+or symbol mismatches rather than silently merging them.
 
 ## 2. Source roles
 
