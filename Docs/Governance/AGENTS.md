@@ -192,7 +192,7 @@ If you must:
    the threshold in §5.
 2. Verify the license is compatible:
    - **Allowed**: MIT, BSD (2/3-clause), Apache-2.0, MPL-2.0, ISC, Boost, zlib, LGPL (dynamically linked only).
-   - **Forbidden without an explicit team decision**: GPL-2.0, GPL-3.0, AGPL, SSPL, custom "non-commercial" licenses.
+   - **Forbidden without an explicit maintainer decision**: GPL-2.0, GPL-3.0, AGPL, SSPL, custom "non-commercial" licenses.
 3. Update the actual owning dependency file discovered in the checkout, pinning
    an immutable CMake source revision or exact Python version and regenerating
    any checked-in hash lock through its documented workflow.
@@ -272,9 +272,9 @@ In addition to the hard rules in §2:
 
 ---
 
-## 10. Communication norms (hybrid team)
+## 10. Communication records
 
-This is a small (4–8 people) hybrid team. Defaults:
+Use repository-visible records so decisions and failures remain discoverable:
 
 | Topic                               | Channel                                                                                                 |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -283,12 +283,11 @@ This is a small (4–8 people) hybrid team. Defaults:
 | Design proposal                     | Issue or PR discussion, then an approved update to [`../Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md) when §5 applies |
 | Code change                         | PR with template filled                                                                                 |
 | Question about a spec / decision    | GitHub Discussion **or** comment on the owning spec or important-decisions entry                         |
-| Quick clarification                 | Sync chat (whatever the team uses) — but if it shaped an important decision, update the living document or record it in the PR pending approval |
-| Outage / something broken on `main` | Sync chat first, then issue with `priority:high`                                                        |
+| Quick clarification                 | Comment on the affected issue or PR                                                                    |
+| Outage / something broken on `main` | Bug issue with reproduction evidence and impact                                                        |
 
-The weekly sync is for ambiguous questions and roadmap. Any important decision
-made there must be added to the living document through a reviewed change
-before EOD that day. **Verbal decisions don't exist.**
+An important decision is not durable until the owning spec and, when the §5
+threshold applies, the living decision record are updated through review.
 
 ---
 

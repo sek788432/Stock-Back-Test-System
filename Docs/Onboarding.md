@@ -1,6 +1,7 @@
 # Onboarding
 
-Goal: get a new contributor (human or AI) from clone to first green local build in **under 60 minutes**, and to first merged PR in their first week.
+Goal: get a contributor from a clean clone to a verified local build using only
+commands and dependencies present in this checkout.
 
 ---
 
@@ -18,17 +19,16 @@ In this order:
 
 If you only have time to read three, read [`Governance/AGENTS.md`](Governance/AGENTS.md), [`Specs/Overview.md`](Specs/Overview.md), and [`DefinitionOfDone.md`](DefinitionOfDone.md).
 
-### Get access
+### Access
 
-Ask the repo lead for:
-
-- Repository write access (GitHub).
-- Sync-chat invitation.
-- A Databento API key (only if you'll work on the data pipeline; otherwise the existing CSV snapshots are enough).
+Repository write access is optional for local work; use a fork when you are not
+an invited collaborator. A personal Databento API key is required only for
+developer ingestion. Existing tracked CSV snapshots are sufficient for the C++
+build and registered tests.
 
 ---
 
-## local environment (target: 60 minutes)
+## local environment
 
 ### Prerequisites by OS
 
@@ -38,14 +38,14 @@ Ask the repo lead for:
 # Xcode command-line tools
 xcode-select --install
 
-# Homebrew, if you don't have it
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Build tools
+# Install Homebrew from https://brew.sh/ first when `brew` is unavailable.
 brew install cmake ninja git
-brew install --cask qt    # OR install Qt 6.8 LTS via the Qt online installer
-brew install python@3.11
+brew install python
 ```
+
+The backend-only `dev` preset does not require Qt. For `qt-dev`, install Qt
+6.8 or newer (including Charts) with the Qt online installer. CI currently
+tests Qt 6.9.x; see [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
 #### Linux (Ubuntu 24.04+ / Fedora / Arch)
 
@@ -55,11 +55,15 @@ sudo apt update
 sudo apt install -y build-essential cmake ninja-build git \
                     clang-18 clang-tidy-18 clang-tools-18 clang-format-18 \
                     cppcheck iwyu llvm \
-                    qt6-base-dev qt6-charts-dev \
-                    python3.11 python3.11-venv pipx
+                    python3 python3-venv
 ```
 
-For other distros, install the equivalents. Clang 17+ is preferred; GCC 13+ also works.
+For other distros, install the equivalents. The project requires a C++20
+compiler; CI's analyzer jobs use Clang 18. The backend-only `dev` preset does
+not require Qt. For `qt-dev`,
+install Qt 6.8 or newer (including Charts) with the Qt online installer; do not
+assume a distribution's `qt6-*` packages satisfy that minimum without checking
+their version.
 
 The coverage job also uses the pinned Python tools `gcovr==8.5` and
 `diff-cover==10.0.0`. See [`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) §7 for
@@ -67,25 +71,40 @@ the analyzer and coverage commands.
 
 #### Windows
 
-Install in this order:
+Windows packaging is an approved target, but Windows CI and a verified local
+onboarding workflow are still **Planned**. Do not treat the Unix Makefiles
+presets below as a supported Windows recipe. Use a current macOS or Ubuntu
+environment until a checked-in Windows preset and registered CI job exist.
 
-1. [Visual Studio 2022](https://visualstudio.microsoft.com/) with **Desktop development with C++** workload.
-2. [Git for Windows](https://git-scm.com/).
-3. [CMake 3.24+](https://cmake.org/download/) (the VS installer's bundled CMake works too).
-4. [Qt 6.8 LTS](https://www.qt.io/download-qt-installer) — pick the MSVC 2022 64-bit build.
-5. [Python 3.11+](https://www.python.org/downloads/).
-
-Use a "Developer PowerShell for VS 2022" terminal for builds so the MSVC toolchain is on PATH.
-
-### Clone and bootstrap
+### Clone
 
 ```bash
-git clone <repo-url>
+# Invited collaborators may clone the canonical repository directly.
+git clone https://github.com/sek788432/Stock-Back-Test-System.git
 cd Stock-Back-Test-System
+```
 
+Fork contributors should clone their GitHub fork as `origin` instead (replace
+`YOUR-GITHUB-NAME` below), then keep the canonical repository as read-only
+`upstream`:
+
+```bash
+git clone https://github.com/YOUR-GITHUB-NAME/Stock-Back-Test-System.git
+cd Stock-Back-Test-System
+git remote add upstream https://github.com/sek788432/Stock-Back-Test-System.git
+```
+
+The `git push` command in the first-PR workflow targets the contributor-owned
+`origin`.
+
+### Bootstrap
+
+From either clone:
+
+```bash
 # Python pipeline (already in this repo)
-python3.11 -m venv .venv
-source .venv/bin/activate                    # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r DataFetcher/requirements.txt
 
 # C++ build (see Docs/BUILD.md + Docs/Specs/BuildDistribution.md)
@@ -98,12 +117,15 @@ ctest --preset qt-dev --no-tests=error
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev                           # unit tests
-# Optional: ASan/UBSan on Clang/GNU — cmake --preset dev-sanitize …
 
 # Before pushing C++ changes or requesting CI:
 ./RunTest.sh
-./RunQuality.sh --base origin/main --head HEAD
+bte_quality_base=origin/main                # Fork clone: upstream/main
+./RunQuality.sh --base "$bte_quality_base" --head HEAD
 ```
+
+Fetch the selected base remote immediately before the final committed-revision
+check.
 
 `RunQuality.sh` is a one-shot command. On its first run it uses Homebrew on
 macOS or `apt` on Ubuntu to install missing analyzers and Python 3.12, then
@@ -112,14 +134,16 @@ Subsequent runs reuse it; no shell activation or `PATH` configuration is needed.
 
 ### Verify
 
-If `ctest --preset dev` passes, your environment is good. For ASan/UBSan, configure and run `dev-sanitize` when that preset is available (see [`BUILD.md`](BUILD.md)). Running the data pipeline is optional and requires its own credentials:
+If `ctest --preset dev` passes, your environment is good. The ASan/UBSan and
+TSan commands are in [`BUILD.md`](BUILD.md). Running the data pipeline is
+optional and requires its own credentials:
 
 ```bash
-# (Optional) collect data into DuckDB — needs Databento API key
-./DataFetcher/CollectData.sh
+# (Optional) collect data into DuckDB — needs DATABENTO_API_KEY
+python3 DataFetcher/FetchDatabento.py
 
 # Or just extract CSVs from an existing DuckDB
-./DataFetcher/ExtractFromDB.sh
+python3 DataFetcher/GetFromDb.py
 ```
 
 If anything in this section fails, fix the docs as part of your first PR — that's everyone's first contribution.
@@ -128,7 +152,8 @@ If anything in this section fails, fix the docs as part of your first PR — tha
 
 ## first PR
 
-Pick a task from the issue tracker labeled `good-first-issue`. If none, the lead will assign one.
+Pick a task from the issue tracker labeled `good first issue`, or open a focused
+documentation/test proposal when none is available.
 
 Good first PRs (by category):
 
@@ -137,17 +162,22 @@ Good first PRs (by category):
 - **Tooling**: add tests for or improve an existing checked-in helper such as
   `Tools/CheckProjectStandards.py`.
 
-For your first PR, **prefer tests or docs** over production code. It's a low-risk way to learn the review process, the CI gates, and the team's review style.
+For your first PR, **prefer tests or docs** over production code. It is a
+low-risk way to learn the review process and CI gates.
 
 Workflow recap:
 
 ```bash
-git switch -c feature/my-first-pr
+# Direct canonical clone:
+git fetch origin
+bte_branch_base=origin/main
+# Fork clone: run `git fetch upstream` and use `bte_branch_base=upstream/main`.
+git switch -c feature/my-first-pr "$bte_branch_base"
 # ... make changes ...
 git add -p
 git commit -m "test(indicators): cover RSI cold-start invariant"
 git push -u origin HEAD
-gh pr create   # or use the GitHub UI
+# Open a pull request from the pushed branch in the GitHub UI.
 ```
 
 Self-review using `Docs/ReviewPlaybook.md` **before** requesting review.
@@ -156,15 +186,14 @@ Self-review using `Docs/ReviewPlaybook.md` **before** requesting review.
 
 ## checkpoint
 
-To contribute you should have:
+Before requesting review you should have:
 
 - [ ] Local dev environment producing a clean `ctest --preset dev`.
-- [ ] At least one merged PR (any size, any kind).
-- [ ] Read every doc in `Docs/`.
-- [ ] Read the Specs that touch your area of work.
-- [ ] Skimmed the five repository-specific C++ skills in [`.agents/skills/`](../.agents/skills/README.md) so you know what they enforce.
+- [ ] Read the canonical governance file, Definition of Done, and the specs that
+      touch your work.
+- [ ] Read every project skill whose description matches the change.
 
-If any are blocked, raise it in the next sync.
+Record any blocked check in the pull request instead of silently omitting it.
 
 ---
 
@@ -179,14 +208,14 @@ If any are blocked, raise it in the next sync.
 | Python pipeline can't find DuckDB               | Missing dep                                | `pip install -r DataFetcher/requirements.txt` inside `.venv`                     |
 | First configure cannot fetch GoogleTest         | Network unavailable                         | Restore network access or use an already populated FetchContent cache            |
 | Tests pass locally, fail on another OS          | Path / line-ending / case-sensitivity       | Use `std::filesystem::path`; check `.gitattributes` for line-ending policy        |
-| "Permission denied" running shell scripts       | Missing exec bit                           | `chmod +x DataFetcher/*.sh` (and check it's preserved in your commit)            |
 
 ---
 
 ## Who to ask
 
-- **Build / CI** issues → open an issue or PR discussion and tag the repo maintainer.
-- **Spec ambiguity** → comment on the spec file in a PR or issue. Don't DM — the answer should be public.
-- **Anything urgent** → sync chat.
+- **Build / CI** issues → open an issue or PR discussion with the exact command
+  and output.
+- **Spec ambiguity** → comment on the owning spec in a PR or issue so the answer
+  remains discoverable.
 
 Welcome aboard.

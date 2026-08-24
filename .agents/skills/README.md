@@ -55,34 +55,34 @@ apply even when an agent host does not support skill discovery.
 | Does this allocation matter? | `cpp-performance` |
 | What does this analyzer warning mean? | `cpp-static-analysis` |
 
-## Vendored Matt Pocock collection
+## Retained shared workflows
+
+| Skill | Purpose |
+|---|---|
+| [`codebase-design`](codebase-design/SKILL.md) | Design deeper module interfaces and seams |
+| [`diagnosing-bugs`](diagnosing-bugs/SKILL.md) | Build a reproducible diagnosis loop |
+| [`domain-modeling`](domain-modeling/SKILL.md) | Maintain domain language and important decisions |
+| [`grilling`](grilling/SKILL.md) | Resolve material ambiguity with the maintainer |
+| [`prototype`](prototype/SKILL.md) | Answer a bounded logic or Qt UI design question |
+| [`research`](research/SKILL.md) | Capture primary-source technical research |
+| [`resolving-merge-conflicts`](resolving-merge-conflicts/SKILL.md) | Resolve an active merge or rebase safely |
+| [`tdd`](tdd/SKILL.md) | Develop behavior through a red-green test loop |
+
+## Vendored skill provenance
 
 - Source: [mattpocock/skills](https://github.com/mattpocock/skills)
 - Upstream release: `1.1.0`
 - Pinned commit: `2ab958093e83e0ec752e6c1c5932da465bf23e0c`
 - License: MIT; see [`LICENSE.mattpocock-skills`](LICENSE.mattpocock-skills)
-- Included: the 22 stable skills in upstream's Engineering and Productivity
-  catalogs
-- Excluded: deprecated, in-progress, personal, and miscellaneous skills
+- Retained and adapted: the shared workflows listed above that remain relevant
+  to this repository. Their local guidance is derived from the pinned snapshot
+  and reconciled with current repository contracts.
+- Removed: optional, overlapping, or repository-inapplicable packages. Git
+  history and the pinned upstream commit preserve their source when needed.
 
-These files are a vendored snapshot. They do not update automatically. Review
-upstream changes and commit a new pinned snapshot deliberately.
-
-### Issue #53 retirement transition
-
-The phase-1 disposition retires these optional workflow packages. Do not invoke
-or treat their contents as current guidance while their catalog consumers are
-being removed:
-
-- `ask-matt`, `code-review`, `grill-me`, `grill-with-docs`, `handoff`, and
-  `implement`;
-- `improve-codebase-architecture`, `setup-matt-pocock-skills`, `teach`, and
-  `to-spec`;
-- `to-tickets`, `triage`, `wayfinder`, and `writing-great-skills`.
-
-They remain tracked only until the approved documentation-cleanup phase removes
-the packages and their remaining references atomically. Repository governance,
-canonical specs, and retained skills are authoritative during the transition.
+These files are locally adapted from a vendored snapshot. They do not update
+automatically. Review upstream changes and commit a new pin plus any deliberate
+local reconciliation.
 
 ## Invocation and maintenance
 

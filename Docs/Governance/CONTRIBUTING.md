@@ -1,6 +1,8 @@
 # Contributing
 
-Welcome. This is a private team repository (4–8 contributors). Contributions come from invited collaborators and AI agents (Cursor, Codex, Claude Code, etc.) supervised by humans.
+Welcome. Contributions may come from human collaborators or AI agents working
+under human direction; both follow the same repository contracts and review
+requirements.
 
 If you're an **AI agent**, your primary playbook is [`AGENTS.md`](AGENTS.md). Everything below applies to you too, but `AGENTS.md` is more specific about how you should behave.
 
@@ -121,7 +123,8 @@ public-behavior parity, and mutation enforcement remain planned. See
 
 ## Reviewing
 
-We expect a **24-hour first response** on any PR during business days, even if it's just "I'll get to it tomorrow". Hybrid team — async first, but don't leave a PR hanging.
+Repository files do not promise a response-time SLA. Keep review requests and
+responses in the PR, with the complete template and required checks visible.
 
 Reviewer checklist is in [`../ReviewPlaybook.md`](../ReviewPlaybook.md). Authors should self-review using the same checklist before requesting review.
 
@@ -136,12 +139,11 @@ Reviewer checklist is in [`../ReviewPlaybook.md`](../ReviewPlaybook.md). Authors
 | Design discussion | Issue or PR discussion; update [`../Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md) when the three-part §5 threshold applies |
 | Code change | Pull Request |
 | Question about a spec | Comment on the spec file in a PR or issue |
-| Quick chat | Team sync chat — but **if it shaped an important decision, update the living document through a reviewed change.** Verbal decisions don't exist. |
-| Outage on `main` | Sync chat first, issue with `priority:high` immediately after |
+| Quick clarification | Issue or PR discussion on the affected work |
+| Something broken on `main` | Bug issue with reproduction evidence and impact |
 
-The weekly sync is for roadmap and ambiguous questions. Important decisions
-made there are backfilled into the living document through a reviewed change
-the same day.
+Important decisions are not complete until the owning spec and living decision
+record, when required, are updated through review.
 
 ---
 
@@ -158,10 +160,14 @@ check, an exact version pin, and an entry in
 
 - Never commit secrets. `.env` is gitignored. If a tracked placeholder template
   is added, it must be `.env.example` and contain no real credentials.
-- Databento API keys: each contributor uses their own key in their local `.env`.
-- Code-signing keys, GPG keys, GitHub Actions secrets: managed by the repo lead. Don't reference them from code paths a fork could hit.
+- Databento API keys: each contributor exports their own key only in the local
+  shell that runs the ingestion command.
+- Code-signing keys and GitHub Actions secrets belong in repository/CI secret
+  storage. Do not expose them to fork-controlled code paths.
 
-If you accidentally commit a secret: rotate it immediately, then `git filter-repo` (or contact the lead) to scrub history. Tell the team.
+If you accidentally commit a secret, rotate it immediately and notify the
+repository maintainer through a private security channel. History rewriting is
+a coordinated incident response, not an ordinary contributor command.
 
 ---
 

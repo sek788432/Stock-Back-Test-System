@@ -14,21 +14,20 @@ If you're the author, save the reviewer time:
 2. **Fill the PR template completely.** No blank fields.
 3. **Confirm [`DefinitionOfDone.md`](DefinitionOfDone.md)** — copy the relevant checklist into the PR body.
 4. **Pre-emptively answer the obvious questions.** "Why this approach over X?" → answer in the description.
-5. **Keep it small.** ≤ 400 lines of diff is the sweet spot. ≥ 1000 lines and you'll get a perfunctory review.
+5. **Keep it reviewable.** Split independent concerns and explain any necessarily
+   large generated, rename, or mechanical portion separately.
 6. **One concern per PR.** Found a bug while in the area? File an issue, don't smuggle a fix.
 
 If a reviewer asks for clarification, treat it as a doc bug — the description should have answered it.
 
 ---
 
-## Review SLAs
+## Review readiness
 
-- **First response: within 1 business day.** "I'll get to it tomorrow" counts. Silence does not.
-- **Review pass: within 2 business days** of the PR being ready (template filled, CI green).
-- **Author response: within 1 business day** of new review comments.
-- **Stale PR**: 5 business days with no author response → reviewer asks the author to close or pick up.
-
-Hybrid team norms: don't wait for the weekly sync to comment. The PR is the forum.
+A PR is ready for substantive review when its template is complete, its scope is
+clear, and required checks have reported. Keep questions and resolutions in the
+PR so later contributors can recover the reasoning. Repository files do not
+define a guaranteed response-time SLA.
 
 ---
 
@@ -121,8 +120,8 @@ Example:
 
 ```
 blocking: this allocation is in the engine bar loop
-(`Specs/EngineReplayPnL.md` §9 budget). Move the `std::vector` outside the
-loop and reserve(), or pass in a scratch buffer.
+(`cpp-performance` hot-path guidance). Move the `std::vector` outside the loop
+and reserve(), or pass in a scratch buffer.
 ```
 
 Use **blocking** sparingly. If everything's blocking, nothing is.
@@ -142,7 +141,7 @@ Don't approve when:
 
 - You don't understand a hunk and the author hasn't responded.
 - Tests look weak and you wouldn't trust them to fail when the code is wrong.
-- The design feels off and you'd want to talk it through in the next sync.
+- The design concern is unresolved and needs a maintainer decision in the PR.
 
 If you can't approve but don't want to block, request changes with an explanation. **Silent ghosting is the worst review behavior.**
 
@@ -176,11 +175,6 @@ If two reviewers leave conflicting `blocking:` comments, the author shouldn't ha
 
 ## When you're new to reviewing
 
-For your first 5 reviews on this repo:
-
-- Pair with a more experienced reviewer if possible.
-- Write **suggestion:** and **nit:** liberally; let the experienced reviewer decide what's blocking.
-- Read the relevant Spec section before reviewing; you'll catch more.
-- Ask "why" generously. Authors should be able to defend their choices.
-
-After 5 reviews you'll know the codebase well enough to mark `blocking:` confidently.
+Read the relevant spec and implementation before assigning severity. Use
+`question:` when evidence is incomplete; use `blocking:` only for a reproduced
+contract, correctness, safety, or required-verification defect.
