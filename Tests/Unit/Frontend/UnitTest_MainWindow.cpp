@@ -68,8 +68,9 @@ void MainWindowTest::libraryPagesExplainThatPersistenceIsPlanned() {
   QCOMPARE(strategiesMessage->text(),
            QString{"Saved Strategy persistence is planned."});
   QVERIFY(resultsMessage != nullptr);
-  QCOMPARE(resultsMessage->text(),
-           QString{"No .bteresult files exist. Result persistence is planned."});
+  QCOMPARE(
+      resultsMessage->text(),
+      QString{"No .bteresult files exist. Result persistence is planned."});
 }
 
 } // namespace

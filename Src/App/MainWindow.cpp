@@ -94,10 +94,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
       tr("Strategies"));
   tabs_->addTab(std::make_unique<frontend::BacktestTab>(tabs_).release(),
                 tr("Backtest"));
-  tabs_->addTab(makePlaceholderTab(
-                    tr("No .bteresult files exist. Result persistence is "
-                       "planned.")),
-                tr("Results"));
+  tabs_->addTab(
+      makePlaceholderTab(tr("No .bteresult files exist. Result persistence is "
+                            "planned.")),
+      tr("Results"));
   tabs_->addTab(std::make_unique<frontend::ReplayTab>(tabs_).release(),
                 tr("Replay"));
   tabs_->setCurrentIndex(1);
