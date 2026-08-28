@@ -3,12 +3,21 @@ name: resolving-merge-conflicts
 description: "Use when you need to resolve an in-progress git merge/rebase conflict."
 ---
 
-1. **See the current state** of the merge/rebase. Check git history, and the conflicting files.
+1. **See the current state.** Inspect `git status`, the merge/rebase operation,
+   the conflicting files, and unrelated user-owned changes before editing.
 
 2. **Find the primary sources** for each conflict. Understand deeply why each change was made, and what the original intent was. Read the commit messages, check the PRs, check original issues/tickets.
 
-3. **Resolve each hunk.** Preserve both intents where possible. Where incompatible, pick the one matching the merge's stated goal and note the trade-off. Do **not** invent new behaviour. Always resolve; never `--abort`.
+3. **Resolve only when the intents are compatible.** Preserve both when
+   possible and do not invent behavior. If the correct result requires a
+   material product choice, destructive history change, or permission outside
+   the task, stop and ask. Aborting is valid when the operation targets the
+   wrong branch or the user requests it; do not abort merely because a conflict
+   is difficult.
 
-4. Discover the project's **automated checks** and run them — typically typecheck, then tests, then format. Fix anything the merge broke.
+4. Run the applicable checked-in commands from `Docs/DefinitionOfDone.md` and
+   `Docs/Specs/CiDevFlow.md`. Do not invent a generic typecheck/format command.
 
-5. **Finish the merge/rebase.** Stage everything and commit. If rebasing, continue the rebase process until all commits are rebased.
+5. **Finish only the authorized operation.** Stage the resolved paths, verify
+   that no conflict marker remains, and continue the merge/rebase. Never stage
+   unrelated working-tree changes.

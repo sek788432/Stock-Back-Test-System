@@ -210,8 +210,6 @@ void QtChartsCandlestickView::appendBar(const core::Bar &bar) {
   resetAxes();
 }
 
-void QtChartsCandlestickView::clearMarkers() {}
-
 std::size_t QtChartsCandlestickView::candleCount() const noexcept {
   return static_cast<std::size_t>(candles_->count());
 }

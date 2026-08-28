@@ -1,59 +1,63 @@
 # When to Mock
 
-Mock at **system boundaries** only:
+Use a fake or mock only at a real system boundary:
 
-- External APIs (payment, email, etc.)
-- Databases (sometimes - prefer test DB)
+- External provider APIs
+- Databases (prefer a temporary real database when practical)
 - Time/randomness
 - File system (sometimes)
 
 Don't mock:
 
-- Your own classes/modules
-- Internal collaborators
-- Anything you control
+- Concrete project classes or internal collaborators
+- Pure project logic that can run directly in the test
+- A boundary merely because its implementation is inconvenient
+
+A project-owned port may be faked when its responsibility is to isolate a real
+external boundary. Test the production adapter separately against that boundary
+when practical.
 
 ## Designing for Mockability
 
-At system boundaries, design interfaces that are easy to mock:
+Do not create an interface solely for a test. When production already owns a
+boundary seam, inject that narrow seam. The snippets below are illustrative C++
+and do not declare repository APIs.
 
 **1. Use dependency injection**
 
 Pass external dependencies in rather than creating them internally:
 
-```typescript
-// Easy to mock
-function processPayment(order, paymentClient) {
-  return paymentClient.charge(order.total);
-}
+```cpp
+class PaymentClient {
+public:
+  virtual ~PaymentClient() = default;
+  [[nodiscard]] virtual ChargeResult charge(Money amount) = 0;
+};
 
-// Hard to mock
-function processPayment(order) {
-  const client = new StripeClient(process.env.STRIPE_KEY);
+[[nodiscard]] ChargeResult processPayment(const Order& order,
+                                          PaymentClient& client) {
   return client.charge(order.total);
 }
 ```
 
-**2. Prefer SDK-style interfaces over generic fetchers**
+**2. Prefer operation-shaped interfaces over generic request dispatch**
 
 Create specific functions for each external operation instead of one generic function with conditional logic:
 
-```typescript
-// GOOD: Each function is independently mockable
-const api = {
-  getUser: (id) => fetch(`/users/${id}`),
-  getOrders: (userId) => fetch(`/users/${userId}/orders`),
-  createOrder: (data) => fetch('/orders', { method: 'POST', body: data }),
+```cpp
+class OrderProvider {
+public:
+  virtual ~OrderProvider() = default;
+  [[nodiscard]] virtual Result<User> findUser(UserId id) = 0;
+  [[nodiscard]] virtual Result<std::vector<Order>> findOrders(UserId id) = 0;
 };
 
-// BAD: Mocking requires conditional logic inside the mock
-const api = {
-  fetch: (endpoint, options) => fetch(endpoint, options),
-};
+// Avoid a generic request(std::string_view operation, Payload payload) seam
+// that forces every fake to reimplement dispatch and untyped result decoding.
 ```
 
-The SDK approach means:
+The operation-shaped approach means:
 - Each mock returns one specific shape
 - No conditional logic in test setup
-- Easier to see which endpoints a test exercises
-- Type safety per endpoint
+- Easier to see which operations a test exercises
+- Type safety per operation

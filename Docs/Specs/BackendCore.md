@@ -1,4 +1,4 @@
-# 03 — Backend Core
+# Backend Core
 
 Core defines the small, dependency-light vocabulary shared by backend modules. This file owns time, financial scalar types, base market/order values, errors, and run status.
 
@@ -6,7 +6,7 @@ Core defines the small, dependency-light vocabulary shared by backend modules. T
 
 - **Implemented:** UTC millisecond timestamps, `DateRange`, floating-point `Bar`, OHLC helpers, and `Result<T>` exist.
 - **Planned migration:** fixed-point domain types, valid-state `Result<T>` including `Result<void>`, order/fill/portfolio values, and canonical serialization.
-- **Not release-ready:** current `double` accounting and JSON result values are baseline code, not the accepted financial contract.
+- **Not release-ready:** current `double` accounting is baseline code, not the accepted financial contract; durable result persistence remains planned.
 
 The implemented timestamp parser still mishandles offsets/fractions/trailing
 input, and the current `Result<T>` permits invalid states described in the

@@ -3,13 +3,13 @@
 A cross-platform C++ desktop application for backtesting and replaying stock trading strategies, with a Python pipeline that ingests Databento OHLCV bars into DuckDB.
 
 > **Current status:** the repository implements CSV-backed K-line playback,
-> legacy replay summaries, a streaming technical-indicator catalog, and a limited
-> Selectable Conditions path. The Backtest page can combine up to two typed buy
+> a streaming technical-indicator catalog, and a limited Selectable Conditions
+> path. The Backtest page can combine up to two typed buy
 > conditions and two typed sell conditions with ALL/ANY logic; signals are
 > long-only orders eligible at the next actual bar open. Persistence, complete
 > order/accounting, the managed Python worker, immutable release snapshots, and
 > `.bteresult` remain planned. See
-> [`Docs/Specs/11StockScreenerKLineProduct.md`](Docs/Specs/11StockScreenerKLineProduct.md)
+> [`Docs/Specs/BacktestReplayProduct.md`](Docs/Specs/BacktestReplayProduct.md)
 > for exact capability status.
 
 > **Engine authority:** the accepted trading engine is project-owned C++.
@@ -39,7 +39,7 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 | `Src/` | C++ backend modules, Qt bindings/frontend, and application shell. Build instructions: [`Docs/BUILD.md`](Docs/BUILD.md). |
 | [`Docs/Specs/`](Docs/Specs/README.md) | System architecture and module specs. |
 | [`Docs/Governance/`](Docs/Governance/) | `AGENTS.md`, `CONTRIBUTING.md`, and `CHANGELOG.md`; the Apache-2.0 project license is at repository root. |
-| [`Docs/Decisions/`](Docs/Decisions/) | Architecture Decision Records. |
+| [`Docs/Decisions/`](Docs/Decisions/) | Living important decisions and the dependency inventory. |
 | [`.agents/skills/`](.agents/skills/README.md) | The canonical project skills for AI agents, including repository-specific C++ rules. |
 | [`.github/`](.github/) | PR/issue templates and the implemented CI workflow. |
 

@@ -56,7 +56,7 @@ private slots:
   void emptyWindowRendersSafely();
   void setBarWindowReplacesCandles();
   void appendBarAddsOneCandle();
-  void invalidBarIsIgnoredAndMarkersCanBeCleared();
+  void invalidBarIsIgnored();
   void zoomControlsAreSafeToCall();
   void pointerInteractionPansAndTogglesCrosshair();
   void wheelInteractionZoomsInAndOut();
@@ -101,14 +101,12 @@ void QtChartsCandlestickViewTest::appendBarAddsOneCandle() {
   QCOMPARE(view.candleCount(), 3U);
 }
 
-void QtChartsCandlestickViewTest::invalidBarIsIgnoredAndMarkersCanBeCleared() {
+void QtChartsCandlestickViewTest::invalidBarIsIgnored() {
   bte::frontend::QtChartsCandlestickView view;
   auto invalid = makeBar(2, 100.0, 104.0);
   invalid.high = invalid.low - 1.0;
 
   view.appendBar(invalid);
-  view.clearMarkers();
-
   QCOMPARE(view.candleCount(), 0U);
 }
 

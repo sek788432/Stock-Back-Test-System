@@ -14,21 +14,20 @@ If you're the author, save the reviewer time:
 2. **Fill the PR template completely.** No blank fields.
 3. **Confirm [`DefinitionOfDone.md`](DefinitionOfDone.md)** — copy the relevant checklist into the PR body.
 4. **Pre-emptively answer the obvious questions.** "Why this approach over X?" → answer in the description.
-5. **Keep it small.** ≤ 400 lines of diff is the sweet spot. ≥ 1000 lines and you'll get a perfunctory review.
+5. **Keep it reviewable.** Split independent concerns and explain any necessarily
+   large generated, rename, or mechanical portion separately.
 6. **One concern per PR.** Found a bug while in the area? File an issue, don't smuggle a fix.
 
 If a reviewer asks for clarification, treat it as a doc bug — the description should have answered it.
 
 ---
 
-## Review SLAs
+## Review readiness
 
-- **First response: within 1 business day.** "I'll get to it tomorrow" counts. Silence does not.
-- **Review pass: within 2 business days** of the PR being ready (template filled, CI green).
-- **Author response: within 1 business day** of new review comments.
-- **Stale PR**: 5 business days with no author response → reviewer asks the author to close or pick up.
-
-Hybrid team norms: don't wait for the weekly sync to comment. The PR is the forum.
+A PR is ready for substantive review when its template is complete, its scope is
+clear, and required checks have reported. Keep questions and resolutions in the
+PR so later contributors can recover the reasoning. Repository files do not
+define a guaranteed response-time SLA.
 
 ---
 
@@ -55,7 +54,7 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] The logic does what the code says. Walk through edge cases mentally: empty inputs, one-element inputs, max-size inputs, concurrent inputs.
 - [ ] Off-by-ones, NaN, divide-by-zero, integer overflow handled where they can occur.
 - [ ] Error paths handled — no swallowed `Result<T>::error()`, no silent failure.
-- [ ] No look-ahead bias in trading code (Specs/07 §4.1 — a new order cannot
+- [ ] No look-ahead bias in trading code (`Specs/EngineReplayPnL.md` §4.1 — a new order cannot
   fill on the observed slice; market orders fill at the next actual open).
 
 ### Tests
@@ -63,7 +62,7 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] Every affected public behavior has positive, negative, and meaningful boundary coverage, or a concrete explanation for a non-applicable category.
 - [ ] Every bug fix or intentional behavior change has a regression test that distinguishes old and new behavior.
 - [ ] Test names describe the **invariant** being checked, not the implementation (`testRsiWilderSmoothingMatchesReference` not `testRsi`).
-- [ ] No anti-cheat patterns (Specs/10 §4).
+- [ ] No anti-cheat patterns (`Specs/CiDevFlow.md` §4).
 - [ ] Mentally apply mutation: "if I changed `+` to `-` here, would a test catch it?"
 - [ ] Fixtures are minimal — small enough to read, big enough to be interesting.
 
@@ -72,7 +71,7 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] Single responsibility per type / function.
 - [ ] Public API minimal — would I shrink it before adding to it?
 - [ ] No premature abstractions for "future flexibility" (YAGNI).
-- [ ] Module dependency graph respected (Specs/01 §1).
+- [ ] Module dependency graph respected (`Specs/Architecture.md` §2).
 - [ ] Right design pattern used — and used because the situation calls for it, not for its own sake (`cpp-oop-design`).
 
 ### Threading and memory
@@ -80,14 +79,16 @@ Goal: 20–40 minutes for a typical PR. Read the diff hunk-by-hunk with the file
 - [ ] No raw `new` / `delete`, no raw `mutex.lock()`.
 - [ ] All resources RAII.
 - [ ] Cross-thread comms via immutable snapshots or queued signals.
-- [ ] If concurrency changed, applicable local sanitizer evidence is present; TSan is not currently a repository CI gate.
+- [ ] If concurrency changed, applicable local sanitizer evidence is present;
+  TSan is a merge-blocking repository CI gate.
 
 ### Performance
 
 - [ ] No new heap allocations in documented hot paths.
 - [ ] No `std::map` where `std::unordered_map` is appropriate.
 - [ ] No `std::function` or virtual call inserted in tight loops.
-- [ ] If the PR claims a perf win, are there nanobench numbers?
+- [ ] If the PR claims a performance change, is there reproducible before/after
+  evidence from a checked-in benchmark or documented measurement?
 
 ### Style and skills compliance
 
@@ -119,8 +120,8 @@ Example:
 
 ```
 blocking: this allocation is in the engine bar loop
-(Specs/07 §9 budget). Move the std::vector outside the
-loop and reserve(), or pass in a scratch buffer.
+(`cpp-performance` hot-path guidance). Move the `std::vector` outside the loop
+and reserve(), or pass in a scratch buffer.
 ```
 
 Use **blocking** sparingly. If everything's blocking, nothing is.
@@ -140,7 +141,7 @@ Don't approve when:
 
 - You don't understand a hunk and the author hasn't responded.
 - Tests look weak and you wouldn't trust them to fail when the code is wrong.
-- The design feels off and you'd want to talk it through in the next sync.
+- The design concern is unresolved and needs a maintainer decision in the PR.
 
 If you can't approve but don't want to block, request changes with an explanation. **Silent ghosting is the worst review behavior.**
 
@@ -163,20 +164,17 @@ If you can't approve but don't want to block, request changes with an explanatio
 If two reviewers leave conflicting `blocking:` comments, the author shouldn't have to mediate. Default protocol:
 
 1. Reviewers thread it out in the PR until they converge.
-2. If they can't, escalate to the topic owner listed in
-   [`TeamOwnershipAndProductPillars.md`](TeamOwnershipAndProductPillars.md).
-3. If the topic owner is one of them, escalate to the repo maintainer.
-4. Whatever the resolution, **write it down in an ADR** if the disagreement was about design (so future PRs don't re-litigate).
+2. If they cannot resolve it, escalate to a repository maintainer.
+3. If the resolution passes all three decision tests in
+   [`Governance/AGENTS.md`](Governance/AGENTS.md) §5, or changes an implemented
+   merge gate, update the applicable entry in
+   [`Decisions/ImportantDecisions.md`](Decisions/ImportantDecisions.md) and its
+   owning spec so future PRs do not re-litigate it.
 
 ---
 
 ## When you're new to reviewing
 
-For your first 5 reviews on this repo:
-
-- Pair with a more experienced reviewer if possible.
-- Write **suggestion:** and **nit:** liberally; let the experienced reviewer decide what's blocking.
-- Read the relevant Spec section before reviewing; you'll catch more.
-- Ask "why" generously. Authors should be able to defend their choices.
-
-After 5 reviews you'll know the codebase well enough to mark `blocking:` confidently.
+Read the relevant spec and implementation before assigning severity. Use
+`question:` when evidence is incomplete; use `blocking:` only for a reproduced
+contract, correctness, safety, or required-verification defect.

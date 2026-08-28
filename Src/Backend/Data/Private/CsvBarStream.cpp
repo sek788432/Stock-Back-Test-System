@@ -254,11 +254,8 @@ parseBar(const std::vector<std::string> &fields, const CsvColumns &columns,
 
 } // namespace
 
-CsvBarStream::CsvBarStream(ConstructionKey, std::string symbol,
-                           std::string schemaName, core::DateRange range,
-                           std::vector<core::Bar> bars)
-    : symbol_(std::move(symbol)), schemaName_(std::move(schemaName)),
-      range_(range), bars_(std::move(bars)) {}
+CsvBarStream::CsvBarStream(ConstructionKey, std::vector<core::Bar> bars)
+    : bars_(std::move(bars)) {}
 
 core::Result<std::unique_ptr<CsvBarStream>>
 CsvBarStream::open(const StreamRequest &request,
@@ -318,19 +315,7 @@ CsvBarStream::open(const StreamRequest &request,
 
   std::ranges::sort(bars, {}, &core::Bar::ts);
 
-  core::DateRange resolvedRange = request.range;
-  if (!bars.empty()) {
-    if (resolvedRange.start == core::Timestamp{}) {
-      resolvedRange.start = bars.front().ts;
-    }
-    if (resolvedRange.end == core::Timestamp{}) {
-      resolvedRange.end = bars.back().ts + std::chrono::milliseconds{1};
-    }
-  }
-
-  return std::make_unique<CsvBarStream>(ConstructionKey{}, request.symbol,
-                                        request.schemaName, resolvedRange,
-                                        std::move(bars));
+  return std::make_unique<CsvBarStream>(ConstructionKey{}, std::move(bars));
 }
 
 std::optional<core::Bar> CsvBarStream::next() {
@@ -347,28 +332,5 @@ std::int64_t CsvBarStream::totalBars() const noexcept {
 std::int64_t CsvBarStream::consumed() const noexcept { return consumed_; }
 
 void CsvBarStream::reset() noexcept { consumed_ = 0; }
-
-core::DateRange CsvBarStream::range() const noexcept { return range_; }
-
-const std::string &CsvBarStream::symbol() const noexcept { return symbol_; }
-
-const std::string &CsvBarStream::schemaName() const noexcept {
-  return schemaName_;
-}
-
-std::optional<core::Bar> CsvBarStream::at(const std::int64_t barIndex) const {
-  if (barIndex < 0 || barIndex >= totalBars()) {
-    return std::nullopt;
-  }
-  return bars_[static_cast<std::size_t>(barIndex)];
-}
-
-bool CsvBarStream::seek(const std::int64_t barIndex) noexcept {
-  if (barIndex < 0 || barIndex > totalBars()) {
-    return false;
-  }
-  consumed_ = barIndex;
-  return true;
-}
 
 } // namespace bte::data

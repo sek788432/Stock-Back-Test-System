@@ -1,8 +1,8 @@
 # Learning Record Format
 
-Learning records live in `./learning-records/` and use sequential numbering: `0001-slug.md`, `0002-slug.md`, etc. Create the directory lazily — only when the first record is written.
+Learning records live in `LearningRecords/` and use stable descriptive names such as `understands-value-semantics.md`. Create the directory lazily, only when the first record is written.
 
-They are the teaching equivalent of ADRs: they capture non-obvious lessons, key insights, and stated prior knowledge that will steer future sessions. They are used to calculate the zone of proximal development.
+They are the teaching equivalent of living project-decision entries: they capture non-obvious lessons, key insights, and stated prior knowledge that will steer future sessions. They are used to calculate the zone of proximal development.
 
 ## Template
 
@@ -18,13 +18,12 @@ That is the whole format. A learning record can be a single paragraph. The value
 
 Only include these when they add genuine value. Most records won't need them.
 
-- **Status** frontmatter (`active | superseded by LR-NNNN`) — useful when an earlier understanding turns out to be wrong and is replaced.
 - **Evidence** — how the user demonstrated the understanding (a question answered, an exercise completed, prior experience cited). Useful when the claim might be revisited.
 - **Implications** — what this unlocks or rules out for future sessions. Worth recording when non-obvious.
 
-## Numbering
+## Naming
 
-Scan `./learning-records/` for the highest existing number and increment by one.
+Choose a concise dash-case name for the understanding being recorded. If that understanding changes, update the same record so the workspace retains one current source of truth.
 
 ## When to write a learning record
 
@@ -41,6 +40,6 @@ Write one when any of these is true:
 - Anything already captured tersely in [[GLOSSARY.md]] as a term definition. Don't duplicate.
 - Session-by-session activity logs. Learning records are not a journal — they are decision-grade insights.
 
-## Supersession
+## Revision
 
-When a later record contradicts an earlier one (the user's understanding deepened or corrected), mark the old record `Status: superseded by LR-NNNN` rather than deleting it. The history of how understanding evolved is itself useful signal.
+When later evidence changes an earlier conclusion, revise the existing record in place. Keep the current understanding and the evidence that matters for future teaching; remove stale conclusions.

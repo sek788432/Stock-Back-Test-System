@@ -25,8 +25,6 @@ public:
 
   void setBarWindow(std::span<const core::Bar> visible) override;
   void appendBar(const core::Bar &bar) override;
-  void clearMarkers() override;
-
   [[nodiscard]] std::size_t candleCount() const noexcept;
 
   void zoomIn();

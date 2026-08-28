@@ -1,7 +1,6 @@
 ---
 name: writing-great-skills
 description: Reference for writing and editing skills well — the vocabulary and principles that make a skill predictable.
-disable-model-invocation: true
 ---
 
 A skill exists to wrangle determinism out of a stochastic system. **Predictability** — the agent taking the same _process_ every run, not producing the same output — is the root virtue; every lever below serves it.
@@ -10,12 +9,12 @@ A skill exists to wrangle determinism out of a stochastic system. **Predictabili
 
 ## Invocation
 
-Two choices, trading different costs:
+Every Codex skill keeps a concise, required `description` in `SKILL.md`. Invocation policy belongs in `agents/openai.yaml`, not in SKILL.md frontmatter. Two choices trade different costs:
 
-- A **model-invoked** skill keeps a **description**, so the agent can fire it autonomously _and_ other skills can reach it (you can still type its name too). It contributes to **context load** — the description sits in the window every turn. Mechanics: omit `disable-model-invocation`, and write a model-facing description with rich trigger phrasing ("Use when the user wants…, mentions…").
-- A **user-invoked** skill strips the description from the agent's reach: only you, typing its name, can invoke it — and no other skill can. Zero context load, but it spends **cognitive load**: _you_ are the index that must remember it exists. Mechanics: set `disable-model-invocation: true`; the `description` becomes human-facing — a one-line summary, trigger lists stripped.
+- A **model-invoked** skill permits implicit invocation, so the agent can select it from the description and the user can name it directly. Write a model-facing description with accurate trigger phrasing. In `agents/openai.yaml`, omit the policy or set `policy.allow_implicit_invocation: true` when supported.
+- A **user-invoked** skill is explicit-only: the user names it to activate it. Keep the required description concise, and set `policy.allow_implicit_invocation: false` in `agents/openai.yaml`.
 
-Pick model-invocation only when the agent must reach the skill on its own, or another skill must. If it only ever fires by hand, make it user-invoked and pay no context load.
+Pick model-invocation only when autonomous selection is valuable. If it should fire only by hand, make it explicit-only. A skill may direct the agent to follow another documented workflow, but the runtime's trigger policy remains authoritative.
 
 When user-invoked skills multiply past what you can remember, that piled-up cognitive load is cured by a **router skill**: one user-invoked skill that names the others and when to reach for each.
 

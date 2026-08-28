@@ -1,15 +1,14 @@
 ---
 name: implement
 description: "Implement a piece of work based on a spec or set of tickets."
-disable-model-invocation: true
 ---
 
 Implement the work described by the user in the spec or tickets.
 
-Use /tdd where possible, at pre-agreed seams.
+Read the canonical governance playbook, applicable module specs, relevant project skills, and Definition of Done before editing. Use the repository `tdd` skill where practical, at agreed behavioral seams.
 
-Run typechecking regularly, single test files regularly, and the full test suite once at the end.
+Protect unrelated staged, unstaged, and untracked user work. Run the narrowest relevant tests during development. Before handoff, run every applicable checked-in verification command documented by the repository; for this repository that includes `./RunTest.sh`, applicable `./RunQuality.sh` checks, and the Definition of Done.
 
-Once done, use /code-review to review the work.
+Once implementation and verification are complete, use the repository's comprehensive `review` skill. Resolve every blocking finding and rerun affected checks.
 
-Commit your work to the current branch.
+Commit only when the user requested or otherwise authorized a commit, and stage only the files in scope.

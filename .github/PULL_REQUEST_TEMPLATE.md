@@ -4,10 +4,10 @@
 
 <!-- What changed and why? -->
 
-## Linked issue / ADR
+## Linked issue / important decision
 
 - Issue:
-- ADR or `N/A — <reason>`:
+- Important-decisions entry or `N/A — <reason>`:
 
 ## Type
 
