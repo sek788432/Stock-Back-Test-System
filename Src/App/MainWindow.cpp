@@ -14,8 +14,8 @@
 namespace bte::app {
 namespace {
 
-QWidget *makePlaceholderTab(const QString &title) {
-  auto label = std::make_unique<QLabel>(title);
+QWidget *makePlaceholderTab(const QString &message) {
+  auto label = std::make_unique<QLabel>(message);
   label->setAlignment(Qt::AlignCenter);
   label->setObjectName("placeholderTab");
   label->setAccessibleName(label->text());
@@ -89,10 +89,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   tabs_ = std::make_unique<QTabWidget>(this).release();
   tabs_->setObjectName("mainTabWidget");
   tabs_->setAccessibleName("Main tabs");
-  tabs_->addTab(makePlaceholderTab(tr("Strategies")), tr("Strategies"));
+  tabs_->addTab(
+      makePlaceholderTab(tr("Saved Strategy persistence is planned.")),
+      tr("Strategies"));
   tabs_->addTab(std::make_unique<frontend::BacktestTab>(tabs_).release(),
                 tr("Backtest"));
-  tabs_->addTab(makePlaceholderTab(tr("Results")), tr("Results"));
+  tabs_->addTab(makePlaceholderTab(
+                    tr("No .bteresult files exist. Result persistence is "
+                       "planned.")),
+                tr("Results"));
   tabs_->addTab(std::make_unique<frontend::ReplayTab>(tabs_).release(),
                 tr("Replay"));
   tabs_->setCurrentIndex(1);

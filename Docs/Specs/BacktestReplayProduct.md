@@ -9,7 +9,7 @@ in [`EngineReplayPnL.md`](EngineReplayPnL.md).
 
 | Capability | Status | User-visible truth |
 |---|---|---|
-| K-line bar playback | **Implemented with known gaps** | Tracked hourly CSV bars and daily aggregation support candlesticks, volume, play, pause, step, and speed. Other displayed timeframe choices are unsupported. |
+| K-line bar playback | **Implemented with known gaps** | Tracked hourly CSV bars and daily aggregation support candlesticks, play, pause, step, and speed. Volume presentation and other displayed timeframe choices remain planned. |
 | Current replay portfolio strip | **Implemented placeholder** | It shows initial values, not trade-driven accounting. |
 | Legacy JSON replay summaries | **Removed** | No runtime or test path remains; durable `.bteresult` storage is still not implemented. |
 | Starter Backtest page | **Implemented limited slice** | One symbol/range, fixed starter or limited Selectable Conditions, whole-share long-only market behavior, and next-actual-bar execution. |
