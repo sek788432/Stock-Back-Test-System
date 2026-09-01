@@ -140,7 +140,10 @@ Authoritative accounting uses checked fixed-point strong types:
 - Pending orders cancel as `EndOfRun`; borrow accrual stops at the configured run-end timestamp.
 - A final mark is valid only if the symbol has an actual bar in the final exchange session. Otherwise save `Incomplete: StaleFinalMark`, retain the diagnostic mark and age, and suppress final metrics.
 
-Each run targets one transactional SQLite `.bteresult` file containing typed
+The schema, lifecycle, framing, compatibility, and recovery rules are fixed by
+the [canonical result storage decision](../Decisions/ImportantDecisions.md#canonical-result-storage-and-lifecycle).
+Each run targets one transactional SQLite
+`.bteresult` file containing typed
 run/configuration, strategy source, orders, fills, trades, positions, equity,
 fees, margin, corporate actions, strategy-relevant indicator snapshots,
 warnings, logs, and data-segment references.

@@ -20,7 +20,7 @@ becomes part of a release profile.
 | databento (Python) | 0.64.0 | Apache-2.0 | Implemented, developer-only | DataFetcher | Upstream market-data acquisition | — |
 | duckdb (Python) | 1.4.4 | MIT | Implemented, developer-only | DataFetcher | Mutable ingestion and verification store; not release runtime | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
 | pandas (Python) | 2.3.3 | BSD-3-Clause | Implemented, developer-only | DataFetcher | Tabular extraction | — |
-| SQLite | Pin before implementation | Public domain | Planned | Results | Transactional `.bteresult` container | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
+| SQLite | 3.53.4, exact installed-package discovery | Public domain | Approved implementation pin | Results | Transactional `.bteresult` container | [Canonical result storage](ImportantDecisions.md#canonical-result-storage-and-lifecycle) |
 | CPython | Pin per immutable runtime profile | PSF-2.0 | Planned | PythonStrategyRunner | Trusted isolated Python Script Strategy runtime | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
 | NumPy and pandas | Pin each per immutable runtime profile | BSD-3-Clause | Planned | `stockbt` runtime | Approved numerical and tabular packages; no arbitrary pip or broader research stack | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
 

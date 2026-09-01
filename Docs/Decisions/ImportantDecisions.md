@@ -122,6 +122,54 @@ separate updater is not a V1 dependency.
 [`EngineReplayPnL.md`](../Specs/EngineReplayPnL.md), and
 [`BuildDistribution.md`](../Specs/BuildDistribution.md).
 
+## Canonical result storage and lifecycle
+
+**Current decision.** Results is a backend module depending only on Core, Data,
+and SQLite. Each run receives an opaque per-run `ResultId` independent of its
+functional content and is persisted as one schema-versioned SQLite
+`.bteresult`. Its `canonicalResultHash` is SHA-256 over explicitly framed,
+stably ordered functional identity and canonical records; Result ID, wall-clock
+times, paths, catalog order, pacing, and SQLite physical bytes are excluded.
+The container stores run and data-selection identities, ordered segment spans,
+canonical records, terminal state, and eligible summaries, but references
+retained immutable OHLCV segments instead of copying bars.
+
+Writes use foreign keys, WAL, full synchronization, explicit record-batch
+transactions, terminal finalization, WAL checkpoint, close, read-only reopen,
+integrity/schema/hash validation, and same-filesystem no-clobber promotion from
+Staging to Results. The lifecycle is Staging to a terminal state to Promoted;
+restart recovery may promote a validated Interrupted diagnostic or quarantine
+untrustworthy staging. Promoted results can move to Trash and restore; purge
+releases segment references transactionally. Catalog state is rebuildable from
+validated artifacts. Imports and migrations create newly validated copies and
+never rewrite their source. SQLite is private to Results and is pinned to
+version 3.53.4 through exact installed-package discovery.
+
+**Why.** Stable functional framing makes deterministic replay portable without
+pretending SQLite page layout is canonical. One independently portable artifact
+supports validation, seeking, import, recovery, and user-visible lifecycle,
+while retained content-addressed segments avoid duplicating market data.
+
+**Important rejected alternatives.** JSON was rejected because it would need a
+second ad-hoc protocol for integer encoding, ordering, indexing, and recovery.
+One application-wide result database was rejected because artifacts must be
+portable and independently promotable. Copying OHLCV into every result was
+rejected because it duplicates immutable data. Treating abandoned staging as
+Completed was rejected because a crash cannot establish terminal engine
+semantics. Comparing physical SQLite bytes was rejected because page and
+journal layout are non-functional.
+
+**Consequences.** Public Results APIs expose typed identities, records, and
+lifecycle operations rather than SQLite handles. Promotion and recovery require
+more work than writing one file, but incomplete or corrupt artifacts cannot
+masquerade as completed runs. Readers reject unknown schema, framing, numeric,
+source-timeframe, or aggregation-policy versions and never fall back to mutable
+data.
+
+**Owning specification.** [`Architecture.md`](../Specs/Architecture.md),
+[`DataLayer.md`](../Specs/DataLayer.md), and
+[`EngineReplayPnL.md`](../Specs/EngineReplayPnL.md).
+
 ## Agent authority and repository layout
 
 **Current decision.** `.agents/skills` is the only project-skill directory.
