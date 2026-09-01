@@ -1,12 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
 
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
-  set(
-    CMAKE_TOOLCHAIN_FILE
-    "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-    CACHE FILEPATH "vcpkg toolchain")
-endif()
-
 project(
   stockBacktester
   VERSION 0.1.0
@@ -44,6 +37,7 @@ add_subdirectory(Src/Backend/Core)
 add_subdirectory(Src/Backend/Data)
 add_subdirectory(Src/Backend/Indicators)
 add_subdirectory(Src/Backend/Strategy)
+add_subdirectory(Src/Backend/Results)
 add_subdirectory(Src/Backend/Engine)
 
 if(BTE_BUILD_QT_APP)

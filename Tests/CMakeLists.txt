@@ -33,6 +33,18 @@ target_compile_definitions(
 gtest_discover_tests(bte_data_tests DISCOVERY_TIMEOUT 30)
 
 add_executable(
+  bte_results_tests
+  Unit/Results/UnitTest_ResultStore.cpp)
+
+target_link_libraries(
+  bte_results_tests
+  PRIVATE
+    bte::results
+    GTest::gtest_main)
+
+gtest_discover_tests(bte_results_tests DISCOVERY_TIMEOUT 30)
+
+add_executable(
   bte_indicators_tests
   Unit/Indicators/UnitTest_StreamingIndicator.cpp)
 
