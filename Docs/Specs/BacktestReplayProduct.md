@@ -9,12 +9,13 @@ in [`EngineReplayPnL.md`](EngineReplayPnL.md).
 
 | Capability | Status | User-visible truth |
 |---|---|---|
-| K-line bar playback | **Implemented with known gaps** | Tracked hourly CSV bars and daily aggregation support candlesticks, play, pause, step, and speed. Volume presentation and other displayed timeframe choices remain planned. |
-| Current replay portfolio strip | **Implemented placeholder** | It shows initial values, not trade-driven accounting. |
-| Legacy JSON replay summaries | **Removed** | No runtime or test path remains; durable `.bteresult` storage is still not implemented. |
+| K-line bar playback | **Implemented with known gaps** | Tracked hourly CSV bars and daily UTC aggregation support candlesticks, volume, persisted fill markers, play, pause, step, seek, and speed. Other timeframe choices remain planned. |
+| Persisted replay portfolio strip | **Implemented limited slice** | It presents stored post-slice cash, position, market value, and equity for the implemented single-symbol Backtest path. |
+| Legacy JSON replay summaries | **Removed** | No runtime or test path remains; transactional SQLite `.bteresult` storage is implemented. |
 | Starter Backtest page | **Implemented limited slice** | One symbol/range, fixed starter or limited Selectable Conditions, whole-share long-only market behavior, and next-actual-bar execution. |
-| Saved strategies and results | **Accepted design / not implemented** | Separate Strategy and Result libraries follow the contracts below. |
-| Python Strategy, Debug Run, durable results, and result replay | **Accepted design / not implemented** | No shipped worker or `.bteresult` path exists yet. |
+| Saved strategies and complete Results library | **Accepted design / partially implemented** | Result storage/catalog operations exist, but saved Strategies and the complete Results management page remain planned. |
+| Durable results and result replay | **Implemented limited slice** | The current Backtest records its canonical order/fill/post-slice timeline, promotes a `.bteresult`, and can open it in Replay without engine execution. Import and the complete engine remain planned. |
+| Python Strategy and Debug Run | **Accepted design / not implemented** | No shipped Python worker or Debug Run path exists yet. |
 | Public data-bearing release | **Blocked** | Redistribution rights and verified split metadata are missing. |
 
 The UI, README, release notes, and screenshots must preserve these distinctions.

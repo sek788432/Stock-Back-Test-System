@@ -233,6 +233,25 @@ if(BTE_BUILD_QT_APP)
   gtest_discover_tests(bte_result_replay_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
+    bte_replay_fixture_tests
+    Unit/Replay/UnitTest_ReplayFixture.cpp)
+
+  target_compile_definitions(
+    bte_replay_fixture_tests
+    PRIVATE
+      BTE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+  target_link_libraries(
+    bte_replay_fixture_tests
+    PRIVATE
+      GTest::gtest_main
+      bte::bindings
+      bte::data
+      bte::results)
+
+  gtest_discover_tests(bte_replay_fixture_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
     bte_backtest_vm_tests
     Unit/Frontend/UnitTest_BacktestSessionVm.cpp)
 

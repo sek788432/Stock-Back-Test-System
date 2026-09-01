@@ -10,16 +10,16 @@ that reads a Backtest Result and never executes a Strategy or engine event.
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | CSV-backed bar loading; forward/back bar stepping; replay clock controls; candlestick presentation; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice. A selected buy/sell signal queues a whole-share market order for the next actual bar open, with 1 bp adverse slippage; buy cash failures preserve cash and open positions are marked at final close. |
-| **Planned** | Volume presentation, synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, immutable snapshots, canonical hashes, and SQLite `.bteresult`. |
+| **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records order, fill, and post-slice portfolio values. |
+| **Planned** | Synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, result import, and the remaining canonical record families. |
 | **Blocked** | Public release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
 
 The current starter and selectable slices are intentionally single-symbol; the
 selectable path supports only a flat position and whole-quantity long entry or
-exit. Neither slice persists a canonical Backtest Result and neither is
-evidence that the complete engine contract below is implemented. The starter
-slice remains single-order. No durable result format is currently implemented;
-the removed legacy JSON summary was not the target result contract.
+exit. They persist only the canonical families they can truthfully produce and
+are not evidence that the complete engine contract below is implemented. The
+starter slice remains single-order. The removed legacy JSON summary is not part
+of the durable result contract.
 
 ### 1.1 Execution modes and scheduling
 

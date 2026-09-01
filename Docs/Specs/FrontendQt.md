@@ -4,10 +4,11 @@
 > chart, replay scaffolding, and a Backtest page for the limited engine slice
 > documented in [`EngineReplayPnL.md`](EngineReplayPnL.md) §1. That page supports the fixed starter strategy and the
 > implemented Selectable Conditions subset; saved-strategy authoring, Python
-> strategies, complete backtest workflows, durable results, and
+> strategies, complete backtest workflows, the complete Results library, and
 > release-quality UX remain planned unless their owning spec says otherwise.
 > The current shell exposes Strategies, Backtest, Results, and Replay;
 > Strategies and Results are placeholders for their accepted future pages.
+> Completed runs can nevertheless be persisted and handed directly to Replay.
 
 This spec owns the Qt presentation interface: every screen the user sees, chart
 presentation, and how the UI communicates with backend modules without blocking
