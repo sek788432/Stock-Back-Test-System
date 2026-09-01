@@ -220,6 +220,19 @@ if(BTE_BUILD_QT_APP)
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(
+    bte_result_replay_tests
+    Unit/Bindings/UnitTest_ResultReplay.cpp)
+
+  target_link_libraries(
+    bte_result_replay_tests
+    PRIVATE
+      GTest::gtest_main
+      bte::bindings
+      bte::data)
+
+  gtest_discover_tests(bte_result_replay_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
     bte_backtest_vm_tests
     Unit/Frontend/UnitTest_BacktestSessionVm.cpp)
 

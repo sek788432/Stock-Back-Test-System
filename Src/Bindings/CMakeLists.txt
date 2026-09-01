@@ -3,9 +3,11 @@ add_library(
   STATIC
     Include/Bte/Bindings/BacktestSessionVm.h
     Include/Bte/Bindings/ReplayDataLoader.h
+    Include/Bte/Bindings/ResultReplay.h
     Include/Bte/Bindings/ReplaySessionVm.h
     Backtest/BacktestSessionVm.cpp
     Replay/ReplayDataLoader.cpp
+    Replay/ResultReplay.cpp
     Replay/ReplaySessionVm.cpp)
 
 add_library(bte::bindings ALIAS bte_bindings)
@@ -22,6 +24,7 @@ target_link_libraries(
   bte_bindings
   PUBLIC
     bte::core
+    bte::results
     bte::strategy
     Qt6::Core
   PRIVATE
