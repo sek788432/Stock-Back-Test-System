@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSlider>
 #include <QTableWidget>
 #include <QToolButton>
 #include <QWidget>
@@ -18,6 +19,11 @@ namespace bte::frontend {
 
 struct ReplaySetupControls {
   QGroupBox *box{};
+  QComboBox *resultCombo{};
+  QComboBox *resultTimeframeCombo{};
+  QPushButton *openResultButton{};
+  QLabel *resultStatusLabel{};
+  QLabel *partialLabel{};
   QComboBox *symbolCombo{};
   QComboBox *schemaCombo{};
   QDateEdit *startDate{};
@@ -33,6 +39,7 @@ struct ReplayPlaybackControls {
   QToolButton *stepForwardButton{};
   QComboBox *speedCombo{};
   QProgressBar *progress{};
+  QSlider *seekSlider{};
   QToolButton *zoomOutButton{};
   QToolButton *zoomInButton{};
   QToolButton *zoomResetButton{};

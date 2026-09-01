@@ -13,11 +13,14 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSlider>
 #include <QTableWidget>
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
 #include <QtGlobal>
+
+#include <filesystem>
 
 namespace {
 
@@ -26,6 +29,7 @@ class ReplayTabTest final : public QObject {
 
 private slots:
   void exposesReplaySetupControls();
+  void exactResultIdStartsOwnedAsynchronousOpen();
   void exposesPlaybackControls();
   void exposesChartAndPortfolioPlaceholders();
   void stepForwardAppendsOneCandle();
@@ -51,6 +55,30 @@ void ReplayTabTest::exposesReplaySetupControls() {
   QVERIFY(tab.findChild<QDoubleSpinBox *>("replayInitialCapitalSpinBox") !=
           nullptr);
   QVERIFY(tab.findChild<QPushButton *>("replayLoadButton") != nullptr);
+  QVERIFY(tab.findChild<QComboBox *>("replayResultCombo") != nullptr);
+  QVERIFY(tab.findChild<QComboBox *>("replayResultTimeframeCombo") != nullptr);
+  QVERIFY(tab.findChild<QPushButton *>("replayOpenResultButton") != nullptr);
+  QVERIFY(tab.findChild<QLabel *>("replayResultStatusLabel") != nullptr);
+}
+
+void ReplayTabTest::exactResultIdStartsOwnedAsynchronousOpen() {
+  const auto root =
+      std::filesystem::temp_directory_path() / "bte-replay-tab-missing-result";
+  std::filesystem::remove_all(root);
+  {
+    bte::frontend::ReplayTab tab{root / "Results", root / "Data"};
+    auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
+    auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+    QVERIFY(selector != nullptr);
+    QVERIFY(status != nullptr);
+
+    const QString resultId{"0123456789abcdef0123456789abcdef"};
+    tab.openResult(resultId);
+    QCOMPARE(selector->currentText(), resultId);
+    QVERIFY(bte::test::waitUntil(
+        [status] { return status->text().contains("Cannot open result"); }));
+  }
+  std::filesystem::remove_all(root);
 }
 
 void ReplayTabTest::exposesPlaybackControls() {
@@ -69,6 +97,7 @@ void ReplayTabTest::exposesPlaybackControls() {
   QCOMPARE(speedCombo->itemText(3), QString{"max"});
 
   QVERIFY(tab.findChild<QProgressBar *>("replayProgressBar") != nullptr);
+  QVERIFY(tab.findChild<QSlider *>("replaySeekSlider") != nullptr);
   const auto *zoomOutButton =
       tab.findChild<QToolButton *>("replayZoomOutButton");
   const auto *zoomInButton = tab.findChild<QToolButton *>("replayZoomInButton");

@@ -92,14 +92,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   tabs_->addTab(
       makePlaceholderTab(tr("Saved Strategy persistence is planned.")),
       tr("Strategies"));
-  tabs_->addTab(std::make_unique<frontend::BacktestTab>(tabs_).release(),
-                tr("Backtest"));
+  auto backtestOwner = frontend::BacktestTab::createApplicationConfigured(tabs_);
+  auto *backtest = backtestOwner.release();
+  tabs_->addTab(backtest, tr("Backtest"));
   tabs_->addTab(
-      makePlaceholderTab(tr("No .bteresult files exist. Result persistence is "
-                            "planned.")),
+      makePlaceholderTab(tr("Result library management is planned; stored "
+                            "results can be opened in Replay.")),
       tr("Results"));
-  tabs_->addTab(std::make_unique<frontend::ReplayTab>(tabs_).release(),
-                tr("Replay"));
+  auto *replay = std::make_unique<frontend::ReplayTab>(tabs_).release();
+  const auto replayIndex = tabs_->addTab(replay, tr("Replay"));
+  QObject::connect(backtest, &frontend::BacktestTab::openResultInReplay, this,
+                   [this, replay, replayIndex](const QString &resultId) {
+                     replay->openResult(resultId);
+                     tabs_->setCurrentIndex(replayIndex);
+                   });
   tabs_->setCurrentIndex(1);
   setCentralWidget(tabs_);
 

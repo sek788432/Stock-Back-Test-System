@@ -1,8 +1,10 @@
 #include "MainWindow.h"
 
 #include "Bte/Frontend/BacktestTab.h"
+#include "Bte/Frontend/ReplayTab.h"
 
 #include <QLabel>
+#include <QComboBox>
 #include <QTabWidget>
 #include <QTest>
 
@@ -16,7 +18,8 @@ class MainWindowTest final : public QObject {
 private slots:
   void mountsBacktestAsTheSelectedApplicationPage();
   void exposesOnlyApprovedApplicationPages();
-  void libraryPagesExplainThatPersistenceIsPlanned();
+  void libraryPagesExplainCurrentDeliveryStatus();
+  void resultNavigationSelectsReplayAndPassesExactId();
 };
 
 void MainWindowTest::mountsBacktestAsTheSelectedApplicationPage() {
@@ -55,7 +58,7 @@ void MainWindowTest::exposesOnlyApprovedApplicationPages() {
   }
 }
 
-void MainWindowTest::libraryPagesExplainThatPersistenceIsPlanned() {
+void MainWindowTest::libraryPagesExplainCurrentDeliveryStatus() {
   const bte::app::MainWindow window;
 
   const auto *tabs = window.findChild<QTabWidget *>("mainTabWidget");
@@ -70,7 +73,26 @@ void MainWindowTest::libraryPagesExplainThatPersistenceIsPlanned() {
   QVERIFY(resultsMessage != nullptr);
   QCOMPARE(
       resultsMessage->text(),
-      QString{"No .bteresult files exist. Result persistence is planned."});
+      QString{"Result library management is planned; stored results can be "
+              "opened in Replay."});
+}
+
+void MainWindowTest::resultNavigationSelectsReplayAndPassesExactId() {
+  bte::app::MainWindow window;
+  auto *tabs = window.findChild<QTabWidget *>("mainTabWidget");
+  auto *backtest = window.findChild<bte::frontend::BacktestTab *>();
+  auto *replay = window.findChild<bte::frontend::ReplayTab *>();
+  QVERIFY(tabs != nullptr);
+  QVERIFY(backtest != nullptr);
+  QVERIFY(replay != nullptr);
+
+  const QString resultId{"fedcba9876543210fedcba9876543210"};
+  emit backtest->openResultInReplay(resultId);
+
+  QCOMPARE(tabs->currentWidget(), replay);
+  auto *selector = replay->findChild<QComboBox *>("replayResultCombo");
+  QVERIFY(selector != nullptr);
+  QCOMPARE(selector->currentText(), resultId);
 }
 
 } // namespace
