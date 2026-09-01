@@ -3,6 +3,7 @@
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
+#include "Bte/Results/ResultStore.h"
 #include "Bte/Strategy/SelectableStrategy.h"
 
 #include <chrono>
@@ -26,6 +27,7 @@ enum class BacktestOrderSide : std::uint8_t { buy, sell };
 
 struct BacktestRequest {
   std::vector<core::Bar> bars;
+  std::string symbol = "PRIMARY";
   std::int64_t initialCapitalMicrodollars = 0;
   std::int64_t quantityShares = 0;
   std::optional<strategy::SelectableStrategyPlan> selectableStrategy;
@@ -52,6 +54,14 @@ struct BacktestResult {
   std::int64_t finalPriceNanodollars = 0;
   std::int64_t positionShares = 0;
   std::size_t barsProcessed = 0;
+  std::vector<results::CanonicalRecord> canonicalRecords;
+};
+
+struct RecordedBacktestOutcome {
+  std::optional<BacktestResult> backtest;
+  results::FinalizedResult persisted;
+  results::RunStatus status = results::RunStatus::incomplete;
+  std::optional<core::Error> terminalError;
 };
 
 /// Runs either the compatibility starter order or a typed Selectable Conditions
@@ -59,5 +69,12 @@ struct BacktestResult {
 [[nodiscard]] core::Result<BacktestResult>
 runBacktest(const BacktestRequest &request,
             const core::CancellationToken &cancellation = {});
+
+/// Executes an already-described run, persists its authoritative timeline, and
+/// promotes either a completed Result or a typed diagnostic Result.
+[[nodiscard]] core::Result<RecordedBacktestOutcome>
+runBacktestAndRecord(const BacktestRequest &request,
+                     results::ResultWriter &writer,
+                     const core::CancellationToken &cancellation = {});
 
 } // namespace bte::engine

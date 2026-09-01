@@ -76,6 +76,7 @@ gtest_discover_tests(bte_strategy_tests DISCOVERY_TIMEOUT 30)
 add_executable(
   bte_engine_tests
   Unit/Engine/UnitTest_Backtest.cpp
+  Unit/Engine/UnitTest_RecordedBacktest.cpp
   Unit/Engine/UnitTest_Replay.cpp)
 
 target_link_libraries(

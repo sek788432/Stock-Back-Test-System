@@ -20,6 +20,7 @@ target_link_libraries(
   PUBLIC
     bte::core
     bte::data
+    bte::results
     bte::strategy)
 
 target_compile_features(bte_engine PUBLIC cxx_std_20)
