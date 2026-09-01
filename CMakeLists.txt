@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.24)
 
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
+  set(
+    CMAKE_TOOLCHAIN_FILE
+    "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    CACHE FILEPATH "vcpkg toolchain")
+endif()
+
 project(
   stockBacktester
   VERSION 0.1.0
@@ -22,6 +29,16 @@ include(CompilerWarnings)
 include(Sanitizers)
 include(Coverage)
 bte_enable_coverage()
+
+if(APPLE AND NOT DEFINED SQLite3_ROOT)
+  foreach(bte_sqlite_prefix "/opt/homebrew/opt/sqlite" "/usr/local/opt/sqlite")
+    if(EXISTS "${bte_sqlite_prefix}/include/sqlite3.h")
+      set(SQLite3_ROOT "${bte_sqlite_prefix}")
+      break()
+    endif()
+  endforeach()
+endif()
+find_package(SQLite3 3.53.4 EXACT REQUIRED)
 
 add_subdirectory(Src/Backend/Core)
 add_subdirectory(Src/Backend/Data)

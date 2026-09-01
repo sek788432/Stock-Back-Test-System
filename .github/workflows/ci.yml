@@ -33,6 +33,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Bootstrap pinned vcpkg registry
+        run: |
+          git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          test "$(git -C "$RUNNER_TEMP/vcpkg" rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
       - name: Install Qt
         uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
@@ -41,6 +47,8 @@ jobs:
           cache: true
 
       - name: Configure all tests
+        env:
+          VCPKG_ROOT: ${{ runner.temp }}/vcpkg
         run: >-
           cmake --preset qt-dev
           -DBTE_BUILD_TESTS=ON
@@ -90,6 +98,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Bootstrap pinned vcpkg registry
+        run: |
+          git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          test "$(git -C "$RUNNER_TEMP/vcpkg" rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
       - name: Install analysis tools
         run: |
           sudo apt-get update
@@ -115,6 +129,7 @@ jobs:
         env:
           CC: clang-18
           CXX: clang++-18
+          VCPKG_ROOT: ${{ runner.temp }}/vcpkg
         run: cmake --preset analysis -DBTE_BUILD_QT_APP=ON
 
       - name: Materialize generated analysis sources
@@ -130,6 +145,8 @@ jobs:
         run: python3 Tools/RunStaticAnalysis.py iwyu
 
       - name: Run clang static analyzer
+        env:
+          VCPKG_ROOT: ${{ runner.temp }}/vcpkg
         run: |
           scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
           scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty -o Output/scan-build-reports cmake --build Output/scan-build --parallel
@@ -153,6 +170,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Bootstrap pinned vcpkg registry
+        run: |
+          git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          test "$(git -C "$RUNNER_TEMP/vcpkg" rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
       - name: Install Qt
         uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
@@ -171,6 +194,8 @@ jobs:
           diff-cover --version
 
       - name: Configure coverage tests
+        env:
+          VCPKG_ROOT: ${{ runner.temp }}/vcpkg
         run: cmake --preset coverage -DBTE_BUILD_QT_APP=ON
 
       - name: Build coverage tests
@@ -231,6 +256,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Bootstrap pinned vcpkg registry
+        run: |
+          git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          test "$(git -C "$RUNNER_TEMP/vcpkg" rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
       - name: Install Clang sanitizer runtime
         run: |
           sudo apt-get update
@@ -243,6 +274,7 @@ jobs:
         env:
           CC: clang-18
           CXX: clang++-18
+          VCPKG_ROOT: ${{ runner.temp }}/vcpkg
         run: >-
           cmake --preset "${{ matrix.preset }}"
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON

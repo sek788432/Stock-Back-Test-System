@@ -16,7 +16,8 @@ gtest_discover_tests(bte_core_tests DISCOVERY_TIMEOUT 30)
 
 add_executable(
   bte_data_tests
-  Unit/Data/UnitTest_CsvBarStream.cpp)
+  Unit/Data/UnitTest_CsvBarStream.cpp
+  Unit/Data/UnitTest_ReleaseSnapshot.cpp)
 
 target_link_libraries(
   bte_data_tests
@@ -82,7 +83,8 @@ add_test(
     -p UnitTest_*.py)
 set_tests_properties(
   bte_project_standards_tests
-  PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+  PROPERTIES ENVIRONMENT
+    "PYTHONDONTWRITEBYTECODE=1;BTE_SNAPSHOT_BUILDER=$<TARGET_FILE:bte_snapshot_builder>")
 
 if(BTE_BUILD_QT_APP)
   add_executable(
