@@ -7,8 +7,10 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -454,6 +456,49 @@ TEST_F(ResultStoreFixture, injectedSchemaCreationIsQuarantinedOnRestart) {
   EXPECT_TRUE(std::filesystem::is_empty(root_ / "ResultsStore" / "Staging"));
   EXPECT_FALSE(
       std::filesystem::is_empty(root_ / "ResultsStore" / "Quarantine"));
+}
+
+TEST_F(ResultStoreFixture,
+       thousandEntryCatalogKeepsValidResultAvailableAndSortsDeterministically) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+  for (std::size_t index = 0; index < 999; ++index) {
+    const auto suffix = std::to_string(index);
+    const auto resultId = std::string(32 - suffix.size(), '0') + suffix;
+    std::ofstream unavailable{root_ / "ResultsStore" / "Results" /
+                              (resultId + ".bteresult")};
+    unavailable << "unavailable";
+  }
+
+  const auto listedAt = std::chrono::steady_clock::now();
+  auto listed = store.value()->list();
+  const auto listMilliseconds =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - listedAt)
+          .count();
+
+  ASSERT_TRUE(listed.ok()) << listed.error().message;
+  RecordProperty("listMilliseconds", listMilliseconds);
+  ASSERT_EQ(listed.value().size(), 1'000);
+  EXPECT_EQ(std::ranges::count_if(
+                listed.value(),
+                [](const auto &summary) { return summary.available; }),
+            1);
+  EXPECT_TRUE(std::ranges::is_sorted(
+      listed.value(), [](const auto &left, const auto &right) {
+        if (left.savedUtcMillis != right.savedUtcMillis) {
+          return left.savedUtcMillis > right.savedUtcMillis;
+        }
+        return left.resultId < right.resultId;
+      }));
 }
 
 } // namespace

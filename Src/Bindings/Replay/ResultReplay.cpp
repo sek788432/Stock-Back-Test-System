@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -42,60 +43,74 @@ core::Bar toBar(const data::SnapshotBar &bar) {
               static_cast<double>(bar.volumeMicroshares) / microsharesPerShare};
 }
 
-std::optional<ResultReplayPortfolio>
-portfolioAt(const results::OpenedResult &result,
-            const core::Timestamp timestamp) {
-  std::optional<ResultReplayPortfolio> portfolio;
-  for (const auto &record : result.records) {
-    if (record.timestamp > timestamp) {
-      break;
+class ReplayRecordIndex final {
+public:
+  explicit ReplayRecordIndex(const results::OpenedResult &result) {
+    for (const auto &record : result.records) {
+      if (record.family == results::RecordFamily::portfolio &&
+          record.cashMicrodollars.has_value() &&
+          record.marketValueMicrodollars.has_value() &&
+          record.equityMicrodollars.has_value() &&
+          record.positionShares.has_value()) {
+        portfolios_.push_back({
+            .timestamp = record.timestamp,
+            .portfolio = {.cash = money(*record.cashMicrodollars),
+                          .positionShares = *record.positionShares,
+                          .marketValue = money(*record.marketValueMicrodollars),
+                          .equity = money(*record.equityMicrodollars),
+                          .pnl = money(
+                              *record.equityMicrodollars -
+                              result.descriptor.initialCapitalMicrodollars)},
+        });
+      } else if (record.family == results::RecordFamily::fill &&
+                 record.quantityShares.has_value() &&
+                 record.priceNanodollars.has_value() &&
+                 record.amountMicrodollars.has_value()) {
+        fills_.push_back({
+            .timestamp = record.timestamp,
+            .isBuy = record.side == results::OrderSide::buy,
+            .quantityShares = *record.quantityShares,
+            .price = price(*record.priceNanodollars),
+            .amount = money(*record.amountMicrodollars),
+        });
+      }
     }
-    if (record.family != results::RecordFamily::portfolio ||
-        !record.cashMicrodollars.has_value() ||
-        !record.marketValueMicrodollars.has_value() ||
-        !record.equityMicrodollars.has_value() ||
-        !record.positionShares.has_value()) {
-      continue;
-    }
-    portfolio = ResultReplayPortfolio{
-        .cash = money(*record.cashMicrodollars),
-        .positionShares = *record.positionShares,
-        .marketValue = money(*record.marketValueMicrodollars),
-        .equity = money(*record.equityMicrodollars),
-        .pnl = money(*record.equityMicrodollars -
-                     result.descriptor.initialCapitalMicrodollars),
-    };
   }
-  return portfolio;
-}
 
-std::vector<ResultReplayFill> fillsAt(const results::OpenedResult &result,
-                                      const core::Timestamp start,
-                                      const core::Timestamp end) {
-  std::vector<ResultReplayFill> fills;
-  for (const auto &record : result.records) {
-    if (record.timestamp < start || record.timestamp >= end ||
-        record.family != results::RecordFamily::fill ||
-        !record.quantityShares.has_value() ||
-        !record.priceNanodollars.has_value() ||
-        !record.amountMicrodollars.has_value()) {
-      continue;
+  [[nodiscard]] std::optional<ResultReplayPortfolio>
+  portfolioAt(const core::Timestamp timestamp) const {
+    const auto end = std::ranges::upper_bound(portfolios_, timestamp, {},
+                                              &TimedPortfolio::timestamp);
+    if (end == portfolios_.begin()) {
+      return std::nullopt;
     }
-    fills.push_back({
-        .timestamp = record.timestamp,
-        .isBuy = record.side == results::OrderSide::buy,
-        .quantityShares = *record.quantityShares,
-        .price = price(*record.priceNanodollars),
-        .amount = money(*record.amountMicrodollars),
-    });
+    return std::prev(end)->portfolio;
   }
-  return fills;
-}
+
+  [[nodiscard]] std::vector<ResultReplayFill>
+  fillsAt(const core::Timestamp start, const core::Timestamp end) const {
+    const auto first = std::ranges::lower_bound(fills_, start, {},
+                                                &ResultReplayFill::timestamp);
+    const auto last = std::ranges::lower_bound(first, fills_.end(), end, {},
+                                               &ResultReplayFill::timestamp);
+    return {first, last};
+  }
+
+private:
+  struct TimedPortfolio {
+    core::Timestamp timestamp;
+    ResultReplayPortfolio portfolio;
+  };
+
+  std::vector<TimedPortfolio> portfolios_;
+  std::vector<ResultReplayFill> fills_;
+};
 
 core::Result<std::vector<ResultReplayFrame>>
 makeHourlyFrames(const results::OpenedResult &result,
                  const std::vector<data::SnapshotBar> &bars,
                  const core::CancellationToken &cancellation) {
+  const ReplayRecordIndex records{result};
   std::vector<ResultReplayFrame> frames;
   frames.reserve(bars.size());
   for (const auto &bar : bars) {
@@ -103,14 +118,14 @@ makeHourlyFrames(const results::OpenedResult &result,
       return core::makeError(core::ErrorCode::cancelled,
                              "Result Replay open was cancelled");
     }
-    const auto portfolio = portfolioAt(result, bar.timestamp);
+    const auto portfolio = records.portfolioAt(bar.timestamp);
     if (!portfolio.has_value()) {
       continue;
     }
     frames.push_back({
         .candle = toBar(bar),
-        .fills = fillsAt(result, bar.timestamp,
-                         bar.timestamp + std::chrono::milliseconds{1}),
+        .fills = records.fillsAt(bar.timestamp,
+                                 bar.timestamp + std::chrono::milliseconds{1}),
         .portfolio = *portfolio,
         .partialUtcDay = false,
     });
@@ -123,6 +138,7 @@ makeDailyFrames(const results::OpenedResult &result,
                 const std::vector<data::SnapshotBar> &bars,
                 const core::CancellationToken &cancellation) {
   using namespace std::chrono;
+  const ReplayRecordIndex records{result};
   std::vector<ResultReplayFrame> frames;
   std::size_t begin = 0;
   while (begin < bars.size()) {
@@ -147,7 +163,7 @@ makeDailyFrames(const results::OpenedResult &result,
       ++end;
     }
     const auto bucketEnd = core::Timestamp{day + days{1}};
-    const auto portfolio = portfolioAt(result, bars[end - 1].timestamp);
+    const auto portfolio = records.portfolioAt(bars[end - 1].timestamp);
     if (portfolio.has_value()) {
       frames.push_back({
           .candle = {.ts = core::Timestamp{day},
@@ -157,7 +173,7 @@ makeDailyFrames(const results::OpenedResult &result,
                      .close = price(bars[end - 1].closeNanodollars),
                      .volume =
                          static_cast<double>(volume) / microsharesPerShare},
-          .fills = fillsAt(result, core::Timestamp{day}, bucketEnd),
+          .fills = records.fillsAt(core::Timestamp{day}, bucketEnd),
           .portfolio = *portfolio,
           .partialUtcDay = end - begin != 24,
       });

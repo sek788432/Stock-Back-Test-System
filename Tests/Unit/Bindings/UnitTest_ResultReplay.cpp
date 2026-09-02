@@ -9,12 +9,33 @@
 
 #include <QDate>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/resource.h>
+#endif
+
 namespace {
+
+std::int64_t peakResidentKibibytes() {
+#if defined(__APPLE__) || defined(__linux__)
+  rusage usage{};
+  if (getrusage(RUSAGE_SELF, &usage) != 0) {
+    return -1;
+  }
+#if defined(__APPLE__)
+  return usage.ru_maxrss / 1'024;
+#else
+  return usage.ru_maxrss;
+#endif
+#else
+  return -1;
+#endif
+}
 
 class ResultReplayTest : public testing::Test {
 protected:
@@ -148,6 +169,111 @@ TEST_F(ResultReplayTest, persistedBacktestRejectsUnsupportedSourceSchema) {
        .strategyHash = std::string(64, 'c')});
   ASSERT_FALSE(unsupported.ok());
   EXPECT_EQ(unsupported.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest,
+       tenThousandHourlyFramesUseIndexedSeekAndBoundedVisibleWindow) {
+  constexpr auto barCount = std::size_t{10'000};
+  const auto sourceDirectory = root_ / "LargeSource";
+  const auto dataDirectory = root_ / "LargeData";
+  std::filesystem::create_directories(sourceDirectory);
+  std::ofstream source{sourceDirectory / "SYN.csv"};
+  source << "symbol,ts,open,high,low,close,volume,schemaName\n";
+  const auto firstTimestamp = timestamp("2024-01-01 00:00:00+00:00");
+  for (std::size_t index = 0; index < barCount; ++index) {
+    source << "SYN,"
+           << bte::core::time::toIso8601(firstTimestamp +
+                                         std::chrono::hours{index})
+           << ",100,102,99,101," << 1'000 + index << ",ohlcv-1h\n";
+  }
+  source.close();
+  auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = dataDirectory,
+      .symbols = {"SYN"},
+      .rowsPerSegment = 1'000,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      dataDirectory, built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  const auto range = bte::core::DateRange{.start = firstTimestamp,
+                                          .end = firstTimestamp +
+                                                 std::chrono::hours{barCount}};
+  auto selected = reader.value()->select(
+      {.symbols = {"SYN"}, .range = range, .timeframe = "ohlcv-1h"});
+  ASSERT_TRUE(selected.ok()) << selected.error().message;
+  auto store =
+      bte::results::ResultStore::open(root_ / "LargeStore", dataDirectory);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin({
+      .universe = {"SYN"},
+      .range = range,
+      .initialCapitalMicrodollars = 100'000'000'000,
+      .strategyId = "performance-fixture",
+      .strategyHash = std::string(64, 'c'),
+      .dataSelection = selected.value().identity,
+  });
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  std::vector<bte::results::CanonicalRecord> records;
+  records.reserve(barCount);
+  for (std::size_t index = 0; index < barCount; ++index) {
+    records.push_back({
+        .sequence = index,
+        .timestamp = firstTimestamp + std::chrono::hours{index},
+        .symbol = "SYN",
+        .family = bte::results::RecordFamily::portfolio,
+        .cashMicrodollars = 100'000'000'000,
+        .marketValueMicrodollars = 0,
+        .equityMicrodollars = 100'000'000'000,
+        .positionShares = 0,
+    });
+  }
+  ASSERT_TRUE(writer.value()->append(records).ok());
+  auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'000'000'000, .pnlMicrodollars = 0});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+
+  const auto openedAt = std::chrono::steady_clock::now();
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "LargeStore", dataDirectory, finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  const auto openMilliseconds =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - openedAt)
+          .count();
+
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  RecordProperty("openMilliseconds", openMilliseconds);
+  EXPECT_EQ(replay.value()->totalFrames(), barCount);
+  const auto seekAt = std::chrono::steady_clock::now();
+  EXPECT_TRUE(replay.value()->seek(barCount - 1));
+  const auto seekMicroseconds =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - seekAt)
+          .count();
+  RecordProperty("seekMicroseconds", seekMicroseconds);
+  EXPECT_EQ(replay.value()->visibleWindow().size(), 500);
+  EXPECT_EQ(replay.value()->current()->candle.ts,
+            firstTimestamp + std::chrono::hours{barCount - 1});
+  EXPECT_TRUE(replay.value()->stepBack());
+  EXPECT_EQ(replay.value()->currentIndex(), barCount - 2);
+  ASSERT_TRUE(replay.value()->seek(0));
+  const auto playbackAt = std::chrono::steady_clock::now();
+  auto steps = std::size_t{0};
+  while (replay.value()->stepForward()) {
+    ++steps;
+  }
+  const auto playbackMicroseconds =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - playbackAt)
+          .count();
+  RecordProperty("maximumPlaybackMicroseconds", playbackMicroseconds);
+  RecordProperty("peakResidentKibibytes", peakResidentKibibytes());
+  EXPECT_EQ(steps, barCount - 1);
 }
 
 } // namespace
