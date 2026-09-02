@@ -5,6 +5,7 @@
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>

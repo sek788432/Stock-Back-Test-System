@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QObject>
 #include <QString>
 #include <QWidget>
 
@@ -18,9 +19,10 @@ public:
   ~ReplayTab() override;
   ReplayTab(const ReplayTab &) = delete;
   ReplayTab &operator=(const ReplayTab &) = delete;
+  ReplayTab(ReplayTab &&) = delete;
+  ReplayTab &operator=(ReplayTab &&) = delete;
 
-public slots:
-  void openResult(const QString &resultId);
+  Q_SLOT void openResult(const QString &resultId);
 
 private:
   struct State;

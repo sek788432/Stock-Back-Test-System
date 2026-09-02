@@ -176,7 +176,14 @@ void appendOrderRecord(BacktestResult &result, const BacktestRequest &request,
                         .side = side == BacktestOrderSide::buy
                                     ? results::OrderSide::buy
                                     : results::OrderSide::sell,
-                        .quantityShares = request.quantityShares});
+                        .quantityShares = request.quantityShares,
+                        .priceNanodollars = {},
+                        .amountMicrodollars = {},
+                        .cashMicrodollars = {},
+                        .marketValueMicrodollars = {},
+                        .equityMicrodollars = {},
+                        .positionShares = {},
+                        .text = {}});
 }
 
 void appendFillRecord(BacktestResult &result, const BacktestRequest &request,
@@ -189,7 +196,12 @@ void appendFillRecord(BacktestResult &result, const BacktestRequest &request,
                                     : results::OrderSide::sell,
                         .quantityShares = fill.quantityShares,
                         .priceNanodollars = fill.priceNanodollars,
-                        .amountMicrodollars = fill.amountMicrodollars});
+                        .amountMicrodollars = fill.amountMicrodollars,
+                        .cashMicrodollars = {},
+                        .marketValueMicrodollars = {},
+                        .equityMicrodollars = {},
+                        .positionShares = {},
+                        .text = {}});
 }
 
 core::Result<void> appendPortfolioRecord(BacktestResult &result,
@@ -221,10 +233,15 @@ core::Result<void> appendPortfolioRecord(BacktestResult &result,
                {.timestamp = bar.ts,
                 .symbol = request.symbol,
                 .family = results::RecordFamily::portfolio,
+                .side = results::OrderSide::none,
+                .quantityShares = {},
+                .priceNanodollars = {},
+                .amountMicrodollars = {},
                 .cashMicrodollars = result.cashMicrodollars,
                 .marketValueMicrodollars = result.marketValueMicrodollars,
                 .equityMicrodollars = result.equityMicrodollars,
-                .positionShares = result.positionShares});
+                .positionShares = result.positionShares,
+                .text = {}});
   return {};
 }
 
@@ -483,6 +500,14 @@ runBacktestAndRecord(const BacktestRequest &request,
         .timestamp = request.bars.front().ts,
         .symbol = request.symbol,
         .family = results::RecordFamily::terminalDiagnostic,
+        .side = results::OrderSide::none,
+        .quantityShares = {},
+        .priceNanodollars = {},
+        .amountMicrodollars = {},
+        .cashMicrodollars = {},
+        .marketValueMicrodollars = {},
+        .equityMicrodollars = {},
+        .positionShares = {},
         .text = executed.error().message,
     };
     auto appended = writer.append({diagnostic});

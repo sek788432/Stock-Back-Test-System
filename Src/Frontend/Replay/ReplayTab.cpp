@@ -1,10 +1,13 @@
 #include "Bte/Frontend/ReplayTab.h"
 
+// IWYU pragma: no_include "Bte/Results/ResultStore.h"
+
 #include "Bte/Bindings/ReplayDataLoader.h"
 #include "Bte/Bindings/ReplaySessionVm.h"
 #include "Bte/Bindings/ResultReplay.h"
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
+#include "Bte/Frontend/IChartView.h"
 #include "Bte/Frontend/QtChartsCandlestickView.h"
 
 #include "ReplayTabSections.h"
@@ -12,6 +15,7 @@
 
 #include <QComboBox>
 #include <QDateEdit>
+#include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QFuture>
@@ -29,19 +33,26 @@
 #include <QStandardPaths>
 #include <QString>
 #include <QTableWidget>
-#include <QTableWidgetItem>
 #include <QTimer>
 #include <QToolButton>
+#include <QVariant>
 #include <QtConcurrentRun>
 #include <QtCore/Qt>
+#include <QtCore/qabstractitemmodel.h>
+#include <QtCore/qtenvironmentvariables.h>
+#include <QtCore/qtimezone.h>
+#include <QtGui/qkeysequence.h>
+#include <QtWidgets/qslider.h>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -75,6 +86,7 @@ QString formatPrice(const double value) {
   return QString{"$%1"}.arg(value, 0, 'f', 2);
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): distinct inputs
 std::filesystem::path defaultApplicationStore(const char *environmentName,
                                               const char *leaf) {
   const auto configured = qEnvironmentVariable(environmentName);
@@ -104,6 +116,11 @@ struct ReplayTab::State final {
     }
     catalogFuture.waitForFinished();
   }
+  State() = default;
+  State(const State &) = delete;
+  State &operator=(const State &) = delete;
+  State(State &&) = delete;
+  State &operator=(State &&) = delete;
 
   std::filesystem::path resultStore;
   std::filesystem::path dataStore;
@@ -122,6 +139,7 @@ ReplayTab::ReplayTab(QWidget *parent)
     : ReplayTab(defaultApplicationStore("BTE_RESULT_STORE", "Results"),
                 defaultApplicationStore("BTE_DATA_STORE", "Data"), parent) {}
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): Qt wiring
 ReplayTab::ReplayTab(std::filesystem::path resultStore,
                      std::filesystem::path dataStore, QWidget *parent)
     : QWidget(parent), state_(std::make_unique<State>()) {
@@ -228,7 +246,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     setPlaying(false);
   };
 
-  const auto renderResult = [=, this]() {
+  const auto renderResult = [this, chart, playback, tradeLog, setup,
+                             portfolio]() {
     if (state_->resultReplay == nullptr) {
       chart.chartView->setBarWindow({});
       chart.chartView->clearMarkers();
@@ -304,7 +323,9 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     }
   };
 
-  const auto advanceOneBar = [=, this]() {
+  const auto advanceOneBar = [this, stopPlayback, renderResult, replaySession,
+                              chart, updateLegacyProgress,
+                              updateLegacyPortfolio]() {
     if (state_->resultMode) {
       if (state_->resultReplay == nullptr ||
           !state_->resultReplay->stepForward()) {
@@ -330,7 +351,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     }
   };
 
-  const auto reloadBars = [=, this]() {
+  const auto reloadBars = [this, stopPlayback, setup, tradeLog, replaySession,
+                           resetVisibleReplay]() {
     stopPlayback();
     state_->cancellation.requestCancellation();
     ++state_->generation;
@@ -350,25 +372,29 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
 
   QObject::connect(playback.stepForwardButton, &QToolButton::clicked, this,
                    advanceOneBar);
+  QObject::connect(playback.stepBackButton, &QToolButton::clicked, this,
+                   [this, stopPlayback, renderResult, replaySession, chart,
+                    updateLegacyProgress, updateLegacyPortfolio]() {
+                     stopPlayback();
+                     if (state_->resultMode) {
+                       if (state_->resultReplay != nullptr &&
+                           state_->resultReplay->stepBack()) {
+                         renderResult();
+                       }
+                       return;
+                     }
+                     if (!replaySession->stepBack()) {
+                       return;
+                     }
+                     chart.chartView->setBarWindow(
+                         replaySession->visibleBars());
+                     updateLegacyProgress();
+                     updateLegacyPortfolio();
+                   });
   QObject::connect(
-      playback.stepBackButton, &QToolButton::clicked, this, [=, this]() {
-        stopPlayback();
-        if (state_->resultMode) {
-          if (state_->resultReplay != nullptr &&
-              state_->resultReplay->stepBack()) {
-            renderResult();
-          }
-          return;
-        }
-        if (!replaySession->stepBack()) {
-          return;
-        }
-        chart.chartView->setBarWindow(replaySession->visibleBars());
-        updateLegacyProgress();
-        updateLegacyPortfolio();
-      });
-  QObject::connect(
-      playback.playPauseButton, &QToolButton::clicked, this, [=, this]() {
+      playback.playPauseButton, &QToolButton::clicked, this,
+      [this, replayTimer, stopPlayback, renderResult, setPlaying, advanceOneBar,
+       playback, replaySession, setup, resetVisibleReplay]() {
         if (replayTimer->isActive()) {
           stopPlayback();
           return;
@@ -421,7 +447,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   addShortcut(QKeySequence{Qt::Key_Space}, playback.playPauseButton);
   addShortcut(QKeySequence{Qt::Key_Right}, playback.stepForwardButton);
   QObject::connect(playback.speedCombo, &QComboBox::currentTextChanged, this,
-                   [=](const QString &speed) {
+                   [replayTimer](const QString &speed) {
                      replayTimer->setInterval(timerIntervalForSpeed(speed));
                    });
   QObject::connect(setup.loadButton, &QPushButton::clicked, this, reloadBars);
@@ -431,14 +457,14 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
                    reloadBars);
   QObject::connect(setup.startDate, &QDateEdit::dateChanged, this, reloadBars);
   QObject::connect(setup.endDate, &QDateEdit::dateChanged, this, reloadBars);
-  QObject::connect(setup.initialCapital,
-                   qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-                   [=, this](const double capital) {
-                     replaySession->setInitialCapital(capital);
-                     if (!state_->resultMode) {
-                       updateLegacyPortfolio();
-                     }
-                   });
+  QObject::connect(
+      setup.initialCapital, qOverload<double>(&QDoubleSpinBox::valueChanged),
+      this, [this, replaySession, updateLegacyPortfolio](const double capital) {
+        replaySession->setInitialCapital(capital);
+        if (!state_->resultMode) {
+          updateLegacyPortfolio();
+        }
+      });
   QObject::connect(playback.zoomOutButton, &QToolButton::clicked,
                    chart.chartView, &QtChartsCandlestickView::zoomOut);
   QObject::connect(playback.zoomInButton, &QToolButton::clicked,
@@ -446,7 +472,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   QObject::connect(playback.zoomResetButton, &QToolButton::clicked,
                    chart.chartView, &QtChartsCandlestickView::resetZoom);
 
-  state_->requestOpen = [=, this](const QString &requestedId) {
+  state_->requestOpen = [this, setup, stopPlayback,
+                         renderResult](const QString &requestedId) {
     const auto resultId = requestedId.trimmed();
     if (resultId.isEmpty()) {
       setup.resultStatusLabel->setText(tr("Select a saved result"));
@@ -481,7 +508,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
         std::make_unique<QFutureWatcher<State::OpenResult>>(this).release();
     QObject::connect(
         watcher, &QFutureWatcher<State::OpenResult>::finished, this,
-        [=, this]() {
+        [this, watcher, generation, setup, resultId, renderResult]() {
           const auto opened = watcher->result();
           watcher->deleteLater();
           if (generation != state_->generation) {
@@ -520,15 +547,16 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     watcher->setFuture(future);
   };
 
-  QObject::connect(
-      setup.openResultButton, &QPushButton::clicked, this,
-      [=, this]() { state_->requestOpen(setup.resultCombo->currentText()); });
+  QObject::connect(setup.openResultButton, &QPushButton::clicked, this,
+                   [this, setup]() {
+                     state_->requestOpen(setup.resultCombo->currentText());
+                   });
   QObject::connect(
       setup.resultCombo, &QComboBox::textActivated, this,
-      [=, this](const QString &resultId) { state_->requestOpen(resultId); });
+      [this](const QString &resultId) { state_->requestOpen(resultId); });
   QObject::connect(
       setup.resultTimeframeCombo, &QComboBox::currentIndexChanged, this,
-      [=, this](const int) {
+      [this](const int) {
         if (state_->resultMode && state_->resultReplay != nullptr) {
           state_->requestOpen(
               QString::fromStdString(state_->resultReplay->resultId()));
@@ -537,7 +565,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
 
   QObject::connect(
       playback.seekSlider, &QSlider::valueChanged, this,
-      [=, this](const int index) {
+      [this, stopPlayback, renderResult](const int index) {
         if (!state_->resultMode || state_->resultReplay == nullptr ||
             index < 0 ||
             static_cast<std::size_t>(index) ==
@@ -556,7 +584,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
       std::make_unique<QFutureWatcher<State::CatalogResult>>(this).release();
   QObject::connect(
       catalogWatcher, &QFutureWatcher<State::CatalogResult>::finished, this,
-      [=, this]() {
+      [this, catalogWatcher, setup]() {
         const auto catalog = catalogWatcher->result();
         catalogWatcher->deleteLater();
         if (!catalog.ok()) {

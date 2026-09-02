@@ -11,18 +11,16 @@
 #include <sqlite3.h>
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <limits>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <random>
-#include <ranges>
-#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -35,12 +33,16 @@ namespace {
 constexpr auto schemaVersion = 1;
 constexpr std::string_view numericPolicy = "fixed-point-v1";
 constexpr std::string_view aggregationPolicy = "utcCalendarDayV1";
-std::atomic<testing::FailurePoint> failurePoint{testing::FailurePoint::none};
+
+std::atomic<testing::FailurePoint> &configuredFailurePoint() {
+  static std::atomic<testing::FailurePoint> value{testing::FailurePoint::none};
+  return value;
+}
 
 bool consumeFailure(const testing::FailurePoint point) noexcept {
   auto expected = point;
-  return failurePoint.compare_exchange_strong(expected,
-                                              testing::FailurePoint::none);
+  return configuredFailurePoint().compare_exchange_strong(
+      expected, testing::FailurePoint::none);
 }
 
 core::Error storageError(std::string message) {
@@ -276,8 +278,11 @@ std::vector<std::string> splitUniverse(const std::string_view joined) {
 
 std::string textColumn(sqlite3_stmt *statement, const int column) {
   const auto *value = sqlite3_column_text(statement, column);
-  return value == nullptr ? std::string{}
-                          : std::string{reinterpret_cast<const char *>(value)};
+  if (value == nullptr) {
+    return {};
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): SQLite
+  return std::string{reinterpret_cast<const char *>(value)};
 }
 
 std::optional<std::int64_t> optionalIntegerColumn(sqlite3_stmt *statement,
@@ -301,6 +306,7 @@ void appendFrame(std::string &bytes, const char tag,
   bytes.append(value);
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): typed canonical frame
 void appendInteger(std::string &bytes, const char tag,
                    const std::int64_t value) {
   std::string encoded;
@@ -393,7 +399,7 @@ core::Result<void> createResultSchema(Database &database,
                                       const RunDescriptor &descriptor,
                                       const std::string &resultId) {
   for (
-      const auto sql : {
+      const auto *const sql : {
           "PRAGMA journal_mode=WAL",
           "PRAGMA synchronous=FULL",
           "PRAGMA foreign_keys=ON",
@@ -501,10 +507,13 @@ core::Result<void> createResultSchema(Database &database,
   return {};
 }
 
-core::Result<OpenedResult> readResultFile(const std::filesystem::path &path,
-                                          const std::filesystem::path &dataRoot,
-                                          const bool validateData,
-                                          const bool allowRunning = false) {
+// clang-format off
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): parser
+core::Result<OpenedResult> readResultFile(
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): store paths
+    const std::filesystem::path &path, const std::filesystem::path &dataRoot,
+    const bool validateData, const bool allowRunning = false) {
+  // clang-format on
   auto database = openDatabase(path, true);
   if (!database.ok()) {
     return core::makeError(core::ErrorCode::schemaMismatch,
@@ -683,7 +692,7 @@ core::Result<void> initializeCatalog(const std::filesystem::path &root) {
   if (!database.ok()) {
     return database.error();
   }
-  for (const auto sql : {
+  for (const auto *const sql : {
            "PRAGMA journal_mode=WAL",
            "PRAGMA synchronous=FULL",
            "CREATE TABLE IF NOT EXISTS results(result_id TEXT PRIMARY KEY, "
@@ -731,8 +740,12 @@ core::Result<void> deleteCatalog(const std::filesystem::path &root,
   return statement.done();
 }
 
-core::Result<void> recoverStaging(const std::filesystem::path &root,
-                                  const std::filesystem::path &dataStore) {
+// clang-format off
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): recovery
+core::Result<void> recoverStaging(
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): store paths
+    const std::filesystem::path &root, const std::filesystem::path &dataStore) {
+  // clang-format on
   std::error_code iterationError;
   for (const auto &entry :
        std::filesystem::directory_iterator(root / "Staging", iterationError)) {
@@ -856,9 +869,13 @@ core::Result<void> recoverStaging(const std::filesystem::path &root,
 
 namespace testing {
 
-void failNext(const FailurePoint point) noexcept { failurePoint.store(point); }
+void failNext(const FailurePoint point) noexcept {
+  configuredFailurePoint().store(point);
+}
 
-void clearFailure() noexcept { failurePoint.store(FailurePoint::none); }
+void clearFailure() noexcept {
+  configuredFailurePoint().store(FailurePoint::none);
+}
 
 } // namespace testing
 
@@ -950,9 +967,10 @@ ResultWriter::append(const std::vector<CanonicalRecord> &records) {
 }
 
 core::Result<FinalizedResult>
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): transaction
 ResultWriter::finalizeAndPromote(const RunStatus status,
                                  const FinalSummary &summary,
-                                 std::string terminalReason) {
+                                 const std::string &terminalReason) {
   if (impl_->finalized || status == RunStatus::running ||
       (status == RunStatus::completed &&
        (!summary.finalEquityMicrodollars.has_value() ||
@@ -1077,7 +1095,8 @@ ResultStore::open(const std::filesystem::path &root,
                            "Result and Data store paths are required");
   }
   try {
-    for (const auto name : {"Staging", "Results", "Trash", "Quarantine"}) {
+    for (const auto *const name :
+         {"Staging", "Results", "Trash", "Quarantine"}) {
       std::filesystem::create_directories(root / name);
     }
   } catch (const std::filesystem::filesystem_error &error) {
@@ -1103,11 +1122,12 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
     return validated.error();
   }
   for (int attempt = 0; attempt < 8; ++attempt) {
-    const auto id = allocateResultId();
-    const auto stagingPath = root_ / "Staging" / (id + ".bteresult");
+    const auto resultId = allocateResultId();
+    const auto stagingPath = root_ / "Staging" / (resultId + ".bteresult");
     if (std::filesystem::exists(stagingPath) ||
-        std::filesystem::exists(root_ / "Results" / (id + ".bteresult")) ||
-        std::filesystem::exists(root_ / "Trash" / (id + ".bteresult"))) {
+        std::filesystem::exists(root_ / "Results" /
+                                (resultId + ".bteresult")) ||
+        std::filesystem::exists(root_ / "Trash" / (resultId + ".bteresult"))) {
       continue;
     }
     auto database = openDatabase(stagingPath);
@@ -1117,7 +1137,7 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
     if (consumeFailure(testing::FailurePoint::schemaCreation)) {
       return injectedFailure("schema creation");
     }
-    auto schema = createResultSchema(*database.value(), descriptor, id);
+    auto schema = createResultSchema(*database.value(), descriptor, resultId);
     if (!schema.ok()) {
       return schema.error();
     }
@@ -1125,7 +1145,7 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
     impl->root = root_;
     impl->dataStore = dataStore_;
     impl->stagingPath = stagingPath;
-    impl->id = id;
+    impl->id = resultId;
     impl->descriptor = descriptor;
     impl->database = std::move(database).value();
     return std::make_unique<ResultWriter>(ResultWriter::ConstructionKey{},
@@ -1146,10 +1166,10 @@ core::Result<std::vector<ResultSummary>> ResultStore::list() const {
     if (!entry.is_regular_file() || entry.path().extension() != ".bteresult") {
       continue;
     }
-    const auto id = entry.path().stem().string();
+    const auto resultId = entry.path().stem().string();
     auto opened = readResultFile(entry.path(), dataStore_, true);
     if (!opened.ok()) {
-      summaries.push_back({.resultId = id,
+      summaries.push_back({.resultId = resultId,
                            .canonicalResultHash = {},
                            .status = RunStatus::incomplete,
                            .savedUtcMillis = 0,
@@ -1158,7 +1178,7 @@ core::Result<std::vector<ResultSummary>> ResultStore::list() const {
       continue;
     }
     summaries.push_back(
-        {.resultId = id,
+        {.resultId = resultId,
          .canonicalResultHash = opened.value().canonicalResultHash,
          .status = opened.value().status,
          .savedUtcMillis = opened.value().savedUtcMillis,
@@ -1252,6 +1272,7 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
 }
 
 core::Result<FinalizedResult>
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): transaction
 ResultStore::importResult(const std::filesystem::path &source) const {
   if (source.empty() || !std::filesystem::is_regular_file(source)) {
     return core::makeError(core::ErrorCode::notFound,

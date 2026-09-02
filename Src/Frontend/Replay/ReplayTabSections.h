@@ -10,10 +10,10 @@
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QSlider>
 #include <QTableWidget>
 #include <QToolButton>
 #include <QWidget>
+#include <QtWidgets/qslider.h>
 
 namespace bte::frontend {
 

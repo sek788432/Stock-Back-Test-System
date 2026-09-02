@@ -45,13 +45,13 @@ void appendBigEndian(std::vector<std::byte> &bytes, const std::uint64_t value) {
 
 } // namespace
 
-std::string sha256(const std::span<const std::byte> input) {
-  std::vector<std::byte> padded{input.begin(), input.end()};
+std::string sha256(const std::span<const std::byte> bytes) {
+  std::vector<std::byte> padded{bytes.begin(), bytes.end()};
   padded.push_back(std::byte{0x80});
   while ((padded.size() + sizeof(std::uint64_t)) % 64 != 0) {
     padded.push_back(std::byte{0});
   }
-  appendBigEndian(padded, static_cast<std::uint64_t>(input.size()) * 8U);
+  appendBigEndian(padded, static_cast<std::uint64_t>(bytes.size()) * 8U);
 
   std::array<std::uint32_t, 8> hash{0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U,
                                     0xa54ff53aU, 0x510e527fU, 0x9b05688cU,
@@ -60,54 +60,58 @@ std::string sha256(const std::span<const std::byte> input) {
   for (std::size_t chunk = 0; chunk < padded.size(); chunk += 64) {
     std::array<std::uint32_t, 64> words{};
     for (std::size_t index = 0; index < 16; ++index) {
-      words[index] = readBigEndianWord(padded, chunk + index * 4);
+      words.at(index) = readBigEndianWord(padded, chunk + index * 4);
     }
     for (std::size_t index = 16; index < words.size(); ++index) {
-      const auto s0 = std::rotr(words[index - 15], 7) ^
-                      std::rotr(words[index - 15], 18) ^
-                      (words[index - 15] >> 3U);
-      const auto s1 = std::rotr(words[index - 2], 17) ^
-                      std::rotr(words[index - 2], 19) ^
-                      (words[index - 2] >> 10U);
-      words[index] = words[index - 16] + s0 + words[index - 7] + s1;
+      const auto sigmaZero = std::rotr(words.at(index - 15), 7) ^
+                             std::rotr(words.at(index - 15), 18) ^
+                             (words.at(index - 15) >> 3U);
+      const auto sigmaOne = std::rotr(words.at(index - 2), 17) ^
+                            std::rotr(words.at(index - 2), 19) ^
+                            (words.at(index - 2) >> 10U);
+      words.at(index) =
+          words.at(index - 16) + sigmaZero + words.at(index - 7) + sigmaOne;
     }
 
-    auto a = hash[0];
-    auto b = hash[1];
-    auto c = hash[2];
-    auto d = hash[3];
-    auto e = hash[4];
-    auto f = hash[5];
-    auto g = hash[6];
-    auto h = hash[7];
+    auto workingA = hash.at(0);
+    auto workingB = hash.at(1);
+    auto workingC = hash.at(2);
+    auto workingD = hash.at(3);
+    auto workingE = hash.at(4);
+    auto workingF = hash.at(5);
+    auto workingG = hash.at(6);
+    auto workingH = hash.at(7);
 
     for (std::size_t index = 0; index < words.size(); ++index) {
-      const auto sum1 = std::rotr(e, 6) ^ std::rotr(e, 11) ^ std::rotr(e, 25);
-      const auto choose = (e & f) ^ ((~e) & g);
-      const auto temp1 =
-          h + sum1 + choose + roundConstants[index] + words[index];
-      const auto sum0 = std::rotr(a, 2) ^ std::rotr(a, 13) ^ std::rotr(a, 22);
-      const auto majority = (a & b) ^ (a & c) ^ (b & c);
-      const auto temp2 = sum0 + majority;
+      const auto sumOne = std::rotr(workingE, 6) ^ std::rotr(workingE, 11) ^
+                          std::rotr(workingE, 25);
+      const auto choose = (workingE & workingF) ^ ((~workingE) & workingG);
+      const auto tempOne = workingH + sumOne + choose +
+                           roundConstants.at(index) + words.at(index);
+      const auto sumZero = std::rotr(workingA, 2) ^ std::rotr(workingA, 13) ^
+                           std::rotr(workingA, 22);
+      const auto majority =
+          (workingA & workingB) ^ (workingA & workingC) ^ (workingB & workingC);
+      const auto tempTwo = sumZero + majority;
 
-      h = g;
-      g = f;
-      f = e;
-      e = d + temp1;
-      d = c;
-      c = b;
-      b = a;
-      a = temp1 + temp2;
+      workingH = workingG;
+      workingG = workingF;
+      workingF = workingE;
+      workingE = workingD + tempOne;
+      workingD = workingC;
+      workingC = workingB;
+      workingB = workingA;
+      workingA = tempOne + tempTwo;
     }
 
-    hash[0] += a;
-    hash[1] += b;
-    hash[2] += c;
-    hash[3] += d;
-    hash[4] += e;
-    hash[5] += f;
-    hash[6] += g;
-    hash[7] += h;
+    hash.at(0) += workingA;
+    hash.at(1) += workingB;
+    hash.at(2) += workingC;
+    hash.at(3) += workingD;
+    hash.at(4) += workingE;
+    hash.at(5) += workingF;
+    hash.at(6) += workingG;
+    hash.at(7) += workingH;
   }
 
   std::ostringstream output;

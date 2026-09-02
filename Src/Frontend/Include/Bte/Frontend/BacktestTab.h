@@ -4,6 +4,7 @@
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
 
+#include <QObject>
 #include <QString>
 #include <QWidget>
 

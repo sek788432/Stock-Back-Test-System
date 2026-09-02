@@ -6,16 +6,33 @@
 #include "ResultStoreTestHooks.h"
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace {
+
+void executeSql(const std::filesystem::path &path, const std::string &sql) {
+  sqlite3 *rawDatabase = nullptr;
+  ASSERT_EQ(sqlite3_open(path.string().c_str(), &rawDatabase), SQLITE_OK);
+  const auto database =
+      std::unique_ptr<sqlite3, decltype(&sqlite3_close)>{rawDatabase,
+                                                        &sqlite3_close};
+  char *rawMessage = nullptr;
+  const auto status =
+      sqlite3_exec(database.get(), sql.c_str(), nullptr, nullptr, &rawMessage);
+  const auto message =
+      rawMessage == nullptr ? std::string{} : std::string{rawMessage};
+  sqlite3_free(rawMessage);
+  ASSERT_EQ(status, SQLITE_OK) << message;
+}
 
 class ResultStoreFixture : public testing::Test {
 protected:
@@ -105,6 +122,110 @@ protected:
   std::filesystem::path root_;
   bte::data::DataSelectionIdentity selection_;
 };
+
+TEST_F(ResultStoreFixture, rejectsInvalidStoreDescriptorAndLifecycleInputs) {
+  const auto emptyRoot = bte::results::ResultStore::open({}, root_ / "Data");
+  ASSERT_FALSE(emptyRoot.ok());
+  EXPECT_EQ(emptyRoot.error().code, bte::core::ErrorCode::invalidArgument);
+  const auto emptyData =
+      bte::results::ResultStore::open(root_ / "Store", {});
+  ASSERT_FALSE(emptyData.ok());
+
+  auto store =
+      bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto invalidDescriptor = descriptor();
+  invalidDescriptor.universe.clear();
+  const auto invalidBegin = store.value()->begin(invalidDescriptor);
+  ASSERT_FALSE(invalidBegin.ok());
+  EXPECT_EQ(invalidBegin.error().code, bte::core::ErrorCode::invalidArgument);
+
+  for (const auto &invalidId : {std::string{}, std::string(32, 'z')}) {
+    EXPECT_FALSE(store.value()->openResult(invalidId).ok());
+    EXPECT_FALSE(store.value()->moveToTrash(invalidId).ok());
+    EXPECT_FALSE(store.value()->restore(invalidId).ok());
+    EXPECT_FALSE(store.value()->purge(invalidId).ok());
+  }
+  EXPECT_FALSE(store.value()->openResult(std::string(32, '0')).ok());
+  EXPECT_FALSE(store.value()->purge(std::string(32, '0')).ok());
+  EXPECT_FALSE(store.value()->importResult({}).ok());
+  EXPECT_FALSE(store.value()->importResult(root_ / "missing.bteresult").ok());
+}
+
+TEST_F(ResultStoreFixture, writerRejectsEmptyOutOfOrderAndPostFinalizeWrites) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  EXPECT_FALSE(writer.value()->append({}).ok());
+
+  auto missingSymbol = records();
+  missingSymbol.front().symbol.clear();
+  EXPECT_FALSE(writer.value()->append(missingSymbol).ok());
+  auto decreasing = records();
+  decreasing[1].timestamp = timestamp("2023-12-31 23:00:00+00:00");
+  EXPECT_FALSE(writer.value()->append(decreasing).ok());
+
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  EXPECT_FALSE(writer.value()
+                   ->finalizeAndPromote(bte::results::RunStatus::completed, {})
+                   .ok());
+  EXPECT_FALSE(writer.value()
+                   ->finalizeAndPromote(
+                       bte::results::RunStatus::failed,
+                       {.finalEquityMicrodollars = 1, .pnlMicrodollars = 1})
+                   .ok());
+  ASSERT_TRUE(writer.value()
+                  ->finalizeAndPromote(
+                      bte::results::RunStatus::completed,
+                      {.finalEquityMicrodollars = 100'009'900'000,
+                       .pnlMicrodollars = 9'900})
+                  .ok());
+  EXPECT_FALSE(writer.value()->append(records()).ok());
+  EXPECT_FALSE(writer.value()
+                   ->finalizeAndPromote(bte::results::RunStatus::failed, {})
+                   .ok());
+}
+
+TEST_F(ResultStoreFixture, persistedSchemaAndCanonicalMutationsFailClosed) {
+  const auto makeResult = [&](const std::filesystem::path &storeRoot) {
+    auto store = bte::results::ResultStore::open(storeRoot, root_ / "Data");
+    EXPECT_TRUE(store.ok()) << store.error().message;
+    auto writer = store.value()->begin(descriptor());
+    EXPECT_TRUE(writer.ok()) << writer.error().message;
+    EXPECT_TRUE(writer.value()->append(records()).ok());
+    auto finalized = writer.value()->finalizeAndPromote(
+        bte::results::RunStatus::completed,
+        {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+    EXPECT_TRUE(finalized.ok()) << finalized.error().message;
+    return std::pair{std::move(store).value(), finalized.value().resultId};
+  };
+
+  const std::vector<std::string> mutations{
+      "UPDATE result_meta SET schema_version=99",
+      "UPDATE result_meta SET numeric_policy='float'",
+      "UPDATE result_meta SET result_id='invalid'",
+      "UPDATE result_meta SET canonical_hash='invalid'",
+      "DELETE FROM run_configuration",
+      "DELETE FROM data_selection",
+      "UPDATE data_spans SET row_count=0",
+      "UPDATE canonical_records SET sequence=7 WHERE sequence=1",
+      "UPDATE canonical_records SET timestamp_ms=0 WHERE sequence=1",
+      "UPDATE summary SET pnl=pnl+1",
+  };
+  for (std::size_t index = 0; index < mutations.size(); ++index) {
+    const auto storeRoot = root_ / ("Mutation" + std::to_string(index));
+    auto [store, resultId] = makeResult(storeRoot);
+    const auto resultPath =
+        storeRoot / "Results" / (resultId + ".bteresult");
+    executeSql(resultPath, mutations[index]);
+    const auto opened = store->openResult(resultId);
+    EXPECT_FALSE(opened.ok()) << mutations[index];
+    EXPECT_EQ(opened.error().code, bte::core::ErrorCode::schemaMismatch)
+        << mutations[index];
+  }
+}
 
 TEST_F(ResultStoreFixture, beginAppendFinalizePromoteListsAndOpensResult) {
   auto store =

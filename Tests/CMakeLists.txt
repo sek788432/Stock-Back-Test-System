@@ -40,7 +40,8 @@ target_link_libraries(
   bte_results_tests
   PRIVATE
     bte::results
-    GTest::gtest_main)
+    GTest::gtest_main
+    SQLite::SQLite3)
 
 target_include_directories(
   bte_results_tests

@@ -9,9 +9,9 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <memory>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -112,6 +112,7 @@ public:
         return core::makeError(core::ErrorCode::internal,
                                "Retention query returned null identity");
       }
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): SQLite
       values.emplace_back(reinterpret_cast<const char *>(text));
     }
   }

@@ -1,9 +1,11 @@
 #pragma once
 
+#include "Bte/Core/Bar.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -113,7 +115,7 @@ public:
   append(const std::vector<CanonicalRecord> &records);
   [[nodiscard]] core::Result<FinalizedResult>
   finalizeAndPromote(RunStatus status, const FinalSummary &summary,
-                     std::string terminalReason = {});
+                     const std::string &terminalReason = {});
 
 private:
   friend class ResultStore;

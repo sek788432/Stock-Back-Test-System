@@ -6,10 +6,14 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -17,6 +21,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -181,7 +186,7 @@ readSourceBars(const std::filesystem::path &path, const std::string &symbol,
       }
     }
 
-    SnapshotBar bar{
+    const SnapshotBar bar{
         .timestamp = parsedTimestamp.value(),
         .openNanodollars = open.value(),
         .highNanodollars = high.value(),
@@ -248,6 +253,7 @@ std::vector<std::byte> encodeSegment(const std::string &symbol,
 core::Result<void> writeBytes(const std::filesystem::path &path,
                               const std::span<const std::byte> bytes) {
   std::ofstream output{path, std::ios::binary | std::ios::trunc};
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): bytes
   output.write(reinterpret_cast<const char *>(bytes.data()),
                static_cast<std::streamsize>(bytes.size()));
   if (!output) {
@@ -273,6 +279,7 @@ readBytes(const std::filesystem::path &path) {
   }
   input.seekg(0, std::ios::beg);
   std::vector<std::byte> bytes(static_cast<std::size_t>(size));
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): bytes
   input.read(reinterpret_cast<char *>(bytes.data()), size);
   if (!input) {
     return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
@@ -302,6 +309,7 @@ core::Result<std::string> readText(const std::span<const std::byte> bytes,
                            "Data Segment text is truncated");
   }
   const auto text =
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): bytes
       std::string{reinterpret_cast<const char *>(bytes.data() + cursor),
                   static_cast<std::size_t>(length.value())};
   cursor += static_cast<std::size_t>(length.value());
@@ -377,9 +385,12 @@ std::string makeManifest(const SnapshotBuildRequest &request,
   return manifest.str();
 }
 
-core::Result<std::vector<SegmentMetadata>>
-parseManifest(const std::string &manifest, std::string &calendarHash,
-              std::string &splitManifestHash) {
+// clang-format off
+core::Result<std::vector<SegmentMetadata>> parseManifest(
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): manifest fields
+    const std::string &manifest, std::string &calendarHash,
+    std::string &splitManifestHash) {
+  // clang-format on
   std::istringstream input{manifest};
   std::string line;
   if (!std::getline(input, line) || line != manifestMagic) {
@@ -495,11 +506,11 @@ buildReleaseSnapshot(const SnapshotBuildRequest &request,
       const auto window =
           std::span<const SnapshotBar>{bars.value()}.subspan(offset, count);
       auto bytes = encodeSegment(symbol, window);
-      const auto id = core::sha256(bytes);
+      const auto segmentId = core::sha256(bytes);
       encodedSegments.push_back(EncodedSegment{
           .metadata = {.ordinal = encodedSegments.size(),
                        .symbol = symbol,
-                       .id = id,
+                       .id = segmentId,
                        .rowCount = count,
                        .firstTimestamp = window.front().timestamp,
                        .lastTimestamp = window.back().timestamp},
@@ -564,6 +575,7 @@ buildReleaseSnapshot(const SnapshotBuildRequest &request,
 
   SnapshotBuildResult result{
       .snapshotId = snapshotId,
+      .segments = {},
       .segmentCount = encodedSegments.size(),
       .barCount = totalBars,
   };
@@ -670,11 +682,13 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::select(
   }
 
   SnapshotSelection selection{
+      .bars = {},
       .identity = {.snapshotId = impl_->snapshotId,
                    .calendarHash = impl_->calendarHash,
                    .splitManifestHash = impl_->splitManifestHash,
                    .timeframe = std::string{hourlyTimeframe},
-                   .profile = std::string{snapshotProfile}},
+                   .profile = std::string{snapshotProfile},
+                   .spans = {}},
   };
   for (const auto &segment : impl_->segments) {
     if (!symbols.contains(segment.metadata.symbol)) {

@@ -267,7 +267,8 @@ std::size_t QtChartsCandlestickView::volumePointCount() const noexcept {
 }
 
 std::size_t QtChartsCandlestickView::markerCount() const noexcept {
-  return static_cast<std::size_t>(buyMarkers_->count() + sellMarkers_->count());
+  return static_cast<std::size_t>(buyMarkers_->count()) +
+         static_cast<std::size_t>(sellMarkers_->count());
 }
 
 void QtChartsCandlestickView::zoomIn() { chart_->zoom(1.2); }

@@ -5,7 +5,9 @@
 #include "Bte/Core/Result.h"
 #include "Bte/Results/ResultStore.h"
 
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -13,7 +15,7 @@
 
 namespace bte::bindings {
 
-enum class ResultReplayTimeframe { hourly, dailyUtc };
+enum class ResultReplayTimeframe : std::uint8_t { hourly, dailyUtc };
 
 struct ResultReplayFill {
   core::Timestamp timestamp;

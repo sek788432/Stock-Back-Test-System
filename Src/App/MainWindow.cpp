@@ -5,6 +5,7 @@
 
 #include <QLabel>
 #include <QMenuBar>
+#include <QObject>
 #include <QStatusBar>
 #include <QString>
 #include <QtCore/Qt>

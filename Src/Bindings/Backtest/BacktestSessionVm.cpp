@@ -3,7 +3,6 @@
 // IWYU pragma: no_include <math>
 
 #include "Bte/Bindings/ReplayDataLoader.h"
-#include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Engine/Backtest.h"
 #include "Bte/Results/ResultStore.h"
@@ -11,7 +10,7 @@
 #include <algorithm> // IWYU pragma: keep
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
+#include <memory>
 #include <optional>
 #include <string> // IWYU pragma: keep
 #include <utility>
@@ -251,7 +250,8 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
     return recorded.value().terminalError.value_or(
         core::makeError(core::ErrorCode::internal, "Recorded Backtest failed"));
   }
-  auto snapshot = toSnapshot(*recorded.value().backtest);
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access): guarded above
+  auto snapshot = toSnapshot(recorded.value().backtest.value());
   snapshot.resultId = recorded.value().persisted.resultId;
   snapshot.canonicalResultHash = recorded.value().persisted.canonicalResultHash;
   return snapshot;

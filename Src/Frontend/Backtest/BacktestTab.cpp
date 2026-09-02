@@ -31,6 +31,7 @@
 #include <QVariant>
 #include <QtConcurrentRun>
 #include <QtCore/Qt>
+#include <QtCore/qtenvironmentvariables.h>
 #include <QtCore/qtimezone.h>
 #include <QtGui/qkeysequence.h>
 #include <algorithm>
@@ -354,6 +355,7 @@ BacktestTab::createApplicationConfigured(QWidget *parent) {
       .strategyHash = std::string(64, '0'),
   };
   return std::make_unique<BacktestTab>(
+      // NOLINTNEXTLINE(bugprone-exception-escape): worker catches failures
       [storage](const bindings::BacktestConfiguration &configuration,
                 const core::CancellationToken &cancellation) {
         return bindings::runPersistedBacktestConfiguration(
