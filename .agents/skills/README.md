@@ -43,6 +43,12 @@ apply even when an agent host does not support skill discovery.
 |---|---|---|
 | [`review`](review/SKILL.md) | Reviewing a branch, pull request, handoff, or uncommitted change set | Complete code, documentation, test-intent, semantic-coverage, and verified-check review across the branch delta and working tree |
 
+## Plan execution
+
+| Skill | Activates when | Enforces |
+|---|---|---|
+| [`implement`](implement/SKILL.md) | Explicitly executing an approved plan, specification, roadmap, or ticket set | Dependency-ordered vertical slices that stay within the repository's applicable CI and Definition of Done gates |
+
 ## How the C++ skills layer with specs
 
 | Question | Primary source |
