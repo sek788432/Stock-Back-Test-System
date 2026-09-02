@@ -24,6 +24,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShortcut>
 #include <QStandardItemModel>
 #include <QStandardPaths>
 #include <QString>
@@ -409,6 +410,16 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
         }
       });
   QObject::connect(replayTimer, &QTimer::timeout, this, advanceOneBar);
+  const auto addShortcut = [this](const QKeySequence &sequence,
+                                  QToolButton *button) {
+    auto *shortcut = std::make_unique<QShortcut>(sequence, this).release();
+    shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    QObject::connect(shortcut, &QShortcut::activated, button,
+                     &QToolButton::click);
+  };
+  addShortcut(QKeySequence{Qt::Key_Left}, playback.stepBackButton);
+  addShortcut(QKeySequence{Qt::Key_Space}, playback.playPauseButton);
+  addShortcut(QKeySequence{Qt::Key_Right}, playback.stepForwardButton);
   QObject::connect(playback.speedCombo, &QComboBox::currentTextChanged, this,
                    [=](const QString &speed) {
                      replayTimer->setInterval(timerIntervalForSpeed(speed));

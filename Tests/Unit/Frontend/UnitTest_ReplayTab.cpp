@@ -40,6 +40,7 @@ private slots:
   void playAdvancesReplay();
   void pauseStopsReplayAdvance();
   void speedSelectionsUpdatePlaybackInterval();
+  void keyboardControlsStepAndTogglePlayback();
   void emptyAndCompletedPlaybackBoundariesRemainStable();
   void rendersNonBlankReplaySnapshot();
   void compactViewportCanScrollToTradeLog();
@@ -348,6 +349,28 @@ void ReplayTabTest::speedSelectionsUpdatePlaybackInterval() {
   QCOMPARE(timer->interval(), 0);
   speedCombo->setCurrentText("1x");
   QCOMPARE(timer->interval(), 1000);
+}
+
+void ReplayTabTest::keyboardControlsStepAndTogglePlayback() {
+  bte::frontend::ReplayTab tab;
+  tab.show();
+  tab.activateWindow();
+  tab.setFocus();
+  QCoreApplication::processEvents();
+  auto *chartView = tab.findChild<bte::frontend::QtChartsCandlestickView *>(
+      "replayCandlestickChartView");
+  auto *timer = tab.findChild<QTimer *>("replayPlaybackTimer");
+  QVERIFY(chartView != nullptr);
+  QVERIFY(timer != nullptr);
+
+  QTest::keyClick(&tab, Qt::Key_Right);
+  QCOMPARE(chartView->candleCount(), 1U);
+  QTest::keyClick(&tab, Qt::Key_Left);
+  QCOMPARE(chartView->candleCount(), 0U);
+  QTest::keyClick(&tab, Qt::Key_Space);
+  QVERIFY(timer->isActive());
+  QTest::keyClick(&tab, Qt::Key_Space);
+  QVERIFY(!timer->isActive());
 }
 
 void ReplayTabTest::emptyAndCompletedPlaybackBoundariesRemainStable() {

@@ -127,6 +127,29 @@ if(BTE_BUILD_QT_APP)
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
   add_executable(
+    bte_result_replay_frontend_tests
+    Unit/Frontend/UnitTest_ResultReplayTab.cpp)
+
+  set_target_properties(
+    bte_result_replay_frontend_tests
+    PROPERTIES AUTOMOC ON)
+
+  target_link_libraries(
+    bte_result_replay_frontend_tests
+    PRIVATE
+      bte::frontend
+      Qt6::Test
+      Qt6::Widgets)
+
+  add_test(
+    NAME bte_result_replay_frontend_tests
+    COMMAND bte_result_replay_frontend_tests -platform offscreen)
+  set_tests_properties(
+    bte_result_replay_frontend_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+  add_executable(
     bte_backtest_frontend_tests
     Unit/Frontend/UnitTest_BacktestTab.cpp)
 
