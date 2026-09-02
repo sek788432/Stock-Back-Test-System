@@ -88,6 +88,7 @@ struct OpenedResult {
   std::string resultId;
   std::string canonicalResultHash;
   RunStatus status = RunStatus::incomplete;
+  std::int64_t savedUtcMillis = 0;
   std::string terminalReason;
   RunDescriptor descriptor;
   std::vector<CanonicalRecord> records;
@@ -141,6 +142,8 @@ public:
   [[nodiscard]] core::Result<std::vector<ResultSummary>> list() const;
   [[nodiscard]] core::Result<OpenedResult>
   openResult(const std::string &resultId) const;
+  [[nodiscard]] core::Result<FinalizedResult>
+  importResult(const std::filesystem::path &source) const;
   [[nodiscard]] core::Result<void>
   moveToTrash(const std::string &resultId) const;
   [[nodiscard]] core::Result<void> restore(const std::string &resultId) const;

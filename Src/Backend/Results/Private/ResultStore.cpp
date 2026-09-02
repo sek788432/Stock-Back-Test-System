@@ -6,10 +6,13 @@
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Data/SegmentRetention.h"
 
+#include "ResultStoreTestHooks.h"
+
 #include <sqlite3.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -32,9 +35,39 @@ namespace {
 constexpr auto schemaVersion = 1;
 constexpr std::string_view numericPolicy = "fixed-point-v1";
 constexpr std::string_view aggregationPolicy = "utcCalendarDayV1";
+std::atomic<testing::FailurePoint> failurePoint{testing::FailurePoint::none};
+
+bool consumeFailure(const testing::FailurePoint point) noexcept {
+  auto expected = point;
+  return failurePoint.compare_exchange_strong(expected,
+                                              testing::FailurePoint::none);
+}
 
 core::Error storageError(std::string message) {
   return core::makeError(core::ErrorCode::internal, std::move(message));
+}
+
+core::Error injectedFailure(const std::string_view operation) {
+  return storageError("Injected Result store failure at " +
+                      std::string{operation});
+}
+
+core::Result<void> moveNoClobber(const std::filesystem::path &source,
+                                 const std::filesystem::path &destination,
+                                 const std::string_view operation) {
+  std::error_code errorCode;
+  std::filesystem::create_hard_link(source, destination, errorCode);
+  if (errorCode) {
+    return storageError(std::string{operation} +
+                        " without clobbering: " + errorCode.message());
+  }
+  std::filesystem::remove(source, errorCode);
+  if (errorCode) {
+    std::error_code rollbackError;
+    std::filesystem::remove(destination, rollbackError);
+    return storageError(std::string{operation} + ": " + errorCode.message());
+  }
+  return {};
 }
 
 class Database final {
@@ -491,7 +524,7 @@ core::Result<OpenedResult> readResultFile(const std::filesystem::path &path,
   prepared = meta.prepare(*database.value(),
                           "SELECT schema_version,result_id,status,"
                           "canonical_hash,terminal_reason,numeric_policy,"
-                          "aggregation_policy FROM result_meta");
+                          "aggregation_policy,saved_utc_ms FROM result_meta");
   if (!prepared.ok() || meta.step() != SQLITE_ROW ||
       sqlite3_column_int(meta.handle(), 0) != schemaVersion ||
       textColumn(meta.handle(), 5) != numericPolicy ||
@@ -503,6 +536,7 @@ core::Result<OpenedResult> readResultFile(const std::filesystem::path &path,
   result.status = static_cast<RunStatus>(sqlite3_column_int(meta.handle(), 2));
   result.canonicalResultHash = textColumn(meta.handle(), 3);
   result.terminalReason = textColumn(meta.handle(), 4);
+  result.savedUtcMillis = sqlite3_column_int64(meta.handle(), 7);
   if (!validResultId(result.resultId) ||
       (result.status == RunStatus::running && !allowRunning) ||
       (result.status != RunStatus::running &&
@@ -710,8 +744,8 @@ core::Result<void> recoverStaging(const std::filesystem::path &root,
       continue;
     }
     auto staged = readResultFile(entry.path(), dataStore, true, true);
-    if (!staged.ok() || staged.value().status != RunStatus::running ||
-        staged.value().records.empty()) {
+    if (!staged.ok() || (staged.value().status == RunStatus::running &&
+                         staged.value().records.empty())) {
       std::error_code quarantineError;
       std::filesystem::rename(entry.path(),
                               root / "Quarantine" / entry.path().filename(),
@@ -723,22 +757,22 @@ core::Result<void> recoverStaging(const std::filesystem::path &root,
       continue;
     }
 
-    constexpr auto reason = "Run interrupted before terminal finalization";
-    const FinalSummary summary;
-    const auto hash =
-        canonicalHash(staged.value().descriptor, staged.value().records,
-                      RunStatus::interrupted, reason, summary);
-    auto database = openDatabase(entry.path());
-    if (!database.ok()) {
-      return database.error();
-    }
-    auto databaseOwner = std::move(database).value();
-    auto begun = databaseOwner->execute("BEGIN IMMEDIATE");
-    if (!begun.ok()) {
-      return begun.error();
-    }
-    const auto saved = nowUtcMillis();
-    {
+    if (staged.value().status == RunStatus::running) {
+      constexpr auto reason = "Run interrupted before terminal finalization";
+      const FinalSummary summary;
+      const auto hash =
+          canonicalHash(staged.value().descriptor, staged.value().records,
+                        RunStatus::interrupted, reason, summary);
+      auto database = openDatabase(entry.path());
+      if (!database.ok()) {
+        return database.error();
+      }
+      auto databaseOwner = std::move(database).value();
+      auto begun = databaseOwner->execute("BEGIN IMMEDIATE");
+      if (!begun.ok()) {
+        return begun.error();
+      }
+      const auto saved = nowUtcMillis();
       Statement summaryStatement;
       auto prepared = summaryStatement.prepare(
           *databaseOwner, "INSERT INTO summary VALUES(NULL,NULL)");
@@ -773,13 +807,20 @@ core::Result<void> recoverStaging(const std::filesystem::path &root,
       if (!checkpointed.ok()) {
         return checkpointed.error();
       }
+      databaseOwner.reset();
     }
-    databaseOwner.reset();
 
     auto validated = readResultFile(entry.path(), dataStore, true);
     if (!validated.ok()) {
       return validated.error();
     }
+    const auto destination = root / "Results" / entry.path().filename();
+    auto promoted = moveNoClobber(entry.path(), destination,
+                                  "Unable to promote recovered Result");
+    if (!promoted.ok()) {
+      return promoted.error();
+    }
+
     std::vector<std::string> segmentIds;
     for (const auto &span : validated.value().descriptor.dataSelection.spans) {
       segmentIds.push_back(span.segmentId);
@@ -797,26 +838,13 @@ core::Result<void> recoverStaging(const std::filesystem::path &root,
       return acquired.error();
     }
 
-    const auto destination = root / "Results" / entry.path().filename();
-    std::error_code promotionError;
-    std::filesystem::create_hard_link(entry.path(), destination,
-                                      promotionError);
-    if (promotionError) {
-      return storageError("Unable to promote recovered Result: " +
-                          promotionError.message());
-    }
-    std::filesystem::remove(entry.path(), promotionError);
-    if (promotionError) {
-      return storageError("Unable to remove recovered staging Result: " +
-                          promotionError.message());
-    }
-    auto cataloged =
-        upsertCatalog(root, {.resultId = validated.value().resultId,
-                             .canonicalResultHash = hash,
-                             .status = RunStatus::interrupted,
-                             .savedUtcMillis = saved,
-                             .available = true,
-                             .unavailableReason = {}});
+    auto cataloged = upsertCatalog(
+        root, {.resultId = validated.value().resultId,
+               .canonicalResultHash = validated.value().canonicalResultHash,
+               .status = validated.value().status,
+               .savedUtcMillis = validated.value().savedUtcMillis,
+               .available = true,
+               .unavailableReason = {}});
     if (!cataloged.ok()) {
       return cataloged.error();
     }
@@ -825,6 +853,14 @@ core::Result<void> recoverStaging(const std::filesystem::path &root,
 }
 
 } // namespace
+
+namespace testing {
+
+void failNext(const FailurePoint point) noexcept { failurePoint.store(point); }
+
+void clearFailure() noexcept { failurePoint.store(FailurePoint::none); }
+
+} // namespace testing
 
 struct ResultWriter::Impl {
   std::filesystem::path root;
@@ -867,6 +903,11 @@ ResultWriter::append(const std::vector<CanonicalRecord> &records) {
   auto begun = impl_->database->execute("BEGIN IMMEDIATE");
   if (!begun.ok()) {
     return begun.error();
+  }
+  if (consumeFailure(testing::FailurePoint::recordTransaction)) {
+    const auto rolledBack = impl_->database->execute("ROLLBACK");
+    static_cast<void>(rolledBack);
+    return injectedFailure("record transaction");
   }
   for (const auto &record : records) {
     Statement statement;
@@ -924,6 +965,9 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
   }
   const auto hash = canonicalHash(impl_->descriptor, impl_->records, status,
                                   terminalReason, summary);
+  if (consumeFailure(testing::FailurePoint::hashFinalization)) {
+    return injectedFailure("hash finalization");
+  }
   auto begun = impl_->database->execute("BEGIN IMMEDIATE");
   if (!begun.ok()) {
     return begun.error();
@@ -966,6 +1010,9 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
     return checkpointed.error();
   }
   impl_->database.reset();
+  if (consumeFailure(testing::FailurePoint::close)) {
+    return injectedFailure("close");
+  }
 
   auto reopened = readResultFile(impl_->stagingPath, impl_->dataStore, true);
   if (!reopened.ok()) {
@@ -988,6 +1035,9 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
   }
 
   const auto destination = impl_->root / "Results" / (impl_->id + ".bteresult");
+  if (consumeFailure(testing::FailurePoint::promotion)) {
+    return injectedFailure("promotion");
+  }
   std::error_code errorCode;
   std::filesystem::create_hard_link(impl_->stagingPath, destination, errorCode);
   if (errorCode) {
@@ -998,6 +1048,9 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
   if (errorCode) {
     return storageError("Unable to remove promoted staging Result: " +
                         errorCode.message());
+  }
+  if (consumeFailure(testing::FailurePoint::catalogVisibility)) {
+    return injectedFailure("catalog visibility");
   }
   auto cataloged = upsertCatalog(impl_->root, {.resultId = impl_->id,
                                                .canonicalResultHash = hash,
@@ -1061,6 +1114,9 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
     if (!database.ok()) {
       return database.error();
     }
+    if (consumeFailure(testing::FailurePoint::schemaCreation)) {
+      return injectedFailure("schema creation");
+    }
     auto schema = createResultSchema(*database.value(), descriptor, id);
     if (!schema.ok()) {
       return schema.error();
@@ -1101,14 +1157,11 @@ core::Result<std::vector<ResultSummary>> ResultStore::list() const {
                            .unavailableReason = opened.error().message});
       continue;
     }
-    const auto saved = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           entry.last_write_time().time_since_epoch())
-                           .count();
     summaries.push_back(
         {.resultId = id,
          .canonicalResultHash = opened.value().canonicalResultHash,
          .status = opened.value().status,
-         .savedUtcMillis = saved,
+         .savedUtcMillis = opened.value().savedUtcMillis,
          .available = true,
          .unavailableReason = {}});
   }
@@ -1139,14 +1192,11 @@ core::Result<void> ResultStore::moveToTrash(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
-  std::error_code errorCode;
-  std::filesystem::rename(root_ / "Results" / (resultId + ".bteresult"),
-                          root_ / "Trash" / (resultId + ".bteresult"),
-                          errorCode);
-  if (errorCode) {
-    return core::makeError(core::ErrorCode::notFound,
-                           "Unable to move Result to Trash: " +
-                               errorCode.message());
+  auto moved = moveNoClobber(root_ / "Results" / (resultId + ".bteresult"),
+                             root_ / "Trash" / (resultId + ".bteresult"),
+                             "Unable to move Result to Trash");
+  if (!moved.ok()) {
+    return moved.error();
   }
   return deleteCatalog(root_, resultId);
 }
@@ -1162,10 +1212,9 @@ core::Result<void> ResultStore::restore(const std::string &resultId) const {
     return opened.error();
   }
   const auto destination = root_ / "Results" / (resultId + ".bteresult");
-  std::error_code errorCode;
-  std::filesystem::rename(source, destination, errorCode);
-  if (errorCode) {
-    return storageError("Unable to restore Result: " + errorCode.message());
+  auto moved = moveNoClobber(source, destination, "Unable to restore Result");
+  if (!moved.ok()) {
+    return moved.error();
   }
   return upsertCatalog(
       root_, {.resultId = resultId,
@@ -1186,6 +1235,11 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::notFound,
                            "Trashed Result is unavailable");
   }
+  std::error_code errorCode;
+  std::filesystem::remove(path, errorCode);
+  if (errorCode) {
+    return storageError("Unable to purge Result: " + errorCode.message());
+  }
   auto retention = data::SegmentRetentionStore::open(dataStore_);
   if (!retention.ok()) {
     return retention.error();
@@ -1194,12 +1248,121 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
   if (!released.ok()) {
     return released.error();
   }
-  std::error_code errorCode;
-  std::filesystem::remove(path, errorCode);
-  if (errorCode) {
-    return storageError("Unable to purge Result: " + errorCode.message());
-  }
   return deleteCatalog(root_, resultId);
+}
+
+core::Result<FinalizedResult>
+ResultStore::importResult(const std::filesystem::path &source) const {
+  if (source.empty() || !std::filesystem::is_regular_file(source)) {
+    return core::makeError(core::ErrorCode::notFound,
+                           "Imported Result source is unavailable");
+  }
+  auto sourceResult = readResultFile(source, dataStore_, true);
+  if (!sourceResult.ok()) {
+    return sourceResult.error();
+  }
+
+  std::string importedId;
+  std::filesystem::path stagingPath;
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    const auto candidate = allocateResultId();
+    const auto candidateStaging =
+        root_ / "Staging" / (candidate + ".bteresult");
+    const auto candidateResult = root_ / "Results" / (candidate + ".bteresult");
+    const auto candidateTrash = root_ / "Trash" / (candidate + ".bteresult");
+    std::error_code copyError;
+    if (std::filesystem::exists(candidateResult) ||
+        std::filesystem::exists(candidateTrash) ||
+        !std::filesystem::copy_file(source, candidateStaging,
+                                    std::filesystem::copy_options::none,
+                                    copyError)) {
+      if (copyError == std::errc::file_exists) {
+        continue;
+      }
+      if (copyError) {
+        return storageError("Unable to stage imported Result: " +
+                            copyError.message());
+      }
+      continue;
+    }
+    importedId = candidate;
+    stagingPath = candidateStaging;
+    break;
+  }
+  if (importedId.empty()) {
+    return storageError("Unable to allocate a unique imported Result ID");
+  }
+
+  auto database = openDatabase(stagingPath);
+  if (!database.ok()) {
+    return database.error();
+  }
+  auto databaseOwner = std::move(database).value();
+  Statement metadata;
+  auto prepared = metadata.prepare(
+      *databaseOwner,
+      "UPDATE result_meta SET result_id=?1,created_utc_ms=?2,saved_utc_ms=?2");
+  const auto saved = nowUtcMillis();
+  if (!prepared.ok() || !metadata.text(1, importedId).ok() ||
+      !metadata.integer(2, saved).ok()) {
+    return databaseOwner->error("Unable to bind imported Result identity");
+  }
+  auto updated = metadata.done();
+  if (!updated.ok()) {
+    return updated.error();
+  }
+  auto checkpointed = databaseOwner->execute("PRAGMA wal_checkpoint(TRUNCATE)");
+  if (!checkpointed.ok()) {
+    return checkpointed.error();
+  }
+  databaseOwner.reset();
+
+  auto validated = readResultFile(stagingPath, dataStore_, true);
+  if (!validated.ok()) {
+    return validated.error();
+  }
+  const auto destination = root_ / "Results" / (importedId + ".bteresult");
+  std::error_code promotionError;
+  std::filesystem::create_hard_link(stagingPath, destination, promotionError);
+  if (promotionError) {
+    return storageError(
+        "Unable to promote imported Result without clobbering: " +
+        promotionError.message());
+  }
+  std::filesystem::remove(stagingPath, promotionError);
+  if (promotionError) {
+    return storageError("Unable to remove imported staging Result: " +
+                        promotionError.message());
+  }
+
+  std::vector<std::string> segmentIds;
+  for (const auto &span : validated.value().descriptor.dataSelection.spans) {
+    segmentIds.push_back(span.segmentId);
+  }
+  std::ranges::sort(segmentIds);
+  const auto uniqueEnd = std::ranges::unique(segmentIds).begin();
+  segmentIds.erase(uniqueEnd, segmentIds.end());
+  auto retention = data::SegmentRetentionStore::open(dataStore_);
+  if (!retention.ok()) {
+    return retention.error();
+  }
+  auto acquired = retention.value()->acquire(importedId, segmentIds);
+  if (!acquired.ok()) {
+    return acquired.error();
+  }
+  auto cataloged = upsertCatalog(
+      root_, {.resultId = importedId,
+              .canonicalResultHash = validated.value().canonicalResultHash,
+              .status = validated.value().status,
+              .savedUtcMillis = saved,
+              .available = true,
+              .unavailableReason = {}});
+  if (!cataloged.ok()) {
+    return cataloged.error();
+  }
+  return FinalizedResult{.resultId = importedId,
+                         .canonicalResultHash =
+                             validated.value().canonicalResultHash};
 }
 
 } // namespace bte::results

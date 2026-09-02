@@ -42,6 +42,11 @@ target_link_libraries(
     bte::results
     GTest::gtest_main)
 
+target_include_directories(
+  bte_results_tests
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private")
+
 gtest_discover_tests(bte_results_tests DISCOVERY_TIMEOUT 30)
 
 add_executable(

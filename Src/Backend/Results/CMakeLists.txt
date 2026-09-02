@@ -2,7 +2,8 @@ add_library(
   bte_results
   STATIC
     Include/Bte/Results/ResultStore.h
-    Private/ResultStore.cpp)
+    Private/ResultStore.cpp
+    Private/ResultStoreTestHooks.h)
 
 add_library(bte::results ALIAS bte_results)
 
