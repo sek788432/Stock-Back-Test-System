@@ -3,8 +3,8 @@
 #include "Bte/Frontend/BacktestTab.h"
 #include "Bte/Frontend/ReplayTab.h"
 
-#include <QLabel>
 #include <QComboBox>
+#include <QLabel>
 #include <QTabWidget>
 #include <QTest>
 

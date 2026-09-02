@@ -356,9 +356,8 @@ BacktestTab::createApplicationConfigured(QWidget *parent) {
   return std::make_unique<BacktestTab>(
       [storage](const bindings::BacktestConfiguration &configuration,
                 const core::CancellationToken &cancellation) {
-        return bindings::runPersistedBacktestConfiguration(configuration,
-                                                            storage,
-                                                            cancellation);
+        return bindings::runPersistedBacktestConfiguration(
+            configuration, storage, cancellation);
       },
       parent);
 }

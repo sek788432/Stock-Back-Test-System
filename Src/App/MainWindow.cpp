@@ -92,7 +92,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   tabs_->addTab(
       makePlaceholderTab(tr("Saved Strategy persistence is planned.")),
       tr("Strategies"));
-  auto backtestOwner = frontend::BacktestTab::createApplicationConfigured(tabs_);
+  auto backtestOwner =
+      frontend::BacktestTab::createApplicationConfigured(tabs_);
   auto *backtest = backtestOwner.release();
   tabs_->addTab(backtest, tr("Backtest"));
   tabs_->addTab(
