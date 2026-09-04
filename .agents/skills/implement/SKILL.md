@@ -1,6 +1,7 @@
 ---
 name: implement
 description: "Execute an approved implementation plan or dependency-ordered ticket set in CI-green slices."
+disable-model-invocation: true
 ---
 
 # Implement
