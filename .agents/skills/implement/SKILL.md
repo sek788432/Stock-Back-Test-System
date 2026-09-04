@@ -1,6 +1,7 @@
 ---
 name: implement
-description: "Use when the user asks to implement an approved plan, specification, roadmap, or dependency-ordered ticket set."
+description: "Execute an approved implementation plan or dependency-ordered ticket set in CI-green slices."
+disable-model-invocation: true
 ---
 
 # Implement
@@ -29,10 +30,18 @@ without dropping required behavior. Ask before changing plan intent.
 
 ## Slice loop
 
+**REQUIRED SUB-SKILL:** Use `tdd` for every code-bearing slice.
+
+For every C++-bearing slice, **REQUIRED SUB-SKILLS:** Use
+`cpp-modern-style`, `cpp-oop-design`, `cpp-performance`,
+`cpp-thread-safety`, and `cpp-static-analysis`. Apply their implementation and
+verification rules before accepting the slice. Record `N/A — <reason>` for a
+skill concern the slice does not affect; loading the skill is not optional.
+
 For each unblocked slice:
 
-1. Mark only that slice in progress. Use `tdd` at the pre-agreed seam: one
-   failing behavior test, minimal implementation, then green.
+1. Mark only that slice in progress. At the pre-agreed seam, write one failing
+   behavior test, add the minimal implementation, then make it green.
 2. During iteration, run the narrowest authoritative tests, typechecking,
    formatting, and analysis that cover the edit.
 3. Before accepting it, run every affected-scope check required by project
@@ -49,10 +58,13 @@ genuine blocker requiring new authority or a material plan decision.
 ## Completion
 
 On the exact submission commit, run every applicable full workflow required
-before CI. Record results and label unrun or external checks accurately. Then
-use `code-review` against the fixed base. Mechanical findings should already be
-resolved, so review can concentrate on test intent, unautomated standards,
-specification fidelity, and design. Review remains mandatory.
+before CI. Record results and label unrun or external checks accurately.
+
+**REQUIRED SUB-SKILL:** Use `code-review` against the fixed base.
+
+Mechanical findings should already be resolved, so review can concentrate on
+test intent, unautomated standards, specification fidelity, and design. Review
+remains mandatory.
 
 Commit and push only when authorized. Report completed slices, evidence, and
 planned or blocked work without claiming completion early.
@@ -63,6 +75,7 @@ planned or blocked work without claiming completion early.
 |---|---|
 | Focused check fails | Fix the current slice; do not advance |
 | Focused checks pass | Run applicable affected-scope checks |
+| Slice touches C++ | Apply all five project `cpp-*` skills |
 | Documented fast gate passes | Treat as interim evidence only |
 | Required full gate fails | Keep the current slice red |
 | All slices complete | Run full required gates on submitted commit, then review |

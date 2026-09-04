@@ -47,7 +47,7 @@ apply even when an agent host does not support skill discovery.
 
 | Skill | Activates when | Enforces |
 |---|---|---|
-| [`implement`](implement/SKILL.md) | Explicitly executing an approved plan, specification, roadmap, or ticket set | Dependency-ordered vertical slices that stay within the repository's applicable CI and Definition of Done gates |
+| [`implement`](implement/SKILL.md) | Explicitly executing an approved implementation plan or dependency-ordered ticket set | Dependency-ordered vertical slices that stay within applicable CI and Definition of Done gates, with all five project `cpp-*` skills applied to C++ slices |
 
 ## How the C++ skills layer with specs
 
