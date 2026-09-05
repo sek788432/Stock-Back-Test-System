@@ -5,8 +5,9 @@ Core, Data, streaming Indicators, the Selectable Strategy path, the bar-only
 Replay, and the limited Engine build in the default preset. Bindings, Frontend,
 and App targets are implemented behind `BTE_BUILD_QT_APP`, including the
 starter and Selectable Conditions Backtest page. General strategy execution,
-broker/accounting/metrics, and canonical result persistence described in Specs
-05 and 07 remain planned.
+broker/accounting/metrics, and canonical result persistence described in
+[`Specs/StrategyAuthoring.md`](Specs/StrategyAuthoring.md) and
+[`Specs/EngineReplayPnL.md`](Specs/EngineReplayPnL.md) remain planned.
 
 ## Prerequisites
 
@@ -64,7 +65,17 @@ cmake --build --preset dev-sanitize
 ctest --preset dev-sanitize
 ```
 
-MSVC sanitizers are not enabled by this preset; use Visual Studio’s `/fsanitize` options if you need them on Windows.
+ThreadSanitizer is a separate preset because its runtime cannot be combined
+with ASan/UBSan:
+
+```bash
+cmake --preset dev-tsan
+cmake --build --preset dev-tsan
+ctest --preset dev-tsan
+```
+
+These presets support Clang/GNU. A checked-in MSVC sanitizer workflow is not
+available.
 
 ## Manual configure (no preset)
 
@@ -80,12 +91,13 @@ cd Output && ctest --output-on-failure
 | ------------------ | ------- | -------------------------------------------- |
 | `BTE_BUILD_TESTS`  | `ON`    | Fetch Google Test and build `Tests/` targets |
 | `BTE_SANITIZERS`   | `OFF`   | ASan/UBSan on Clang/GNU when set to `ON`     |
+| `BTE_THREAD_SANITIZER` | `OFF` | TSan on Clang/GNU; mutually exclusive with `BTE_SANITIZERS` |
 | `BTE_BUILD_QT_APP` | `OFF`   | Build the optional Qt desktop app shell and frontend smoke tests |
 | `BTE_COVERAGE`     | `OFF`   | Add gcov-compatible test coverage instrumentation |
 
 The `analysis` and `coverage` presets back the merge-blocking quality jobs.
 Analyzer and changed-code coverage commands are documented in
-[`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7.
+[`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) §7.
 
 Before pushing C++ work or requesting CI, run the complete local equivalents on
 the committed revision:
@@ -129,13 +141,13 @@ configuring.
 | Path                         | Role                                              |
 | ---------------------------- | ------------------------------------------------- |
 | `CMakeLists.txt`             | Root project, optional tests, FetchContent (GTest) |
-| `CMakePresets.json`        | `dev`, `qt-dev`, `dev-sanitize`, `analysis`, `coverage`, `release` |
+| `CMakePresets.json`        | `dev`, `qt-dev`, `dev-sanitize`, `dev-tsan`, `analysis`, `coverage`, `release` |
 | `Output/<preset>/`        | CMake binary directory (gitignored; e.g. `Output/dev`) |
 | `CMake/CompilerWarnings.cmake` | Shared warning flags                            |
-| `CMake/Sanitizers.cmake`   | ASan/UBSan when `BTE_SANITIZERS=ON`               |
+| `CMake/Sanitizers.cmake`   | ASan/UBSan or TSan instrumentation                 |
 | `Src/Backend/Core/Include/Bte/Core/` | Public headers (e.g. `Bar.h`)                       |
 | `Src/Backend/Core/Private/`           | Implementation `.cpp` files for Core              |
-| `Tests/`                   | Google Test sources (`UnitTest_<Thing>.cpp`; see Docs/Specs/03 §1) |
+| `Tests/`                   | Google Test sources (`UnitTest_<Thing>.cpp`; see `Docs/Specs/BackendCore.md` §2) |
 
 ## Turning tests off
 

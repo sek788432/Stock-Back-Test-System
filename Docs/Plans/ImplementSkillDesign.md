@@ -18,7 +18,8 @@ smallest dependency-ordered slices that deliver verifiable behavior.
 For each slice, the agent:
 
 1. defines the slice's acceptance evidence and applicable CI checks;
-2. implements it test-first at the planned seam;
+2. applies the repository's impact-specific test contract at the planned seam,
+   using red-first TDD for behavior changes and bug fixes;
 3. applies all five project `cpp-*` skills when the slice touches C++;
 4. runs focused checks during development;
 5. runs the broader applicable checks before accepting the slice;
@@ -73,12 +74,12 @@ vertical slices, refuse to begin later slices while the current one is red,
 and report CI status without confusing planned checks with enforced gates.
 
 After behavioral testing, validate the standard skill fields plus the
-repository's explicit-only extension, parse the UI metadata, review the
+repository's explicit-only policy, parse the UI metadata, review the
 complete diff, verify links and catalog consistency, and run the applicable
 documentation checks from the Definition of Done.
 
 ## Scope boundaries
 
 This change does not modify CI, weaken a merge gate, implement product
-features, or require an ADR. It changes only the project workflow used to carry
-out already-authorized plans.
+features, or require an important-decision entry. It changes only the project
+workflow used to carry out already-authorized plans.

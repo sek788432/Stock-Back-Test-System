@@ -32,9 +32,7 @@ Every resource has exactly one owner whose destructor releases it. No exceptions
 | Reader-writer mutex hold | `std::shared_lock` (read), `std::unique_lock` (write) |
 | Thread | `std::jthread` (auto-joins, stop-token aware) |
 | File | `std::ofstream` / `std::ifstream` / `std::fstream` |
-| OS handle (socket, fd, dlopen) | RAII wrapper class with deleted copy + move-only semantics |
-| Lua state, DuckDB connection, etc. | Wrapper class; declare destructor; rule of five |
-| `dlopen` handle | Wrapper that calls `dlclose` in destructor |
+| OS handle required by an implemented module | Narrow move-only RAII wrapper with the documented close operation |
 
 Banned: bare `new`/`delete`, bare `mutex.lock()`, `pthread_create`, `std::thread::detach()` (use `jthread` + `stop_token`), `std::auto_ptr` (gone in C++17).
 
@@ -54,20 +52,57 @@ private:
 };
 ```
 
-Define copy/move/destructor only when wrapping a non-RAII resource (`dlopen`, `lua_State*`, raw OS handle). Then implement **all five** (or `=default` / `=delete` each) — never let the compiler generate one and you write another.
+Define copy/move/destructor only when wrapping a non-RAII resource required by
+an implemented module. Then explicitly default or delete the applicable special
+members and document the ownership contract.
+
+Illustrative wrapper—the names below are not repository APIs:
+
+The platform-specific `closeHandle` operation in this pattern must be
+non-throwing; a destructor or move assignment must not leak a close failure as
+an exception.
+
+```cpp
+class NativeHandle final {
+public:
+    explicit NativeHandle(Handle value) noexcept : value_{value} {}
+    ~NativeHandle() { reset(); }
+
+    NativeHandle(const NativeHandle&) = delete;
+    NativeHandle& operator=(const NativeHandle&) = delete;
+
+    NativeHandle(NativeHandle&& other) noexcept
+        : value_{std::exchange(other.value_, invalidHandle)} {}
+
+    NativeHandle& operator=(NativeHandle&& other) noexcept {
+        if (this != &other) {
+            reset();
+            value_ = std::exchange(other.value_, invalidHandle);
+        }
+        return *this;
+    }
+
+private:
+    void reset() noexcept {
+        if (value_ != invalidHandle) {
+            closeHandle(value_);
+            value_ = invalidHandle;
+        }
+    }
+
+    Handle value_ = invalidHandle;
+};
+```
 
 ## Cross-thread communication
 
 ### Default: pass by value or immutable snapshot
 
-The engine, data layer, and Qt UI run on different threads (Docs/Specs/01 §3). They communicate via:
-
-```cpp
-// from Engine thread → UI thread
-emit barProcessed(BarSnapshot{ /* trivially copyable */ });   // QueuedConnection deep-copies
-```
-
-`BarSnapshot`, `TradeSnapshot`, `PortfolioSnapshot` are trivially copyable values declared in `Bte/Core/Snapshots.h`. Never ship a `shared_ptr<Bar>` across threads to avoid a copy — the snapshot copy is the safety boundary.
+The accepted engine/data/UI model is defined in
+`Docs/Specs/Architecture.md` §4. Verify the checked-in worker and Qt adapter
+types before naming them. Cross-thread delivery uses owned values or immutable
+snapshots through queued delivery; no skill example declares a public snapshot
+header or signal that the repository does not contain.
 
 ### When you must share
 
@@ -79,23 +114,26 @@ If you genuinely need shared mutable state, the rules are:
 4. Use `std::shared_mutex` if reads dominate and writes are rare. Otherwise `std::mutex`.
 5. For one-time init, use `std::call_once` + `std::once_flag`, not double-checked locking.
 
+Illustrative synchronized value—the type names are deliberately generic:
+
 ```cpp
-class IndicatorRegistry {
+class SnapshotCache final {
 public:
-    void registerKind(std::string kind, Factory f) {
-        std::scoped_lock lock(mutex_);              // RAII
-        factories_.insert_or_assign(std::move(kind), std::move(f));
+    void replace(Snapshot snapshot) {
+        std::scoped_lock lock{mutex_};
+        snapshot_ = std::move(snapshot);
     }
 
-    Factory lookup(std::string_view kind) const {
-        std::shared_lock lock(mutex_);
-        auto it = factories_.find(std::string{kind});
-        return it == factories_.end() ? Factory{} : it->second;
+    [[nodiscard]] Snapshot read() const {
+        std::scoped_lock lock{mutex_};
+        return snapshot_;
     }
 
 private:
-    mutable std::shared_mutex mutex_;
-    std::unordered_map<std::string, Factory> factories_;
+    // Synchronization protocol: every access to snapshot_ holds mutex_; this
+    // class acquires no other lock and invokes no callback while it is held.
+    mutable std::mutex mutex_;
+    Snapshot snapshot_;
 };
 ```
 
@@ -114,19 +152,35 @@ Memory order: default to `std::memory_order_seq_cst` (the implicit default). Use
 
 Long-running work uses `std::stop_token` (paired with `std::jthread` or `std::stop_source`):
 
+Check cancellation at bounded intervals and translate it through the actual
+owning module's `bte::core::Result<T>` error contract.
+
 ```cpp
-core::Result<void> runBacktest(std::stop_token stop) {
-    while (auto bar = stream.next()) {
-        if (stop.stop_requested()) {
-            return Error{ErrorCode::cancelled, "user cancelled"};
+enum class ConsumeStatus { completed, cancelled };
+
+template <typename Next, typename Consume>
+[[nodiscard]] ConsumeStatus consumeUntilStopped(std::stop_token stopToken,
+                                                Next next,
+                                                Consume consume) {
+    while (!stopToken.stop_requested()) {
+        auto value = next(stopToken);
+        if (!value.has_value()) {
+            return stopToken.stop_requested() ? ConsumeStatus::cancelled
+                                              : ConsumeStatus::completed;
         }
-        // ...
+        consume(*value, stopToken);
     }
-    return {};
+    return ConsumeStatus::cancelled;
 }
 ```
 
-Lua scripts get cancellation via a debug hook checking `stop_token` (Docs/Specs/05 §4.2).
+This example shows cancellation placement and an explicit outcome. Both
+callbacks must cooperate with the supplied token and return within the
+owning contract's bounded interval. Production code must translate the outcome
+into the owning module's documented `bte::core::Result<T>` cancellation error.
+
+Python worker hooks use the deadline and cooperative-then-forced cancellation
+contract in `Docs/Specs/StrategyAuthoring.md` §4.
 
 ### Qt-specific rules
 
@@ -142,10 +196,10 @@ When you see these in code, fix them:
 
 ```cpp
 // 1. Shared raw pointer with no synchronization
-class Engine {
-    Strategy* strategy_;     // who owns? who reads?
+class WorkerState {
+    State* state_;     // who owns it, and which thread may read it?
 };
-// → make it std::unique_ptr<IStrategy>, owned by exactly one thread.
+// → prefer a value or unique owner confined to one thread.
 
 // 2. Read-modify-write on a non-atomic
 counter_++;                    // race
@@ -184,8 +238,9 @@ catch leaks, undefined behavior, and data races during registered tests. To pass
 1. Every owning resource is RAII (above).
 2. Cycles in `std::shared_ptr` are forbidden. Use `std::weak_ptr` for back-references.
 3. `setParent(...)` in Qt is fine for owning widgets — Qt's parent-child is RAII.
-4. `dlopen` handles closed in plugin manager destructor.
-5. Self-referential lambdas captured by `[this]` must outlive `this` or be invalidated before `this` dies. Use `QPointer` for Qt objects, `std::weak_ptr` otherwise.
+4. Self-referential lambdas captured by `[this]` must outlive `this` or be
+   invalidated before destruction. Use `QPointer` for Qt objects and a justified
+   `std::weak_ptr` only when shared ownership is real.
 
 ## Sanitizer dev workflow
 
@@ -215,4 +270,5 @@ and maintainer approval.
 5. Did you add a `volatile` for synchronization? → use `std::atomic`.
 6. Did both applicable sanitizer presets pass with no reports?
 
-If yes to all, the change is good. Otherwise, fix before committing.
+Resolve every applicable question before committing; a "yes" to items 1–5 is
+a defect, while item 6 requires passing evidence.

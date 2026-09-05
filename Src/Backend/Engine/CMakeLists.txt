@@ -3,10 +3,8 @@ add_library(
   STATIC
     Include/Bte/Engine/Backtest.h
     Include/Bte/Engine/Replay.h
-    Include/Bte/Engine/ResultSnapshotStore.h
     Private/Backtest.cpp
-    Private/Replay.cpp
-    Private/ResultSnapshotStore.cpp)
+    Private/Replay.cpp)
 
 add_library(bte::engine ALIAS bte_engine)
 

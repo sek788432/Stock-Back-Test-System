@@ -19,7 +19,8 @@ Images and `FakeFundamentals.csv` are prototype fixtures only.
 ## Promotion rule
 
 Before implementation, move the accepted behavior into the owning canonical
-spec or an ADR, reconcile it with the managed snapshot and C++ engine, and add
+spec and, when the threshold applies, the living important-decisions document;
+reconcile it with the managed snapshot and C++ engine, and add
 positive, negative, boundary, and regression tests. Do not copy database
 schemas, C++ interfaces, Python sandbox claims, AI-provider calls, or numeric
 defaults from these proposals without that review.

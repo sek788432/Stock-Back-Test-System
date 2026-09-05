@@ -13,9 +13,9 @@ Repository instructions always take precedence over skill guidance.
 | Layer | Canonical location | Purpose |
 |---|---|---|
 | Hard invariants | [`Docs/Governance/AGENTS.md` §2](../../Docs/Governance/AGENTS.md) | Always-read, non-negotiable repository rules |
-| Product and architecture contracts | [`Docs/Specs/`](../../Docs/Specs/README.md) and [`Docs/Decisions/`](../../Docs/Decisions/README.md) | Defines required behavior and accepted decisions |
+| Product and architecture contracts | [`Docs/Specs/`](../../Docs/Specs/README.md) and [`ImportantDecisions.md`](../../Docs/Decisions/ImportantDecisions.md) | Defines required behavior and active important decisions |
 | Task-specific workflows | This `.agents/skills/` directory | Detailed guidance loaded only when a skill matches the task |
-| Mechanical enforcement (currently partial) | [`.github/workflows/`](../../.github/workflows/) and [`tools/`](../../tools/) | Detects the covered subset without relying on agent memory |
+| Mechanical enforcement (currently partial) | [`.github/workflows/`](../../.github/workflows/) and [`Tools/`](../../Tools/) | Detects the covered subset without relying on agent memory |
 
 Do not make a non-negotiable rule live only in a skill. Put its concise,
 authoritative form in `Docs/Governance/AGENTS.md`, keep implementation detail in
@@ -54,32 +54,48 @@ apply even when an agent host does not support skill discovery.
 | Question | Primary source |
 |---|---|
 | How should this C++ loop or API be written? | `cpp-modern-style` |
-| Where does this module belong? | [`Docs/Specs/01_Architecture.md`](../../Docs/Specs/01_Architecture.md) |
-| How should this strategy type plug in? | [`Docs/Specs/05_Strategy_Authoring.md`](../../Docs/Specs/05_Strategy_Authoring.md) and `cpp-oop-design` |
-| What are the CI gates? | [`Docs/Specs/10_CI_Dev_Flow.md`](../../Docs/Specs/10_CI_Dev_Flow.md) |
+| Where does this module belong? | [`Docs/Specs/Architecture.md`](../../Docs/Specs/Architecture.md) |
+| How should this strategy type plug in? | [`Docs/Specs/StrategyAuthoring.md`](../../Docs/Specs/StrategyAuthoring.md) and `cpp-oop-design` |
+| What are the CI gates? | [`Docs/Specs/CiDevFlow.md`](../../Docs/Specs/CiDevFlow.md) |
 | Is this code thread-safe? | `cpp-thread-safety` |
 | Does this allocation matter? | `cpp-performance` |
 | What does this analyzer warning mean? | `cpp-static-analysis` |
 
-## Vendored Matt Pocock collection
+## Retained shared workflows
+
+| Skill | Purpose |
+|---|---|
+| [`code-review`](code-review/SKILL.md) | Review a diff independently against repository standards and its originating specification |
+| [`codebase-design`](codebase-design/SKILL.md) | Design deeper module interfaces and seams |
+| [`diagnosing-bugs`](diagnosing-bugs/SKILL.md) | Build a reproducible diagnosis loop |
+| [`domain-modeling`](domain-modeling/SKILL.md) | Maintain domain language and important decisions |
+| [`grill-me`](grill-me/SKILL.md) | Start an explicit maintainer grilling session |
+| [`grill-with-docs`](grill-with-docs/SKILL.md) | Grill a decision while maintaining domain documentation |
+| [`grilling`](grilling/SKILL.md) | Resolve material ambiguity with the maintainer |
+| [`improve-codebase-architecture`](improve-codebase-architecture/SKILL.md) | Find and visualize deep-module architecture opportunities |
+| [`prototype`](prototype/SKILL.md) | Answer a bounded logic or Qt UI design question |
+| [`research`](research/SKILL.md) | Capture primary-source technical research |
+| [`resolving-merge-conflicts`](resolving-merge-conflicts/SKILL.md) | Resolve an active merge or rebase safely |
+| [`tdd`](tdd/SKILL.md) | Develop behavior through a red-green test loop |
+| [`teach`](teach/SKILL.md) | Build a persistent, evidence-based teaching workspace |
+| [`to-spec`](to-spec/SKILL.md) | Turn an established conversation into an issue-tracker specification |
+| [`writing-great-skills`](writing-great-skills/SKILL.md) | Reference the vocabulary and principles for predictable skills |
+
+## Vendored skill provenance
 
 - Source: [mattpocock/skills](https://github.com/mattpocock/skills)
 - Upstream release: `1.1.0`
 - Pinned commit: `2ab958093e83e0ec752e6c1c5932da465bf23e0c`
 - License: MIT; see [`LICENSE.mattpocock-skills`](LICENSE.mattpocock-skills)
-- Included: the 22 stable skills in upstream's Engineering and Productivity
-  catalogs
-- Excluded: deprecated, in-progress, personal, and miscellaneous skills
+- Retained and adapted: the shared workflows listed above that remain relevant
+  to this repository. Their local guidance is derived from the pinned snapshot
+  and reconciled with current repository contracts.
+- Removed: optional, overlapping, or repository-inapplicable packages. Git
+  history and the pinned upstream commit preserve their source when needed.
 
-These files are a vendored snapshot. They do not update automatically. Review
-upstream changes and commit a new pinned snapshot deliberately.
-
-The `setup-matt-pocock-skills` skill is installed but has not been run. Invoke
-it explicitly if the repository should adopt the optional issue-tracker,
-triage-label, and domain-document configuration used by that collection.
-
-Local adaptation: `setup-matt-pocock-skills` uses the repository's canonical
-`AGENTS.md` and never creates or edits host-specific instruction files.
+These files are locally adapted from a vendored snapshot. They do not update
+automatically. Review upstream changes and commit a new pin plus any deliberate
+local reconciliation.
 
 ## Invocation and maintenance
 

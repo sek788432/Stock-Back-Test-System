@@ -1,4 +1,4 @@
-# 07 — Engine, Replay, P&L, and Results
+# Engine, Replay, P&L, and Results
 
 The project-owned C++ engine is the sole authority for chronology, orders,
 fills, portfolio accounting, metrics, and durable results. Batch and Paced
@@ -10,16 +10,16 @@ that reads a Backtest Result and never executes a Strategy or engine event.
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | CSV-backed bar loading; forward/back bar stepping; replay clock controls; candlestick/volume presentation; legacy JSON replay-summary persistence/comparison; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice. A selected buy/sell signal queues a whole-share market order for the next actual bar open, with 1 bp adverse slippage; buy cash failures preserve cash and open positions are marked at final close. |
-| **Planned** | Synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, immutable snapshots, canonical hashes, and SQLite `.bteresult`. |
+| **Implemented** | CSV-backed bar loading; forward/back bar stepping; replay clock controls; candlestick presentation; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice. A selected buy/sell signal queues a whole-share market order for the next actual bar open, with 1 bp adverse slippage; buy cash failures preserve cash and open positions are marked at final close. |
+| **Planned** | Volume presentation, synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, immutable snapshots, canonical hashes, and SQLite `.bteresult`. |
 | **Blocked** | Public release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
 
 The current starter and selectable slices are intentionally single-symbol; the
 selectable path supports only a flat position and whole-quantity long entry or
 exit. Neither slice persists a canonical Backtest Result and neither is
 evidence that the complete engine contract below is implemented. The starter
-slice remains single-order. Legacy JSON snapshots are implemented current
-behavior, not the target result contract.
+slice remains single-order. No durable result format is currently implemented;
+the removed legacy JSON summary was not the target result contract.
 
 ### 1.1 Execution modes and scheduling
 
@@ -30,9 +30,8 @@ behavior, not the target result contract.
 - **K-line Replay** reads an existing completed or diagnostic Backtest Result
   and its referenced bars; it never calls Strategy hooks, starts Python, or
   creates new fills.
-- V1 permits one active Backtest by default. A future advanced-concurrency mode
-  must bound runs by CPU and aggregate history budgets and isolate all mutable
-  engine, indicator, and Python-worker state per run.
+- V1 permits one active Backtest. Advanced multi-run concurrency is outside the
+  accepted scope.
 
 ## 2. Canonical event sequence
 
@@ -146,12 +145,26 @@ run/configuration, strategy source, orders, fills, trades, positions, equity,
 fees, margin, corporate actions, strategy-relevant indicator snapshots,
 warnings, logs, and data-segment references.
 
-- Write a staging file transactionally and atomically promote it on finalization.
+- Embed the exact Strategy source or typed plan used by the run. Export warns
+  that embedded source is untrusted and must not be executed merely because a
+  result was opened or imported.
+- Write a same-filesystem staging file transactionally, validate and flush it,
+  then atomically promote it on finalization.
 - Crash recovery produces `Interrupted`, never `Completed`.
 - `Failed`, `Canceled`, `Interrupted`, and `Incomplete` retain diagnostic events but expose no valid final performance metrics.
-- Schema upgrades never rewrite an old result; migration creates a new copy.
-- Imports validate schema, canonical hash, and references. Missing data reports `DataSnapshotUnavailable` rather than substituting data.
-- User deletion moves a result to a 30-day Trash. Permanent purge decrements segment/runtime-profile references and removes only now-unreferenced assets.
+- The schema has explicit major and minor versions. The application reads the
+  current and immediately previous major version. Unknown newer majors fail as
+  `ResultSchemaUnsupported`; compatible minor additions are ignored only when
+  their schema declaration permits it.
+- Migration validates the source and creates a new copy; it never rewrites the
+  original.
+- Imports are untrusted data. They validate size, schema, canonical hash,
+  identifiers, and data references without executing embedded Strategy source.
+  Missing data reports `DataSnapshotUnavailable` rather than substituting data.
+- User deletion moves a result to 30-day Trash. Active and trashed results pin
+  Data Segments. Results never pin Runtime Profiles because replay does not
+  execute source. Purge releases references; unreferenced segments follow the
+  separate Data Trash lifecycle in [`DataLayer.md`](DataLayer.md).
 - K-line Replay reads persisted engine events, indicator snapshots, and
   referenced immutable bars; it does not rerun Python, Strategy hooks, or the
   C++ execution engine.
@@ -167,12 +180,50 @@ paths, SQLite page layout, pacing delays, and UI state are excluded. CI compares
 canonical bytes/hash, not physical SQLite file bytes. An intentional behavior
 change requires a regression test, fixture update, and explanation.
 
-## 10. Metrics
+## 10. Trades and metrics
 
 Completed runs report total return, realized/unrealized P&L, commissions, slippage, borrow cost, exposure, maximum drawdown and duration, trade count, win rate, average win/loss, payoff ratio, expectancy, CAGR, volatility, Sharpe, and Sortino.
 
-- CAGR uses actual elapsed time.
-- Volatility, Sharpe, and Sortino use exchange-session-end returns and 252 sessions/year, avoiding over-counting extended-hours bars.
+- A **Trade** is one flat-to-flat position episode for one symbol. It starts when
+  net quantity leaves zero and ends when it returns to zero. Scale-ins and
+  partial closes belong to that same Trade; an open episode is not a completed
+  Trade for win-rate calculations.
+- Run validation requires strictly positive initial capital and a finite annual
+  risk-free rate greater than `-1`. Invalid values fail the Run Configuration
+  before any metric or engine event. Total return is
+  `(finalEquity / initialEquity) - 1`.
+- CAGR is `(finalEquity / initialEquity)^(365.2425 / elapsedDays) - 1` for a
+  positive elapsed interval and positive endpoint equities; otherwise it is
+  unavailable with a structured reason.
+- Session returns use consecutive exchange-session-end equity values. Annualized
+  volatility is their sample standard deviation times `sqrt(252)` and requires
+  at least two session returns; otherwise it is unavailable.
+- The persisted annual risk-free rate becomes the effective session rate
+  `(1 + annualRate)^(1 / 252) - 1`; session excess return is session return
+  minus that rate. Sharpe is the mean session excess return divided by its sample
+  standard deviation times `sqrt(252)` and requires at least two session
+  returns. Sortino uses the same numerator and
+  `sqrt(sum(min(excessReturn, 0)^2) / sessionReturnCount)` as its downside
+  denominator; it requires at least one session return and at least one strictly
+  negative excess return. Insufficient samples or zero denominators make the
+  ratio unavailable rather than infinite.
+- Maximum drawdown is the greatest `1 - equity / priorPeakEquity` over ordered
+  session-end equity. Duration counts exchange sessions from the peak through
+  recovery, or through the end when unrecovered.
+- Win rate is profitable completed Trades divided by completed Trades. Payoff
+  ratio is mean winning net P&L divided by the absolute mean losing net P&L.
+  Average win and average loss are the arithmetic means of positive and
+  negative net completed-Trade P&L respectively. Expectancy is mean net P&L
+  across completed Trades, and trade count is the number of completed Trades.
+  Empty required sets and zero denominators are unavailable with structured
+  reasons.
+- Realized P&L, unrealized P&L, commission, slippage, and borrow cost are direct
+  sums of their canonical ledger records in `Money`. Slippage cost is the signed
+  adverse difference between the unslipped executable candidate and actual
+  fill, multiplied by fill quantity and normalized through the numeric policy.
+- Exposure is the time-weighted mean of `abs(netMarketValue) / equity` across
+  consecutive canonical slice intervals; intervals with nonpositive equity make
+  the metric unavailable. The final sample has zero duration and adds no weight.
 - Risk-free rate defaults to zero and is persisted per run.
 - Benchmark alpha/beta is **Planned**, not V1.
 - Non-completed runs expose labelled diagnostic values only.
@@ -187,4 +238,4 @@ Completed runs report total return, realized/unrealized P&L, commissions, slippa
   hooks, Python, indicator scheduling, order evaluation, or fill creation.
 - Every bug fix or intentional behavior change requires a regression test that would fail against the old behavior.
 - Performance tests cover the per-slice hot path without weakening correctness tests.
-- A check is merge-blocking only when [`10CiDevFlow.md`](10CiDevFlow.md) marks its implemented gate as required.
+- A check is merge-blocking only when [`CiDevFlow.md`](CiDevFlow.md) marks its implemented gate as required.

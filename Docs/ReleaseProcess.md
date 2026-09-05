@@ -1,11 +1,12 @@
 # Release Process
 
-> **Status:** Target process. Release packaging, signing, managed-runtime assembly, and automated publication are not implemented yet.
+> **Status:** Target process. Release packaging, signing, managed-runtime
+> assembly, and manual publication are not implemented yet.
 
 ## Versioning
 
 - Application releases use semantic versioning.
-- Strategy API, result schema, data manifest, and future native-plugin ABI are versioned independently.
+- Strategy API, result schema, and data manifest are versioned independently.
 - A breaking stored-artifact change requires a migration or an explicit compatibility rejection.
 
 ## Release readiness
@@ -39,6 +40,9 @@ There is no emergency bypass. A bad release is withdrawn or followed by a tested
 - Code signing, notarization, and signed manifest flow.
 - Managed Python-runtime assembly and package lock validation.
 - Managed-data licensing and release validation gates.
-- Automated publication, rollback, and updater/launcher behavior.
+- Manual artifact publication and withdrawal procedure.
 
-See [`Specs/09BuildDistributionLauncher.md`](Specs/09BuildDistributionLauncher.md) for the release contract and [`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) for current gate truth.
+V1 has no updater, launcher, delta patcher, or automated publication contract.
+
+See [`Specs/BuildDistribution.md`](Specs/BuildDistribution.md) for the release
+contract and [`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) for current gate truth.

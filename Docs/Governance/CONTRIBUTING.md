@@ -1,6 +1,8 @@
 # Contributing
 
-Welcome. This is a private team repository (4–8 contributors). Contributions come from invited collaborators and AI agents (Cursor, Codex, Claude Code, etc.) supervised by humans.
+Welcome. Contributions may come from human collaborators or AI agents working
+under human direction; both follow the same repository contracts and review
+requirements.
 
 If you're an **AI agent**, your primary playbook is [`AGENTS.md`](AGENTS.md). Everything below applies to you too, but `AGENTS.md` is more specific about how you should behave.
 
@@ -13,16 +15,19 @@ If you're a **human contributor**, read this file and [`../Onboarding.md`](../On
 1. Pick or open an issue.
 2. Branch from `main`: `feature/<short-name>`, `fix/<short-name>`, etc.
 3. Make small, focused commits with [Conventional Commits](https://www.conventionalcommits.org/) messages.
-4. For non-trivial changes: open an [ADR](../Decisions/) first.
+4. Resolve every ambiguity with the maintainer. Update the [living
+   important-decisions document](../Decisions/ImportantDecisions.md) first when
+   the choice is hard to reverse, surprising without context, and a real
+   trade-off; implemented merge-gate changes always require an entry.
 5. Add positive, negative, and boundary unit tests for every affected public
    behavior; bug fixes and behavior changes also need regression tests
-   ([`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md)).
+   ([`../Specs/CiDevFlow.md`](../Specs/CiDevFlow.md)).
 6. Run the applicable verified local commands from
    [`../DefinitionOfDone.md`](../DefinitionOfDone.md).
 7. Open a PR using the template; fill every section.
 8. Confirm [`../DefinitionOfDone.md`](../DefinitionOfDone.md) passes.
 9. Wait for the required CI and reviews configured in GitHub. Repository files
-   do not prove the current branch-protection or auto-merge settings (`Specs/10`).
+   do not prove the current branch-protection or auto-merge settings (`Specs/CiDevFlow.md`).
 
 ---
 
@@ -31,13 +36,13 @@ If you're a **human contributor**, read this file and [`../Onboarding.md`](../On
 | You want to... | Read |
 |---|---|
 | Set up your dev environment | [`../Onboarding.md`](../Onboarding.md) |
-| Understand the architecture | [`../Specs/00Overview.md`](../Specs/00Overview.md) |
+| Understand the architecture | [`../Specs/Overview.md`](../Specs/Overview.md) |
 | Find the spec for a module | [`../Specs/README.md`](../Specs/README.md) |
 | Know what coding rules apply | [`../../.agents/skills/README.md`](../../.agents/skills/README.md) |
 | Know what "done" looks like | [`../DefinitionOfDone.md`](../DefinitionOfDone.md) |
 | Review someone's PR | [`../ReviewPlaybook.md`](../ReviewPlaybook.md) |
 | Cut a release | [`../ReleaseProcess.md`](../ReleaseProcess.md) |
-| Record a design decision | [`../Decisions/`](../Decisions/) |
+| Record an important design decision | [`../Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md) |
 | Configure AI assistants | [`AGENTS.md`](AGENTS.md) |
 
 ---
@@ -63,12 +68,13 @@ Conventional Commit types we use:
 | `perf` | performance improvement (must include benchmark numbers in body) |
 | `chore` | tooling, deps, CI, build |
 
-Example body for a `perf` change:
+Example body for a `perf` change (use the actual checked-in benchmark or
+documented measurement; the numbers and tool label below are illustrative):
 
 ```
 perf(indicators): avoid heap alloc in RSI update path
 
-Before: 124 ns/op (nanobench, M1, release)
+Before: 124 ns/op (documented benchmark, Apple Silicon, release preset)
 After:   38 ns/op
 Verified determinism fixture unchanged.
 ```
@@ -82,11 +88,10 @@ The binding sources are:
 1. The repository hard rules in [`AGENTS.md`](AGENTS.md).
 2. The repository-specific C++ skills in [`../../.agents/skills/`](../../.agents/skills/README.md).
 
-The checked-in `.clang-tidy` configuration is enforced by the merge-blocking
-static-analysis job. Explicit clang-format enforcement remains planned
-(`Specs/10`).
+The checked-in `.clang-tidy` configuration and full-tree clang-format check are
+enforced by merge-blocking CI jobs (`Specs/CiDevFlow.md`).
 
-Naming (recap from `cpp-modern-style` and [`../Specs/03BackendCore.md`](../Specs/03BackendCore.md) §1):
+Naming (recap from `cpp-modern-style` and [`../Specs/BackendCore.md`](../Specs/BackendCore.md) §2):
 - Variables / methods / namespaces: `lowerCamelCase`.
 - Types: `UpperCamelCase`.
 - Private members: trailing underscore.
@@ -112,13 +117,14 @@ A PR must:
 
 Changed-line and changed-branch coverage are merge gates. Semantic anti-cheat,
 public-behavior parity, and mutation enforcement remain planned. See
-[`../Specs/10CiDevFlow.md`](../Specs/10CiDevFlow.md) for exact status.
+[`../Specs/CiDevFlow.md`](../Specs/CiDevFlow.md) for exact status.
 
 ---
 
 ## Reviewing
 
-We expect a **24-hour first response** on any PR during business days, even if it's just "I'll get to it tomorrow". Hybrid team — async first, but don't leave a PR hanging.
+Repository files do not promise a response-time SLA. Keep review requests and
+responses in the PR, with the complete template and required checks visible.
 
 Reviewer checklist is in [`../ReviewPlaybook.md`](../ReviewPlaybook.md). Authors should self-review using the same checklist before requesting review.
 
@@ -130,29 +136,38 @@ Reviewer checklist is in [`../ReviewPlaybook.md`](../ReviewPlaybook.md). Authors
 |---|---|
 | Bug | GitHub Issue (`bug` template) |
 | Feature idea | GitHub Issue (`feature` template) |
-| Design discussion | ADR PR in [`../Decisions/`](../Decisions/) |
+| Design discussion | Issue or PR discussion; update [`../Decisions/ImportantDecisions.md`](../Decisions/ImportantDecisions.md) when the three-part §5 threshold applies |
 | Code change | Pull Request |
 | Question about a spec | Comment on the spec file in a PR or issue |
-| Quick chat | Team sync chat — but **if it shaped a decision, write it down in an ADR or PR comment.** Verbal decisions don't exist. |
-| Outage on `main` | Sync chat first, issue with `priority:high` immediately after |
+| Quick clarification | Issue or PR discussion on the affected work |
+| Something broken on `main` | Bug issue with reproduction evidence and impact |
 
-The weekly sync is for roadmap and ambiguous questions. Decisions made there are backfilled into ADRs or PR comments same day.
+Important decisions are not complete until the owning spec and living decision
+record, when required, are updated through review.
 
 ---
 
 ## Adding a dependency
 
-See [`AGENTS.md` §6](AGENTS.md). Default answer is no. If yes, ADR + license check + version pin + entry in [`../Decisions/Dependencies.md`](../Decisions/Dependencies.md).
+See [`AGENTS.md` §6](AGENTS.md). Default answer is no. If yes: maintainer
+approval, an important-decision update when the choice meets §5, a license
+check, an exact version pin, and an entry in
+[`../Decisions/Dependencies.md`](../Decisions/Dependencies.md).
 
 ---
 
 ## Security / secrets
 
-- Never commit secrets. `.env` is gitignored; `.env.example` is the canonical placeholder.
-- Databento API keys: each contributor uses their own key in their local `.env`.
-- Code-signing keys, GPG keys, GitHub Actions secrets: managed by the repo lead. Don't reference them from code paths a fork could hit.
+- Never commit secrets. `.env` is gitignored. If a tracked placeholder template
+  is added, it must be `.env.example` and contain no real credentials.
+- Databento API keys: each contributor exports their own key only in the local
+  shell that runs the ingestion command.
+- Code-signing keys and GitHub Actions secrets belong in repository/CI secret
+  storage. Do not expose them to fork-controlled code paths.
 
-If you accidentally commit a secret: rotate it immediately, then `git filter-repo` (or contact the lead) to scrub history. Tell the team.
+If you accidentally commit a secret, rotate it immediately and notify the
+repository maintainer through a private security channel. History rewriting is
+a coordinated incident response, not an ordinary contributor command.
 
 ---
 

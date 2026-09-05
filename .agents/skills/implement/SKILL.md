@@ -1,7 +1,6 @@
 ---
 name: implement
 description: "Execute an approved implementation plan or dependency-ordered ticket set in CI-green slices."
-disable-model-invocation: true
 ---
 
 # Implement
@@ -13,11 +12,11 @@ known failing applicable check. A deferred failure is still a red slice.
 
 ## Preflight
 
-1. Read the plan and source spec, repository governance, relevant
-   specs/ADRs/skills, Definition of Done, CI workflow, and verified local
-   commands. Repository authority wins.
-2. Preserve unrelated work. Confirm the base revision and authorization for
-   commits, pushes, or external changes.
+1. Read the plan and source spec, canonical governance, relevant specs, active
+   important decisions and project skills, Definition of Done, CI workflow, and
+   verified local commands. Repository authority wins.
+2. Preserve unrelated staged, unstaged, and untracked user work. Confirm the
+   base revision and authorization for commits, pushes, or external changes.
 3. Classify checks from checked-in evidence: **merge-blocking**,
    **implemented local**, **planned/not merge-blocking**, or
    **external/unverified**. Never invent or relabel a check.
@@ -30,7 +29,10 @@ without dropping required behavior. Ask before changing plan intent.
 
 ## Slice loop
 
-**REQUIRED SUB-SKILL:** Use `tdd` for every code-bearing slice.
+**REQUIRED SUB-SKILL:** Use `tdd` for every behavior-changing or bug-fix
+slice. For behavior-preserving refactors and build or tooling work, follow the
+repository's impact-specific test contract and record why a new red behavior
+test is not applicable.
 
 For every C++-bearing slice, **REQUIRED SUB-SKILLS:** Use
 `cpp-modern-style`, `cpp-oop-design`, `cpp-performance`,
@@ -40,15 +42,19 @@ skill concern the slice does not affect; loading the skill is not optional.
 
 For each unblocked slice:
 
-1. Mark only that slice in progress. At the pre-agreed seam, write one failing
-   behavior test, add the minimal implementation, then make it green.
+1. Mark only that slice in progress. At the pre-agreed seam, make a behavior
+   change or bug fix red before implementing it. For a behavior-preserving
+   refactor, establish green characterization evidence first; for tooling, use
+   the required positive, negative, and boundary tool tests. Add the minimal
+   change, then make the applicable evidence green.
 2. During iteration, run the narrowest authoritative tests, typechecking,
    formatting, and analysis that cover the edit.
 3. Before accepting it, run every affected-scope check required by project
    instructions. A documented fast mode is interim evidence, never the complete
    gate. If only a full-project check can validate the slice, run it.
 4. Review against its evidence and Definition of Done. If authorized, make a
-   cohesive commit so the green checkpoint is recoverable.
+   cohesive commit containing only the slice so the green checkpoint is
+   recoverable.
 5. Update the ledger, then start the next unblocked slice.
 
 If a check fails, stay on the slice, diagnose it, fix production or test code,
@@ -57,17 +63,21 @@ genuine blocker requiring new authority or a material plan decision.
 
 ## Completion
 
-On the exact submission commit, run every applicable full workflow required
-before CI. Record results and label unrun or external checks accurately.
+On the exact submission commit, run every applicable checked-in full workflow
+required before CI. For this repository, applicable C++ work includes
+`./RunTest.sh` and `./RunQuality.sh --base <base-revision> --head HEAD`. Record
+results and label unrun, unavailable, or external checks accurately.
 
-**REQUIRED SUB-SKILL:** Use `code-review` against the fixed base.
+**REQUIRED SUB-SKILL:** Use `review` against the fixed base and resolve every
+blocking finding.
 
-Mechanical findings should already be resolved, so review can concentrate on
-test intent, unautomated standards, specification fidelity, and design. Review
-remains mandatory.
+Mechanical quality evidence should already be complete, so reviewer attention
+can concentrate on test intent, unautomated standards, specification fidelity,
+and design. Comprehensive review remains mandatory.
 
-Commit and push only when authorized. Report completed slices, evidence, and
-planned or blocked work without claiming completion early.
+Commit and push only when authorized, staging only files in scope. Report
+completed slices, evidence, and planned or blocked work without claiming
+completion early.
 
 ## Quick reference
 

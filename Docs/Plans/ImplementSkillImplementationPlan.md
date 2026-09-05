@@ -4,7 +4,7 @@
 
 **Goal:** Make `$implement` execute an entire plan as dependency-ordered, CI-green vertical slices instead of accumulating all features before verification.
 
-**Architecture:** Expand the existing explicit-only project skill with a gate-aware slice loop that derives requirements from repository authority, applies test-first implementation, and blocks later slices until the current slice passes its applicable checks. Validate the behavioral contract with before-and-after pressure scenarios, then validate the skill package and documentation mechanically.
+**Architecture:** Expand the existing explicit-only project skill with a gate-aware slice loop that derives requirements from repository authority, applies the impact-specific testing contract, and blocks later slices until the current slice passes its applicable checks. Validate the behavioral contract with before-and-after pressure scenarios, then validate the skill package and documentation mechanically.
 
 **Tech Stack:** Markdown Agent Skills, YAML UI metadata, Codex skill validator, Git, GitHub
 
@@ -63,14 +63,19 @@ Keep explicit invocation and describe the trigger as executing an approved plan 
 
 - [x] **Step 2: Define the preflight and slicing contract**
 
-Require reading the plan, governance, relevant specs/ADRs/skills, Definition of Done, CI workflow, and verified local commands. Require a dependency-ordered slice ledger whose entries identify behavior, acceptance evidence, affected scope, and applicable gates.
+Require reading the plan, governance, relevant specs, active important
+decisions, project skills, Definition of Done, CI workflow, and verified local
+commands. Require a dependency-ordered slice ledger whose entries identify
+behavior, acceptance evidence, affected scope, and applicable gates.
 
 - [x] **Step 3: Define the per-slice execution loop**
 
-Require test-first work at a pre-agreed seam; all five project `cpp-*` skills
-for C++ changes; focused tests and formatting during iteration; broader affected
-checks before accepting the slice; and no work on later slices until the current
-slice is green.
+Require red-first TDD for behavior changes and bug fixes, characterization
+evidence for behavior-preserving refactors, and applicable tooling tests at a
+pre-agreed seam; require all five project `cpp-*` skills for C++ changes;
+focused tests and formatting during iteration; broader affected checks before
+accepting the slice; and no work on later slices until the current slice is
+green.
 
 - [x] **Step 4: Define checkpoints, failure handling, and final verification**
 
@@ -111,8 +116,8 @@ If an agent finds a new shortcut, add the smallest explicit counter, update the 
 - [x] **Step 3: Validate the skill package and YAML**
 
 ```bash
-ruby -e 'require "yaml"; skill = File.read(".agents/skills/implement/SKILL.md"); data = YAML.safe_load(skill.split(/^---\s*$/, 3)[1]); abort unless data["name"] == "implement" && data["disable-model-invocation"] == true; puts "SKILL.md: valid"'
-ruby -e 'require "yaml"; data = YAML.load_file(".agents/skills/implement/agents/openai.yaml"); abort unless data.dig("policy", "allow_implicit_invocation") == false; puts "openai.yaml: valid"'
+ruby -E UTF-8 -e 'require "yaml"; skill = File.read(".agents/skills/implement/SKILL.md", encoding: "UTF-8"); data = YAML.safe_load(skill.split(/^---\s*$/, 3)[1]); abort unless data == {"name" => "implement", "description" => "Execute an approved implementation plan or dependency-ordered ticket set in CI-green slices."}; puts "SKILL.md: valid"'
+ruby -E UTF-8 -e 'require "yaml"; data = YAML.load_file(".agents/skills/implement/agents/openai.yaml"); abort unless data.dig("policy", "allow_implicit_invocation") == false; puts "openai.yaml: valid"'
 ```
 
 - [x] **Step 4: Verify documentation and repository hygiene**
@@ -136,16 +141,16 @@ git commit -m "docs(skills): harden incremental implementation gates"
 - Consumes: verified branch commits and the repository PR template
 - Produces: a pushed branch and pull request targeting `main`
 
-- [ ] **Step 1: Push the branch**
+- [x] **Step 1: Push the branch**
 
 ```bash
 git push -u origin codex/implement-ci-slices
 ```
 
-- [ ] **Step 2: Create the pull request**
+- [x] **Step 2: Create the pull request**
 
 Use the repository template without blank sections, mark build/runtime/code-test items `N/A — documentation-only skill change`, include behavioral pressure-test evidence, and identify intent/design as the requested reviewer focus after mechanical checks.
 
-- [ ] **Step 3: Report the PR and final evidence**
+- [x] **Step 3: Report the PR and final evidence**
 
 Provide the PR link, commits, changed files, validation commands, behavioral outcomes, and any remaining external/unverified checks without claiming they passed.
