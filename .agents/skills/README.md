@@ -43,6 +43,12 @@ apply even when an agent host does not support skill discovery.
 |---|---|---|
 | [`review`](review/SKILL.md) | Reviewing a branch, pull request, handoff, or uncommitted change set | Complete code, documentation, test-intent, semantic-coverage, and verified-check review across the branch delta and working tree |
 
+## Plan execution
+
+| Skill | Activates when | Enforces |
+|---|---|---|
+| [`implement`](implement/SKILL.md) | Explicitly executing an approved implementation plan or dependency-ordered ticket set | Dependency-ordered vertical slices that stay within applicable CI and Definition of Done gates, with all five project `cpp-*` skills applied to C++ slices |
+
 ## How the C++ skills layer with specs
 
 | Question | Primary source |
@@ -66,7 +72,6 @@ apply even when an agent host does not support skill discovery.
 | [`grill-me`](grill-me/SKILL.md) | Start an explicit maintainer grilling session |
 | [`grill-with-docs`](grill-with-docs/SKILL.md) | Grill a decision while maintaining domain documentation |
 | [`grilling`](grilling/SKILL.md) | Resolve material ambiguity with the maintainer |
-| [`implement`](implement/SKILL.md) | Implement approved specifications or tickets with tests and review |
 | [`improve-codebase-architecture`](improve-codebase-architecture/SKILL.md) | Find and visualize deep-module architecture opportunities |
 | [`prototype`](prototype/SKILL.md) | Answer a bounded logic or Qt UI design question |
 | [`research`](research/SKILL.md) | Capture primary-source technical research |
