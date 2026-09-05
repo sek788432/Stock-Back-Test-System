@@ -3,6 +3,7 @@
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
+#include "ResultStoreTestHooks.h"
 
 #include <gtest/gtest.h>
 
@@ -50,7 +51,10 @@ protected:
     selection_ = std::move(selected).value().identity;
   }
 
-  void TearDown() override { std::filesystem::remove_all(root_); }
+  void TearDown() override {
+    bte::results::testing::clearFailure();
+    std::filesystem::remove_all(root_);
+  }
 
   static bte::core::Timestamp timestamp(const std::string &text) {
     return bte::core::time::parseIso8601(text).value();
@@ -133,6 +137,75 @@ TEST_F(RecordedBacktestTest,
   EXPECT_EQ(opened.value().records.front().family,
             bte::results::RecordFamily::terminalDiagnostic);
   EXPECT_FALSE(opened.value().summary.finalEquityMicrodollars.has_value());
+}
+
+TEST_F(RecordedBacktestTest,
+       validationFailureDoesNotCreateOrMutateAPersistedTimeline) {
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  auto invalid = request();
+  invalid.symbol.clear();
+
+  const auto recorded =
+      bte::engine::runBacktestAndRecord(invalid, *writer.value());
+
+  ASSERT_FALSE(recorded.ok());
+  EXPECT_EQ(recorded.error().code, bte::core::ErrorCode::invalidArgument);
+  auto listed = store.value()->list();
+  ASSERT_TRUE(listed.ok()) << listed.error().message;
+  EXPECT_TRUE(listed.value().empty());
+}
+
+TEST_F(RecordedBacktestTest,
+       completedTimelinePropagatesAppendAndFinalizationFailures) {
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+
+  auto appendWriter = store.value()->begin(descriptor());
+  ASSERT_TRUE(appendWriter.ok()) << appendWriter.error().message;
+  bte::results::testing::failNext(
+      bte::results::testing::FailurePoint::statementPreparation);
+  const auto appendFailure =
+      bte::engine::runBacktestAndRecord(request(), *appendWriter.value());
+  ASSERT_FALSE(appendFailure.ok());
+  EXPECT_EQ(appendFailure.error().code, bte::core::ErrorCode::internal);
+
+  auto finalizeWriter = store.value()->begin(descriptor());
+  ASSERT_TRUE(finalizeWriter.ok()) << finalizeWriter.error().message;
+  bte::results::testing::failNext(
+      bte::results::testing::FailurePoint::hashFinalization);
+  const auto finalizeFailure =
+      bte::engine::runBacktestAndRecord(request(), *finalizeWriter.value());
+  ASSERT_FALSE(finalizeFailure.ok());
+  EXPECT_EQ(finalizeFailure.error().code, bte::core::ErrorCode::internal);
+}
+
+TEST_F(RecordedBacktestTest,
+       diagnosticTimelinePropagatesAppendAndFinalizationFailures) {
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto invalid = request();
+  invalid.selectableStrategy = bte::strategy::SelectableStrategyPlan{};
+
+  auto appendWriter = store.value()->begin(descriptor());
+  ASSERT_TRUE(appendWriter.ok()) << appendWriter.error().message;
+  bte::results::testing::failNext(
+      bte::results::testing::FailurePoint::statementPreparation);
+  const auto appendFailure =
+      bte::engine::runBacktestAndRecord(invalid, *appendWriter.value());
+  ASSERT_FALSE(appendFailure.ok());
+  EXPECT_EQ(appendFailure.error().code, bte::core::ErrorCode::internal);
+
+  auto finalizeWriter = store.value()->begin(descriptor());
+  ASSERT_TRUE(finalizeWriter.ok()) << finalizeWriter.error().message;
+  bte::results::testing::failNext(
+      bte::results::testing::FailurePoint::hashFinalization);
+  const auto finalizeFailure =
+      bte::engine::runBacktestAndRecord(invalid, *finalizeWriter.value());
+  ASSERT_FALSE(finalizeFailure.ok());
+  EXPECT_EQ(finalizeFailure.error().code, bte::core::ErrorCode::internal);
 }
 
 } // namespace

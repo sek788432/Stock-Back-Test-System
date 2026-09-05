@@ -23,12 +23,18 @@ target_link_libraries(
   bte_data_tests
   PRIVATE
     bte::data
-    GTest::gtest_main)
+    GTest::gtest_main
+    SQLite::SQLite3)
 
 target_compile_definitions(
   bte_data_tests
   PRIVATE
     BTE_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Fixtures")
+
+target_include_directories(
+  bte_data_tests
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Data/Private")
 
 gtest_discover_tests(bte_data_tests DISCOVERY_TIMEOUT 30)
 
@@ -46,7 +52,8 @@ target_link_libraries(
 target_include_directories(
   bte_results_tests
   PRIVATE
-    "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private")
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private"
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Data/Private")
 
 gtest_discover_tests(bte_results_tests DISCOVERY_TIMEOUT 30)
 
@@ -90,6 +97,11 @@ target_link_libraries(
   PRIVATE
     bte::engine
     GTest::gtest_main)
+
+target_include_directories(
+  bte_engine_tests
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private")
 
 gtest_discover_tests(bte_engine_tests DISCOVERY_TIMEOUT 30)
 
@@ -258,6 +270,11 @@ if(BTE_BUILD_QT_APP)
       GTest::gtest_main
       bte::bindings
       bte::data)
+
+  target_include_directories(
+    bte_result_replay_tests
+    PRIVATE
+      "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private")
 
   gtest_discover_tests(bte_result_replay_tests DISCOVERY_TIMEOUT 30)
 

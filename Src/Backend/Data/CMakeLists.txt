@@ -6,7 +6,9 @@ add_library(
     Include/Bte/Data/SegmentRetention.h
     Private/CsvBarStream.cpp
     Private/ReleaseSnapshot.cpp
-    Private/SegmentRetention.cpp)
+    Private/ReleaseSnapshotTestHooks.h
+    Private/SegmentRetention.cpp
+    Private/SegmentRetentionTestHooks.h)
 
 add_library(bte::data ALIAS bte_data)
 

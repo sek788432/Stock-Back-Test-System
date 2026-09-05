@@ -38,6 +38,7 @@ jobs:
           git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
           test "$(git -C "$RUNNER_TEMP/vcpkg" rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg" install sqlite3
 
       - name: Install Qt
         uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
@@ -53,6 +54,7 @@ jobs:
           cmake --preset qt-dev
           -DBTE_BUILD_TESTS=ON
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build all tests
         run: cmake --build --preset qt-dev --parallel
@@ -103,6 +105,7 @@ jobs:
           git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
           test "$(git -C "$RUNNER_TEMP/vcpkg" rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg" install sqlite3
 
       - name: Install analysis tools
         run: |
@@ -130,7 +133,10 @@ jobs:
           CC: clang-18
           CXX: clang++-18
           VCPKG_ROOT: ${{ runner.temp }}/vcpkg
-        run: cmake --preset analysis -DBTE_BUILD_QT_APP=ON
+        run: >-
+          cmake --preset analysis
+          -DBTE_BUILD_QT_APP=ON
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Materialize generated analysis sources
         run: cmake --build --preset analysis --parallel
@@ -148,7 +154,7 @@ jobs:
         env:
           VCPKG_ROOT: ${{ runner.temp }}/vcpkg
         run: |
-          scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
+          scan-build-18 --use-analyzer=/usr/bin/clang-18 cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           scan-build-18 --use-analyzer=/usr/bin/clang-18 --status-bugs --keep-empty -o Output/scan-build-reports cmake --build Output/scan-build --parallel
 
       - name: Upload scan-build reports
@@ -175,6 +181,7 @@ jobs:
           git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
           test "$(git -C "$RUNNER_TEMP/vcpkg" rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg" install sqlite3
 
       - name: Install Qt
         uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
@@ -196,7 +203,10 @@ jobs:
       - name: Configure coverage tests
         env:
           VCPKG_ROOT: ${{ runner.temp }}/vcpkg
-        run: cmake --preset coverage -DBTE_BUILD_QT_APP=ON
+        run: >-
+          cmake --preset coverage
+          -DBTE_BUILD_QT_APP=ON
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build coverage tests
         run: cmake --build --preset coverage --parallel
@@ -261,6 +271,7 @@ jobs:
           git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
           test "$(git -C "$RUNNER_TEMP/vcpkg" rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg" install sqlite3
 
       - name: Install Clang sanitizer runtime
         run: |
@@ -278,6 +289,7 @@ jobs:
         run: >-
           cmake --preset "${{ matrix.preset }}"
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build sanitizer tests
         run: cmake --build --preset "${{ matrix.preset }}" --parallel

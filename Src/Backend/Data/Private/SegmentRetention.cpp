@@ -3,10 +3,14 @@
 #include "Bte/Core/Digest.h"
 #include "Bte/Core/Result.h"
 
+#include "SegmentRetentionTestHooks.h"
+
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -18,6 +22,32 @@
 
 namespace bte::data {
 namespace {
+
+std::atomic<testing::RetentionFailurePoint> &configuredFailurePoint() {
+  static std::atomic<testing::RetentionFailurePoint> value{
+      testing::RetentionFailurePoint::none};
+  return value;
+}
+
+std::atomic<std::uint32_t> &configuredFailureSkips() {
+  static std::atomic<std::uint32_t> value{0};
+  return value;
+}
+
+bool consumeFailure(const testing::RetentionFailurePoint point) noexcept {
+  if (configuredFailurePoint().load() != point) {
+    return false;
+  }
+  auto skips = configuredFailureSkips().load();
+  while (skips > 0) {
+    if (configuredFailureSkips().compare_exchange_weak(skips, skips - 1)) {
+      return false;
+    }
+  }
+  auto expected = point;
+  return configuredFailurePoint().compare_exchange_strong(
+      expected, testing::RetentionFailurePoint::none);
+}
 
 class Database final {
 public:
@@ -37,7 +67,8 @@ public:
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "SQLite 3.53.4 is required");
     }
-    if (sqlite3_open_v2(path.string().c_str(), &handle_,
+    if (consumeFailure(testing::RetentionFailurePoint::databaseOpen) ||
+        sqlite3_open_v2(path.string().c_str(), &handle_,
                         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
                             SQLITE_OPEN_FULLMUTEX,
                         nullptr) != SQLITE_OK) {
@@ -54,7 +85,8 @@ public:
     const auto detail =
         message == nullptr ? std::string{} : std::string{message};
     sqlite3_free(message);
-    if (status != SQLITE_OK) {
+    if (consumeFailure(testing::RetentionFailurePoint::sqlExecution) ||
+        status != SQLITE_OK) {
       return core::makeError(core::ErrorCode::internal,
                              "SQLite operation failed: " + detail);
     }
@@ -65,20 +97,23 @@ public:
   executeBound(const std::string &sql, const std::string &first,
                const std::string &second = {}) {
     sqlite3_stmt *statement = nullptr;
-    if (sqlite3_prepare_v2(handle_, sql.c_str(), -1, &statement, nullptr) !=
-        SQLITE_OK) {
+    if (consumeFailure(testing::RetentionFailurePoint::boundPreparation) ||
+        sqlite3_prepare_v2(handle_, sql.c_str(), -1, &statement, nullptr) !=
+            SQLITE_OK) {
       return error("Unable to prepare retention statement");
     }
     const auto finalize =
         std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>{
             statement, &sqlite3_finalize};
-    if (sqlite3_bind_text(statement, 1, first.c_str(), -1, SQLITE_TRANSIENT) !=
+    if (consumeFailure(testing::RetentionFailurePoint::boundBinding) ||
+        sqlite3_bind_text(statement, 1, first.c_str(), -1, SQLITE_TRANSIENT) !=
             SQLITE_OK ||
         (!second.empty() && sqlite3_bind_text(statement, 2, second.c_str(), -1,
                                               SQLITE_TRANSIENT) != SQLITE_OK)) {
       return error("Unable to bind retention statement");
     }
-    if (sqlite3_step(statement) != SQLITE_DONE) {
+    if (consumeFailure(testing::RetentionFailurePoint::boundExecution) ||
+        sqlite3_step(statement) != SQLITE_DONE) {
       return error("Unable to execute retention statement");
     }
     return static_cast<std::size_t>(sqlite3_changes(handle_));
@@ -87,15 +122,17 @@ public:
   [[nodiscard]] core::Result<std::vector<std::string>>
   strings(const std::string &sql, const std::string &value) {
     sqlite3_stmt *statement = nullptr;
-    if (sqlite3_prepare_v2(handle_, sql.c_str(), -1, &statement, nullptr) !=
-        SQLITE_OK) {
+    if (consumeFailure(testing::RetentionFailurePoint::queryPreparation) ||
+        sqlite3_prepare_v2(handle_, sql.c_str(), -1, &statement, nullptr) !=
+            SQLITE_OK) {
       return error("Unable to prepare retention query");
     }
     const auto finalize =
         std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>{
             statement, &sqlite3_finalize};
-    if (sqlite3_bind_text(statement, 1, value.c_str(), -1, SQLITE_TRANSIENT) !=
-        SQLITE_OK) {
+    if (consumeFailure(testing::RetentionFailurePoint::queryBinding) ||
+        sqlite3_bind_text(statement, 1, value.c_str(), -1, SQLITE_TRANSIENT) !=
+            SQLITE_OK) {
       return error("Unable to bind retention query");
     }
     std::vector<std::string> values;
@@ -104,11 +141,13 @@ public:
       if (status == SQLITE_DONE) {
         return values;
       }
-      if (status != SQLITE_ROW) {
+      if (consumeFailure(testing::RetentionFailurePoint::queryExecution) ||
+          status != SQLITE_ROW) {
         return error("Unable to execute retention query");
       }
       const auto *text = sqlite3_column_text(statement, 0);
-      if (text == nullptr) {
+      if (consumeFailure(testing::RetentionFailurePoint::queryNullIdentity) ||
+          text == nullptr) {
         return core::makeError(core::ErrorCode::internal,
                                "Retention query returned null identity");
       }
@@ -122,14 +161,16 @@ public:
     sqlite3_stmt *statement = nullptr;
     constexpr auto sql =
         "SELECT COUNT(*) FROM segment_references WHERE segment_id = ?1";
-    if (sqlite3_prepare_v2(handle_, sql, -1, &statement, nullptr) !=
-        SQLITE_OK) {
+    if (consumeFailure(testing::RetentionFailurePoint::countPreparation) ||
+        sqlite3_prepare_v2(handle_, sql, -1, &statement, nullptr) !=
+            SQLITE_OK) {
       return error("Unable to prepare reference-count query");
     }
     const auto finalize =
         std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>{
             statement, &sqlite3_finalize};
-    if (sqlite3_bind_text(statement, 1, segmentId.c_str(), -1,
+    if (consumeFailure(testing::RetentionFailurePoint::countExecution) ||
+        sqlite3_bind_text(statement, 1, segmentId.c_str(), -1,
                           SQLITE_TRANSIENT) != SQLITE_OK ||
         sqlite3_step(statement) != SQLITE_ROW) {
       return error("Unable to execute reference-count query");
@@ -175,6 +216,21 @@ openDatabase(const std::filesystem::path &storeDirectory) {
 }
 
 } // namespace
+
+namespace testing {
+
+void failRetentionAfter(const RetentionFailurePoint point,
+                        const std::uint32_t occurrencesToSkip) noexcept {
+  configuredFailureSkips().store(occurrencesToSkip);
+  configuredFailurePoint().store(point);
+}
+
+void clearRetentionFailure() noexcept {
+  configuredFailurePoint().store(RetentionFailurePoint::none);
+  configuredFailureSkips().store(0);
+}
+
+} // namespace testing
 
 SegmentRetentionStore::SegmentRetentionStore(
     ConstructionKey, std::filesystem::path storeDirectory)

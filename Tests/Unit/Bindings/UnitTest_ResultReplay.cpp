@@ -4,6 +4,9 @@
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
+#include "Bte/Results/ResultStore.h"
+
+#include "ResultStoreTestHooks.h"
 
 #include <gtest/gtest.h>
 
@@ -64,6 +67,17 @@ protected:
     ASSERT_TRUE(built.ok()) << built.error().message;
     segments_ = built.value().segments;
     snapshotId_ = built.value().snapshotId;
+    auto reader =
+        bte::data::ReleaseSnapshotReader::open(root_ / "Data", snapshotId_);
+    ASSERT_TRUE(reader.ok()) << reader.error().message;
+    auto selected = reader.value()->select({
+        .symbols = {"SYN"},
+        .range = {.start = timestamp("2024-01-01 23:00:00+00:00"),
+                  .end = timestamp("2024-01-02 02:00:00+00:00")},
+        .timeframe = "ohlcv-1h",
+    });
+    ASSERT_TRUE(selected.ok()) << selected.error().message;
+    selection_ = std::move(selected).value().identity;
     auto recorded = bte::bindings::runPersistedBacktestConfiguration(
         {.symbol = "SYN",
          .schema = "ohlcv-1h",
@@ -81,16 +95,56 @@ protected:
     resultId_ = recorded.value().resultId;
   }
 
-  void TearDown() override { std::filesystem::remove_all(root_); }
+  void TearDown() override {
+    bte::results::testing::clearFailure();
+    std::filesystem::remove_all(root_);
+  }
 
   static bte::core::Timestamp timestamp(const std::string &text) {
     return bte::core::time::parseIso8601(text).value();
+  }
+
+  bte::core::Result<bte::results::FinalizedResult>
+  persist(const std::vector<bte::results::CanonicalRecord> &records,
+          const bte::results::RunStatus status,
+          const std::string &terminalReason = {}) const {
+    auto store =
+        bte::results::ResultStore::open(root_ / "CustomStore", root_ / "Data");
+    if (!store.ok()) {
+      return store.error();
+    }
+    auto writer = store.value()->begin({
+        .universe = {"SYN"},
+        .range = {.start = timestamp("2024-01-01 23:00:00+00:00"),
+                  .end = timestamp("2024-01-02 02:00:00+00:00")},
+        .initialCapitalMicrodollars = 2'000'000'000,
+        .strategyId = "replay-boundary-fixture",
+        .strategyHash = std::string(64, 'c'),
+        .dataSelection = selection_,
+    });
+    if (!writer.ok()) {
+      return writer.error();
+    }
+    if (!records.empty()) {
+      auto appended = writer.value()->append(records);
+      if (!appended.ok()) {
+        return appended.error();
+      }
+    }
+    const auto summary =
+        status == bte::results::RunStatus::completed
+            ? bte::results::FinalSummary{.finalEquityMicrodollars =
+                                             2'000'000'000,
+                                         .pnlMicrodollars = 0}
+            : bte::results::FinalSummary{};
+    return writer.value()->finalizeAndPromote(status, summary, terminalReason);
   }
 
   std::filesystem::path root_;
   std::vector<std::string> segments_;
   std::string snapshotId_;
   std::string resultId_;
+  bte::data::DataSelectionIdentity selection_;
 };
 
 TEST_F(ResultReplayTest,
@@ -169,6 +223,245 @@ TEST_F(ResultReplayTest, persistedBacktestRejectsUnsupportedSourceSchema) {
        .strategyHash = std::string(64, 'c')});
   ASSERT_FALSE(unsupported.ok());
   EXPECT_EQ(unsupported.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest,
+       persistedBacktestCompositionPropagatesEveryBoundaryFailure) {
+  const auto validConfiguration = bte::bindings::BacktestConfiguration{
+      .symbol = "SYN",
+      .schema = "ohlcv-1h",
+      .startDate = QDate{2024, 1, 1},
+      .endDate = QDate{2024, 1, 2},
+      .initialCapital = 2'000,
+      .quantityShares = 10,
+  };
+  const auto validStorage = bte::bindings::PersistedBacktestStorage{
+      .resultStore = root_ / "BoundaryStore",
+      .dataStore = root_ / "Data",
+      .snapshotId = snapshotId_,
+      .strategyHash = std::string(64, 'c'),
+  };
+  auto expectError = [&](const auto &configuration, const auto &storage,
+                         const bte::core::ErrorCode expected) {
+    const auto result = bte::bindings::runPersistedBacktestConfiguration(
+        configuration, storage);
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code, expected);
+  };
+
+  auto invalidDate = validConfiguration;
+  invalidDate.startDate = QDate{};
+  expectError(invalidDate, validStorage, bte::core::ErrorCode::invalidArgument);
+  auto invalidCapital = validConfiguration;
+  invalidCapital.initialCapital = 0;
+  expectError(invalidCapital, validStorage,
+              bte::core::ErrorCode::invalidArgument);
+  auto missingSnapshot = validStorage;
+  missingSnapshot.snapshotId = std::string(64, 'd');
+  expectError(validConfiguration, missingSnapshot,
+              bte::core::ErrorCode::dataSnapshotUnavailable);
+  auto missingSymbol = validConfiguration;
+  missingSymbol.symbol = "MISSING";
+  expectError(missingSymbol, validStorage,
+              bte::core::ErrorCode::dataUnavailable);
+  auto emptySymbol = validConfiguration;
+  emptySymbol.symbol.clear();
+  expectError(emptySymbol, validStorage, bte::core::ErrorCode::dataUnavailable);
+  auto emptyRange = validConfiguration;
+  emptyRange.startDate = QDate{2030, 1, 1};
+  emptyRange.endDate = QDate{2030, 1, 2};
+  expectError(emptyRange, validStorage, bte::core::ErrorCode::dataUnavailable);
+
+  const auto blockedStore = root_ / "BlockedBoundaryStore";
+  std::ofstream blocked{blockedStore};
+  blocked << "not a directory";
+  blocked.close();
+  auto storageFault = validStorage;
+  storageFault.resultStore = blockedStore;
+  expectError(validConfiguration, storageFault,
+              bte::core::ErrorCode::permissionDenied);
+
+  auto invalidIdentity = validStorage;
+  invalidIdentity.strategyHash = std::string(64, 'Z');
+  expectError(validConfiguration, invalidIdentity,
+              bte::core::ErrorCode::invalidArgument);
+
+  bte::results::testing::failNext(
+      bte::results::testing::FailurePoint::hashFinalization);
+  expectError(validConfiguration, validStorage, bte::core::ErrorCode::internal);
+  bte::results::testing::clearFailure();
+
+  auto strategyFailure = validConfiguration;
+  strategyFailure.selectableStrategy = bte::strategy::SelectableStrategyPlan{};
+  expectError(strategyFailure, validStorage,
+              bte::core::ErrorCode::strategyCompileFailed);
+}
+
+TEST_F(ResultReplayTest,
+       emptyAndTerminalTimelinesHaveSafeNavigationAndBoundedHistory) {
+  auto empty = persist({}, bte::results::RunStatus::completed);
+  ASSERT_TRUE(empty.ok()) << empty.error().message;
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", empty.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  EXPECT_EQ(replay.value()->resultId(), empty.value().resultId);
+  EXPECT_EQ(replay.value()->current(), nullptr);
+  EXPECT_EQ(replay.value()->currentIndex(), 0);
+  EXPECT_EQ(replay.value()->totalFrames(), 0);
+  EXPECT_EQ(replay.value()->progressPercent(), 0);
+  EXPECT_TRUE(replay.value()->visibleWindow().empty());
+  EXPECT_FALSE(replay.value()->stepForward());
+  EXPECT_FALSE(replay.value()->stepBack());
+  EXPECT_FALSE(replay.value()->seek(0));
+
+  const auto terminalTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  auto terminal =
+      persist({{.sequence = 0,
+                .timestamp = terminalTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .positionShares = 0},
+               {.sequence = 1,
+                .timestamp = terminalTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::terminalDiagnostic,
+                .text = "intentional strategy stop"}},
+              bte::results::RunStatus::failed, "intentional strategy stop");
+  ASSERT_TRUE(terminal.ok()) << terminal.error().message;
+  auto failedReplay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", terminal.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(failedReplay.ok()) << failedReplay.error().message;
+  EXPECT_EQ(failedReplay.value()->totalFrames(), 1);
+  EXPECT_EQ(failedReplay.value()->terminalReason(),
+            "intentional strategy stop");
+  EXPECT_FALSE(failedReplay.value()->stepBack());
+}
+
+TEST_F(ResultReplayTest, barsBeforeTheFirstPortfolioCheckpointAreNotPresented) {
+  auto persisted =
+      persist({{.sequence = 0,
+                .timestamp = timestamp("2024-01-02 00:00:00+00:00"),
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .positionShares = 0}},
+              bte::results::RunStatus::completed);
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  auto hourly = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(hourly.ok()) << hourly.error().message;
+  ASSERT_EQ(hourly.value()->totalFrames(), 2);
+  EXPECT_EQ(hourly.value()->current()->candle.ts,
+            timestamp("2024-01-02 00:00:00+00:00"));
+
+  auto daily = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_EQ(daily.value()->totalFrames(), 1);
+  EXPECT_EQ(daily.value()->current()->candle.ts,
+            timestamp("2024-01-02 00:00:00+00:00"));
+}
+
+TEST_F(ResultReplayTest, catalogBoundariesPropagateCancellationAndStoreFaults) {
+  auto listed =
+      bte::bindings::ResultReplay::list(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(listed.ok()) << listed.error().message;
+  ASSERT_EQ(listed.value().size(), 1);
+  EXPECT_EQ(listed.value().front().resultId, resultId_);
+
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+  auto cancelled = bte::bindings::ResultReplay::list(
+      root_ / "Store", root_ / "Data", cancellation.token());
+  ASSERT_FALSE(cancelled.ok());
+  EXPECT_EQ(cancelled.error().code, bte::core::ErrorCode::cancelled);
+
+  std::ofstream blocked{root_ / "BlockedStore"};
+  blocked << "not a directory";
+  blocked.close();
+  auto unavailable =
+      bte::bindings::ResultReplay::list(root_ / "BlockedStore", root_ / "Data");
+  ASSERT_FALSE(unavailable.ok());
+  EXPECT_EQ(unavailable.error().code, bte::core::ErrorCode::permissionDenied);
+
+  auto missing = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", std::string(32, 'd'),
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_FALSE(missing.ok());
+  EXPECT_EQ(missing.error().code, bte::core::ErrorCode::notFound);
+}
+
+TEST_F(ResultReplayTest, dailyAggregationRejectsFixedPointVolumeOverflow) {
+  const auto sourceDirectory = root_ / "OverflowSource";
+  const auto dataDirectory = root_ / "OverflowData";
+  std::filesystem::create_directories(sourceDirectory);
+  std::ofstream source{sourceDirectory / "SYN.csv"};
+  source << "symbol,ts,open,high,low,close,volume,schemaName\n"
+            "SYN,2024-01-01 00:00:00+00:00,100,102,99,101,"
+            "5000000000000,ohlcv-1h\n"
+            "SYN,2024-01-01 01:00:00+00:00,101,103,100,102,"
+            "5000000000000,ohlcv-1h\n";
+  source.close();
+  auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = dataDirectory,
+      .symbols = {"SYN"},
+      .rowsPerSegment = 2,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      dataDirectory, built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  const auto range =
+      bte::core::DateRange{.start = timestamp("2024-01-01 00:00:00+00:00"),
+                           .end = timestamp("2024-01-01 02:00:00+00:00")};
+  auto selected = reader.value()->select(
+      {.symbols = {"SYN"}, .range = range, .timeframe = "ohlcv-1h"});
+  ASSERT_TRUE(selected.ok()) << selected.error().message;
+  auto store =
+      bte::results::ResultStore::open(root_ / "OverflowStore", dataDirectory);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin({
+      .universe = {"SYN"},
+      .range = range,
+      .initialCapitalMicrodollars = 2'000'000'000,
+      .strategyId = "volume-overflow-fixture",
+      .strategyHash = std::string(64, 'c'),
+      .dataSelection = selected.value().identity,
+  });
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()
+                  ->append({{.sequence = 0,
+                             .timestamp = range.start,
+                             .symbol = "SYN",
+                             .family = bte::results::RecordFamily::portfolio,
+                             .cashMicrodollars = 2'000'000'000,
+                             .marketValueMicrodollars = 0,
+                             .equityMicrodollars = 2'000'000'000,
+                             .positionShares = 0}})
+                  .ok());
+  auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 2'000'000'000, .pnlMicrodollars = 0});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "OverflowStore", dataDirectory, finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  ASSERT_FALSE(replay.ok());
+  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
 TEST_F(ResultReplayTest,

@@ -39,7 +39,21 @@ std::atomic<testing::FailurePoint> &configuredFailurePoint() {
   return value;
 }
 
+std::atomic<std::uint32_t> &configuredFailureSkips() {
+  static std::atomic<std::uint32_t> value{0};
+  return value;
+}
+
 bool consumeFailure(const testing::FailurePoint point) noexcept {
+  if (configuredFailurePoint().load() != point) {
+    return false;
+  }
+  auto skips = configuredFailureSkips().load();
+  while (skips > 0) {
+    if (configuredFailureSkips().compare_exchange_weak(skips, skips - 1)) {
+      return false;
+    }
+  }
   auto expected = point;
   return configuredFailurePoint().compare_exchange_strong(
       expected, testing::FailurePoint::none);
@@ -87,6 +101,9 @@ public:
 
   [[nodiscard]] core::Result<void> open(const std::filesystem::path &path,
                                         const int flags) {
+    if (consumeFailure(testing::FailurePoint::databaseOpen)) {
+      return injectedFailure("database open");
+    }
     if (sqlite3_libversion_number() != 3'053'004) {
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "SQLite 3.53.4 is required");
@@ -100,6 +117,9 @@ public:
   }
 
   [[nodiscard]] core::Result<void> execute(const std::string_view sql) {
+    if (consumeFailure(testing::FailurePoint::sqlExecution)) {
+      return injectedFailure("SQL execution");
+    }
     char *message = nullptr;
     const auto status = sqlite3_exec(handle_, std::string{sql}.c_str(), nullptr,
                                      nullptr, &message);
@@ -140,6 +160,9 @@ public:
   [[nodiscard]] core::Result<void> prepare(Database &database,
                                            const std::string_view sql) {
     database_ = &database;
+    if (consumeFailure(testing::FailurePoint::statementPreparation)) {
+      return injectedFailure("statement preparation");
+    }
     if (sqlite3_prepare_v2(database.handle(), std::string{sql}.c_str(), -1,
                            &handle_, nullptr) != SQLITE_OK) {
       return database.error("Unable to prepare Result statement");
@@ -149,7 +172,8 @@ public:
 
   [[nodiscard]] core::Result<void> text(const int index,
                                         const std::string_view value) {
-    if (sqlite3_bind_text(handle_, index, value.data(),
+    if (consumeFailure(testing::FailurePoint::textBinding) ||
+        sqlite3_bind_text(handle_, index, value.data(),
                           static_cast<int>(value.size()),
                           SQLITE_TRANSIENT) != SQLITE_OK) {
       return database_->error("Unable to bind Result text");
@@ -159,7 +183,8 @@ public:
 
   [[nodiscard]] core::Result<void> integer(const int index,
                                            const std::int64_t value) {
-    if (sqlite3_bind_int64(handle_, index, value) != SQLITE_OK) {
+    if (consumeFailure(testing::FailurePoint::integerBinding) ||
+        sqlite3_bind_int64(handle_, index, value) != SQLITE_OK) {
       return database_->error("Unable to bind Result integer");
     }
     return {};
@@ -167,6 +192,9 @@ public:
 
   [[nodiscard]] core::Result<void>
   optionalInteger(const int index, const std::optional<std::int64_t> value) {
+    if (consumeFailure(testing::FailurePoint::optionalIntegerBinding)) {
+      return database_->error("Unable to bind optional Result integer");
+    }
     const auto status = value.has_value()
                             ? sqlite3_bind_int64(handle_, index, *value)
                             : sqlite3_bind_null(handle_, index);
@@ -177,7 +205,8 @@ public:
   }
 
   [[nodiscard]] core::Result<void> done() {
-    if (sqlite3_step(handle_) != SQLITE_DONE) {
+    if (consumeFailure(testing::FailurePoint::statementExecution) ||
+        sqlite3_step(handle_) != SQLITE_DONE) {
       return database_->error("Unable to execute Result statement");
     }
     return {};
@@ -596,7 +625,8 @@ core::Result<OpenedResult> readResultFile(
                          "first_row,row_count,first_timestamp_ms,"
                          "last_timestamp_ms FROM data_spans ORDER BY ordinal");
   if (!prepared.ok()) {
-    return prepared.error();
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Data Span schema is unavailable");
   }
   while (spans.step() == SQLITE_ROW) {
     identity.spans.push_back({
@@ -628,7 +658,8 @@ core::Result<OpenedResult> readResultFile(
       "cash,market_value,equity,position,text FROM canonical_records ORDER BY "
       "sequence");
   if (!prepared.ok()) {
-    return prepared.error();
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Canonical record schema is unavailable");
   }
   while (records.step() == SQLITE_ROW) {
     result.records.push_back({
@@ -663,7 +694,8 @@ core::Result<OpenedResult> readResultFile(
   prepared = summary.prepare(*database.value(),
                              "SELECT final_equity,pnl FROM summary");
   if (!prepared.ok()) {
-    return prepared.error();
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Result summary schema is unavailable");
   }
   if (summary.step() == SQLITE_ROW) {
     result.summary.finalEquityMicrodollars =
@@ -869,12 +901,17 @@ core::Result<void> recoverStaging(
 
 namespace testing {
 
-void failNext(const FailurePoint point) noexcept {
+void failNext(const FailurePoint point) noexcept { failAfter(point, 0); }
+
+void failAfter(const FailurePoint point,
+               const std::uint32_t occurrencesToSkip) noexcept {
+  configuredFailureSkips().store(occurrencesToSkip);
   configuredFailurePoint().store(point);
 }
 
 void clearFailure() noexcept {
   configuredFailurePoint().store(FailurePoint::none);
+  configuredFailureSkips().store(0);
 }
 
 } // namespace testing
@@ -960,6 +997,8 @@ ResultWriter::append(const std::vector<CanonicalRecord> &records) {
   }
   auto committed = impl_->database->execute("COMMIT");
   if (!committed.ok()) {
+    const auto ignored = impl_->database->execute("ROLLBACK");
+    static_cast<void>(ignored);
     return committed.error();
   }
   impl_->records.insert(impl_->records.end(), records.begin(), records.end());
@@ -997,10 +1036,14 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
       !summaryStatement.optionalInteger(1, summary.finalEquityMicrodollars)
            .ok() ||
       !summaryStatement.optionalInteger(2, summary.pnlMicrodollars).ok()) {
+    const auto ignored = impl_->database->execute("ROLLBACK");
+    static_cast<void>(ignored);
     return impl_->database->error("Unable to bind Result summary");
   }
   auto written = summaryStatement.done();
   if (!written.ok()) {
+    const auto ignored = impl_->database->execute("ROLLBACK");
+    static_cast<void>(ignored);
     return written.error();
   }
   Statement meta;
@@ -1012,14 +1055,20 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
       !meta.integer(1, static_cast<std::int64_t>(status)).ok() ||
       !meta.text(2, hash).ok() || !meta.text(3, terminalReason).ok() ||
       !meta.integer(4, saved).ok()) {
+    const auto ignored = impl_->database->execute("ROLLBACK");
+    static_cast<void>(ignored);
     return impl_->database->error("Unable to bind Result finalization");
   }
   written = meta.done();
   if (!written.ok()) {
+    const auto ignored = impl_->database->execute("ROLLBACK");
+    static_cast<void>(ignored);
     return written.error();
   }
   auto committed = impl_->database->execute("COMMIT");
   if (!committed.ok()) {
+    const auto ignored = impl_->database->execute("ROLLBACK");
+    static_cast<void>(ignored);
     return committed.error();
   }
   auto checkpointed =
@@ -1157,12 +1206,13 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
 core::Result<std::vector<ResultSummary>> ResultStore::list() const {
   std::vector<ResultSummary> summaries;
   std::error_code errorCode;
-  for (const auto &entry :
-       std::filesystem::directory_iterator(root_ / "Results", errorCode)) {
-    if (errorCode) {
-      return storageError("Unable to inspect Result catalog: " +
-                          errorCode.message());
-    }
+  const auto entries =
+      std::filesystem::directory_iterator(root_ / "Results", errorCode);
+  if (errorCode) {
+    return storageError("Unable to inspect Result catalog: " +
+                        errorCode.message());
+  }
+  for (const auto &entry : entries) {
     if (!entry.is_regular_file() || entry.path().extension() != ".bteresult") {
       continue;
     }

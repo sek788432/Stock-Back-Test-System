@@ -2,8 +2,11 @@
 
 #include "Bte/Core/Digest.h"
 
+#include "ReleaseSnapshotTestHooks.h"
+
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <compare>
@@ -28,6 +31,24 @@
 
 namespace bte::data {
 namespace {
+
+std::atomic<testing::SnapshotFailurePoint> &snapshotFailurePoint() {
+  static std::atomic<testing::SnapshotFailurePoint> value{
+      testing::SnapshotFailurePoint::none};
+  return value;
+}
+
+bool consumeFailure(const testing::SnapshotFailurePoint point) noexcept {
+  auto expected = point;
+  return snapshotFailurePoint().compare_exchange_strong(
+      expected, testing::SnapshotFailurePoint::none);
+}
+
+bool cancellationRequested(
+    const core::CancellationToken &cancellation,
+    const testing::SnapshotFailurePoint failurePoint) noexcept {
+  return consumeFailure(failurePoint) || cancellation.isCancellationRequested();
+}
 
 constexpr std::string_view segmentMagic = "BTEDATA1";
 constexpr std::string_view manifestMagic = "BTE-SNAPSHOT-MANIFEST-V1";
@@ -157,7 +178,8 @@ readSourceBars(const std::filesystem::path &path, const std::string &symbol,
 
   std::vector<SnapshotBar> bars;
   while (std::getline(input, line)) {
-    if (cancellation.isCancellationRequested()) {
+    if (cancellationRequested(
+            cancellation, testing::SnapshotFailurePoint::buildCancellation)) {
       return core::makeError(core::ErrorCode::cancelled,
                              "Snapshot build was cancelled");
     }
@@ -256,7 +278,7 @@ core::Result<void> writeBytes(const std::filesystem::path &path,
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): bytes
   output.write(reinterpret_cast<const char *>(bytes.data()),
                static_cast<std::streamsize>(bytes.size()));
-  if (!output) {
+  if (consumeFailure(testing::SnapshotFailurePoint::artifactWrite) || !output) {
     return core::makeError(core::ErrorCode::permissionDenied,
                            "Unable to write snapshot artifact: " +
                                path.string());
@@ -273,7 +295,8 @@ readBytes(const std::filesystem::path &path) {
   }
   input.seekg(0, std::ios::end);
   const auto size = input.tellg();
-  if (size < 0) {
+  if (consumeFailure(testing::SnapshotFailurePoint::artifactInspection) ||
+      size < 0) {
     return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
                            "Unable to inspect Data Segment");
   }
@@ -281,7 +304,7 @@ readBytes(const std::filesystem::path &path) {
   std::vector<std::byte> bytes(static_cast<std::size_t>(size));
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): bytes
   input.read(reinterpret_cast<char *>(bytes.data()), size);
-  if (!input) {
+  if (consumeFailure(testing::SnapshotFailurePoint::artifactRead) || !input) {
     return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
                            "Unable to read Data Segment");
   }
@@ -457,6 +480,18 @@ bool validHash(const std::string &hash) {
 
 } // namespace
 
+namespace testing {
+
+void failSnapshotAt(const SnapshotFailurePoint point) noexcept {
+  snapshotFailurePoint().store(point);
+}
+
+void clearSnapshotFailure() noexcept {
+  snapshotFailurePoint().store(SnapshotFailurePoint::none);
+}
+
+} // namespace testing
+
 struct ReleaseSnapshotReader::Impl {
   std::string snapshotId;
   std::string calendarHash;
@@ -560,7 +595,8 @@ buildReleaseSnapshot(const SnapshotBuildRequest &request,
                            std::ios::binary | std::ios::trunc};
       output << manifest;
       output.close();
-      if (!output) {
+      if (consumeFailure(testing::SnapshotFailurePoint::manifestWrite) ||
+          !output) {
         std::filesystem::remove_all(stagingDirectory);
         return core::makeError(core::ErrorCode::permissionDenied,
                                "Unable to write snapshot manifest");
@@ -629,7 +665,8 @@ ReleaseSnapshotReader::open(const std::filesystem::path &storeDirectory,
 
   std::optional<std::pair<std::string, core::Timestamp>> previous;
   for (const auto &segment : metadata.value()) {
-    if (cancellation.isCancellationRequested()) {
+    if (cancellationRequested(
+            cancellation, testing::SnapshotFailurePoint::openCancellation)) {
       return core::makeError(core::ErrorCode::cancelled,
                              "Snapshot open was cancelled");
     }
