@@ -10,6 +10,7 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTest>
@@ -76,6 +77,7 @@ class BacktestTabTest final : public QObject {
 
 private slots:
   void exposesAccessibleRunConfiguration();
+  void promotedResultEnablesOpenInReplayAndEmitsExactId();
   void calendarYearsAreDirectlySelectable();
   void runExecutesOffTheUiThreadAndDisplaysFill();
   void failedRunClearsPriorResultAndPreservesError();
@@ -90,6 +92,32 @@ private slots:
   void selectableConditionStatusNamesItsSelectedStrategy();
   void selectableControlsPresentNoSignalAndSellFill();
 };
+
+void BacktestTabTest::promotedResultEnablesOpenInReplayAndEmitsExactId() {
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = "0123456789abcdef0123456789abcdef";
+  bte::frontend::BacktestTab tab{
+      [snapshot](bte::bindings::BacktestConfiguration,
+                 bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      }};
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *open = tab.findChild<QPushButton *>("backtestOpenInReplayButton");
+  QVERIFY(run != nullptr);
+  QVERIFY(open != nullptr);
+  QVERIFY(!open->isEnabled());
+  QCOMPARE(open->text(), QString{"Open in Replay"});
+  QVERIFY(!open->accessibleName().isEmpty());
+  QSignalSpy opened{&tab, &bte::frontend::BacktestTab::openResultInReplay};
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([open] { return open->isEnabled(); }));
+  QTest::mouseClick(open, Qt::LeftButton);
+
+  QCOMPARE(opened.count(), 1);
+  QCOMPARE(opened.first().first().toString(),
+           QString{"0123456789abcdef0123456789abcdef"});
+}
 
 void BacktestTabTest::exposesAccessibleRunConfiguration() {
   const bte::frontend::BacktestTab tab;

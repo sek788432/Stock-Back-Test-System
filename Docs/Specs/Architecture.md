@@ -3,6 +3,9 @@
 This spec defines module seams and ownership. The living decisions record the
 rationale for the [C++/Qt desktop boundary](../Decisions/ImportantDecisions.md#c-and-qt-desktop-boundary)
 and the [project-owned engine](../Decisions/ImportantDecisions.md#engine-and-release-data-authority).
+The [canonical result storage decision](../Decisions/ImportantDecisions.md#canonical-result-storage-and-lifecycle)
+fixes the Results module, `.bteresult`, lifecycle, and canonical-framing
+constraints.
 
 ## 1. Status
 

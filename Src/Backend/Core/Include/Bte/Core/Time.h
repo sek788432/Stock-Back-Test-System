@@ -12,6 +12,8 @@ namespace bte::core {
 struct DateRange {
   Timestamp start;
   Timestamp end;
+
+  bool operator==(const DateRange &) const = default;
 };
 
 namespace time {

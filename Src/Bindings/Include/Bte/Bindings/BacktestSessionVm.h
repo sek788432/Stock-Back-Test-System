@@ -11,7 +11,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace bte::bindings {
@@ -45,6 +47,8 @@ struct BacktestSnapshot {
   double finalPrice = 0.0;
   std::int64_t positionShares = 0;
   std::size_t barsProcessed = 0;
+  std::string resultId;
+  std::string canonicalResultHash;
 };
 
 struct BacktestConfiguration {
@@ -55,6 +59,13 @@ struct BacktestConfiguration {
   double initialCapital = 0.0;
   std::int64_t quantityShares = 0;
   std::optional<strategy::SelectableStrategyPlan> selectableStrategy;
+};
+
+struct PersistedBacktestStorage {
+  std::filesystem::path resultStore;
+  std::filesystem::path dataStore;
+  std::string snapshotId;
+  std::string strategyHash;
 };
 
 [[nodiscard]] core::Result<BacktestSnapshot>
@@ -71,5 +82,10 @@ runBacktestSession(std::vector<core::Bar> bars, double initialCapital,
 [[nodiscard]] core::Result<BacktestSnapshot>
 runBacktestConfiguration(const BacktestConfiguration &configuration,
                          const core::CancellationToken &cancellation = {});
+
+[[nodiscard]] core::Result<BacktestSnapshot> runPersistedBacktestConfiguration(
+    const BacktestConfiguration &configuration,
+    const PersistedBacktestStorage &storage,
+    const core::CancellationToken &cancellation = {});
 
 } // namespace bte::bindings

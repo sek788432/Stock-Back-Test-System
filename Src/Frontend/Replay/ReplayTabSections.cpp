@@ -64,13 +64,41 @@ ReplaySetupControls makeReplaySetupControls(QWidget *owner) {
           .release();
   controls.box->setObjectName("replaySetupBox");
   controls.box->setAccessibleName("Replay setup");
-  controls.box->setMinimumHeight(142);
-  controls.box->setMaximumHeight(150);
+  controls.box->setMinimumHeight(220);
+  controls.box->setMaximumHeight(230);
 
   auto *setupLayout = std::make_unique<QGridLayout>(controls.box).release();
   setupLayout->setContentsMargins(18, 22, 18, 16);
   setupLayout->setHorizontalSpacing(16);
   setupLayout->setVerticalSpacing(12);
+
+  controls.resultCombo = std::make_unique<QComboBox>(controls.box).release();
+  controls.resultCombo->setObjectName("replayResultCombo");
+  controls.resultCombo->setAccessibleName("Saved Backtest result");
+  controls.resultCombo->setEditable(true);
+  controls.resultCombo->setPlaceholderText(ReplayTab::tr("No saved results"));
+  controls.resultCombo->setFixedWidth(360);
+
+  controls.resultTimeframeCombo =
+      std::make_unique<QComboBox>(controls.box).release();
+  controls.resultTimeframeCombo->setObjectName("replayResultTimeframeCombo");
+  controls.resultTimeframeCombo->setAccessibleName("Result replay timeframe");
+  controls.resultTimeframeCombo->addItems(
+      {ReplayTab::tr("Hourly"), ReplayTab::tr("Daily (UTC)")});
+  controls.resultTimeframeCombo->setFixedWidth(180);
+
+  controls.openResultButton =
+      std::make_unique<QPushButton>(ReplayTab::tr("Open Result"), controls.box)
+          .release();
+  controls.openResultButton->setObjectName("replayOpenResultButton");
+  controls.openResultButton->setAccessibleName("Open selected Backtest result");
+
+  controls.resultStatusLabel =
+      makeFormLabel(ReplayTab::tr("Saved results are loading…"),
+                    "replayResultStatusLabel", controls.box);
+  controls.partialLabel = makeFormLabel(ReplayTab::tr("Partial UTC day"),
+                                        "replayPartialLabel", controls.box);
+  controls.partialLabel->setVisible(false);
 
   controls.symbolCombo = std::make_unique<QComboBox>(controls.box).release();
   controls.symbolCombo->setObjectName("replaySymbolCombo");
@@ -115,28 +143,37 @@ ReplaySetupControls makeReplaySetupControls(QWidget *owner) {
   controls.loadButton->setAccessibleName("Load replay data");
   controls.loadButton->setFixedSize(132, 38);
 
+  setupLayout->addWidget(makeFormLabel(ReplayTab::tr("Saved result"),
+                                       "replayResultLabel", controls.box),
+                         0, 0);
+  setupLayout->addWidget(controls.resultCombo, 0, 1, 1, 2);
+  setupLayout->addWidget(controls.resultTimeframeCombo, 0, 3);
+  setupLayout->addWidget(controls.openResultButton, 0, 4);
+  setupLayout->addWidget(controls.resultStatusLabel, 1, 1, 1, 3);
+  setupLayout->addWidget(controls.partialLabel, 1, 4);
+
   setupLayout->addWidget(
       makeFormLabel(ReplayTab::tr("Symbol"), "replaySymbolLabel", controls.box),
-      0, 0);
-  setupLayout->addWidget(controls.symbolCombo, 0, 1);
+      2, 0);
+  setupLayout->addWidget(controls.symbolCombo, 2, 1);
   setupLayout->addWidget(makeFormLabel(ReplayTab::tr("Timeframe"),
                                        "replaySchemaLabel", controls.box),
-                         0, 2);
-  setupLayout->addWidget(controls.schemaCombo, 0, 3);
+                         2, 2);
+  setupLayout->addWidget(controls.schemaCombo, 2, 3);
   setupLayout->addWidget(makeFormLabel(ReplayTab::tr("Capital"),
                                        "replayInitialCapitalLabel",
                                        controls.box),
-                         0, 4);
-  setupLayout->addWidget(controls.initialCapital, 0, 5);
-  setupLayout->addWidget(controls.loadButton, 0, 6, Qt::AlignTop);
+                         2, 4);
+  setupLayout->addWidget(controls.initialCapital, 2, 5);
+  setupLayout->addWidget(controls.loadButton, 2, 6, Qt::AlignTop);
   setupLayout->addWidget(makeFormLabel(ReplayTab::tr("Start"),
                                        "replayStartDateLabel", controls.box),
-                         1, 0);
-  setupLayout->addWidget(controls.startDate, 1, 1);
+                         3, 0);
+  setupLayout->addWidget(controls.startDate, 3, 1);
   setupLayout->addWidget(
       makeFormLabel(ReplayTab::tr("End"), "replayEndDateLabel", controls.box),
-      1, 2);
-  setupLayout->addWidget(controls.endDate, 1, 3);
+      3, 2);
+  setupLayout->addWidget(controls.endDate, 3, 3);
   setupLayout->setColumnMinimumWidth(0, 74);
   setupLayout->setColumnMinimumWidth(2, 92);
   setupLayout->setColumnMinimumWidth(4, 70);
@@ -201,6 +238,13 @@ ReplayPlaybackControls makeReplayPlaybackControls(QWidget *owner) {
   controls.progress->setValue(0);
   controls.progress->setFixedWidth(260);
 
+  controls.seekSlider =
+      std::make_unique<QSlider>(Qt::Horizontal, owner).release();
+  controls.seekSlider->setObjectName("replaySeekSlider");
+  controls.seekSlider->setAccessibleName("Replay position");
+  controls.seekSlider->setRange(0, 0);
+  controls.seekSlider->setMinimumWidth(180);
+
   controls.bar = std::make_unique<QFrame>(owner).release();
   controls.bar->setObjectName("replayPlaybackBar");
   controls.bar->setAccessibleName("Replay playback controls");
@@ -216,6 +260,7 @@ ReplayPlaybackControls makeReplayPlaybackControls(QWidget *owner) {
       makeFormLabel(ReplayTab::tr("Speed"), "replaySpeedLabel", owner));
   playbackRow->addWidget(controls.speedCombo);
   playbackRow->addWidget(controls.progress);
+  playbackRow->addWidget(controls.seekSlider);
   playbackRow->addSpacing(10);
   playbackRow->addWidget(controls.zoomOutButton);
   playbackRow->addWidget(controls.zoomInButton);

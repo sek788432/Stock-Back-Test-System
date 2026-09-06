@@ -13,6 +13,7 @@
 #include <QGraphicsScene>
 #include <QLegend>
 #include <QLineF>
+#include <QLineSeries>
 #include <QList>
 #include <QMargins>
 #include <QMouseEvent>
@@ -20,6 +21,7 @@
 #include <QPen>
 #include <QPoint>
 #include <QRectF>
+#include <QScatterSeries>
 #include <QTimeZone>
 #include <QVBoxLayout>
 #include <QValueAxis>
@@ -149,8 +151,12 @@ QtChartsCandlestickView::QtChartsCandlestickView(QWidget *parent)
       chartView_(
           std::make_unique<InteractiveChartView>(chart_, this).release()),
       candles_(std::make_unique<QCandlestickSeries>(chart_).release()),
+      volume_(std::make_unique<QLineSeries>(chart_).release()),
+      buyMarkers_(std::make_unique<QScatterSeries>(chart_).release()),
+      sellMarkers_(std::make_unique<QScatterSeries>(chart_).release()),
       axisX_(std::make_unique<QDateTimeAxis>(chart_).release()),
-      axisY_(std::make_unique<QValueAxis>(chart_).release()) {
+      axisY_(std::make_unique<QValueAxis>(chart_).release()),
+      volumeAxis_(std::make_unique<QValueAxis>(chart_).release()) {
   setObjectName("replayCandlestickChartView");
   setAccessibleName("K-line candlestick chart");
 
@@ -159,26 +165,49 @@ QtChartsCandlestickView::QtChartsCandlestickView(QWidget *parent)
   candles_->setDecreasingColor(QColor{232, 82, 86});
   candles_->setBodyWidth(0.34);
   candles_->setCapsWidth(0.22);
+  volume_->setName(tr("Volume"));
+  volume_->setColor(QColor{70, 145, 181, 150});
+  buyMarkers_->setName(tr("Buy"));
+  buyMarkers_->setColor(QColor{52, 211, 153});
+  buyMarkers_->setMarkerShape(QScatterSeries::MarkerShapeTriangle);
+  buyMarkers_->setMarkerSize(13.0);
+  sellMarkers_->setName(tr("Sell"));
+  sellMarkers_->setColor(QColor{251, 113, 133});
+  sellMarkers_->setMarkerShape(QScatterSeries::MarkerShapeRectangle);
+  sellMarkers_->setMarkerSize(11.0);
 
   chart_->addSeries(candles_);
-  chart_->legend()->hide();
+  chart_->addSeries(volume_);
+  chart_->addSeries(buyMarkers_);
+  chart_->addSeries(sellMarkers_);
+  chart_->legend()->setVisible(true);
   chart_->setBackgroundBrush(QColor{6, 18, 28});
   chart_->setPlotAreaBackgroundBrush(QColor{7, 21, 33});
   chart_->setPlotAreaBackgroundVisible(true);
   chart_->setMargins(QMargins{0, 0, 0, 0});
   chart_->addAxis(axisX_, Qt::AlignBottom);
   chart_->addAxis(axisY_, Qt::AlignLeft);
+  chart_->addAxis(volumeAxis_, Qt::AlignRight);
   candles_->attachAxis(axisX_);
   candles_->attachAxis(axisY_);
+  volume_->attachAxis(axisX_);
+  volume_->attachAxis(volumeAxis_);
+  buyMarkers_->attachAxis(axisX_);
+  buyMarkers_->attachAxis(axisY_);
+  sellMarkers_->attachAxis(axisX_);
+  sellMarkers_->attachAxis(axisY_);
 
   axisX_->setFormat("MM-dd");
   axisY_->setLabelFormat("%.2f");
+  volumeAxis_->setLabelFormat("%.0f");
+  volumeAxis_->setTitleText(tr("Volume"));
   axisX_->setGridLineColor(QColor{31, 51, 70});
   axisY_->setGridLineColor(QColor{31, 51, 70});
   axisX_->setLinePenColor(QColor{74, 101, 126});
   axisY_->setLinePenColor(QColor{74, 101, 126});
   axisX_->setLabelsColor(QColor{198, 220, 239});
   axisY_->setLabelsColor(QColor{198, 220, 239});
+  volumeAxis_->setLabelsColor(QColor{112, 172, 201});
 
   chartView_->setObjectName("replayChartView");
   chartView_->setAccessibleName("K-line chart viewport");
@@ -196,8 +225,12 @@ QtChartsCandlestickView::QtChartsCandlestickView(QWidget *parent)
 void QtChartsCandlestickView::setBarWindow(
     const std::span<const core::Bar> visible) {
   candles_->clear();
+  volume_->clear();
   for (const auto &bar : visible) {
-    appendBar(bar);
+    if (bar.isValid()) {
+      candles_->append(makeCandleSet(bar));
+      volume_->append(toEpochMilliseconds(bar.ts), bar.volume);
+    }
   }
   resetAxes();
 }
@@ -207,11 +240,35 @@ void QtChartsCandlestickView::appendBar(const core::Bar &bar) {
     return;
   }
   candles_->append(makeCandleSet(bar));
+  volume_->append(toEpochMilliseconds(bar.ts), bar.volume);
   resetAxes();
+}
+
+void QtChartsCandlestickView::setMarkers(
+    const std::span<const ChartMarker> markers) {
+  clearMarkers();
+  for (const auto &marker : markers) {
+    auto *series = marker.isBuy ? buyMarkers_ : sellMarkers_;
+    series->append(toEpochMilliseconds(marker.timestamp), marker.price);
+  }
+}
+
+void QtChartsCandlestickView::clearMarkers() {
+  buyMarkers_->clear();
+  sellMarkers_->clear();
 }
 
 std::size_t QtChartsCandlestickView::candleCount() const noexcept {
   return static_cast<std::size_t>(candles_->count());
+}
+
+std::size_t QtChartsCandlestickView::volumePointCount() const noexcept {
+  return static_cast<std::size_t>(volume_->count());
+}
+
+std::size_t QtChartsCandlestickView::markerCount() const noexcept {
+  return static_cast<std::size_t>(buyMarkers_->count()) +
+         static_cast<std::size_t>(sellMarkers_->count());
 }
 
 void QtChartsCandlestickView::zoomIn() { chart_->zoom(1.2); }
@@ -228,17 +285,22 @@ void QtChartsCandlestickView::resetAxes() {
     const auto now = QDateTime::currentDateTimeUtc();
     axisX_->setRange(now.addDays(-1), now);
     axisY_->setRange(0.0, 1.0);
+    volumeAxis_->setRange(0.0, 1.0);
   } else {
     qreal minTimestamp = std::numeric_limits<qreal>::max();
     qreal maxTimestamp = std::numeric_limits<qreal>::lowest();
     qreal minPrice = std::numeric_limits<qreal>::max();
     qreal maxPrice = std::numeric_limits<qreal>::lowest();
+    qreal maxVolume = 0.0;
 
     for (auto *set : candles_->sets()) {
       minTimestamp = std::min(minTimestamp, set->timestamp());
       maxTimestamp = std::max(maxTimestamp, set->timestamp());
       minPrice = std::min(minPrice, set->low());
       maxPrice = std::max(maxPrice, set->high());
+    }
+    for (const auto &point : volume_->points()) {
+      maxVolume = std::max(maxVolume, point.y());
     }
 
     if (minTimestamp == maxTimestamp) {
@@ -252,6 +314,7 @@ void QtChartsCandlestickView::resetAxes() {
                      QDateTime::fromMSecsSinceEpoch(
                          static_cast<qint64>(maxTimestamp), QTimeZone::UTC));
     axisY_->setRange(std::max(0.0, minPrice - padding), maxPrice + padding);
+    volumeAxis_->setRange(0.0, std::max(1.0, maxVolume * 4.0));
   }
 }
 
