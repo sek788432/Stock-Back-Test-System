@@ -18,6 +18,7 @@ enum class ErrorCode : std::uint8_t {
   timeout,
   internal,
   dataUnavailable,
+  dataSnapshotUnavailable,
   schemaMismatch,
   strategyCompileFailed,
   strategyRuntimeError,
@@ -65,6 +66,18 @@ public:
 
 private:
   std::optional<T> value_;
+  Error error_;
+};
+
+template <> class Result<void> {
+public:
+  Result() = default;
+  Result(Error error) : error_(std::move(error)) {}
+
+  [[nodiscard]] bool ok() const noexcept { return !error_; }
+  [[nodiscard]] const Error &error() const noexcept { return error_; }
+
+private:
   Error error_;
 };
 

@@ -3,9 +3,11 @@ add_library(
   STATIC
     Include/Bte/Core/Bar.h
     Include/Bte/Core/Cancellation.h
+    Include/Bte/Core/Digest.h
     Include/Bte/Core/Result.h
     Include/Bte/Core/Time.h
     Private/Bar.cpp
+    Private/Digest.cpp
     Private/Result.cpp
     Private/Time.cpp)
 

@@ -23,6 +23,8 @@ struct Bar {
   double close = 0.0;
   double volume = 0.0;
 
+  bool operator==(const Bar &) const = default;
+
   [[nodiscard]] constexpr bool isValid() const noexcept {
     return std::isfinite(open) && std::isfinite(high) && std::isfinite(low) &&
            std::isfinite(close) && std::isfinite(volume) && open > 0.0 &&

@@ -42,6 +42,14 @@ installed from the hash-locked `Tools/CoverageRequirements.txt`. Release labels
 remain beside action SHAs as review and dependency-update metadata; labels are
 not executable references.
 
+Each C++ build job verifies vcpkg registry revision
+`9e593bb18ea69cc5095e012465dcd675a822ed0d`, installs the root
+[`vcpkg.json`](../../vcpkg.json) in manifest mode, and configures with its
+toolchain. The manifest pins SQLite 3.53.4 through that immutable baseline;
+CMake separately requires the exact version and rejects configuration without
+vcpkg manifest provenance. The same setup is documented in
+[`BUILD.md`](../BUILD.md#pinned-sqlite-setup).
+
 Whether GitHub branch protection requires the aggregate status, signed commits,
 reviews, or linear history is **External / unverified**. Those settings must be
 checked in GitHub; repository files alone cannot prove them.
@@ -55,6 +63,8 @@ UTF-8 files from the exact `--head` commit and skips binary files.
 It currently checks:
 
 - trailing whitespace;
+- path conventions, including the exact root `vcpkg.json` external-tool
+  filename exception (nested or arbitrary lowercase JSON files are rejected);
 - banned modern-style C++ spellings, including `using namespace std`, raw
   allocation/deallocation, C arrays, recognized built-in C-style casts,
   unscoped enums, `NULL`, `typedef`, `goto`, function-like macros, and selected
@@ -195,6 +205,10 @@ No threshold, exemption file, report artifact, or tool command should be
 documented as current until that exact mechanism exists in the tree.
 
 ## 7. Local verification
+
+Bootstrap and export the pinned `VCPKG_ROOT` from
+[`BUILD.md`](../BUILD.md#pinned-sqlite-setup) before these commands. There is no
+host/system SQLite fallback.
 
 The local commands matching the implemented C++/Qt workflow are:
 

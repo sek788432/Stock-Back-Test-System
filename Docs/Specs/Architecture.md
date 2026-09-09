@@ -3,15 +3,20 @@
 This spec defines module seams and ownership. The living decisions record the
 rationale for the [C++/Qt desktop boundary](../Decisions/ImportantDecisions.md#c-and-qt-desktop-boundary)
 and the [project-owned engine](../Decisions/ImportantDecisions.md#engine-and-release-data-authority).
+The [canonical result storage decision](../Decisions/ImportantDecisions.md#canonical-result-storage-and-lifecycle)
+fixes the Results module, `.bteresult`, lifecycle, and canonical-framing
+constraints.
 
 ## 1. Status
 
 - **Implemented:** Core, CSV Data, Indicators, Selectable Strategy, basic
   Replay, a limited Engine, Bindings, Frontend, and App targets exist. The Qt
   shell includes its own Backtest page and is optional at configure time.
+  Data also implements limited immutable snapshot/segment support; Results
+  implements transactional `.bteresult` storage consumed by result Replay.
 - **Planned:** the complete module graph below, general Strategy/`MarketSlice`
-  seam, Python worker, snapshot builder, complete broker/accounting/metrics,
-  canonical results, and `.bteresult` persistence.
+  seam, Python worker, complete release snapshot pipeline,
+  broker/accounting/metrics, and remaining canonical result families.
 - **Blocked for public release:** redistribution rights and a verified redistribution-cleared split manifest.
 
 Planned modules are contracts, not claims about current code.
@@ -91,7 +96,8 @@ Every fallible public C++ backend function is `[[nodiscard]]` and returns `bte::
 
 ## 7. Compatibility identities
 
-Every completed result identifies at least:
+The target compatibility contract requires every completed result to identify
+at least:
 
 - engine and result-schema versions;
 - strategy source/artifact hash and strategy API version;
@@ -99,5 +105,11 @@ Every completed result identifies at least:
 - Release Snapshot, Data Segment, and calendar hashes;
 - Python runtime profile when Python executed;
 - `canonicalResultHash` over canonical functional records.
+
+Implemented result schema 2 is a limited predecessor: it records the current
+strategy ID/hash, fixed policy literals, data-selection identities, spans, and
+supported records, but not every target identity above. Its exact current hash
+framing is fixed in
+[`EngineReplayPnL.md` §8.1](EngineReplayPnL.md#81-implemented-schema-2-canonical-hash-framing).
 
 Wall-clock creation time, local paths, and SQLite page layout are not functional determinism inputs.

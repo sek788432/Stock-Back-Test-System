@@ -286,7 +286,9 @@ cmake --build --preset analysis --parallel
 if [[ "$run_scan_build" -eq 1 ]]; then
   cmake -E remove_directory Output/scan-build
   cmake -E remove_directory Output/scan-build-reports
-  "$scan_build" --use-analyzer="$clang_compiler" \
+  # Configure outside scan-build so dependency-manager builds are not reported
+  # as project defects. The analyzer wraps only this repository's build graph.
+  CC="$clang_compiler" CXX="$clangxx_compiler" \
     cmake -S . -B Output/scan-build -DBTE_BUILD_TESTS=OFF -DBTE_BUILD_QT_APP=ON
   "$scan_build" --use-analyzer="$clang_compiler" \
     --status-bugs --keep-empty -o Output/scan-build-reports \
