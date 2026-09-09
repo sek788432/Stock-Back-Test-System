@@ -222,6 +222,7 @@ jobs:
           --exclude 'Output/'
           --merge-mode-functions merge-use-line-min
           --decisions
+          --gcov-ignore-parse-errors negative_hits.warn_once_per_file
           --cobertura coverage.xml
           --json coverage.json
           --markdown-summary coverage-summary.md
