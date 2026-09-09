@@ -8,9 +8,11 @@ This spec owns market-data provenance, release snapshots, chronology-safe access
   C++ `CsvBarStream` reads tracked files under `StockData/Extracted` into
   memory. The direct reader currently supports symbols whose CSV filename stem
   exactly equals the canonical symbol; dotted-symbol exports are a known gap.
-- **Planned:** release snapshot builder, immutable segment reader,
+  Limited immutable snapshot construction, segment reading, selection identity,
+  and result reference retention also exist for the single-symbol Backtest path.
+- **Planned:** complete release snapshot pipeline,
   streaming/prefetch, synchronized multi-symbol slices, calendar/split
-  manifests, and retention.
+  manifests, and full release-profile retention.
 - **Blocked for public release:** redistribution rights for derived market data and a verified redistribution-cleared split manifest are not recorded.
 
 The existing CSV reader is a development baseline. It is not yet the release snapshot implementation and currently materializes a complete file.

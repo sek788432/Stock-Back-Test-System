@@ -10,16 +10,16 @@ that reads a Backtest Result and never executes a Strategy or engine event.
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | CSV-backed bar loading; forward/back bar stepping; replay clock controls; candlestick presentation; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice. A selected buy/sell signal queues a whole-share market order for the next actual bar open, with 1 bp adverse slippage; buy cash failures preserve cash and open positions are marked at final close. |
-| **Planned** | Volume presentation, synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, immutable snapshots, canonical hashes, and SQLite `.bteresult`. |
+| **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar. |
+| **Planned** | Synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, the complete Results-management UI and migration workflow, and the remaining canonical record families. |
 | **Blocked** | Public release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
 
 The current starter and selectable slices are intentionally single-symbol; the
 selectable path supports only a flat position and whole-quantity long entry or
-exit. Neither slice persists a canonical Backtest Result and neither is
-evidence that the complete engine contract below is implemented. The starter
-slice remains single-order. No durable result format is currently implemented;
-the removed legacy JSON summary was not the target result contract.
+exit. They persist only the canonical families they can truthfully produce and
+are not evidence that the complete engine contract below is implemented. The
+starter slice remains single-order. The removed legacy JSON summary is not part
+of the durable result contract.
 
 ### 1.1 Execution modes and scheduling
 
@@ -27,6 +27,10 @@ the removed legacy JSON summary was not the target result contract.
 - A **Paced Backtest** lets Debug Run or a user-controlled execution surface
   advance the same engine one slice at a time. Pausing or stepping cannot alter
   functional inputs, event order, or canonical output.
+- The implemented `BacktestExecution` session is the shared stateful seam:
+  Batch runs it to completion, while Paced callers invoke one `advance` per
+  authorized slice. Terminal cancellation and operational failure retain only
+  records from fully processed slices plus a terminal diagnostic.
 - **K-line Replay** reads an existing completed or diagnostic Backtest Result
   and its referenced bars; it never calls Strategy hooks, starts Python, or
   creates new fills.
@@ -140,10 +144,22 @@ Authoritative accounting uses checked fixed-point strong types:
 - Pending orders cancel as `EndOfRun`; borrow accrual stops at the configured run-end timestamp.
 - A final mark is valid only if the symbol has an actual bar in the final exchange session. Otherwise save `Incomplete: StaleFinalMark`, retain the diagnostic mark and age, and suppress final metrics.
 
-Each run targets one transactional SQLite `.bteresult` file containing typed
+The schema, lifecycle, framing, compatibility, and recovery rules are fixed by
+the [canonical result storage decision](../Decisions/ImportantDecisions.md#canonical-result-storage-and-lifecycle).
+Each run targets one transactional SQLite
+`.bteresult` file containing typed
 run/configuration, strategy source, orders, fills, trades, positions, equity,
 fees, margin, corporate actions, strategy-relevant indicator snapshots,
 warnings, logs, and data-segment references.
+
+Schema 2 also persists one validated capability-declaration row. The current
+limited Engine declares warnings, orders, fills, post-slice portfolio,
+slippage-cost, and terminal-diagnostic records as supported. Trades, metrics,
+strategy logs, indicator snapshots, corporate actions, and margin records are
+explicitly unsupported; readers expose these flags and the limited Engine never
+fabricates those families. Because this declaration is invariant for schema 2
+rather than a per-run functional value, it is container schema metadata and is
+not an additional canonical-hash frame.
 
 - Embed the exact Strategy source or typed plan used by the run. Export warns
   that embedded source is untrusted and must not be executed merely because a
@@ -168,6 +184,68 @@ warnings, logs, and data-segment references.
 - K-line Replay reads persisted engine events, indicator snapshots, and
   referenced immutable bars; it does not rerun Python, Strategy hooks, or the
   C++ execution engine.
+
+### 8.1 Implemented schema 2 canonical hash framing
+
+The current limited Results implementation uses result schema integer `2`,
+numeric-policy literal `fixed-point-v1`, and aggregation-policy literal
+`utcCalendarDayV1`. Its `canonicalResultHash` is lowercase hexadecimal SHA-256
+over the exact byte stream below. This subsection is normative for schema 2 and
+matches the implemented writer and reader; it does not describe the still-
+planned complete record model.
+
+The stream begins with the 20 ASCII bytes `BTE-CANONICAL-RESULT` followed by one
+zero byte. Every following field is one frame:
+
+1. one ASCII tag byte;
+2. an unsigned 64-bit big-endian payload byte count;
+3. exactly that many payload bytes.
+
+An integer payload is always eight bytes containing the signed 64-bit value in
+two's-complement big-endian form. Non-negative ordinals, row counts, sequences,
+and enum values use that same signed representation. A string payload is the
+exact stored byte sequence with no terminator or transcoding. For an optional
+integer, absence is a zero-length frame and presence is the normal eight-byte
+integer frame; therefore an absent value is distinct from present zero.
+
+Frames occur in this exact order:
+
+| Scope | Repetition and frames |
+| --- | --- |
+| Header | `v` schema integer (`2`) |
+| Ordered universe | one `u` string for each symbol, preserving Run Configuration order |
+| Run Configuration | `s` range-start Unix milliseconds, `e` range-end Unix milliseconds, `c` initial-capital microdollars, `i` strategy ID, `h` strategy hash, `n` numeric-policy literal, `a` aggregation-policy literal |
+| Data selection | five `d` strings: snapshot ID, calendar hash, split-manifest hash, source timeframe, and profile, in that order |
+| Each ordered data span | `o` snapshot-manifest ordinal, `y` symbol, two `g` strings for segment ID then segment hash, two `r` integers for first row then row count, and two `t` integers for first then last Unix-millisecond timestamp |
+| Each canonical record | `q` sequence, `t` Unix-millisecond timestamp, `y` symbol, `f` record-family enum, `x` order-side enum, optional integers `1` quantity shares, `2` price nanodollars, `3` amount microdollars, `4` cash microdollars, `5` market-value microdollars, `6` equity microdollars, `p` P&L microdollars, `7` position shares, then `m` text |
+| Terminal state | `z` run-status enum, `m` terminal-reason text, optional `8` final-equity microdollars, optional `9` P&L microdollars |
+
+Schema-2 enum integers are fixed: run status is `running=0`, `completed=1`,
+`failed=2`, `canceled=3`, `interrupted=4`, and `incomplete=5`; record family is
+`order=0`, `fill=1`, `portfolio=2`, `cost=3`, `warning=4`, `log=5`, and
+`terminalDiagnostic=6`; order side is `none=0`, `buy=1`, and `sell=2`.
+
+Universe order is functional. Data spans are hashed in vector order and must
+have strictly increasing snapshot-manifest ordinals; a selection may begin at
+any manifest segment. Canonical records are hashed in
+sequence order; persisted sequences must be exactly `0..N-1`, and timestamps
+must be nondecreasing. Stable same-timestamp ordering is therefore the assigned
+sequence, not database row order or enum family.
+
+The schema-2 hash includes every field named above. It excludes Result ID,
+creation/save wall-clock times, catalog availability and ordering, local paths,
+SQLite tables/pages/journals/transaction metadata, pacing delays, and UI state.
+OHLCV bytes are not copied into the result hash stream; their snapshot,
+segment, span, calendar, and split identities are included instead. Schema 2
+does not yet represent the target engine-version, strategy-API/source,
+cost-profile, Runtime Profile, complete numeric-policy, or general record-family
+contracts. Those remain required before general release rather than being
+silently treated as stable omissions.
+
+Any change to the domain separator, tag, frame encoding, field inclusion,
+enum integer, or ordering rule requires a new result schema version plus an
+explained deterministic-fixture update. A reader must never reinterpret schema
+1 bytes under changed rules.
 
 ## 9. Determinism
 

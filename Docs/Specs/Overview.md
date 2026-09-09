@@ -36,6 +36,10 @@ multi-run concurrency are outside the accepted product scope.
   execution; fixed slippage; affordability rejection; final-close
   open-position marking; and a multi-fill trade log.
 - `DataFetcher/` developer pipeline for Databento ingestion into DuckDB and tracked CSV extraction.
+- Limited immutable snapshot/segment support and transactional SQLite
+  `.bteresult` storage for the single-symbol Backtest path, with persisted
+  order/fill/post-slice portfolio presentation in Replay. Remaining acceptance
+  work is tracked in the [Replay roadmap](../KLineReplayRoadmap.md).
 
 ### Planned
 
@@ -46,7 +50,7 @@ multi-run concurrency are outside the accepted product scope.
   Python worker using the same engine. The implemented conditions slice remains
   limited to the indicators, comparisons, sizing, and actions listed above.
 - Immutable release snapshots generated from `StockData/Extracted`.
-- Fixed-point accounting and transactional SQLite `.bteresult` files.
+- Complete fixed-point accounting and the remaining canonical result families.
 - Complete K-line result replay, packaging, and release-profile retention.
 
 ### Blocked
