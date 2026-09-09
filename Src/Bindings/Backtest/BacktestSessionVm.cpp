@@ -7,6 +7,7 @@
 
 #include <algorithm> // IWYU pragma: keep
 #include <cmath>
+#include <compare> // IWYU pragma: keep
 #include <cstdint>
 #include <optional>
 #include <string> // IWYU pragma: keep
