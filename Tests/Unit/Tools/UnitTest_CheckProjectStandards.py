@@ -516,6 +516,13 @@ class AuditTestRegistrationTest(unittest.TestCase):
 
 
 class AuditPathConventionsTest(unittest.TestCase):
+    def test_accepts_only_root_vcpkg_manifest_convention(self) -> None:
+        self.assertEqual(audit_path_conventions({Path("vcpkg.json")}), [])
+        for path in (Path("Docs/vcpkg.json"), Path("vcpkg-custom.json"), Path("other.json")):
+            with self.subTest(path=path):
+                violations = audit_path_conventions({path})
+                self.assertEqual([violation.rule for violation in violations], ["PATH001"])
+
     def test_rejects_non_pascal_case_project_paths(self) -> None:
         violations = audit_path_conventions(
             {

@@ -9,12 +9,13 @@ in [`EngineReplayPnL.md`](EngineReplayPnL.md).
 
 | Capability | Status | User-visible truth |
 |---|---|---|
-| K-line bar playback | **Implemented with known gaps** | Tracked hourly CSV bars and daily aggregation support candlesticks, play, pause, step, and speed. Volume presentation and other displayed timeframe choices remain planned. |
-| Current replay portfolio strip | **Implemented placeholder** | It shows initial values, not trade-driven accounting. |
-| Legacy JSON replay summaries | **Removed** | No runtime or test path remains; durable `.bteresult` storage is still not implemented. |
+| K-line bar playback | **Implemented with known gaps** | Tracked hourly CSV bars and daily UTC aggregation support candlesticks, volume, persisted fill markers, play, pause, step, seek, and speed. Other timeframe choices remain planned. |
+| Persisted replay portfolio strip | **Implemented limited slice** | It presents stored post-slice cash, position, market value, equity, and P&L for the implemented single-symbol Backtest path. |
+| Legacy JSON replay summaries | **Removed** | No runtime or test path remains; transactional SQLite `.bteresult` storage is implemented. |
 | Starter Backtest page | **Implemented limited slice** | One symbol/range, fixed starter or limited Selectable Conditions, whole-share long-only market behavior, and next-actual-bar execution. |
-| Saved strategies and results | **Accepted design / not implemented** | Separate Strategy and Result libraries follow the contracts below. |
-| Python Strategy, Debug Run, durable results, and result replay | **Accepted design / not implemented** | No shipped worker or `.bteresult` path exists yet. |
+| Saved strategies and complete Results library | **Accepted design / partially implemented** | Backend Result storage, catalog, import, and lifecycle operations exist, but saved Strategies and the complete Results management page remain planned. |
+| Durable results and result replay | **Implemented limited slice** | The current Backtest records canonical warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar; promotes completed or diagnostic `.bteresult` artifacts; and can open them in Replay without engine execution. Unsupported record families are declared in persisted capability metadata. The complete engine, canonical record families, and result migration remain planned. |
+| Python Strategy and Debug Run | **Accepted design / not implemented** | No shipped Python worker or Debug Run path exists yet. |
 | Public data-bearing release | **Blocked** | Redistribution rights and verified split metadata are missing. |
 
 The UI, README, release notes, and screenshots must preserve these distinctions.
@@ -36,6 +37,9 @@ accepted scope.
   not accept a Strategy and does not execute the engine.
 
 ## Strategy library
+
+This section is the accepted target; saved Strategy persistence and its UI are
+not implemented in the current checkout.
 
 Strategy artifacts are stored in `Strategies/Active` using UUIDv7 filenames
 and the `.btestrategy` extension. The library shows name, authoring mode,
@@ -82,11 +86,18 @@ allowed. Rows expose clear validation and keyboard-accessible reordering.
 
 ## Result library and storage
 
-Results are stored in `Results/Active` using UUIDv7 filenames and the
-`.bteresult` extension. The table shows status, Strategy name, symbols/universe,
-timeframe, range, completion time, valid total return, result-schema version,
-canonical-hash state, and data availability. It sorts newest first by default;
-selecting a row opens a read-only detail pane.
+The implemented limited backend stores staged, promoted, and trashed
+`.bteresult` artifacts below the application Results root. Each filename uses
+the run's opaque 32-digit lowercase hexadecimal Result ID. The backend supports
+begin/append/finalize/promote, validated catalog listing/open, import,
+interrupted-run recovery, Trash/restore, and purge for schema 2. The current
+Results tab is still a placeholder; Replay owns the implemented catalog
+selector and Backtest can hand it an exact promoted Result ID.
+
+The accepted complete Results page shows status, Strategy name,
+symbols/universe, timeframe, range, completion time, valid total return,
+result-schema version, canonical-hash state, and data availability. It sorts
+newest first by default; selecting a row opens a read-only detail pane.
 
 Actions are Show Details, Open Replay, Compare, Export, Import, Move to Trash,
 and Restore. Filters cover Strategy, symbol/universe, timeframe, status, and
@@ -94,28 +105,33 @@ date range, with separate Active and 30-day Trash views.
 **Open Replay** is disabled when validation or required data resolution fails
 and displays the exact structured error.
 
-Both artifact types are written to a same-filesystem staging path, fully
-validated, flushed, and atomically renamed into `Active`. Import is untrusted:
-it validates size, schema versions, hashes, identifiers, and references and
-never executes embedded strategy source. Deletion moves an artifact into its
-type-specific Trash; eligible unreferenced content is purged after 30 days.
-
-Before persistence exists, both library pages show honest empty states rather
-than fake content. Results state that no `.bteresult` files exist and result
-persistence is planned; Strategies state that saved Strategy persistence is
-planned.
+Implemented Result writes use same-filesystem staging, validation, close, and
+no-clobber promotion. Backend import treats the artifact as untrusted data and
+validates its current schema, canonical hash, identifiers, and data references;
+it never executes embedded source. Result Trash/restore/purge exists in the
+backend, while its complete UI and 30-day scheduler remain planned. Strategy
+artifact persistence remains wholly planned and must not be inferred from the
+Result implementation.
 
 ## K-line Replay
 
-Replay opens a validated `.bteresult` plus its exact retained Data Segments. It
-shows persisted candlesticks, volume, fills, warnings, portfolio/accounting
-records, metrics, and structured strategy logs; it never reruns Python,
-indicators, order evaluation, or fills.
+Implemented limited Result Replay opens a validated `.bteresult` plus its exact
+persisted row spans from retained Data Segments; it never reselects by the
+broader Run date range. An owned Bindings request object performs cancellable
+catalog/open work and publishes only the newest generation as a queued immutable
+value. Replay shows Hourly or UTC Daily candles, synchronized
+volume, persisted fills/markers, post-slice cash/position/market-value/equity/P&L,
+partial UTC-day state, and terminal reason. It uses indexed frames, displays at
+most 500 at once, and never reruns Python, indicators, order evaluation, or
+fills. Complete warnings/logs/metrics/trade episodes and marker-detail
+interaction remain planned.
 
-The project-owned `QPainter` chart uses a 70/30 candlestick-to-volume vertical
-split. It initially loads 120 bars and supports an exact maximum of 1,000
-visible bars. Pan, zoom, seek, crosshair, accessible marker navigation, and
-keyboard playback must preserve persisted ordering and never fabricate data.
+The current development chart is Qt Charts with a volume line and secondary
+axis. The accepted project-owned `QPainter` release chart uses a 70/30
+candlestick-to-volume vertical split, initially presents 120 bars, and caps its
+visible window at exactly 1,000 bars. Its pan, zoom, seek, crosshair, accessible
+marker navigation, and keyboard playback must preserve persisted ordering and
+never fabricate data.
 
 ## Required verification
 

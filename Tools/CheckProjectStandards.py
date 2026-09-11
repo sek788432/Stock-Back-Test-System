@@ -598,6 +598,8 @@ def is_domain_data_file(path: Path) -> bool:
 
 
 def is_conventional_file(path: Path) -> bool:
+    if path == Path("vcpkg.json"):
+        return True
     if path.name.startswith(".") or path.name in CONVENTIONAL_FILE_NAMES:
         return True
     if path.parts[0] in {".agents", ".github"}:

@@ -4,10 +4,11 @@
 > chart, replay scaffolding, and a Backtest page for the limited engine slice
 > documented in [`EngineReplayPnL.md`](EngineReplayPnL.md) §1. That page supports the fixed starter strategy and the
 > implemented Selectable Conditions subset; saved-strategy authoring, Python
-> strategies, complete backtest workflows, durable results, and
+> strategies, complete backtest workflows, the complete Results library, and
 > release-quality UX remain planned unless their owning spec says otherwise.
 > The current shell exposes Strategies, Backtest, Results, and Replay;
 > Strategies and Results are placeholders for their accepted future pages.
+> Completed runs can nevertheless be persisted and handed directly to Replay.
 
 This spec owns the Qt presentation interface: every screen the user sees, chart
 presentation, and how the UI communicates with backend modules without blocking
@@ -114,21 +115,23 @@ trade-log behavior remain planned.
 **Cross-link.** A completed or diagnostic stored Result has a dedicated **Open
 Replay** action.
 
-### 2.3 Replay tab — current baseline and target result playback
+### 2.3 Replay tab — implemented modes and deferred UX
 
-The implemented baseline is a bar-only player keyed by symbol, timeframe/range,
-and placeholder initial capital. It has no Strategy, fills, or accounting.
-Hourly CSV and daily aggregation are the only truthful data paths; other
-displayed timeframe choices currently fall back to hourly data and are a known
-gap, not supported behavior.
-The current loader also turns a load failure into an empty bar collection; the
-typed failure behavior in §3 is planned and must land before empty data can be
-distinguished reliably from an error.
+The current tab keeps an explicitly labelled **Bar-only preview** keyed by
+symbol, timeframe/range, and placeholder initial capital. It has no Strategy,
+fills, or authoritative accounting. Hourly CSV and UTC-daily aggregation are
+its truthful paths; the displayed one-minute choice still falls back to hourly,
+and a preview load failure still becomes an empty collection.
 
-The target **K-line Replay** opens a validated Backtest Result and its referenced
-Data Segments. It does not accept a new Strategy or Run Configuration and does
-not invoke Python or the C++ engine. Speed, scrub, portfolio, and marker controls
-present persisted records only.
+The implemented limited **Result Replay** mode asynchronously lists and opens
+validated `.bteresult` artifacts and retained Data Segments. It supports Hourly
+and UTC Daily presentation, immediate first-frame display, cancellation and
+stale-request rejection, step/back/seek/playback, a 500-frame visible window,
+volume, persisted fill markers/rows, post-slice portfolio values, partial-day
+labelling, and terminal reasons. It does not invoke Strategy, Python, indicator
+scheduling, order evaluation, or Engine execution. Complete warning/log/metric
+presentation, marker detail interaction, and the Results-management page remain
+planned.
 
 The headline UX. Layout:
 
@@ -160,13 +163,19 @@ Interactions:
   persisted slice.
 - **Scrub bar** — seek within validated persisted checkpoints/records and
   referenced bars; seeking never reconstructs fills by rerunning the engine.
-- **Trade markers** — green up-triangle for buys, red down-triangle for sells, click to see fill details.
-- **Cursor inspector** — hover any candle to see OHLCV + active indicators in a side popup.
-- **Volume pane** — histogram under the candles, sharing the visible window.
+- **Trade markers** — persisted buys and sells currently use color plus distinct
+  shapes; click-to-open fill details remains planned.
+- **Cursor inspector** — the current Qt Charts adapter has a crosshair; an
+  OHLCV/indicator side popup remains planned.
+- **Volume** — the current adapter draws a synchronized volume line against a
+  secondary axis. The separate 70/30 histogram pane belongs to the planned
+  project-owned release chart.
 
 ### 2.4 Results tab
 
-The Results page is separate from Strategies. Its proxy-model table shows the
+The current Results tab is a placeholder that accurately directs users to open
+stored results in Replay. The accepted complete page is separate from
+Strategies. Its proxy-model table shows the
 stored result's Strategy, universe, timeframe, range, status, completion time,
 valid total return, result-schema version, canonical-hash state, and data
 availability. Actions are Show Details, Open Replay, Compare, Export, Import,
@@ -186,6 +195,13 @@ result or referenced data is invalid or unavailable.
   is a synchronous, dependency-light adapter over the current bar-only Replay.
   It owns the backend with `std::unique_ptr`; its portfolio values are explicitly
   placeholders, not engine accounting.
+- **Implemented result adapter:**
+  [`ResultReplay`](../../Src/Bindings/Include/Bte/Bindings/ResultReplay.h)
+  validates persisted results/data and exposes indexed immutable presentation
+  frames. `ReplayTab` owns independent catalog and open
+  [`ResultReplayRequests`](../../Src/Bindings/Include/Bte/Bindings/ResultReplayRequests.h)
+  channels; those Bindings objects own concurrency, cancellation,
+  per-channel stale-generation rejection, and queued immutable completion.
 - **Target:** Qt-facing adapters receive immutable progress/result values from
   an engine worker through queued delivery. Views never hold backend pointers or
   call widgets from workers.
@@ -200,16 +216,16 @@ result or referenced data is invalid or unavailable.
 ## 4. Chart abstraction
 
 The implemented development
-[`IChartView`](../../Src/Frontend/Include/Bte/Frontend/IChartView.h) seam has
-two operations: replace the visible bar window and append one bar.
-`QtChartsCandlestickView` is its current adapter. The accepted release
-adapter is project-owned `QPainter`; it must not leak rendering types into the
-backend or alter persisted ordering.
+[`IChartView`](../../Src/Frontend/Include/Bte/Frontend/IChartView.h) seam can
+replace or append bars and set or clear persisted fill markers.
+`QtChartsCandlestickView` renders candles, synchronized volume, markers,
+crosshair, pan, and zoom. The accepted release adapter is project-owned
+`QPainter`; it must not leak rendering types into the backend or alter
+persisted ordering.
 
-Indicator overlays, persisted fill/corporate-action markers, crosshair state,
-and result seeking are planned interface additions. Add them only with their
-real callers, immutable value types, and tests; K-line Replay consumes persisted
-result values rather than asking the chart to execute engine logic.
+Indicator/corporate-action overlays, accessible marker-detail navigation, and
+the release chart remain planned interface additions. K-line Replay consumes
+persisted result values rather than asking the chart to execute engine logic.
 
 ---
 
@@ -218,8 +234,8 @@ result values rather than asking the chart to execute engine logic.
 | What | Location contract | Format/status |
 |---|---|---|
 | Strategies | `QStandardPaths::AppLocalDataLocation/Strategies/{Active,Trash}` | UUIDv7 `.btestrategy` typed plan or Python source plus versioned metadata |
-| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Active,Trash}` | Planned UUIDv7 `.bteresult`; no durable result format is currently implemented |
-| Data and runtimes | `QStandardPaths::AppLocalDataLocation/{DataSegments,RuntimeProfiles}` | Immutable referenced content |
+| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Staging,Results,Trash}` | Implemented limited schema-2 `.bteresult` artifacts named by opaque 32-digit lowercase hexadecimal Result IDs; complete management UI remains planned |
+| Data and runtimes | `QStandardPaths::AppLocalDataLocation/{DataSegments,RuntimeProfiles}` | Limited immutable referenced segments are implemented; complete release profiles remain planned |
 | Settings and layout | OS-appropriate application data directory | Planned UI-only state; never a mutable market-data path |
 
 One future Core path resolver owns these locations and is redirectable in tests.
@@ -254,9 +270,10 @@ their exact paths are not a current contract.
 ## 9. Tests
 
 Current registered frontend tests cover the application shell, current Backtest
-page, bar-only Replay page/state, Qt Charts adapter, and Bindings view models.
-They do not prove saved Strategy/Result libraries, the five-row editor, Python
-authoring, or the project-owned release chart.
+page, bar-only and result-backed Replay states, asynchronous switching and
+destruction, the Qt Charts candle/volume/marker adapter, and Bindings result
+frames. They do not prove saved Strategy/complete Result library pages, the
+five-row editor, Python authoring, or the project-owned release chart.
 
 Those accepted future behaviors require positive, negative, and boundary tests
 for one/five/six condition rows, invalid conditions, responsive layout, inner

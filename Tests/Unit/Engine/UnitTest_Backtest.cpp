@@ -2,6 +2,7 @@
 
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Cancellation.h"
+#include "Bte/Results/ResultStore.h"
 #include "Bte/Strategy/SelectableStrategy.h"
 
 #include <gtest/gtest.h>
@@ -64,6 +65,72 @@ TEST(BacktestTest, starterMarketBuyFillsAtNextBarOpenAndMarksFinalEquity) {
   EXPECT_EQ(result.value().equityMicrodollars, 2'099'890'000);
   EXPECT_EQ(result.value().pnlMicrodollars, 99'890'000);
   EXPECT_EQ(result.value().barsProcessed, 2U);
+}
+
+TEST(BacktestTest,
+     canonicalTimelineOrdersSameTimestampFillBeforePostSlicePortfolio) {
+  const bte::engine::BacktestRequest request{
+      .bars = {makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 120.0)},
+      .symbol = "SYN",
+      .initialCapitalMicrodollars = 2'000'000'000,
+      .quantityShares = 10,
+  };
+
+  const auto result = bte::engine::runBacktest(request);
+
+  ASSERT_TRUE(result.ok()) << result.error().message;
+  const auto &records = result.value().canonicalRecords;
+  ASSERT_EQ(records.size(), 6);
+  EXPECT_EQ(records[0].family, bte::results::RecordFamily::warning);
+  EXPECT_EQ(records[1].family, bte::results::RecordFamily::order);
+  EXPECT_EQ(records[2].family, bte::results::RecordFamily::portfolio);
+  EXPECT_EQ(records[3].family, bte::results::RecordFamily::fill);
+  EXPECT_EQ(records[4].family, bte::results::RecordFamily::cost);
+  EXPECT_EQ(records[5].family, bte::results::RecordFamily::portfolio);
+  EXPECT_EQ(records[3].timestamp, records[4].timestamp);
+  EXPECT_EQ(records[4].timestamp, records[5].timestamp);
+  EXPECT_EQ(records[4].amountMicrodollars, 110'000);
+  EXPECT_EQ(records[4].text, "slippage");
+  EXPECT_EQ(records[5].cashMicrodollars, 899'890'000);
+  EXPECT_EQ(records[5].marketValueMicrodollars, 1'200'000'000);
+  EXPECT_EQ(records[5].equityMicrodollars, 2'099'890'000);
+  EXPECT_EQ(records[5].positionShares, 10);
+  for (std::size_t index = 0; index < records.size(); ++index) {
+    EXPECT_EQ(records[index].sequence, index);
+    EXPECT_EQ(records[index].symbol, "SYN");
+  }
+}
+
+TEST(BacktestTest, canonicalTimelineHasOnePostSliceCheckpointForEveryBar) {
+  const auto request = bte::engine::BacktestRequest{
+      .bars = {makeFlatBar(2, 10.0), makeFlatBar(3, 10.0),
+               makeFlatBar(4, 10.0)},
+      .symbol = "SYN",
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy = {.conditions = {bte::strategy::Condition{
+                          .source = bte::strategy::ConditionSource::barField,
+                          .comparison = bte::strategy::Comparison::greaterThan,
+                          .threshold = 20.0,
+                      }}},
+              .sell = {},
+          },
+  };
+
+  const auto first = bte::engine::runBacktest(request);
+  const auto second = bte::engine::runBacktest(request);
+
+  ASSERT_TRUE(first.ok()) << first.error().message;
+  ASSERT_TRUE(second.ok()) << second.error().message;
+  EXPECT_EQ(first.value().canonicalRecords, second.value().canonicalRecords);
+  EXPECT_EQ(std::ranges::count_if(
+                first.value().canonicalRecords,
+                [](const auto &record) {
+                  return record.family == bte::results::RecordFamily::portfolio;
+                }),
+            request.bars.size());
 }
 
 TEST(BacktestTest, unaffordableNextOpenRejectsOrderWithoutChangingCash) {
@@ -712,4 +779,44 @@ TEST(BacktestTest, requestedStopCancelsBeforeExecution) {
 
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST(BacktestTest, requiredFinalMarkCannotPrecedeLastActualBar) {
+  const auto bars = std::vector{makeFlatBar(2, 100.0), makeFlatBar(3, 101.0)};
+
+  const auto execution = bte::engine::BacktestExecution::start({
+      .bars = bars,
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+      .requiredFinalMarkTimestamp = bars.front().ts,
+  });
+
+  ASSERT_FALSE(execution.ok());
+  EXPECT_EQ(execution.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(execution.error().message,
+            "required final mark cannot precede the last actual bar");
+}
+
+TEST(BacktestTest, canceledPacedExecutionExposesErrorAndRejectsFurtherAdvance) {
+  auto execution = bte::engine::BacktestExecution::start({
+      .bars = {makeFlatBar(2, 100.0), makeFlatBar(3, 101.0)},
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+  });
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+
+  const auto canceled = execution.value()->advance(cancellation.token());
+
+  ASSERT_FALSE(canceled.ok());
+  EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::canceled);
+  ASSERT_TRUE(execution.value()->terminalError().has_value());
+  EXPECT_EQ(execution.value()->terminalError()->code,
+            bte::core::ErrorCode::cancelled);
+  const auto repeated = execution.value()->advance();
+  ASSERT_FALSE(repeated.ok());
+  EXPECT_EQ(repeated.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(repeated.error().message, "backtest execution is already terminal");
+  EXPECT_EQ(execution.value()->result().barsProcessed, 0U);
 }

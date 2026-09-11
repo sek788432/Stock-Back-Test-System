@@ -4,9 +4,17 @@ Core defines the small, dependency-light vocabulary shared by backend modules. T
 
 ## 1. Status
 
-- **Implemented:** UTC millisecond timestamps, `DateRange`, floating-point `Bar`, OHLC helpers, and `Result<T>` exist.
-- **Planned migration:** fixed-point domain types, valid-state `Result<T>` including `Result<void>`, order/fill/portfolio values, and canonical serialization.
-- **Not release-ready:** current `double` accounting is baseline code, not the accepted financial contract; durable result persistence remains planned.
+- **Implemented:** UTC millisecond timestamps, `DateRange`, floating-point
+  `Bar`, OHLC helpers, SHA-256, `Result<T>`, and `Result<void>` exist. Data and
+  Results also store the implemented limited snapshot/result slice in explicit
+  integer units without making those integers general Core strong types.
+- **Planned migration:** checked fixed-point Core types, fully valid-state
+  `Result<T>`, complete order/fill/portfolio values, and general canonical
+  serialization.
+- **Not release-ready:** current `double` engine accounting is baseline code,
+  not the accepted general financial contract. Transactional `.bteresult`
+  persistence is implemented for the current limited single-symbol path; the
+  complete canonical record model remains planned.
 
 The implemented timestamp parser still mishandles offsets/fractions/trailing
 input, and the current `Result<T>` permits invalid states described in the
@@ -89,7 +97,13 @@ class Result; // fixed Error payload
 }
 ```
 
-Use `bte::core::Result<T>`, not `Result<T, Error>`. A successful result contains a `T`; a failed result contains a non-`ok` `Error`. Invalid mixed or empty states are not constructible. `Result<void>` represents success without a value.
+Use `bte::core::Result<T>`, not `Result<T, Error>`. The accepted contract is
+that a successful result contains a `T`, a failed result contains a non-`ok`
+`Error`, and invalid mixed or empty states are not constructible.
+`Result<void>` is implemented for success without a value. The current
+`Result<T>` constructor still accepts an `ErrorCode::ok` payload and can
+therefore create an apparent success without a value; closing that valid-state
+gap remains planned.
 
 `Error` contains a stable `ErrorCode`, user-readable message, source location, and optional cause chain. Required codes include invalid input, unavailable data/snapshot/runtime, cancellation, timeout, schema mismatch, strategy validation/runtime/protocol failures, buying-power failure, and result corruption.
 
@@ -114,7 +128,12 @@ Only `Completed` exposes final performance metrics. Other statuses may expose cl
 
 ## 8. Canonical serialization
 
-Every persisted/wire value has an explicit field order, integer scale, enum encoding, and schema version. `canonicalResultHash` covers functional records and their ordered identities. It excludes local paths, wall-clock metadata, and SQLite physical layout.
+The implemented limited Results schema has explicit framing, integer scales,
+enum encodings, and field order in
+[`EngineReplayPnL.md` §8.1](EngineReplayPnL.md#81-implemented-schema-2-canonical-hash-framing).
+The complete persisted/wire vocabulary and reusable Core serialization types
+remain planned. `canonicalResultHash` excludes local paths, wall-clock
+metadata, and SQLite physical layout.
 
 ## 9. Verification requirements
 

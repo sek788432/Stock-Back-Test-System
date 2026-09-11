@@ -6,9 +6,10 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 > a streaming technical-indicator catalog, and a limited Selectable Conditions
 > path. The Backtest page can combine up to two typed buy
 > conditions and two typed sell conditions with ALL/ANY logic; signals are
-> long-only orders eligible at the next actual bar open. Persistence, complete
-> order/accounting, the managed Python worker, immutable release snapshots, and
-> `.bteresult` remain planned. See
+> long-only orders eligible at the next actual bar open. The current single-symbol
+> path records `.bteresult` files and presents retained immutable segments,
+> volume, fills, and portfolio values in Replay. Complete order/accounting, the
+> managed Python worker, and public release snapshots remain planned. See
 > [`Docs/Specs/BacktestReplayProduct.md`](Docs/Specs/BacktestReplayProduct.md)
 > for exact capability status.
 
@@ -25,6 +26,7 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 | AI coding agent | [`AGENTS.md`](AGENTS.md) → [`Docs/Governance/AGENTS.md`](Docs/Governance/AGENTS.md) |
 | Human contributor | [`Docs/Governance/CONTRIBUTING.md`](Docs/Governance/CONTRIBUTING.md) → [`Docs/Onboarding.md`](Docs/Onboarding.md) |
 | Reading the design | [`Docs/Specs/`](Docs/Specs/README.md) |
+| Tracking persisted K-line Replay | [`Docs/KLineReplayRoadmap.md`](Docs/KLineReplayRoadmap.md) |
 | Building the C++ tree | [`Docs/BUILD.md`](Docs/BUILD.md) (`./RunTest.sh` builds and runs unit tests) |
 | Reviewing a PR | [`Docs/ReviewPlaybook.md`](Docs/ReviewPlaybook.md) |
 | Cutting a release | [`Docs/ReleaseProcess.md`](Docs/ReleaseProcess.md) |

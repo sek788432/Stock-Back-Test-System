@@ -13,6 +13,8 @@ class QChart;
 class QChartView;
 class QCandlestickSeries;
 class QDateTimeAxis;
+class QLineSeries;
+class QScatterSeries;
 class QValueAxis;
 
 namespace bte::frontend {
@@ -25,7 +27,12 @@ public:
 
   void setBarWindow(std::span<const core::Bar> visible) override;
   void appendBar(const core::Bar &bar) override;
+  void setMarkers(std::span<const ChartMarker> markers) override;
+  void clearMarkers() override;
+
   [[nodiscard]] std::size_t candleCount() const noexcept;
+  [[nodiscard]] std::size_t volumePointCount() const noexcept;
+  [[nodiscard]] std::size_t markerCount() const noexcept;
 
   void zoomIn();
   void zoomOut();
@@ -37,8 +44,12 @@ private:
   QChart *chart_ = nullptr;
   QChartView *chartView_ = nullptr;
   QCandlestickSeries *candles_ = nullptr;
+  QLineSeries *volume_ = nullptr;
+  QScatterSeries *buyMarkers_ = nullptr;
+  QScatterSeries *sellMarkers_ = nullptr;
   QDateTimeAxis *axisX_ = nullptr;
   QValueAxis *axisY_ = nullptr;
+  QValueAxis *volumeAxis_ = nullptr;
 };
 
 } // namespace bte::frontend
