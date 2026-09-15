@@ -271,7 +271,7 @@ protected:
                     .volume = 10'200.0},
          .fills = {expected[1].fills[0], expected[3].fills[0]},
          .portfolio = expected[3].portfolio,
-         .partialUtcDay = true},
+         .partialUtcDay = false},
         {.candle = {.ts = timestamp("2024-01-03 00:00:00+00:00"),
                     .open = 106.0,
                     .high = 108.0,

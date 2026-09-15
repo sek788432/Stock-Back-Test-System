@@ -171,6 +171,7 @@ makeHourlyFrames(const results::OpenedResult &result,
 core::Result<std::vector<ResultReplayFrame>>
 makeDailyFrames(const results::OpenedResult &result,
                 const std::vector<data::SnapshotBar> &bars,
+                const std::vector<data::SnapshotBar> &fullSourceBars,
                 const core::CancellationToken &cancellation) {
   using namespace std::chrono;
   const ReplayRecordIndex records{result};
@@ -198,6 +199,18 @@ makeDailyFrames(const results::OpenedResult &result,
       ++end;
     }
     const auto bucketEnd = core::Timestamp{day + days{1}};
+    const auto sourceBegin =
+        std::ranges::lower_bound(fullSourceBars, core::Timestamp{day}, {},
+                                 &data::SnapshotBar::timestamp);
+    const auto sourceEnd =
+        std::ranges::lower_bound(sourceBegin, fullSourceBars.end(), bucketEnd,
+                                 {}, &data::SnapshotBar::timestamp);
+    const auto completeSourceDay = std::ranges::equal(
+        std::ranges::subrange{bars.begin() + static_cast<std::ptrdiff_t>(begin),
+                              bars.begin() + static_cast<std::ptrdiff_t>(end)},
+        std::ranges::subrange{sourceBegin, sourceEnd});
+    const auto rangeCutsUtcDay = result.descriptor.range.start > day ||
+                                 result.descriptor.range.end < bucketEnd;
     const auto portfolio = records.portfolioAt(bars[end - 1].timestamp);
     if (portfolio.has_value()) {
       frames.push_back({
@@ -210,7 +223,7 @@ makeDailyFrames(const results::OpenedResult &result,
                          static_cast<double>(volume) / microsharesPerShare},
           .fills = records.fillsAt(core::Timestamp{day}, bucketEnd),
           .portfolio = *portfolio,
-          .partialUtcDay = end - begin != 24,
+          .partialUtcDay = !completeSourceDay || rangeCutsUtcDay,
       });
     }
     begin = end;
@@ -265,6 +278,22 @@ ResultReplay::open(const std::filesystem::path &resultStore,
     return selected.error();
   }
   auto bars = std::move(selected).value().bars;
+  std::vector<data::SnapshotBar> fullDailySourceBars;
+  if (timeframe == ResultReplayTimeframe::dailyUtc && !bars.empty()) {
+    using namespace std::chrono;
+    const auto firstDay = floor<days>(bars.front().timestamp);
+    const auto afterLastDay = floor<days>(bars.back().timestamp) + days{1};
+    auto fullSource = reader.value()->select(
+        {.symbols = {result.value().descriptor.universe.front()},
+         .range = {.start = core::Timestamp{firstDay},
+                   .end = core::Timestamp{afterLastDay}},
+         .timeframe = result.value().descriptor.dataSelection.timeframe},
+        cancellation);
+    if (!fullSource.ok()) {
+      return fullSource.error();
+    }
+    fullDailySourceBars = std::move(fullSource).value().bars;
+  }
   if (result.value().status != results::RunStatus::completed) {
     const auto checkpoint = std::ranges::find_if(
         result.value().records.rbegin(), result.value().records.rend(),
@@ -287,7 +316,8 @@ ResultReplay::open(const std::filesystem::path &resultStore,
     frames = makeHourlyFrames(result.value(), bars, cancellation);
     break;
   case ResultReplayTimeframe::dailyUtc:
-    frames = makeDailyFrames(result.value(), bars, cancellation);
+    frames = makeDailyFrames(result.value(), bars, fullDailySourceBars,
+                             cancellation);
     break;
   }
   if (!frames.ok()) {

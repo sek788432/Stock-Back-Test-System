@@ -241,6 +241,12 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   EXPECT_EQ(replay.value()->current()->candle.ts,
             timestamp("2024-01-02 01:00:00+00:00"));
   EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 123.0);
+  auto daily = bte::bindings::ResultReplay::open(
+      root_ / "ExactStore", root_ / "Data", finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_TRUE(daily.value()->current()->partialUtcDay);
 }
 
 TEST_F(ResultReplayTest, resultStoreRejectsMalformedCanonicalReplayPayloads) {
@@ -302,17 +308,18 @@ TEST_F(ResultReplayTest,
             bte::core::ErrorCode::invalidArgument);
 }
 
-TEST_F(ResultReplayTest, dailyUtcAggregationSumsVolumeAndLabelsPartialBuckets) {
+TEST_F(ResultReplayTest,
+       dailyUtcAggregationSumsVolumeAndRecognizesCompleteSourceDays) {
   auto replay = bte::bindings::ResultReplay::open(
       root_ / "Store", root_ / "Data", resultId_,
       bte::bindings::ResultReplayTimeframe::dailyUtc);
   ASSERT_TRUE(replay.ok()) << replay.error().message;
   ASSERT_EQ(replay.value()->totalFrames(), 2);
   ASSERT_NE(replay.value()->current(), nullptr);
-  EXPECT_TRUE(replay.value()->current()->partialUtcDay);
+  EXPECT_FALSE(replay.value()->current()->partialUtcDay);
   EXPECT_DOUBLE_EQ(replay.value()->current()->candle.volume, 1200);
   ASSERT_TRUE(replay.value()->stepForward());
-  EXPECT_TRUE(replay.value()->current()->partialUtcDay);
+  EXPECT_FALSE(replay.value()->current()->partialUtcDay);
   EXPECT_DOUBLE_EQ(replay.value()->current()->candle.open, 101);
   EXPECT_DOUBLE_EQ(replay.value()->current()->candle.high, 105);
   EXPECT_DOUBLE_EQ(replay.value()->current()->candle.low, 100);
