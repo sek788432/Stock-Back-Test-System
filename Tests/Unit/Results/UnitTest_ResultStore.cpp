@@ -3,6 +3,7 @@
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
+#include "Bte/Data/SegmentRetention.h"
 
 #include "ResultStoreTestHooks.h"
 #include "SegmentRetentionTestHooks.h"
@@ -286,6 +287,21 @@ TEST_F(ResultStoreFixture,
 
   auto writer = store.value()->begin(later);
   ASSERT_TRUE(writer.ok()) << writer.error().message;
+}
+
+TEST_F(ResultStoreFixture,
+       beginRejectsStructurallyValidSelectionThatDoesNotMatchSnapshotRows) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ExactStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto mismatched = descriptor();
+  ++mismatched.dataSelection.spans.front().firstRow;
+
+  const auto writer = store.value()->begin(mismatched);
+
+  ASSERT_FALSE(writer.ok());
+  EXPECT_EQ(writer.error().code, bte::core::ErrorCode::dataSnapshotUnavailable);
+  EXPECT_TRUE(std::filesystem::is_empty(root_ / "ExactStore" / "Staging"));
 }
 
 TEST_F(ResultStoreFixture, writerRejectsEmptyOutOfOrderAndPostFinalizeWrites) {
@@ -1358,8 +1374,67 @@ TEST_F(ResultStoreFixture, importAndPurgeSurfaceFilesystemAndRetentionFaults) {
       sourceStore.value()->moveToTrash(finalized.value().resultId).ok());
   bte::data::testing::failRetentionAfter(
       bte::data::testing::RetentionFailurePoint::databaseOpen);
-  EXPECT_FALSE(sourceStore.value()->purge(finalized.value().resultId).ok());
+  const auto failedPurge =
+      sourceStore.value()->purge(finalized.value().resultId);
+  EXPECT_FALSE(failedPurge.ok());
   bte::data::testing::clearRetentionFailure();
+  EXPECT_TRUE(
+      std::filesystem::exists(root_ / "SourceStore" / "Trash" /
+                              (finalized.value().resultId + ".bteresult")));
+  const auto stillPinned =
+      bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(stillPinned.ok()) << stillPinned.error().message;
+  std::vector<std::string> segmentIds;
+  for (const auto &span : descriptor().dataSelection.spans) {
+    segmentIds.push_back(span.segmentId);
+  }
+  const auto reacquired =
+      stillPinned.value()->acquire(finalized.value().resultId, segmentIds);
+  ASSERT_TRUE(reacquired.ok()) << reacquired.error().message;
+  EXPECT_EQ(reacquired.value(), 0U);
+}
+
+TEST_F(ResultStoreFixture, openRollsBackAnInterruptedPurge) {
+  const auto storeRoot = root_ / "InterruptedPurge";
+  auto store = bte::results::ResultStore::open(storeRoot, root_ / "Data");
+  ASSERT_TRUE(store.ok());
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok());
+  ASSERT_TRUE(store.value()->moveToTrash(finalized.value().resultId).ok());
+
+  const auto trashPath =
+      storeRoot / "Trash" / (finalized.value().resultId + ".bteresult");
+  const auto purgingPath = storeRoot / "Staging" /
+                           (finalized.value().resultId + ".purging.bteresult");
+  std::filesystem::rename(trashPath, purgingPath);
+  auto retention = bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(retention.ok());
+  ASSERT_TRUE(retention.value()->release(finalized.value().resultId).ok());
+
+  auto recovered = bte::results::ResultStore::open(storeRoot, root_ / "Data");
+  ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+  EXPECT_TRUE(std::filesystem::exists(trashPath));
+  EXPECT_FALSE(std::filesystem::exists(purgingPath));
+  EXPECT_FALSE(std::filesystem::exists(
+      storeRoot / "Results" / (finalized.value().resultId + ".bteresult")));
+
+  std::vector<std::string> segmentIds;
+  for (const auto &span : descriptor().dataSelection.spans) {
+    segmentIds.push_back(span.segmentId);
+    EXPECT_TRUE(std::filesystem::exists(root_ / "Data" / "Segments" /
+                                        (span.segmentId + ".btedata")));
+  }
+  auto activeRetention = bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(activeRetention.ok());
+  const auto reacquired =
+      activeRetention.value()->acquire(finalized.value().resultId, segmentIds);
+  ASSERT_TRUE(reacquired.ok());
+  EXPECT_EQ(reacquired.value(), 0U);
 }
 
 } // namespace

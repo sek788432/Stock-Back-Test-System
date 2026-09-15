@@ -322,6 +322,22 @@ core::Result<void> validateDescriptor(const RunDescriptor &descriptor) {
   return {};
 }
 
+core::Result<void>
+validateDataSelection(const std::filesystem::path &dataRoot,
+                      const data::DataSelectionIdentity &identity,
+                      const core::CancellationToken &cancellation = {}) {
+  auto reader = data::ReleaseSnapshotReader::open(dataRoot, identity.snapshotId,
+                                                  cancellation);
+  if (!reader.ok()) {
+    return reader.error();
+  }
+  auto exact = reader.value()->readExact(identity, cancellation);
+  if (!exact.ok()) {
+    return exact.error();
+  }
+  return {};
+}
+
 std::string joinUniverse(const std::vector<std::string> &universe) {
   std::string joined;
   for (const auto &symbol : universe) {
@@ -885,10 +901,9 @@ core::Result<OpenedResult> readResultFile(
                            "Canonical Result hash is invalid");
   }
   if (validateData) {
-    auto reader = data::ReleaseSnapshotReader::open(
-        dataRoot, identity.snapshotId, cancellation);
-    if (!reader.ok()) {
-      return reader.error();
+    auto exact = validateDataSelection(dataRoot, identity, cancellation);
+    if (!exact.ok()) {
+      return exact.error();
     }
   }
   return result;
@@ -947,6 +962,60 @@ core::Result<void> deleteCatalog(const std::filesystem::path &root,
   return statement.done();
 }
 
+core::Result<void>
+recoverInterruptedPurges(const std::filesystem::path &root,
+                         const std::filesystem::path &dataStore,
+                         const core::CancellationToken &cancellation) {
+  constexpr std::string_view suffix = ".purging.bteresult";
+  std::error_code iterationError;
+  for (const auto &entry :
+       std::filesystem::directory_iterator(root / "Staging", iterationError)) {
+    if (cancellation.isCancellationRequested()) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "Result purge recovery was cancelled");
+    }
+    if (iterationError) {
+      return storageError("Unable to inspect interrupted Result purges: " +
+                          iterationError.message());
+    }
+    const auto filename = entry.path().filename().string();
+    if (!entry.is_regular_file() || !filename.ends_with(suffix)) {
+      continue;
+    }
+    const auto resultId = filename.substr(0, filename.size() - suffix.size());
+    auto opened = readResultFile(entry.path(), dataStore, false);
+    if (!opened.ok()) {
+      return opened.error();
+    }
+    if (opened.value().resultId != resultId) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Interrupted purge Result ID does not match its "
+                             "filename");
+    }
+    std::vector<std::string> segmentIds;
+    for (const auto &span : opened.value().descriptor.dataSelection.spans) {
+      segmentIds.push_back(span.segmentId);
+    }
+    std::ranges::sort(segmentIds);
+    segmentIds.erase(std::ranges::unique(segmentIds).begin(), segmentIds.end());
+    auto retention = data::SegmentRetentionStore::open(dataStore);
+    if (!retention.ok()) {
+      return retention.error();
+    }
+    auto acquired = retention.value()->acquire(resultId, segmentIds);
+    if (!acquired.ok()) {
+      return acquired.error();
+    }
+    auto restored =
+        moveNoClobber(entry.path(), root / "Trash" / (resultId + ".bteresult"),
+                      "Unable to roll back interrupted Result purge");
+    if (!restored.ok()) {
+      return restored.error();
+    }
+  }
+  return {};
+}
+
 // clang-format off
 // NOLINTNEXTLINE(readability-function-cognitive-complexity): recovery
 core::Result<void> recoverStaging(
@@ -965,7 +1034,8 @@ core::Result<void> recoverStaging(
       return storageError("Unable to inspect staged Results: " +
                           iterationError.message());
     }
-    if (!entry.is_regular_file() || entry.path().extension() != ".bteresult") {
+    if (!entry.is_regular_file() || entry.path().extension() != ".bteresult" ||
+        entry.path().filename().string().ends_with(".purging.bteresult")) {
       continue;
     }
     auto staged =
@@ -1362,6 +1432,11 @@ ResultStore::open(const std::filesystem::path &root,
   if (!initialized.ok()) {
     return initialized.error();
   }
+  auto recoveredPurges =
+      recoverInterruptedPurges(root, dataStore, cancellation);
+  if (!recoveredPurges.ok()) {
+    return recoveredPurges.error();
+  }
   auto recovered = recoverStaging(root, dataStore, cancellation);
   if (!recovered.ok()) {
     return recovered.error();
@@ -1374,6 +1449,10 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
   auto validated = validateDescriptor(descriptor);
   if (!validated.ok()) {
     return validated.error();
+  }
+  auto exact = validateDataSelection(dataStore_, descriptor.dataSelection);
+  if (!exact.ok()) {
+    return exact.error();
   }
   for (int attempt = 0; attempt < 8; ++attempt) {
     const auto resultId = allocateResultId();
@@ -1529,18 +1608,59 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::notFound,
                            "Trashed Result is unavailable");
   }
-  std::error_code errorCode;
-  std::filesystem::remove(path, errorCode);
-  if (errorCode) {
-    return storageError("Unable to purge Result: " + errorCode.message());
+  if (!std::filesystem::is_regular_file(path)) {
+    return storageError("Unable to purge Result: artifact is not a file");
   }
+  auto opened = readResultFile(path, dataStore_, false);
+  if (!opened.ok()) {
+    return opened.error();
+  }
+  std::vector<std::string> segmentIds;
+  segmentIds.reserve(opened.value().descriptor.dataSelection.spans.size());
+  for (const auto &span : opened.value().descriptor.dataSelection.spans) {
+    segmentIds.push_back(span.segmentId);
+  }
+  std::ranges::sort(segmentIds);
+  segmentIds.erase(std::ranges::unique(segmentIds).begin(), segmentIds.end());
+
+  const auto purgingPath =
+      root_ / "Staging" / (resultId + ".purging.bteresult");
+  auto staged =
+      moveNoClobber(path, purgingPath, "Unable to stage Result purge");
+  if (!staged.ok()) {
+    return staged.error();
+  }
+  const auto restoreResult = [&] {
+    return moveNoClobber(purgingPath, path, "Unable to roll back Result purge");
+  };
   auto retention = data::SegmentRetentionStore::open(dataStore_);
   if (!retention.ok()) {
+    auto restored = restoreResult();
+    if (!restored.ok()) {
+      return restored.error();
+    }
     return retention.error();
   }
   auto released = retention.value()->release(resultId);
   if (!released.ok()) {
+    auto restored = restoreResult();
+    if (!restored.ok()) {
+      return restored.error();
+    }
     return released.error();
+  }
+  std::error_code errorCode;
+  std::filesystem::remove(purgingPath, errorCode);
+  if (errorCode) {
+    auto reacquired = retention.value()->acquire(resultId, segmentIds);
+    auto restored = restoreResult();
+    if (!reacquired.ok()) {
+      return reacquired.error();
+    }
+    if (!restored.ok()) {
+      return restored.error();
+    }
+    return storageError("Unable to purge Result: " + errorCode.message());
   }
   return deleteCatalog(root_, resultId);
 }
