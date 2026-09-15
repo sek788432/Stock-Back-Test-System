@@ -1563,6 +1563,27 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
   return storageError("Unable to allocate a unique Result ID");
 }
 
+core::Result<void> ResultStore::validateSelectedBars(
+    const data::DataSelectionIdentity &identity,
+    const std::vector<data::SnapshotBar> &bars,
+    const core::CancellationToken &cancellation) const {
+  auto reader = data::ReleaseSnapshotReader::open(
+      dataStore_, identity.snapshotId, cancellation);
+  if (!reader.ok()) {
+    return reader.error();
+  }
+  auto exact = reader.value()->readExact(identity, cancellation);
+  if (!exact.ok()) {
+    return exact.error();
+  }
+  if (exact.value().bars != bars) {
+    return core::makeError(
+        core::ErrorCode::invalidArgument,
+        "Backtest bars do not match the immutable Data Selection");
+  }
+  return {};
+}
+
 core::Result<std::vector<ResultSummary>>
 ResultStore::list(const core::CancellationToken &cancellation) const {
   if (cancellation.isCancellationRequested()) {

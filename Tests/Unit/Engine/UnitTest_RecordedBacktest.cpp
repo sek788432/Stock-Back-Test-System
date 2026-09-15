@@ -585,4 +585,20 @@ TEST_F(RecordedBacktestTest, mismatchedDescriptorDoesNotCreateAResultArtifact) {
   EXPECT_TRUE(std::filesystem::is_empty(root_ / "Store" / "Staging"));
 }
 
+TEST_F(RecordedBacktestTest,
+       recordingRejectsBarsThatDifferFromTheImmutableSelection) {
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto altered = request();
+  altered.bars.front().close = 100.5;
+
+  const auto recorded =
+      bte::engine::runBacktestAndRecord(altered, *store.value(), descriptor());
+
+  ASSERT_FALSE(recorded.ok());
+  EXPECT_EQ(recorded.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_TRUE(std::filesystem::is_empty(root_ / "Store" / "Staging"));
+  EXPECT_TRUE(std::filesystem::is_empty(root_ / "Store" / "Results"));
+}
+
 } // namespace

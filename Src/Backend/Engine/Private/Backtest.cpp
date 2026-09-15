@@ -20,6 +20,7 @@ namespace bte::engine {
 namespace {
 
 constexpr auto nanodollarsPerDollar = 1'000'000'000.0;
+constexpr auto microsharesPerShare = 1'000'000.0;
 constexpr auto int64ExclusiveUpperBound = 9'223'372'036'854'775'808.0;
 constexpr auto priceToMoneyDivisor = std::int64_t{1000};
 constexpr auto slippageDivisor = std::int64_t{10'000};
@@ -48,6 +49,44 @@ core::Result<std::int64_t> checkedPriceNanodollars(const double price) {
     return invalidArgument("bar price is outside the supported range");
   }
   return static_cast<std::int64_t>(rounded);
+}
+
+core::Result<std::int64_t> checkedVolumeMicroshares(const double volume) {
+  const auto scaledVolume = volume * microsharesPerShare;
+  if (!std::isfinite(scaledVolume) || scaledVolume < 0.0 ||
+      scaledVolume >= int64ExclusiveUpperBound) {
+    return invalidArgument("bar volume is outside the supported range");
+  }
+  const auto integral = std::floor(scaledVolume);
+  const auto fraction = scaledVolume - integral;
+  auto rounded = integral;
+  if (fraction > 0.5 || (fraction == 0.5 && std::fmod(integral, 2.0) != 0.0)) {
+    rounded += 1.0;
+  }
+  return static_cast<std::int64_t>(rounded);
+}
+
+core::Result<std::vector<data::SnapshotBar>>
+normalizeBars(const std::vector<core::Bar> &bars) {
+  std::vector<data::SnapshotBar> normalized;
+  normalized.reserve(bars.size());
+  for (const auto &bar : bars) {
+    const auto open = checkedPriceNanodollars(bar.open);
+    const auto high = checkedPriceNanodollars(bar.high);
+    const auto low = checkedPriceNanodollars(bar.low);
+    const auto close = checkedPriceNanodollars(bar.close);
+    const auto volume = checkedVolumeMicroshares(bar.volume);
+    if (!open.ok() || !high.ok() || !low.ok() || !close.ok() || !volume.ok()) {
+      return invalidArgument("Backtest bars cannot be normalized exactly");
+    }
+    normalized.push_back({.timestamp = bar.ts,
+                          .openNanodollars = open.value(),
+                          .highNanodollars = high.value(),
+                          .lowNanodollars = low.value(),
+                          .closeNanodollars = close.value(),
+                          .volumeMicroshares = volume.value()});
+  }
+  return normalized;
 }
 
 core::Result<std::int64_t> checkedAdd(const std::int64_t left,
@@ -761,6 +800,15 @@ runBacktestAndRecord(const BacktestRequest &request,
       request.bars.back().ts >= descriptor.range.end) {
     return invalidArgument(
         "Result descriptor does not identify the validated Backtest request");
+  }
+  auto normalized = normalizeBars(request.bars);
+  if (!normalized.ok()) {
+    return normalized.error();
+  }
+  auto exact = store.validateSelectedBars(descriptor.dataSelection,
+                                          normalized.value(), cancellation);
+  if (!exact.ok()) {
+    return exact.error();
   }
   auto writer = store.begin(descriptor);
   if (!writer.ok()) {
