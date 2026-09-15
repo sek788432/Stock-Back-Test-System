@@ -180,7 +180,7 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
   const auto exclusiveEnd = configuration.endDate.addDays(1);
   if (!configuration.startDate.isValid() || !configuration.endDate.isValid() ||
       configuration.startDate > configuration.endDate ||
-      !exclusiveEnd.isValid() || storage.strategyHash.size() != 64) {
+      !exclusiveEnd.isValid()) {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Persisted Backtest configuration is invalid");
   }
@@ -231,7 +231,8 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
       .strategyId = configuration.selectableStrategy.has_value()
                         ? "selectable-conditions"
                         : "starter",
-      .strategyHash = storage.strategyHash,
+      .strategyHash =
+          strategy::canonicalStrategyHash(configuration.selectableStrategy),
       .dataSelection = selected.value().identity,
   };
   auto recorded = engine::runBacktestAndRecord(

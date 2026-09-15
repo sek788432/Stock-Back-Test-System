@@ -588,11 +588,6 @@ TEST_F(ResultReplayTest,
   expectError(validConfiguration, storageFault,
               bte::core::ErrorCode::permissionDenied);
 
-  auto invalidIdentity = validStorage;
-  invalidIdentity.strategyHash = std::string(64, 'Z');
-  expectError(validConfiguration, invalidIdentity,
-              bte::core::ErrorCode::invalidArgument);
-
   bte::results::testing::failNext(
       bte::results::testing::FailurePoint::hashFinalization);
   expectError(validConfiguration, validStorage, bte::core::ErrorCode::internal);

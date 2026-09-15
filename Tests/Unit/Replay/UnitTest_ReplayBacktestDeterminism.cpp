@@ -67,6 +67,10 @@ TEST_F(ReplayBacktestDeterminism,
   ASSERT_TRUE(firstOpened.ok()) << firstOpened.error().message;
   ASSERT_TRUE(secondOpened.ok()) << secondOpened.error().message;
   EXPECT_EQ(firstOpened.value().records, secondOpened.value().records);
+  EXPECT_EQ(
+      firstOpened.value().descriptor.strategyHash,
+      bte::strategy::canonicalStrategyHash(configuration.selectableStrategy));
+  EXPECT_NE(firstOpened.value().descriptor.strategyHash, storage.strategyHash);
 }
 
 } // namespace

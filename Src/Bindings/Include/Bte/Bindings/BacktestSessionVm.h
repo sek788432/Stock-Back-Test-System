@@ -66,6 +66,8 @@ struct PersistedBacktestStorage {
   std::filesystem::path resultStore;
   std::filesystem::path dataStore;
   std::string snapshotId;
+  // Kept for source compatibility; provenance is derived canonically from the
+  // actual Strategy configuration and this legacy caller value is ignored.
   std::string strategyHash;
 };
 

@@ -225,6 +225,11 @@ Schema-2 enum integers are fixed: run status is `running=0`, `completed=1`,
 `order=0`, `fill=1`, `portfolio=2`, `cost=3`, `warning=4`, `log=5`, and
 `terminalDiagnostic=6`; order side is `none=0`, `buy=1`, and `sell=2`.
 
+The current C++ Strategy hash is derived by the Strategy module, never supplied
+by the UI: the built-in starter uses a versioned identity and Selectable
+Conditions hash the ordered buy/sell groups plus every condition and indicator
+field using their exact enum, integer, and IEEE-754 bit values.
+
 Universe order is functional. Data spans are hashed in vector order and must
 have strictly increasing snapshot-manifest ordinals; a selection may begin at
 any manifest segment. Canonical records are hashed in
