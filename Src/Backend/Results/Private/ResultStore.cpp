@@ -289,6 +289,71 @@ bool validResultId(const std::string_view value) {
          });
 }
 
+bool validRunStatus(const RunStatus status) {
+  return status >= RunStatus::running && status <= RunStatus::incomplete;
+}
+
+core::Result<void> validateCanonicalRecord(const CanonicalRecord &record,
+                                           const RunDescriptor &descriptor,
+                                           const core::ErrorCode errorCode) {
+  const auto invalid = [&](const std::string &message) {
+    return core::makeError(errorCode, message);
+  };
+  if (record.family < RecordFamily::order ||
+      record.family > RecordFamily::terminalDiagnostic ||
+      record.side < OrderSide::none || record.side > OrderSide::sell) {
+    return invalid("Canonical record enum is invalid");
+  }
+  if (std::ranges::find(descriptor.universe, record.symbol) ==
+          descriptor.universe.end() ||
+      record.timestamp < descriptor.range.start ||
+      record.timestamp >= descriptor.range.end) {
+    return invalid("Canonical record identity or timestamp is invalid");
+  }
+  switch (record.family) {
+  case RecordFamily::order:
+    if (record.side == OrderSide::none || !record.quantityShares.has_value() ||
+        *record.quantityShares <= 0) {
+      return invalid("Canonical order payload is invalid");
+    }
+    break;
+  case RecordFamily::fill:
+    if (record.side == OrderSide::none || !record.quantityShares.has_value() ||
+        *record.quantityShares <= 0 || !record.priceNanodollars.has_value() ||
+        *record.priceNanodollars <= 0 ||
+        !record.amountMicrodollars.has_value() ||
+        *record.amountMicrodollars < 0) {
+      return invalid("Canonical fill payload is invalid");
+    }
+    break;
+  case RecordFamily::portfolio:
+    if (record.side != OrderSide::none ||
+        !record.cashMicrodollars.has_value() ||
+        !record.marketValueMicrodollars.has_value() ||
+        !record.equityMicrodollars.has_value() ||
+        !record.pnlMicrodollars.has_value() ||
+        !record.positionShares.has_value()) {
+      return invalid("Canonical portfolio payload is invalid");
+    }
+    break;
+  case RecordFamily::cost:
+    if (record.side == OrderSide::none || !record.quantityShares.has_value() ||
+        *record.quantityShares <= 0 || !record.amountMicrodollars.has_value() ||
+        *record.amountMicrodollars < 0) {
+      return invalid("Canonical cost payload is invalid");
+    }
+    break;
+  case RecordFamily::warning:
+  case RecordFamily::log:
+  case RecordFamily::terminalDiagnostic:
+    if (record.side != OrderSide::none || record.text.empty()) {
+      return invalid("Canonical diagnostic payload is invalid");
+    }
+    break;
+  }
+  return {};
+}
+
 core::Result<void> validateDescriptor(const RunDescriptor &descriptor) {
   if (descriptor.universe.empty() ||
       descriptor.range.start >= descriptor.range.end ||
@@ -687,7 +752,7 @@ core::Result<OpenedResult> readResultFile(
   result.canonicalResultHash = textColumn(meta.handle(), 3);
   result.terminalReason = textColumn(meta.handle(), 4);
   result.savedUtcMillis = sqlite3_column_int64(meta.handle(), 7);
-  if (!validResultId(result.resultId) ||
+  if (!validResultId(result.resultId) || !validRunStatus(result.status) ||
       (result.status == RunStatus::running && !allowRunning) ||
       (result.status != RunStatus::running &&
        !validHash(result.canonicalResultHash))) {
@@ -874,6 +939,12 @@ core::Result<OpenedResult> readResultFile(
                           result.records[index].timestamp)) {
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "Canonical record order is invalid");
+    }
+    auto recordValidation =
+        validateCanonicalRecord(result.records[index], result.descriptor,
+                                core::ErrorCode::schemaMismatch);
+    if (!recordValidation.ok()) {
+      return recordValidation.error();
     }
   }
 
@@ -1219,6 +1290,11 @@ ResultWriter::append(const std::vector<CanonicalRecord> &records) {
       return core::makeError(core::ErrorCode::invalidArgument,
                              "Canonical Result records are out of order");
     }
+    auto recordValidation = validateCanonicalRecord(
+        record, impl_->descriptor, core::ErrorCode::invalidArgument);
+    if (!recordValidation.ok()) {
+      return recordValidation.error();
+    }
     ++expected;
     previousTimestamp = record.timestamp;
   }
@@ -1280,7 +1356,7 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
                                  const FinalSummary &summary,
                                  const std::string &terminalReason) {
   if (impl_->finalized || impl_->database == nullptr ||
-      status == RunStatus::running ||
+      !validRunStatus(status) || status == RunStatus::running ||
       (status == RunStatus::completed &&
        (!summary.finalEquityMicrodollars.has_value() ||
         !summary.pnlMicrodollars.has_value())) ||

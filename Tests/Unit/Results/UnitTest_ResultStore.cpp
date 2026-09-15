@@ -120,7 +120,10 @@ protected:
          .symbol = "SYN",
          .family = bte::results::RecordFamily::portfolio,
          .cashMicrodollars = 100'000'000,
-         .equityMicrodollars = 100'000'000},
+         .marketValueMicrodollars = 0,
+         .equityMicrodollars = 100'000'000,
+         .pnlMicrodollars = 0,
+         .positionShares = 0},
         {.sequence = 1,
          .timestamp = timestamp("2024-01-02 00:00:00+00:00"),
          .symbol = "SYN",
@@ -136,6 +139,7 @@ protected:
          .cashMicrodollars = 98'989'900'000,
          .marketValueMicrodollars = 1'020'000'000,
          .equityMicrodollars = 100'009'900'000,
+         .pnlMicrodollars = 9'900,
          .positionShares = 10},
     };
   }
@@ -338,6 +342,56 @@ TEST_F(ResultStoreFixture, writerRejectsEmptyOutOfOrderAndPostFinalizeWrites) {
   EXPECT_FALSE(writer.value()
                    ->finalizeAndPromote(bte::results::RunStatus::failed, {})
                    .ok());
+}
+
+TEST_F(ResultStoreFixture,
+       writerRejectsInvalidCanonicalEnumsSymbolsRangesAndPayloads) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ValidatedStore", root_ / "Data");
+  ASSERT_TRUE(store.ok());
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  const auto valid = bte::results::CanonicalRecord{
+      .timestamp = timestamp("2024-01-01 23:00:00+00:00"),
+      .symbol = "SYN",
+      .family = bte::results::RecordFamily::log,
+      .text = "valid diagnostic",
+  };
+  std::vector<bte::results::CanonicalRecord> invalid;
+  auto add = [&](const auto &mutate) {
+    auto candidate = valid;
+    mutate(candidate);
+    invalid.push_back(std::move(candidate));
+  };
+  add([](auto &record) {
+    record.family = static_cast<bte::results::RecordFamily>(99);
+  });
+  add([](auto &record) {
+    record.side = static_cast<bte::results::OrderSide>(99);
+  });
+  add([](auto &record) { record.symbol = "OTHER"; });
+  add([&](auto &record) {
+    record.timestamp = timestamp("2024-01-02 01:00:00+00:00");
+  });
+  add([](auto &record) {
+    record.family = bte::results::RecordFamily::fill;
+    record.text.clear();
+  });
+  add([](auto &record) {
+    record.family = bte::results::RecordFamily::portfolio;
+    record.text.clear();
+  });
+  for (const auto &record : invalid) {
+    const auto appended = writer.value()->append({record});
+    ASSERT_FALSE(appended.ok());
+    EXPECT_EQ(appended.error().code, bte::core::ErrorCode::invalidArgument);
+  }
+  ASSERT_TRUE(writer.value()->append({valid}).ok());
+
+  const auto invalidStatus = writer.value()->finalizeAndPromote(
+      static_cast<bte::results::RunStatus>(99), {});
+  ASSERT_FALSE(invalidStatus.ok());
+  EXPECT_EQ(invalidStatus.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
 TEST_F(ResultStoreFixture, persistedSchemaAndCanonicalMutationsFailClosed) {

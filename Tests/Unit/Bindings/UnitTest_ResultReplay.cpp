@@ -243,7 +243,7 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 123.0);
 }
 
-TEST_F(ResultReplayTest, malformedCanonicalReplayPayloadsFailClosed) {
+TEST_F(ResultReplayTest, resultStoreRejectsMalformedCanonicalReplayPayloads) {
   const auto at = timestamp("2024-01-01 23:00:00+00:00");
   auto missingPnl = persist({{.sequence = 0,
                               .timestamp = at,
@@ -254,12 +254,8 @@ TEST_F(ResultReplayTest, malformedCanonicalReplayPayloadsFailClosed) {
                               .equityMicrodollars = 2'000'000'000,
                               .positionShares = 0}},
                             bte::results::RunStatus::completed);
-  ASSERT_TRUE(missingPnl.ok()) << missingPnl.error().message;
-  auto replay = bte::bindings::ResultReplay::open(
-      root_ / "CustomStore", root_ / "Data", missingPnl.value().resultId,
-      bte::bindings::ResultReplayTimeframe::hourly);
-  ASSERT_FALSE(replay.ok());
-  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+  ASSERT_FALSE(missingPnl.ok());
+  EXPECT_EQ(missingPnl.error().code, bte::core::ErrorCode::invalidArgument);
 
   auto malformedFill = persist({{.sequence = 0,
                                  .timestamp = at,
@@ -270,12 +266,8 @@ TEST_F(ResultReplayTest, malformedCanonicalReplayPayloadsFailClosed) {
                                  .priceNanodollars = 100'000'000'000,
                                  .amountMicrodollars = 1'000'000'000}},
                                bte::results::RunStatus::completed);
-  ASSERT_TRUE(malformedFill.ok()) << malformedFill.error().message;
-  replay = bte::bindings::ResultReplay::open(
-      root_ / "CustomStore", root_ / "Data", malformedFill.value().resultId,
-      bte::bindings::ResultReplayTimeframe::hourly);
-  ASSERT_FALSE(replay.ok());
-  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+  ASSERT_FALSE(malformedFill.ok());
+  EXPECT_EQ(malformedFill.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
 TEST_F(ResultReplayTest,
@@ -305,12 +297,9 @@ TEST_F(ResultReplayTest,
                 .pnlMicrodollars = 0,
                 .positionShares = 0}},
               bte::results::RunStatus::completed);
-  ASSERT_TRUE(mismatchedRecord.ok()) << mismatchedRecord.error().message;
-  auto opened = bte::bindings::ResultReplay::open(
-      root_ / "CustomStore", root_ / "Data", mismatchedRecord.value().resultId,
-      bte::bindings::ResultReplayTimeframe::hourly);
-  ASSERT_FALSE(opened.ok());
-  EXPECT_EQ(opened.error().code, bte::core::ErrorCode::schemaMismatch);
+  ASSERT_FALSE(mismatchedRecord.ok());
+  EXPECT_EQ(mismatchedRecord.error().code,
+            bte::core::ErrorCode::invalidArgument);
 }
 
 TEST_F(ResultReplayTest, dailyUtcAggregationSumsVolumeAndLabelsPartialBuckets) {
