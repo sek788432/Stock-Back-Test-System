@@ -50,7 +50,12 @@ void ReplayTabTest::exposesReplaySetupControls() {
   const bte::frontend::ReplayTab tab;
 
   QVERIFY(tab.findChild<QComboBox *>("replaySymbolCombo") != nullptr);
-  QVERIFY(tab.findChild<QComboBox *>("replaySchemaCombo") != nullptr);
+  const auto *schemaCombo = tab.findChild<QComboBox *>("replaySchemaCombo");
+  QVERIFY(schemaCombo != nullptr);
+  QCOMPARE(schemaCombo->count(), 2);
+  QCOMPARE(schemaCombo->itemText(0), QString{"ohlcv-1d"});
+  QCOMPARE(schemaCombo->itemText(1), QString{"ohlcv-1h"});
+  QCOMPARE(schemaCombo->findText("ohlcv-1m"), -1);
   QVERIFY(tab.findChild<QDateEdit *>("replayStartDateEdit") != nullptr);
   QVERIFY(tab.findChild<QDateEdit *>("replayEndDateEdit") != nullptr);
   QVERIFY(tab.findChild<QDoubleSpinBox *>("replayInitialCapitalSpinBox") !=
