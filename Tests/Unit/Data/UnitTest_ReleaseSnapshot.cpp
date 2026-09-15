@@ -971,11 +971,28 @@ TEST(SegmentRetentionTest,
     EXPECT_FALSE(released.ok()) << static_cast<int>(point);
     bte::data::testing::clearRetentionFailure();
   }
+  ScopedSnapshotFixture commitFixture{"retention-commit-rollback"};
+  commitFixture.writeSymbol("SYN", threeHourlyRows);
+  const auto commitBuilt =
+      bte::data::buildReleaseSnapshot(commitFixture.buildRequest());
+  ASSERT_TRUE(commitBuilt.ok()) << commitBuilt.error().message;
+  auto commitRetention =
+      bte::data::SegmentRetentionStore::open(commitFixture.store());
+  ASSERT_TRUE(commitRetention.ok()) << commitRetention.error().message;
   const auto commitId = std::string{"release-commit"};
-  ASSERT_TRUE(
-      retention.value()->acquire(commitId, built.value().segments).ok());
+  ASSERT_TRUE(commitRetention.value()
+                  ->acquire(commitId, commitBuilt.value().segments)
+                  .ok());
   bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution,
                                          1);
-  EXPECT_FALSE(retention.value()->release(commitId).ok());
+  const auto failedCommit = commitRetention.value()->release(commitId);
+  EXPECT_FALSE(failedCommit.ok());
   bte::data::testing::clearRetentionFailure();
+  for (const auto &segmentId : commitBuilt.value().segments) {
+    EXPECT_TRUE(std::filesystem::exists(commitFixture.store() / "Segments" /
+                                        (segmentId + ".btedata")));
+  }
+  const auto retriedRelease = commitRetention.value()->release(commitId);
+  ASSERT_TRUE(retriedRelease.ok()) << retriedRelease.error().message;
+  EXPECT_EQ(retriedRelease.value().size(), commitBuilt.value().segments.size());
 }
