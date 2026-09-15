@@ -56,7 +56,8 @@ private slots:
   void emptyWindowRendersSafely();
   void setBarWindowReplacesCandles();
   void appendBarAddsOneCandle();
-  void invalidBarIsIgnored();
+  void invalidBarIsIgnoredAndMarkersCanBeCleared();
+  void rendersSynchronizedVolumeAndTradeMarkers();
   void zoomControlsAreSafeToCall();
   void pointerInteractionPansAndTogglesCrosshair();
   void wheelInteractionZoomsInAndOut();
@@ -68,6 +69,7 @@ void QtChartsCandlestickViewTest::emptyWindowRendersSafely() {
   view.setBarWindow({});
 
   QCOMPARE(view.candleCount(), 0U);
+  QCOMPARE(view.volumePointCount(), 0U);
 }
 
 void QtChartsCandlestickViewTest::setBarWindowReplacesCandles() {
@@ -99,15 +101,36 @@ void QtChartsCandlestickViewTest::appendBarAddsOneCandle() {
   view.appendBar(makeBar(4, 101.0, 108.0));
 
   QCOMPARE(view.candleCount(), 3U);
+  QCOMPARE(view.volumePointCount(), 3U);
 }
 
-void QtChartsCandlestickViewTest::invalidBarIsIgnored() {
+void QtChartsCandlestickViewTest::invalidBarIsIgnoredAndMarkersCanBeCleared() {
   bte::frontend::QtChartsCandlestickView view;
   auto invalid = makeBar(2, 100.0, 104.0);
   invalid.high = invalid.low - 1.0;
 
   view.appendBar(invalid);
   QCOMPARE(view.candleCount(), 0U);
+  view.clearMarkers();
+  QCOMPARE(view.markerCount(), 0U);
+}
+
+void QtChartsCandlestickViewTest::rendersSynchronizedVolumeAndTradeMarkers() {
+  bte::frontend::QtChartsCandlestickView view;
+  const std::array bars{makeBar(2, 100.0, 104.0), makeBar(3, 104.0, 101.0)};
+  const std::array markers{
+      bte::frontend::ChartMarker{
+          .timestamp = makeTimestamp(2), .price = 101.0, .isBuy = true},
+      bte::frontend::ChartMarker{
+          .timestamp = makeTimestamp(3), .price = 103.0, .isBuy = false}};
+
+  view.setBarWindow(bars);
+  view.setMarkers(markers);
+  QCOMPARE(view.volumePointCount(), 2U);
+  QCOMPARE(view.markerCount(), 2U);
+
+  view.clearMarkers();
+  QCOMPARE(view.markerCount(), 0U);
 }
 
 void QtChartsCandlestickViewTest::zoomControlsAreSafeToCall() {

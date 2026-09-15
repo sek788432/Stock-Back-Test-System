@@ -1,3 +1,4 @@
+#include "Bte/Core/Digest.h"
 #include "Bte/Core/Result.h"
 
 #include <gtest/gtest.h>
@@ -31,4 +32,22 @@ TEST(ResultTest, valueAccessOnErrorThrowsForConstAndMovedResults) {
                std::bad_optional_access);
   EXPECT_THROW(static_cast<void>(std::move(movedResult).value()),
                std::bad_optional_access);
+}
+
+TEST(ResultTest, voidResultDistinguishesSuccessFromStructuredFailure) {
+  const bte::core::Result<void> success;
+  const bte::core::Result<void> failure{
+      bte::core::makeError(bte::core::ErrorCode::permissionDenied, "denied")};
+
+  EXPECT_TRUE(success.ok());
+  EXPECT_FALSE(failure.ok());
+  EXPECT_EQ(failure.error().code, bte::core::ErrorCode::permissionDenied);
+  EXPECT_EQ(failure.error().message, "denied");
+}
+
+TEST(DigestTest, sha256MatchesPublishedEmptyAndAbcVectors) {
+  EXPECT_EQ(bte::core::sha256(""), "e3b0c44298fc1c149afbf4c8996fb924"
+                                   "27ae41e4649b934ca495991b7852b855");
+  EXPECT_EQ(bte::core::sha256("abc"), "ba7816bf8f01cfea414140de5dae2223"
+                                      "b00361a396177a9cb410ff61f20015ad");
 }

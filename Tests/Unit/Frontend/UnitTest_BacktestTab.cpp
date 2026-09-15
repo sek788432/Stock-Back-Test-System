@@ -2,6 +2,7 @@
 
 #include "WaitUntil.h"
 
+#include <QByteArray>
 #include <QCalendarWidget>
 #include <QCheckBox>
 #include <QComboBox>
@@ -10,6 +11,7 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTest>
@@ -24,6 +26,33 @@
 #include <vector>
 
 namespace {
+
+class ScopedEnvironmentRestore final {
+public:
+  explicit ScopedEnvironmentRestore(QByteArray name)
+      : name_{std::move(name)},
+        previous_{qEnvironmentVariableIsSet(name_.constData())
+                      ? std::optional<QByteArray>{qgetenv(name_.constData())}
+                      : std::nullopt} {}
+
+  ~ScopedEnvironmentRestore() {
+    if (previous_.has_value()) {
+      qputenv(name_.constData(), *previous_);
+    } else {
+      qunsetenv(name_.constData());
+    }
+  }
+
+  ScopedEnvironmentRestore(const ScopedEnvironmentRestore &) = delete;
+  ScopedEnvironmentRestore &
+  operator=(const ScopedEnvironmentRestore &) = delete;
+  ScopedEnvironmentRestore(ScopedEnvironmentRestore &&) = delete;
+  ScopedEnvironmentRestore &operator=(ScopedEnvironmentRestore &&) = delete;
+
+private:
+  QByteArray name_;
+  std::optional<QByteArray> previous_;
+};
 
 bte::bindings::BacktestSnapshot filledSnapshot() {
   return bte::bindings::BacktestSnapshot{
@@ -51,6 +80,8 @@ bte::bindings::BacktestSnapshot filledSnapshot() {
       .finalPrice = 120.0,
       .positionShares = 10,
       .barsProcessed = 2,
+      .resultId = {},
+      .canonicalResultHash = {},
   };
 }
 
@@ -68,6 +99,8 @@ noFillSnapshot(const bte::bindings::BacktestOutcome outcome) {
       .finalPrice = 200.0,
       .positionShares = 0,
       .barsProcessed = 2,
+      .resultId = {},
+      .canonicalResultHash = {},
   };
 }
 
@@ -76,6 +109,7 @@ class BacktestTabTest final : public QObject {
 
 private slots:
   void exposesAccessibleRunConfiguration();
+  void promotedResultEnablesOpenInReplayAndEmitsExactId();
   void calendarYearsAreDirectlySelectable();
   void runExecutesOffTheUiThreadAndDisplaysFill();
   void failedRunClearsPriorResultAndPreservesError();
@@ -85,11 +119,38 @@ private slots:
   void workerExceptionIsPresentedAsAnError();
   void unknownWorkerExceptionIsPresentedAsAnError();
   void defaultRunnerExecutesTrackedBars();
+  void applicationConfiguredRunnerUsesEnvironmentStorage();
   void selectableConditionsSubmitTypedPlanToBackend();
   void selectableMetricsSubmitTypedPlansToBackend();
   void selectableConditionStatusNamesItsSelectedStrategy();
   void selectableControlsPresentNoSignalAndSellFill();
 };
+
+void BacktestTabTest::promotedResultEnablesOpenInReplayAndEmitsExactId() {
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = "0123456789abcdef0123456789abcdef";
+  bte::frontend::BacktestTab tab{
+      [snapshot](bte::bindings::BacktestConfiguration,
+                 bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      }};
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *open = tab.findChild<QPushButton *>("backtestOpenInReplayButton");
+  QVERIFY(run != nullptr);
+  QVERIFY(open != nullptr);
+  QVERIFY(!open->isEnabled());
+  QCOMPARE(open->text(), QString{"Open in Replay"});
+  QVERIFY(!open->accessibleName().isEmpty());
+  QSignalSpy opened{&tab, &bte::frontend::BacktestTab::openResultInReplay};
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([open] { return open->isEnabled(); }));
+  QTest::mouseClick(open, Qt::LeftButton);
+
+  QCOMPARE(opened.count(), 1);
+  QCOMPARE(opened.first().first().toString(),
+           QString{"0123456789abcdef0123456789abcdef"});
+}
 
 void BacktestTabTest::exposesAccessibleRunConfiguration() {
   const bte::frontend::BacktestTab tab;
@@ -370,6 +431,34 @@ void BacktestTabTest::defaultRunnerExecutesTrackedBars() {
       [&status] { return status->text().contains("Completed"); }));
   QVERIFY(!bars->text().contains("--"));
   QVERIFY(run->isEnabled());
+}
+
+void BacktestTabTest::applicationConfiguredRunnerUsesEnvironmentStorage() {
+  const ScopedEnvironmentRestore resultStoreRestore{"BTE_RESULT_STORE"};
+  const ScopedEnvironmentRestore dataStoreRestore{"BTE_DATA_STORE"};
+  const ScopedEnvironmentRestore snapshotRestore{"BTE_DATA_SNAPSHOT_ID"};
+  const auto configuredRoot =
+      std::filesystem::temp_directory_path() / "bte-configured-backtest-tab";
+  std::filesystem::remove_all(configuredRoot);
+  QVERIFY(qputenv("BTE_RESULT_STORE",
+                  (configuredRoot / "Results").string().c_str()));
+  QVERIFY(
+      qputenv("BTE_DATA_STORE", (configuredRoot / "Data").string().c_str()));
+  QVERIFY(qputenv("BTE_DATA_SNAPSHOT_ID", std::string(64, 'd').c_str()));
+  auto tab = bte::frontend::BacktestTab::createApplicationConfigured();
+  auto *run = tab->findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab->findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+
+  QTest::mouseClick(run, Qt::LeftButton);
+
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text().contains("snapshot", Qt::CaseInsensitive);
+  }));
+  QVERIFY(run->isEnabled());
+  QVERIFY(!std::filesystem::exists(configuredRoot / "Results" / "Results"));
+  std::filesystem::remove_all(configuredRoot);
 }
 
 void BacktestTabTest::selectableConditionsSubmitTypedPlanToBackend() {

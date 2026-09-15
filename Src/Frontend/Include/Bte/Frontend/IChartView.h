@@ -6,6 +6,12 @@
 
 namespace bte::frontend {
 
+struct ChartMarker {
+  core::Timestamp timestamp;
+  double price = 0.0;
+  bool isBuy = false;
+};
+
 class IChartView {
 public:
   IChartView() = default;
@@ -17,6 +23,8 @@ public:
 
   virtual void setBarWindow(std::span<const core::Bar> visible) = 0;
   virtual void appendBar(const core::Bar &bar) = 0;
+  virtual void setMarkers(std::span<const ChartMarker> markers) = 0;
+  virtual void clearMarkers() = 0;
 };
 
 } // namespace bte::frontend

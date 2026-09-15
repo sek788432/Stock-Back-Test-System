@@ -20,7 +20,7 @@ becomes part of a release profile.
 | databento (Python) | 0.64.0 | Apache-2.0 | Implemented, developer-only | DataFetcher | Upstream market-data acquisition | — |
 | duckdb (Python) | 1.4.4 | MIT | Implemented, developer-only | DataFetcher | Mutable ingestion and verification store; not release runtime | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
 | pandas (Python) | 2.3.3 | BSD-3-Clause | Implemented, developer-only | DataFetcher | Tabular extraction | — |
-| SQLite | Pin before implementation | Public domain | Planned | Results | Transactional `.bteresult` container | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
+| SQLite | 3.53.4, vcpkg port revision 0 at `9e593bb18ea69cc5095e012465dcd675a822ed0d` | Public domain (`blessing`) | Implemented; root manifest and exact CMake discovery | Results | Transactional `.bteresult` container | [Canonical result storage](ImportantDecisions.md#canonical-result-storage-and-lifecycle) |
 | CPython | Pin per immutable runtime profile | PSF-2.0 | Planned | PythonStrategyRunner | Trusted isolated Python Script Strategy runtime | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
 | NumPy and pandas | Pin each per immutable runtime profile | BSD-3-Clause | Planned | `stockbt` runtime | Approved numerical and tabular packages; no arbitrary pip or broader research stack | [Engine authority](ImportantDecisions.md#engine-and-release-data-authority) |
 
@@ -28,6 +28,16 @@ Tooling is listed only when present. Semantic test-intent auditing, mutation
 testing, Clazy, CodeQL, and a custom Clang AST policy plugin remain planned
 until their exact commands and required workflows exist. The sanitizer matrix
 and clang-format 18 full-tree check are implemented and merge-blocking.
+
+SQLite provenance is fixed by the root [`vcpkg.json`](../../vcpkg.json).
+The pinned [port manifest](https://github.com/microsoft/vcpkg/blob/9e593bb18ea69cc5095e012465dcd675a822ed0d/ports/sqlite3/vcpkg.json)
+selects 3.53.4 with its existing default `json1` feature; the
+[port recipe](https://github.com/microsoft/vcpkg/blob/9e593bb18ea69cc5095e012465dcd675a822ed0d/ports/sqlite3/portfile.cmake)
+verifies the upstream `sqlite-autoconf-3530400.tar.gz` archive with SHA-512
+`c24374e9393a943157f533f96e89e6c5743e5f5aad169d8393cff3088ca5ccbe5cc0561681ace49c349d0fe402298ee2624d319f422967247ce0792e3b3aa01e`.
+That immutable registry also pins the port's host build helpers. SQLite's
+public-domain dedication permits use in this Apache-2.0 application; the port
+installs its copyright notice. Local setup is in [`BUILD.md`](../BUILD.md).
 
 ## License rules
 

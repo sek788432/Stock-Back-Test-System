@@ -182,9 +182,9 @@ behavior-preserving refactors), an important-decision entry is not needed.
 ## 6. Adding dependencies
 
 Default answer: **don't add one**. The C++20 standard library is large. This
-repository currently pins C++ dependencies through checked-in CMake/
-`FetchContent` configuration and Python dependencies through workflow-specific
-requirements files; no `vcpkg.json` exists.
+repository pins SQLite through the root `vcpkg.json` manifest and immutable
+vcpkg registry baseline, GoogleTest through CMake/`FetchContent`, and Python
+dependencies through workflow-specific requirements files.
 
 If you must:
 
@@ -194,7 +194,7 @@ If you must:
    - **Allowed**: MIT, BSD (2/3-clause), Apache-2.0, MPL-2.0, ISC, Boost, zlib, LGPL (dynamically linked only).
    - **Forbidden without an explicit maintainer decision**: GPL-2.0, GPL-3.0, AGPL, SSPL, custom "non-commercial" licenses.
 3. Update the actual owning dependency file discovered in the checkout, pinning
-   an immutable CMake source revision or exact Python version and regenerating
+   an immutable registry/CMake source revision or exact Python version and regenerating
    any checked-in hash lock through its documented workflow.
 4. Add a one-line entry in [`../Decisions/Dependencies.md`](../Decisions/Dependencies.md) (`name | version | license | reason`).
 
