@@ -1,10 +1,12 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
+#include "Bte/Core/Digest.h"
 #include "SelectableStrategyDetail.h"
 
 // IWYU pragma: no_include <math>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <exception>
 #include <functional> // IWYU pragma: keep
@@ -17,6 +19,39 @@
 
 namespace bte::strategy {
 namespace {
+
+void appendFrame(std::string &bytes, const std::string &value) {
+  bytes += std::to_string(value.size());
+  bytes.push_back(':');
+  bytes += value;
+}
+
+template <typename Value>
+void appendInteger(std::string &bytes, const Value value) {
+  appendFrame(bytes, std::to_string(static_cast<std::uint64_t>(value)));
+}
+
+void appendCondition(std::string &bytes, const Condition &condition) {
+  appendInteger(bytes, condition.source);
+  appendInteger(bytes, condition.comparison);
+  appendInteger(bytes, std::bit_cast<std::uint64_t>(condition.threshold));
+  appendInteger(bytes, condition.thresholdDomain);
+  appendInteger(bytes, condition.barField);
+  appendInteger(bytes, condition.indicator.kind);
+  appendInteger(bytes, condition.indicator.period);
+  appendInteger(bytes, condition.indicator.secondaryPeriod);
+  appendInteger(bytes, condition.indicator.signalPeriod);
+  appendInteger(bytes, condition.indicator.output);
+  appendInteger(bytes, condition.indicator.field);
+}
+
+void appendGroup(std::string &bytes, const ConditionGroup &group) {
+  appendInteger(bytes, group.logic);
+  appendInteger(bytes, group.conditions.size());
+  for (const auto &condition : group.conditions) {
+    appendCondition(bytes, condition);
+  }
+}
 
 [[nodiscard]] bool isLogic(const ConditionLogic logic) noexcept {
   return logic == ConditionLogic::all || logic == ConditionLogic::any;
@@ -125,6 +160,19 @@ validateGroup(const ConditionGroup &group, const bool required) {
 }
 
 } // namespace
+
+std::string
+canonicalStrategyHash(const std::optional<SelectableStrategyPlan> &plan) {
+  std::string bytes{"bte-strategy-v1"};
+  if (!plan.has_value()) {
+    appendFrame(bytes, "starter-market-buy-v1");
+    return core::sha256(bytes);
+  }
+  appendFrame(bytes, "selectable-conditions-v1");
+  appendGroup(bytes, plan->buy);
+  appendGroup(bytes, plan->sell);
+  return core::sha256(bytes);
+}
 
 struct SelectableStrategy::Impl final {
   struct RuntimeCondition final {

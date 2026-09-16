@@ -120,8 +120,8 @@ Replay** action.
 The current tab keeps an explicitly labelled **Bar-only preview** keyed by
 symbol, timeframe/range, and placeholder initial capital. It has no Strategy,
 fills, or authoritative accounting. Hourly CSV and UTC-daily aggregation are
-its truthful paths; the displayed one-minute choice still falls back to hourly,
-and a preview load failure still becomes an empty collection.
+its only supported paths; unsupported timeframe choices are not presented, and
+a preview load failure still becomes an empty collection.
 
 The implemented limited **Result Replay** mode asynchronously lists and opens
 validated `.bteresult` artifacts and retained Data Segments. It supports Hourly

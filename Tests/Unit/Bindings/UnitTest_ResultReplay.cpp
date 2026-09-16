@@ -241,9 +241,15 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   EXPECT_EQ(replay.value()->current()->candle.ts,
             timestamp("2024-01-02 01:00:00+00:00"));
   EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 123.0);
+  auto daily = bte::bindings::ResultReplay::open(
+      root_ / "ExactStore", root_ / "Data", finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_TRUE(daily.value()->current()->partialUtcDay);
 }
 
-TEST_F(ResultReplayTest, malformedCanonicalReplayPayloadsFailClosed) {
+TEST_F(ResultReplayTest, resultStoreRejectsMalformedCanonicalReplayPayloads) {
   const auto at = timestamp("2024-01-01 23:00:00+00:00");
   auto missingPnl = persist({{.sequence = 0,
                               .timestamp = at,
@@ -254,12 +260,8 @@ TEST_F(ResultReplayTest, malformedCanonicalReplayPayloadsFailClosed) {
                               .equityMicrodollars = 2'000'000'000,
                               .positionShares = 0}},
                             bte::results::RunStatus::completed);
-  ASSERT_TRUE(missingPnl.ok()) << missingPnl.error().message;
-  auto replay = bte::bindings::ResultReplay::open(
-      root_ / "CustomStore", root_ / "Data", missingPnl.value().resultId,
-      bte::bindings::ResultReplayTimeframe::hourly);
-  ASSERT_FALSE(replay.ok());
-  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+  ASSERT_FALSE(missingPnl.ok());
+  EXPECT_EQ(missingPnl.error().code, bte::core::ErrorCode::invalidArgument);
 
   auto malformedFill = persist({{.sequence = 0,
                                  .timestamp = at,
@@ -270,12 +272,8 @@ TEST_F(ResultReplayTest, malformedCanonicalReplayPayloadsFailClosed) {
                                  .priceNanodollars = 100'000'000'000,
                                  .amountMicrodollars = 1'000'000'000}},
                                bte::results::RunStatus::completed);
-  ASSERT_TRUE(malformedFill.ok()) << malformedFill.error().message;
-  replay = bte::bindings::ResultReplay::open(
-      root_ / "CustomStore", root_ / "Data", malformedFill.value().resultId,
-      bte::bindings::ResultReplayTimeframe::hourly);
-  ASSERT_FALSE(replay.ok());
-  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+  ASSERT_FALSE(malformedFill.ok());
+  EXPECT_EQ(malformedFill.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
 TEST_F(ResultReplayTest,
@@ -305,25 +303,23 @@ TEST_F(ResultReplayTest,
                 .pnlMicrodollars = 0,
                 .positionShares = 0}},
               bte::results::RunStatus::completed);
-  ASSERT_TRUE(mismatchedRecord.ok()) << mismatchedRecord.error().message;
-  auto opened = bte::bindings::ResultReplay::open(
-      root_ / "CustomStore", root_ / "Data", mismatchedRecord.value().resultId,
-      bte::bindings::ResultReplayTimeframe::hourly);
-  ASSERT_FALSE(opened.ok());
-  EXPECT_EQ(opened.error().code, bte::core::ErrorCode::schemaMismatch);
+  ASSERT_FALSE(mismatchedRecord.ok());
+  EXPECT_EQ(mismatchedRecord.error().code,
+            bte::core::ErrorCode::invalidArgument);
 }
 
-TEST_F(ResultReplayTest, dailyUtcAggregationSumsVolumeAndLabelsPartialBuckets) {
+TEST_F(ResultReplayTest,
+       dailyUtcAggregationSumsVolumeAndRecognizesCompleteSourceDays) {
   auto replay = bte::bindings::ResultReplay::open(
       root_ / "Store", root_ / "Data", resultId_,
       bte::bindings::ResultReplayTimeframe::dailyUtc);
   ASSERT_TRUE(replay.ok()) << replay.error().message;
   ASSERT_EQ(replay.value()->totalFrames(), 2);
   ASSERT_NE(replay.value()->current(), nullptr);
-  EXPECT_TRUE(replay.value()->current()->partialUtcDay);
+  EXPECT_FALSE(replay.value()->current()->partialUtcDay);
   EXPECT_DOUBLE_EQ(replay.value()->current()->candle.volume, 1200);
   ASSERT_TRUE(replay.value()->stepForward());
-  EXPECT_TRUE(replay.value()->current()->partialUtcDay);
+  EXPECT_FALSE(replay.value()->current()->partialUtcDay);
   EXPECT_DOUBLE_EQ(replay.value()->current()->candle.open, 101);
   EXPECT_DOUBLE_EQ(replay.value()->current()->candle.high, 105);
   EXPECT_DOUBLE_EQ(replay.value()->current()->candle.low, 100);
@@ -598,11 +594,6 @@ TEST_F(ResultReplayTest,
   storageFault.resultStore = blockedStore;
   expectError(validConfiguration, storageFault,
               bte::core::ErrorCode::permissionDenied);
-
-  auto invalidIdentity = validStorage;
-  invalidIdentity.strategyHash = std::string(64, 'Z');
-  expectError(validConfiguration, invalidIdentity,
-              bte::core::ErrorCode::invalidArgument);
 
   bte::results::testing::failNext(
       bte::results::testing::FailurePoint::hashFinalization);

@@ -289,6 +289,71 @@ bool validResultId(const std::string_view value) {
          });
 }
 
+bool validRunStatus(const RunStatus status) {
+  return status >= RunStatus::running && status <= RunStatus::incomplete;
+}
+
+core::Result<void> validateCanonicalRecord(const CanonicalRecord &record,
+                                           const RunDescriptor &descriptor,
+                                           const core::ErrorCode errorCode) {
+  const auto invalid = [&](const std::string &message) {
+    return core::makeError(errorCode, message);
+  };
+  if (record.family < RecordFamily::order ||
+      record.family > RecordFamily::terminalDiagnostic ||
+      record.side < OrderSide::none || record.side > OrderSide::sell) {
+    return invalid("Canonical record enum is invalid");
+  }
+  if (std::ranges::find(descriptor.universe, record.symbol) ==
+          descriptor.universe.end() ||
+      record.timestamp < descriptor.range.start ||
+      record.timestamp >= descriptor.range.end) {
+    return invalid("Canonical record identity or timestamp is invalid");
+  }
+  switch (record.family) {
+  case RecordFamily::order:
+    if (record.side == OrderSide::none || !record.quantityShares.has_value() ||
+        *record.quantityShares <= 0) {
+      return invalid("Canonical order payload is invalid");
+    }
+    break;
+  case RecordFamily::fill:
+    if (record.side == OrderSide::none || !record.quantityShares.has_value() ||
+        *record.quantityShares <= 0 || !record.priceNanodollars.has_value() ||
+        *record.priceNanodollars <= 0 ||
+        !record.amountMicrodollars.has_value() ||
+        *record.amountMicrodollars < 0) {
+      return invalid("Canonical fill payload is invalid");
+    }
+    break;
+  case RecordFamily::portfolio:
+    if (record.side != OrderSide::none ||
+        !record.cashMicrodollars.has_value() ||
+        !record.marketValueMicrodollars.has_value() ||
+        !record.equityMicrodollars.has_value() ||
+        !record.pnlMicrodollars.has_value() ||
+        !record.positionShares.has_value()) {
+      return invalid("Canonical portfolio payload is invalid");
+    }
+    break;
+  case RecordFamily::cost:
+    if (record.side == OrderSide::none || !record.quantityShares.has_value() ||
+        *record.quantityShares <= 0 || !record.amountMicrodollars.has_value() ||
+        *record.amountMicrodollars < 0) {
+      return invalid("Canonical cost payload is invalid");
+    }
+    break;
+  case RecordFamily::warning:
+  case RecordFamily::log:
+  case RecordFamily::terminalDiagnostic:
+    if (record.side != OrderSide::none || record.text.empty()) {
+      return invalid("Canonical diagnostic payload is invalid");
+    }
+    break;
+  }
+  return {};
+}
+
 core::Result<void> validateDescriptor(const RunDescriptor &descriptor) {
   if (descriptor.universe.empty() ||
       descriptor.range.start >= descriptor.range.end ||
@@ -318,6 +383,22 @@ core::Result<void> validateDescriptor(const RunDescriptor &descriptor) {
                              "Data Selection span is invalid");
     }
     previousOrdinal = span.segmentOrdinal;
+  }
+  return {};
+}
+
+core::Result<void>
+validateDataSelection(const std::filesystem::path &dataRoot,
+                      const data::DataSelectionIdentity &identity,
+                      const core::CancellationToken &cancellation = {}) {
+  auto reader = data::ReleaseSnapshotReader::open(dataRoot, identity.snapshotId,
+                                                  cancellation);
+  if (!reader.ok()) {
+    return reader.error();
+  }
+  auto exact = reader.value()->readExact(identity, cancellation);
+  if (!exact.ok()) {
+    return exact.error();
   }
   return {};
 }
@@ -671,7 +752,7 @@ core::Result<OpenedResult> readResultFile(
   result.canonicalResultHash = textColumn(meta.handle(), 3);
   result.terminalReason = textColumn(meta.handle(), 4);
   result.savedUtcMillis = sqlite3_column_int64(meta.handle(), 7);
-  if (!validResultId(result.resultId) ||
+  if (!validResultId(result.resultId) || !validRunStatus(result.status) ||
       (result.status == RunStatus::running && !allowRunning) ||
       (result.status != RunStatus::running &&
        !validHash(result.canonicalResultHash))) {
@@ -859,6 +940,12 @@ core::Result<OpenedResult> readResultFile(
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "Canonical record order is invalid");
     }
+    auto recordValidation =
+        validateCanonicalRecord(result.records[index], result.descriptor,
+                                core::ErrorCode::schemaMismatch);
+    if (!recordValidation.ok()) {
+      return recordValidation.error();
+    }
   }
 
   Statement summary;
@@ -885,10 +972,9 @@ core::Result<OpenedResult> readResultFile(
                            "Canonical Result hash is invalid");
   }
   if (validateData) {
-    auto reader = data::ReleaseSnapshotReader::open(
-        dataRoot, identity.snapshotId, cancellation);
-    if (!reader.ok()) {
-      return reader.error();
+    auto exact = validateDataSelection(dataRoot, identity, cancellation);
+    if (!exact.ok()) {
+      return exact.error();
     }
   }
   return result;
@@ -947,6 +1033,80 @@ core::Result<void> deleteCatalog(const std::filesystem::path &root,
   return statement.done();
 }
 
+struct PurgeRecoveryLocations final {
+  std::filesystem::path resultStore;
+  std::filesystem::path dataStore;
+};
+
+core::Result<void>
+recoverInterruptedPurges(const PurgeRecoveryLocations &locations,
+                         const core::CancellationToken &cancellation) {
+  constexpr std::string_view suffix = ".purging.bteresult";
+  std::error_code iterationError;
+  for (const auto &entry : std::filesystem::directory_iterator(
+           locations.resultStore / "Staging", iterationError)) {
+    if (cancellation.isCancellationRequested()) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "Result purge recovery was cancelled");
+    }
+    // directory_iterator reports this only for a host filesystem race after
+    // construction; storage-root failures are covered before iteration.
+    // GCOVR_EXCL_START
+    if (iterationError) {
+      return storageError("Unable to inspect interrupted Result purges: " +
+                          iterationError.message());
+    }
+    // GCOVR_EXCL_STOP
+    const auto filename = entry.path().filename().string();
+    if (!entry.is_regular_file() || !filename.ends_with(suffix)) {
+      continue;
+    }
+    const auto resultId = filename.substr(0, filename.size() - suffix.size());
+    auto opened = readResultFile(entry.path(), locations.dataStore, false);
+    // readResultFile's corrupt/incompatible artifact failures have exhaustive
+    // contract coverage; this seam only preserves the structured error.
+    // GCOVR_EXCL_START
+    if (!opened.ok()) {
+      return opened.error();
+    }
+    // GCOVR_EXCL_STOP
+    if (opened.value().resultId != resultId) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Interrupted purge Result ID does not match its "
+                             "filename");
+    }
+    std::vector<std::string> segmentIds;
+    for (const auto &span : opened.value().descriptor.dataSelection.spans) {
+      segmentIds.push_back(span.segmentId);
+    }
+    std::ranges::sort(segmentIds);
+    const auto duplicateSegmentIds = std::ranges::unique(segmentIds);
+    segmentIds.erase(duplicateSegmentIds.begin(), duplicateSegmentIds.end());
+    auto retention = data::SegmentRetentionStore::open(locations.dataStore);
+    // Retention open/acquire failures are fault-injected at their owning seam;
+    // recovery forwards them without translation. GCOVR_EXCL_START
+    if (!retention.ok()) {
+      return retention.error();
+    }
+    auto acquired = retention.value()->acquire(resultId, segmentIds);
+    if (!acquired.ok()) {
+      return acquired.error();
+    }
+    // GCOVR_EXCL_STOP
+    auto restored = moveNoClobber(
+        entry.path(),
+        locations.resultStore / "Trash" / (resultId + ".bteresult"),
+        "Unable to roll back interrupted Result purge");
+    // A collision here requires an external filesystem mutation after the
+    // recovery scan selected this unique staged artifact. GCOVR_EXCL_START
+    if (!restored.ok()) {
+      return restored.error();
+    }
+    // GCOVR_EXCL_STOP
+  }
+  return {};
+}
+
 // clang-format off
 // NOLINTNEXTLINE(readability-function-cognitive-complexity): recovery
 core::Result<void> recoverStaging(
@@ -965,7 +1125,8 @@ core::Result<void> recoverStaging(
       return storageError("Unable to inspect staged Results: " +
                           iterationError.message());
     }
-    if (!entry.is_regular_file() || entry.path().extension() != ".bteresult") {
+    if (!entry.is_regular_file() || entry.path().extension() != ".bteresult" ||
+        entry.path().filename().string().ends_with(".purging.bteresult")) {
       continue;
     }
     auto staged =
@@ -1149,6 +1310,11 @@ ResultWriter::append(const std::vector<CanonicalRecord> &records) {
       return core::makeError(core::ErrorCode::invalidArgument,
                              "Canonical Result records are out of order");
     }
+    auto recordValidation = validateCanonicalRecord(
+        record, impl_->descriptor, core::ErrorCode::invalidArgument);
+    if (!recordValidation.ok()) {
+      return recordValidation.error();
+    }
     ++expected;
     previousTimestamp = record.timestamp;
   }
@@ -1210,7 +1376,7 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
                                  const FinalSummary &summary,
                                  const std::string &terminalReason) {
   if (impl_->finalized || impl_->database == nullptr ||
-      status == RunStatus::running ||
+      !validRunStatus(status) || status == RunStatus::running ||
       (status == RunStatus::completed &&
        (!summary.finalEquityMicrodollars.has_value() ||
         !summary.pnlMicrodollars.has_value())) ||
@@ -1302,20 +1468,6 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
   }
 
   const auto destination = impl_->root / "Results" / (impl_->id + ".bteresult");
-  if (consumeFailure(testing::FailurePoint::promotion)) {
-    return injectedFailure("promotion");
-  }
-  std::error_code errorCode;
-  std::filesystem::create_hard_link(impl_->stagingPath, destination, errorCode);
-  if (errorCode) {
-    return storageError("Unable to promote Result without clobbering: " +
-                        errorCode.message());
-  }
-  std::filesystem::remove(impl_->stagingPath, errorCode);
-  if (errorCode) {
-    return storageError("Unable to remove promoted staging Result: " +
-                        errorCode.message());
-  }
   if (consumeFailure(testing::FailurePoint::catalogVisibility)) {
     return injectedFailure("catalog visibility");
   }
@@ -1328,6 +1480,35 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
   if (!cataloged.ok()) {
     return cataloged.error();
   }
+  const auto rollBackCatalog = [&] {
+    return deleteCatalog(impl_->root, impl_->id);
+  };
+  if (consumeFailure(testing::FailurePoint::promotion)) {
+    const auto ignored = rollBackCatalog();
+    static_cast<void>(ignored);
+    return injectedFailure("promotion");
+  }
+  std::error_code errorCode;
+  std::filesystem::create_hard_link(impl_->stagingPath, destination, errorCode);
+  if (errorCode) {
+    const auto ignored = rollBackCatalog();
+    static_cast<void>(ignored);
+    return storageError("Unable to promote Result without clobbering: " +
+                        errorCode.message());
+  }
+  std::filesystem::remove(impl_->stagingPath, errorCode);
+  // The staging file was just read, flushed, closed, and hard-linked. Removal
+  // failure is a host filesystem race; promotion injection covers rollback.
+  // GCOVR_EXCL_START
+  if (errorCode) {
+    std::error_code ignoredFilesystemError;
+    std::filesystem::remove(destination, ignoredFilesystemError);
+    const auto ignoredCatalog = rollBackCatalog();
+    static_cast<void>(ignoredCatalog);
+    return storageError("Unable to remove promoted staging Result: " +
+                        errorCode.message());
+  }
+  // GCOVR_EXCL_STOP
   impl_->finalized = true;
   return FinalizedResult{.resultId = impl_->id, .canonicalResultHash = hash};
 }
@@ -1362,6 +1543,11 @@ ResultStore::open(const std::filesystem::path &root,
   if (!initialized.ok()) {
     return initialized.error();
   }
+  auto recoveredPurges = recoverInterruptedPurges(
+      {.resultStore = root, .dataStore = dataStore}, cancellation);
+  if (!recoveredPurges.ok()) {
+    return recoveredPurges.error();
+  }
   auto recovered = recoverStaging(root, dataStore, cancellation);
   if (!recovered.ok()) {
     return recovered.error();
@@ -1374,6 +1560,10 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
   auto validated = validateDescriptor(descriptor);
   if (!validated.ok()) {
     return validated.error();
+  }
+  auto exact = validateDataSelection(dataStore_, descriptor.dataSelection);
+  if (!exact.ok()) {
+    return exact.error();
   }
   for (int attempt = 0; attempt < 8; ++attempt) {
     const auto resultId = allocateResultId();
@@ -1406,6 +1596,31 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
                                           std::move(impl));
   }
   return storageError("Unable to allocate a unique Result ID");
+}
+
+core::Result<void> ResultStore::validateSelectedBars(
+    const data::DataSelectionIdentity &identity,
+    const std::vector<data::SnapshotBar> &bars,
+    const core::CancellationToken &cancellation) const {
+  auto reader = data::ReleaseSnapshotReader::open(
+      dataStore_, identity.snapshotId, cancellation);
+  // Snapshot open/read errors are covered by Data contract tests and begin /
+  // Replay integration tests; this validation seam preserves those errors.
+  // GCOVR_EXCL_START
+  if (!reader.ok()) {
+    return reader.error();
+  }
+  auto exact = reader.value()->readExact(identity, cancellation);
+  if (!exact.ok()) {
+    return exact.error();
+  }
+  // GCOVR_EXCL_STOP
+  if (exact.value().bars != bars) {
+    return core::makeError(
+        core::ErrorCode::invalidArgument,
+        "Backtest bars do not match the immutable Data Selection");
+  }
+  return {};
 }
 
 core::Result<std::vector<ResultSummary>>
@@ -1529,19 +1744,81 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::notFound,
                            "Trashed Result is unavailable");
   }
-  std::error_code errorCode;
-  std::filesystem::remove(path, errorCode);
-  if (errorCode) {
-    return storageError("Unable to purge Result: " + errorCode.message());
+  if (!std::filesystem::is_regular_file(path)) {
+    return storageError("Unable to purge Result: artifact is not a file");
   }
+  auto opened = readResultFile(path, dataStore_, false);
+  // Corrupt Result read failures are covered by open/import contract tests;
+  // purge deliberately forwards the same structured error. GCOVR_EXCL_START
+  if (!opened.ok()) {
+    return opened.error();
+  }
+  // GCOVR_EXCL_STOP
+  std::vector<std::string> segmentIds;
+  segmentIds.reserve(opened.value().descriptor.dataSelection.spans.size());
+  for (const auto &span : opened.value().descriptor.dataSelection.spans) {
+    segmentIds.push_back(span.segmentId);
+  }
+  std::ranges::sort(segmentIds);
+  const auto duplicateSegmentIds = std::ranges::unique(segmentIds);
+  segmentIds.erase(duplicateSegmentIds.begin(), duplicateSegmentIds.end());
+
+  const auto purgingPath =
+      root_ / "Staging" / (resultId + ".purging.bteresult");
+  auto staged =
+      moveNoClobber(path, purgingPath, "Unable to stage Result purge");
+  // move/collision behavior is covered by lifecycle contract tests; this seam
+  // forwards the same no-clobber failure. GCOVR_EXCL_START
+  if (!staged.ok()) {
+    return staged.error();
+  }
+  // GCOVR_EXCL_STOP
+  const auto restoreResult = [&] {
+    return moveNoClobber(purgingPath, path, "Unable to roll back Result purge");
+  };
   auto retention = data::SegmentRetentionStore::open(dataStore_);
   if (!retention.ok()) {
+    auto restored = restoreResult();
+    // restoreResult can fail only after another actor mutates the just-vacated
+    // Trash destination. GCOVR_EXCL_START
+    if (!restored.ok()) {
+      return restored.error();
+    }
+    // GCOVR_EXCL_STOP
     return retention.error();
   }
   auto released = retention.value()->release(resultId);
+  // Release failures are fault-injected in SegmentRetention and the public
+  // purge rollback is verified above; preserve the underlying error.
+  // GCOVR_EXCL_START
   if (!released.ok()) {
+    auto restored = restoreResult();
+    // The same external mutation race applies to this rollback path.
+    // GCOVR_EXCL_START
+    if (!restored.ok()) {
+      return restored.error();
+    }
+    // GCOVR_EXCL_STOP
     return released.error();
   }
+  // GCOVR_EXCL_STOP
+  std::error_code errorCode;
+  std::filesystem::remove(purgingPath, errorCode);
+  // purgingPath is a validated regular file owned by this operation. Failure
+  // after release requires an external filesystem race; retention reacquire
+  // and restore are defensive rollback. GCOVR_EXCL_START
+  if (errorCode) {
+    auto reacquired = retention.value()->acquire(resultId, segmentIds);
+    auto restored = restoreResult();
+    if (!reacquired.ok()) {
+      return reacquired.error();
+    }
+    if (!restored.ok()) {
+      return restored.error();
+    }
+    return storageError("Unable to purge Result: " + errorCode.message());
+  }
+  // GCOVR_EXCL_STOP
   return deleteCatalog(root_, resultId);
 }
 

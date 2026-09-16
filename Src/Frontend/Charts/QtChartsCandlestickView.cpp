@@ -167,10 +167,12 @@ QtChartsCandlestickView::QtChartsCandlestickView(QWidget *parent)
   candles_->setCapsWidth(0.22);
   volume_->setName(tr("Volume"));
   volume_->setColor(QColor{70, 145, 181, 150});
+  buyMarkers_->setObjectName("replayBuyMarkers");
   buyMarkers_->setName(tr("Buy"));
   buyMarkers_->setColor(QColor{52, 211, 153});
   buyMarkers_->setMarkerShape(QScatterSeries::MarkerShapeTriangle);
   buyMarkers_->setMarkerSize(13.0);
+  sellMarkers_->setObjectName("replaySellMarkers");
   sellMarkers_->setName(tr("Sell"));
   sellMarkers_->setColor(QColor{251, 113, 133});
   sellMarkers_->setMarkerShape(QScatterSeries::MarkerShapeRectangle);

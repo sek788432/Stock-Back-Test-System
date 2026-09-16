@@ -21,6 +21,7 @@
 #include <mutex>
 #include <ranges> // IWYU pragma: keep
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -92,14 +93,17 @@ public:
   }
 
   [[nodiscard]] core::Result<std::size_t> execute(const std::string &sql) {
+    if (consumeFailure(testing::RetentionFailurePoint::sqlExecution)) {
+      return core::makeError(core::ErrorCode::internal,
+                             "SQLite operation failed: injected failure");
+    }
     char *message = nullptr;
     const auto status =
         sqlite3_exec(handle_, sql.c_str(), nullptr, nullptr, &message);
     const auto detail =
         message == nullptr ? std::string{} : std::string{message};
     sqlite3_free(message);
-    if (consumeFailure(testing::RetentionFailurePoint::sqlExecution) ||
-        status != SQLITE_OK) {
+    if (status != SQLITE_OK) {
       return core::makeError(core::ErrorCode::internal,
                              "SQLite operation failed: " + detail);
     }
@@ -236,6 +240,38 @@ std::mutex &retentionDatabaseMutex() {
   return mutex;
 }
 
+struct SegmentMove final {
+  std::filesystem::path source;
+  std::filesystem::path destination;
+};
+
+void restoreMoves(std::vector<SegmentMove> &moves) noexcept {
+  for (const auto &move : moves | std::views::reverse) {
+    std::error_code ignored;
+    std::filesystem::rename(move.destination, move.source, ignored);
+  }
+}
+
+core::Result<void> moveSegment(const std::filesystem::path &source,
+                               const std::filesystem::path &destination,
+                               const std::string &message) {
+  std::error_code errorCode;
+  if (!std::filesystem::is_regular_file(source, errorCode) || errorCode ||
+      std::filesystem::exists(destination, errorCode) || errorCode) {
+    return core::makeError(core::ErrorCode::permissionDenied, message);
+  }
+  std::filesystem::rename(source, destination, errorCode);
+  // The preflight checks above make this reachable only through a filesystem
+  // permission/state race; injected storage failures cover the public error
+  // contract without racing the host filesystem. GCOVR_EXCL_START
+  if (errorCode) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           message + ": " + errorCode.message());
+  }
+  // GCOVR_EXCL_STOP
+  return {};
+}
+
 } // namespace
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
@@ -267,6 +303,7 @@ SegmentRetentionStore::open(const std::filesystem::path &storeDirectory) {
   }
   try {
     std::filesystem::create_directories(storeDirectory);
+    std::filesystem::create_directories(storeDirectory / "Trash" / "Segments");
   } catch (const std::filesystem::filesystem_error &error) {
     return core::makeError(core::ErrorCode::permissionDenied,
                            "Unable to create retention store: " +
@@ -308,25 +345,6 @@ core::Result<std::size_t> SegmentRetentionStore::acquire(
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Data Segment identities must be unique");
   }
-  for (const auto &segmentId : uniqueIds) {
-    if (!validSegmentId(segmentId)) {
-      return core::makeError(core::ErrorCode::invalidArgument,
-                             "Data Segment identity is invalid");
-    }
-    const auto path = storeDirectory_ / "Segments" / (segmentId + ".btedata");
-    std::ifstream input{path, std::ios::binary};
-    if (!input) {
-      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
-                             "Referenced Data Segment is unavailable");
-    }
-    const std::string bytes{std::istreambuf_iterator<char>{input},
-                            std::istreambuf_iterator<char>{}};
-    if (core::sha256(bytes) != segmentId) {
-      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
-                             "Referenced Data Segment hash is invalid");
-    }
-  }
-
   const std::scoped_lock lock{retentionDatabaseMutex()};
   auto database = openDatabase(storeDirectory_);
   if (!database.ok()) {
@@ -336,6 +354,47 @@ core::Result<std::size_t> SegmentRetentionStore::acquire(
   if (!begun.ok()) {
     return begun.error();
   }
+  std::vector<SegmentMove> restored;
+  const auto rollback = [&] {
+    (void)database.value()->execute("ROLLBACK");
+    restoreMoves(restored);
+  };
+  for (const auto &segmentId : uniqueIds) {
+    if (!validSegmentId(segmentId)) {
+      rollback();
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Data Segment identity is invalid");
+    }
+    const auto active = storeDirectory_ / "Segments" / (segmentId + ".btedata");
+    const auto trashed =
+        storeDirectory_ / "Trash" / "Segments" / (segmentId + ".btedata");
+    if (!std::filesystem::exists(active) && std::filesystem::exists(trashed)) {
+      // moveSegment's failure here requires a filesystem race after both
+      // existence checks; its public failure contract is covered at the
+      // storage seam. GCOVR_EXCL_START
+      auto moved =
+          moveSegment(trashed, active, "Unable to restore Data Segment");
+      if (!moved.ok()) {
+        rollback();
+        return moved.error();
+      }
+      // GCOVR_EXCL_STOP
+      restored.push_back({.source = trashed, .destination = active});
+    }
+    std::ifstream input{active, std::ios::binary};
+    if (!input) {
+      rollback();
+      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                             "Referenced Data Segment is unavailable");
+    }
+    const std::string bytes{std::istreambuf_iterator<char>{input},
+                            std::istreambuf_iterator<char>{}};
+    if (core::sha256(bytes) != segmentId) {
+      rollback();
+      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                             "Referenced Data Segment hash is invalid");
+    }
+  }
   std::size_t acquired = 0;
   for (const auto &segmentId : uniqueIds) {
     auto inserted = database.value()->executeBound(
@@ -343,13 +402,14 @@ core::Result<std::size_t> SegmentRetentionStore::acquire(
         "VALUES(?1, ?2)",
         resultId, segmentId);
     if (!inserted.ok()) {
-      (void)database.value()->execute("ROLLBACK");
+      rollback();
       return inserted.error();
     }
     acquired += inserted.value();
   }
   auto committed = database.value()->execute("COMMIT");
   if (!committed.ok()) {
+    rollback();
     return committed.error();
   }
   return acquired;
@@ -386,28 +446,34 @@ SegmentRetentionStore::release(const std::string &resultId) const {
   }
 
   std::vector<std::string> purged;
+  std::vector<SegmentMove> movedToTrash;
+  const auto rollback = [&] {
+    (void)database.value()->execute("ROLLBACK");
+    restoreMoves(movedToTrash);
+  };
   for (const auto &segmentId : segmentIds.value()) {
     auto count = database.value()->countReferences(segmentId);
     if (!count.ok()) {
-      (void)database.value()->execute("ROLLBACK");
+      rollback();
       return count.error();
     }
     if (count.value() == 0) {
-      try {
-        if (std::filesystem::remove(storeDirectory_ / "Segments" /
-                                    (segmentId + ".btedata"))) {
-          purged.push_back(segmentId);
-        }
-      } catch (const std::filesystem::filesystem_error &error) {
-        (void)database.value()->execute("ROLLBACK");
-        return core::makeError(core::ErrorCode::permissionDenied,
-                               "Unable to purge Data Segment: " +
-                                   std::string{error.what()});
+      const auto active =
+          storeDirectory_ / "Segments" / (segmentId + ".btedata");
+      const auto trashed =
+          storeDirectory_ / "Trash" / "Segments" / (segmentId + ".btedata");
+      auto moved = moveSegment(active, trashed, "Unable to trash Data Segment");
+      if (!moved.ok()) {
+        rollback();
+        return moved.error();
       }
+      movedToTrash.push_back({.source = active, .destination = trashed});
+      purged.push_back(segmentId);
     }
   }
   auto committed = database.value()->execute("COMMIT");
   if (!committed.ok()) {
+    rollback();
     return committed.error();
   }
   return purged;

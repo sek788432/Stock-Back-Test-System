@@ -167,6 +167,10 @@ public:
 
   [[nodiscard]] core::Result<std::unique_ptr<ResultWriter>>
   begin(const RunDescriptor &descriptor) const;
+  [[nodiscard]] core::Result<void>
+  validateSelectedBars(const data::DataSelectionIdentity &identity,
+                       const std::vector<data::SnapshotBar> &bars,
+                       const core::CancellationToken &cancellation = {}) const;
   [[nodiscard]] core::Result<std::vector<ResultSummary>>
   list(const core::CancellationToken &cancellation = {}) const;
   [[nodiscard]] core::Result<OpenedResult>

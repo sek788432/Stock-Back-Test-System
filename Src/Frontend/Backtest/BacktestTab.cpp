@@ -352,7 +352,7 @@ BacktestTab::createApplicationConfigured(QWidget *parent) {
           configuredPath("BTE_RESULT_STORE", applicationRoot / "Results"),
       .dataStore = configuredPath("BTE_DATA_STORE", applicationRoot / "Data"),
       .snapshotId = qEnvironmentVariable("BTE_DATA_SNAPSHOT_ID").toStdString(),
-      .strategyHash = std::string(64, '0'),
+      .strategyHash = {},
   };
   return std::make_unique<BacktestTab>(
       // NOLINTNEXTLINE(bugprone-exception-escape): worker catches failures

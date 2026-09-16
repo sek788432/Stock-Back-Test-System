@@ -9,6 +9,7 @@
 #include <QGraphicsScene>
 #include <QMouseEvent>
 #include <QPoint>
+#include <QScatterSeries>
 #include <QTest>
 #include <QValueAxis>
 #include <QWheelEvent>
@@ -128,6 +129,23 @@ void QtChartsCandlestickViewTest::rendersSynchronizedVolumeAndTradeMarkers() {
   view.setMarkers(markers);
   QCOMPARE(view.volumePointCount(), 2U);
   QCOMPARE(view.markerCount(), 2U);
+  const auto *chartView = view.findChild<QChartView *>("replayChartView");
+  QVERIFY(chartView != nullptr);
+  const auto series = chartView->chart()->series();
+  const auto findMarkers = [&](const QString &name) {
+    const auto found =
+        std::ranges::find(series, name, &QAbstractSeries::objectName);
+    return found == series.end() ? nullptr
+                                 : qobject_cast<QScatterSeries *>(*found);
+  };
+  const auto *buy = findMarkers("replayBuyMarkers");
+  const auto *sell = findMarkers("replaySellMarkers");
+  QVERIFY(buy != nullptr);
+  QVERIFY(sell != nullptr);
+  QCOMPARE(buy->markerShape(), QScatterSeries::MarkerShapeTriangle);
+  QCOMPARE(sell->markerShape(), QScatterSeries::MarkerShapeRectangle);
+  QCOMPARE(buy->color(), QColor(52, 211, 153));
+  QCOMPARE(sell->color(), QColor(251, 113, 133));
 
   view.clearMarkers();
   QCOMPARE(view.markerCount(), 0U);

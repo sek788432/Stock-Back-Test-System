@@ -3,6 +3,7 @@
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
+#include "Bte/Data/SegmentRetention.h"
 
 #include "ResultStoreTestHooks.h"
 #include "SegmentRetentionTestHooks.h"
@@ -119,7 +120,10 @@ protected:
          .symbol = "SYN",
          .family = bte::results::RecordFamily::portfolio,
          .cashMicrodollars = 100'000'000,
-         .equityMicrodollars = 100'000'000},
+         .marketValueMicrodollars = 0,
+         .equityMicrodollars = 100'000'000,
+         .pnlMicrodollars = 0,
+         .positionShares = 0},
         {.sequence = 1,
          .timestamp = timestamp("2024-01-02 00:00:00+00:00"),
          .symbol = "SYN",
@@ -135,6 +139,7 @@ protected:
          .cashMicrodollars = 98'989'900'000,
          .marketValueMicrodollars = 1'020'000'000,
          .equityMicrodollars = 100'009'900'000,
+         .pnlMicrodollars = 9'900,
          .positionShares = 10},
     };
   }
@@ -288,6 +293,21 @@ TEST_F(ResultStoreFixture,
   ASSERT_TRUE(writer.ok()) << writer.error().message;
 }
 
+TEST_F(ResultStoreFixture,
+       beginRejectsStructurallyValidSelectionThatDoesNotMatchSnapshotRows) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ExactStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto mismatched = descriptor();
+  ++mismatched.dataSelection.spans.front().firstRow;
+
+  const auto writer = store.value()->begin(mismatched);
+
+  ASSERT_FALSE(writer.ok());
+  EXPECT_EQ(writer.error().code, bte::core::ErrorCode::dataSnapshotUnavailable);
+  EXPECT_TRUE(std::filesystem::is_empty(root_ / "ExactStore" / "Staging"));
+}
+
 TEST_F(ResultStoreFixture, writerRejectsEmptyOutOfOrderAndPostFinalizeWrites) {
   auto store =
       bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
@@ -324,6 +344,65 @@ TEST_F(ResultStoreFixture, writerRejectsEmptyOutOfOrderAndPostFinalizeWrites) {
                    .ok());
 }
 
+TEST_F(ResultStoreFixture,
+       writerRejectsInvalidCanonicalEnumsSymbolsRangesAndPayloads) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ValidatedStore", root_ / "Data");
+  ASSERT_TRUE(store.ok());
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  const auto valid = bte::results::CanonicalRecord{
+      .timestamp = timestamp("2024-01-01 23:00:00+00:00"),
+      .symbol = "SYN",
+      .family = bte::results::RecordFamily::log,
+      .text = "valid diagnostic",
+  };
+  std::vector<bte::results::CanonicalRecord> invalid;
+  auto add = [&](const auto &mutate) {
+    auto candidate = valid;
+    mutate(candidate);
+    invalid.push_back(std::move(candidate));
+  };
+  add([](auto &record) {
+    record.family = static_cast<bte::results::RecordFamily>(99);
+  });
+  add([](auto &record) {
+    record.side = static_cast<bte::results::OrderSide>(99);
+  });
+  add([](auto &record) { record.symbol = "OTHER"; });
+  add([&](auto &record) {
+    record.timestamp = timestamp("2024-01-02 01:00:00+00:00");
+  });
+  add([](auto &record) {
+    record.family = bte::results::RecordFamily::fill;
+    record.text.clear();
+  });
+  add([](auto &record) {
+    record.family = bte::results::RecordFamily::portfolio;
+    record.text.clear();
+  });
+  add([](auto &record) {
+    record.family = bte::results::RecordFamily::order;
+    record.text.clear();
+  });
+  add([](auto &record) {
+    record.family = bte::results::RecordFamily::cost;
+    record.text.clear();
+  });
+  add([](auto &record) { record.side = bte::results::OrderSide::buy; });
+  for (const auto &record : invalid) {
+    const auto appended = writer.value()->append({record});
+    ASSERT_FALSE(appended.ok());
+    EXPECT_EQ(appended.error().code, bte::core::ErrorCode::invalidArgument);
+  }
+  ASSERT_TRUE(writer.value()->append({valid}).ok());
+
+  const auto invalidStatus = writer.value()->finalizeAndPromote(
+      static_cast<bte::results::RunStatus>(99), {});
+  ASSERT_FALSE(invalidStatus.ok());
+  EXPECT_EQ(invalidStatus.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
 TEST_F(ResultStoreFixture, persistedSchemaAndCanonicalMutationsFailClosed) {
   const auto makeResult = [&](const std::filesystem::path &storeRoot) {
     auto store = bte::results::ResultStore::open(storeRoot, root_ / "Data");
@@ -353,6 +432,8 @@ TEST_F(ResultStoreFixture, persistedSchemaAndCanonicalMutationsFailClosed) {
       "UPDATE data_spans SET row_count=0",
       "UPDATE canonical_records SET sequence=7 WHERE sequence=1",
       "UPDATE canonical_records SET timestamp_ms=0 WHERE sequence=1",
+      "UPDATE canonical_records SET family=0,side=0,quantity=NULL WHERE "
+      "sequence=0",
       "UPDATE canonical_records SET pnl=123 WHERE sequence=2",
       "UPDATE summary SET pnl=pnl+1",
   };
@@ -979,6 +1060,11 @@ TEST_F(ResultStoreFixture,
           {.finalEquityMicrodollars = 100'009'900'000,
            .pnlMicrodollars = 9'900});
       ASSERT_FALSE(failed.ok());
+      const auto visibleBeforeRecovery = store.value()->list();
+      ASSERT_TRUE(visibleBeforeRecovery.ok());
+      EXPECT_TRUE(visibleBeforeRecovery.value().empty())
+          << "failed finalization must not publish at point "
+          << static_cast<int>(point);
     }
     bte::results::testing::clearFailure();
 
@@ -1358,8 +1444,67 @@ TEST_F(ResultStoreFixture, importAndPurgeSurfaceFilesystemAndRetentionFaults) {
       sourceStore.value()->moveToTrash(finalized.value().resultId).ok());
   bte::data::testing::failRetentionAfter(
       bte::data::testing::RetentionFailurePoint::databaseOpen);
-  EXPECT_FALSE(sourceStore.value()->purge(finalized.value().resultId).ok());
+  const auto failedPurge =
+      sourceStore.value()->purge(finalized.value().resultId);
+  EXPECT_FALSE(failedPurge.ok());
   bte::data::testing::clearRetentionFailure();
+  EXPECT_TRUE(
+      std::filesystem::exists(root_ / "SourceStore" / "Trash" /
+                              (finalized.value().resultId + ".bteresult")));
+  const auto stillPinned =
+      bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(stillPinned.ok()) << stillPinned.error().message;
+  std::vector<std::string> segmentIds;
+  for (const auto &span : descriptor().dataSelection.spans) {
+    segmentIds.push_back(span.segmentId);
+  }
+  const auto reacquired =
+      stillPinned.value()->acquire(finalized.value().resultId, segmentIds);
+  ASSERT_TRUE(reacquired.ok()) << reacquired.error().message;
+  EXPECT_EQ(reacquired.value(), 0U);
+}
+
+TEST_F(ResultStoreFixture, openRollsBackAnInterruptedPurge) {
+  const auto storeRoot = root_ / "InterruptedPurge";
+  auto store = bte::results::ResultStore::open(storeRoot, root_ / "Data");
+  ASSERT_TRUE(store.ok());
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok());
+  ASSERT_TRUE(store.value()->moveToTrash(finalized.value().resultId).ok());
+
+  const auto trashPath =
+      storeRoot / "Trash" / (finalized.value().resultId + ".bteresult");
+  const auto purgingPath = storeRoot / "Staging" /
+                           (finalized.value().resultId + ".purging.bteresult");
+  std::filesystem::rename(trashPath, purgingPath);
+  auto retention = bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(retention.ok());
+  ASSERT_TRUE(retention.value()->release(finalized.value().resultId).ok());
+
+  auto recovered = bte::results::ResultStore::open(storeRoot, root_ / "Data");
+  ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+  EXPECT_TRUE(std::filesystem::exists(trashPath));
+  EXPECT_FALSE(std::filesystem::exists(purgingPath));
+  EXPECT_FALSE(std::filesystem::exists(
+      storeRoot / "Results" / (finalized.value().resultId + ".bteresult")));
+
+  std::vector<std::string> segmentIds;
+  for (const auto &span : descriptor().dataSelection.spans) {
+    segmentIds.push_back(span.segmentId);
+    EXPECT_TRUE(std::filesystem::exists(root_ / "Data" / "Segments" /
+                                        (span.segmentId + ".btedata")));
+  }
+  auto activeRetention = bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(activeRetention.ok());
+  const auto reacquired =
+      activeRetention.value()->acquire(finalized.value().resultId, segmentIds);
+  ASSERT_TRUE(reacquired.ok());
+  EXPECT_EQ(reacquired.value(), 0U);
 }
 
 } // namespace

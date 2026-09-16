@@ -168,10 +168,13 @@ not an additional canonical-hash frame.
   then atomically promote it on finalization.
 - Crash recovery produces `Interrupted`, never `Completed`.
 - `Failed`, `Canceled`, `Interrupted`, and `Incomplete` retain diagnostic events but expose no valid final performance metrics.
-- The schema has explicit major and minor versions. The application reads the
-  current and immediately previous major version. Unknown newer majors fail as
-  `ResultSchemaUnsupported`; compatible minor additions are ignored only when
-  their schema declaration permits it.
+- The schema has explicit major and minor versions. Schema 2 is the first
+  released canonical container and the implemented reader accepts schema 2
+  only; older prototypes and unknown newer majors fail as
+  `ResultSchemaUnsupported`. When a subsequent major ships, its migration must
+  read the immediately previous released major, validate the source, and
+  create a new copy. Compatible minor additions may be ignored only when their
+  schema declaration permits it.
 - Migration validates the source and creates a new copy; it never rewrites the
   original.
 - Imports are untrusted data. They validate size, schema, canonical hash,
@@ -224,6 +227,11 @@ Schema-2 enum integers are fixed: run status is `running=0`, `completed=1`,
 `failed=2`, `canceled=3`, `interrupted=4`, and `incomplete=5`; record family is
 `order=0`, `fill=1`, `portfolio=2`, `cost=3`, `warning=4`, `log=5`, and
 `terminalDiagnostic=6`; order side is `none=0`, `buy=1`, and `sell=2`.
+
+The current C++ Strategy hash is derived by the Strategy module, never supplied
+by the UI: the built-in starter uses a versioned identity and Selectable
+Conditions hash the ordered buy/sell groups plus every condition and indicator
+field using their exact enum, integer, and IEEE-754 bit values.
 
 Universe order is functional. Data spans are hashed in vector order and must
 have strictly increasing snapshot-manifest ordinals; a selection may begin at
