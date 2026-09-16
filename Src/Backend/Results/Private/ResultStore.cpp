@@ -1448,20 +1448,6 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
   }
 
   const auto destination = impl_->root / "Results" / (impl_->id + ".bteresult");
-  if (consumeFailure(testing::FailurePoint::promotion)) {
-    return injectedFailure("promotion");
-  }
-  std::error_code errorCode;
-  std::filesystem::create_hard_link(impl_->stagingPath, destination, errorCode);
-  if (errorCode) {
-    return storageError("Unable to promote Result without clobbering: " +
-                        errorCode.message());
-  }
-  std::filesystem::remove(impl_->stagingPath, errorCode);
-  if (errorCode) {
-    return storageError("Unable to remove promoted staging Result: " +
-                        errorCode.message());
-  }
   if (consumeFailure(testing::FailurePoint::catalogVisibility)) {
     return injectedFailure("catalog visibility");
   }
@@ -1473,6 +1459,31 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
                                                .unavailableReason = {}});
   if (!cataloged.ok()) {
     return cataloged.error();
+  }
+  const auto rollBackCatalog = [&] {
+    return deleteCatalog(impl_->root, impl_->id);
+  };
+  if (consumeFailure(testing::FailurePoint::promotion)) {
+    const auto ignored = rollBackCatalog();
+    static_cast<void>(ignored);
+    return injectedFailure("promotion");
+  }
+  std::error_code errorCode;
+  std::filesystem::create_hard_link(impl_->stagingPath, destination, errorCode);
+  if (errorCode) {
+    const auto ignored = rollBackCatalog();
+    static_cast<void>(ignored);
+    return storageError("Unable to promote Result without clobbering: " +
+                        errorCode.message());
+  }
+  std::filesystem::remove(impl_->stagingPath, errorCode);
+  if (errorCode) {
+    std::error_code ignoredFilesystemError;
+    std::filesystem::remove(destination, ignoredFilesystemError);
+    const auto ignoredCatalog = rollBackCatalog();
+    static_cast<void>(ignoredCatalog);
+    return storageError("Unable to remove promoted staging Result: " +
+                        errorCode.message());
   }
   impl_->finalized = true;
   return FinalizedResult{.resultId = impl_->id, .canonicalResultHash = hash};

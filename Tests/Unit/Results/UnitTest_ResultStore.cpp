@@ -1049,6 +1049,11 @@ TEST_F(ResultStoreFixture,
           {.finalEquityMicrodollars = 100'009'900'000,
            .pnlMicrodollars = 9'900});
       ASSERT_FALSE(failed.ok());
+      const auto visibleBeforeRecovery = store.value()->list();
+      ASSERT_TRUE(visibleBeforeRecovery.ok());
+      EXPECT_TRUE(visibleBeforeRecovery.value().empty())
+          << "failed finalization must not publish at point "
+          << static_cast<int>(point);
     }
     bte::results::testing::clearFailure();
 
