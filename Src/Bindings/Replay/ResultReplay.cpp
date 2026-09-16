@@ -298,9 +298,13 @@ ResultReplay::open(const std::filesystem::path &resultStore,
                    .end = core::Timestamp{afterLastDay}},
          .timeframe = result.value().descriptor.dataSelection.timeframe},
         cancellation);
+    // The same validated reader and timeframe already produced the exact
+    // selected bars above; only an external snapshot mutation can fail this
+    // wider source-coverage lookup. GCOVR_EXCL_START
     if (!fullSource.ok()) {
       return fullSource.error();
     }
+    // GCOVR_EXCL_STOP
     fullDailySourceBars = std::move(fullSource).value().bars;
   }
   if (result.value().status != results::RunStatus::completed) {

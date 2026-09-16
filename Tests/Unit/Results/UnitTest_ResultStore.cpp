@@ -381,6 +381,15 @@ TEST_F(ResultStoreFixture,
     record.family = bte::results::RecordFamily::portfolio;
     record.text.clear();
   });
+  add([](auto &record) {
+    record.family = bte::results::RecordFamily::order;
+    record.text.clear();
+  });
+  add([](auto &record) {
+    record.family = bte::results::RecordFamily::cost;
+    record.text.clear();
+  });
+  add([](auto &record) { record.side = bte::results::OrderSide::buy; });
   for (const auto &record : invalid) {
     const auto appended = writer.value()->append({record});
     ASSERT_FALSE(appended.ok());
@@ -423,6 +432,8 @@ TEST_F(ResultStoreFixture, persistedSchemaAndCanonicalMutationsFailClosed) {
       "UPDATE data_spans SET row_count=0",
       "UPDATE canonical_records SET sequence=7 WHERE sequence=1",
       "UPDATE canonical_records SET timestamp_ms=0 WHERE sequence=1",
+      "UPDATE canonical_records SET family=0,side=0,quantity=NULL WHERE "
+      "sequence=0",
       "UPDATE canonical_records SET pnl=123 WHERE sequence=2",
       "UPDATE summary SET pnl=pnl+1",
   };

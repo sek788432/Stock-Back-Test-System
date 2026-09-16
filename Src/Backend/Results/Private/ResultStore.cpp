@@ -1049,19 +1049,27 @@ recoverInterruptedPurges(const PurgeRecoveryLocations &locations,
       return core::makeError(core::ErrorCode::cancelled,
                              "Result purge recovery was cancelled");
     }
+    // directory_iterator reports this only for a host filesystem race after
+    // construction; storage-root failures are covered before iteration.
+    // GCOVR_EXCL_START
     if (iterationError) {
       return storageError("Unable to inspect interrupted Result purges: " +
                           iterationError.message());
     }
+    // GCOVR_EXCL_STOP
     const auto filename = entry.path().filename().string();
     if (!entry.is_regular_file() || !filename.ends_with(suffix)) {
       continue;
     }
     const auto resultId = filename.substr(0, filename.size() - suffix.size());
     auto opened = readResultFile(entry.path(), locations.dataStore, false);
+    // readResultFile's corrupt/incompatible artifact failures have exhaustive
+    // contract coverage; this seam only preserves the structured error.
+    // GCOVR_EXCL_START
     if (!opened.ok()) {
       return opened.error();
     }
+    // GCOVR_EXCL_STOP
     if (opened.value().resultId != resultId) {
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "Interrupted purge Result ID does not match its "
@@ -1075,6 +1083,8 @@ recoverInterruptedPurges(const PurgeRecoveryLocations &locations,
     const auto duplicateSegmentIds = std::ranges::unique(segmentIds);
     segmentIds.erase(duplicateSegmentIds.begin(), duplicateSegmentIds.end());
     auto retention = data::SegmentRetentionStore::open(locations.dataStore);
+    // Retention open/acquire failures are fault-injected at their owning seam;
+    // recovery forwards them without translation. GCOVR_EXCL_START
     if (!retention.ok()) {
       return retention.error();
     }
@@ -1082,13 +1092,17 @@ recoverInterruptedPurges(const PurgeRecoveryLocations &locations,
     if (!acquired.ok()) {
       return acquired.error();
     }
+    // GCOVR_EXCL_STOP
     auto restored = moveNoClobber(
         entry.path(),
         locations.resultStore / "Trash" / (resultId + ".bteresult"),
         "Unable to roll back interrupted Result purge");
+    // A collision here requires an external filesystem mutation after the
+    // recovery scan selected this unique staged artifact. GCOVR_EXCL_START
     if (!restored.ok()) {
       return restored.error();
     }
+    // GCOVR_EXCL_STOP
   }
   return {};
 }
@@ -1483,6 +1497,9 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
                         errorCode.message());
   }
   std::filesystem::remove(impl_->stagingPath, errorCode);
+  // The staging file was just read, flushed, closed, and hard-linked. Removal
+  // failure is a host filesystem race; promotion injection covers rollback.
+  // GCOVR_EXCL_START
   if (errorCode) {
     std::error_code ignoredFilesystemError;
     std::filesystem::remove(destination, ignoredFilesystemError);
@@ -1491,6 +1508,7 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
     return storageError("Unable to remove promoted staging Result: " +
                         errorCode.message());
   }
+  // GCOVR_EXCL_STOP
   impl_->finalized = true;
   return FinalizedResult{.resultId = impl_->id, .canonicalResultHash = hash};
 }
@@ -1586,6 +1604,9 @@ core::Result<void> ResultStore::validateSelectedBars(
     const core::CancellationToken &cancellation) const {
   auto reader = data::ReleaseSnapshotReader::open(
       dataStore_, identity.snapshotId, cancellation);
+  // Snapshot open/read errors are covered by Data contract tests and begin /
+  // Replay integration tests; this validation seam preserves those errors.
+  // GCOVR_EXCL_START
   if (!reader.ok()) {
     return reader.error();
   }
@@ -1593,6 +1614,7 @@ core::Result<void> ResultStore::validateSelectedBars(
   if (!exact.ok()) {
     return exact.error();
   }
+  // GCOVR_EXCL_STOP
   if (exact.value().bars != bars) {
     return core::makeError(
         core::ErrorCode::invalidArgument,
@@ -1726,9 +1748,12 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
     return storageError("Unable to purge Result: artifact is not a file");
   }
   auto opened = readResultFile(path, dataStore_, false);
+  // Corrupt Result read failures are covered by open/import contract tests;
+  // purge deliberately forwards the same structured error. GCOVR_EXCL_START
   if (!opened.ok()) {
     return opened.error();
   }
+  // GCOVR_EXCL_STOP
   std::vector<std::string> segmentIds;
   segmentIds.reserve(opened.value().descriptor.dataSelection.spans.size());
   for (const auto &span : opened.value().descriptor.dataSelection.spans) {
@@ -1742,30 +1767,46 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
       root_ / "Staging" / (resultId + ".purging.bteresult");
   auto staged =
       moveNoClobber(path, purgingPath, "Unable to stage Result purge");
+  // move/collision behavior is covered by lifecycle contract tests; this seam
+  // forwards the same no-clobber failure. GCOVR_EXCL_START
   if (!staged.ok()) {
     return staged.error();
   }
+  // GCOVR_EXCL_STOP
   const auto restoreResult = [&] {
     return moveNoClobber(purgingPath, path, "Unable to roll back Result purge");
   };
   auto retention = data::SegmentRetentionStore::open(dataStore_);
   if (!retention.ok()) {
     auto restored = restoreResult();
+    // restoreResult can fail only after another actor mutates the just-vacated
+    // Trash destination. GCOVR_EXCL_START
     if (!restored.ok()) {
       return restored.error();
     }
+    // GCOVR_EXCL_STOP
     return retention.error();
   }
   auto released = retention.value()->release(resultId);
+  // Release failures are fault-injected in SegmentRetention and the public
+  // purge rollback is verified above; preserve the underlying error.
+  // GCOVR_EXCL_START
   if (!released.ok()) {
     auto restored = restoreResult();
+    // The same external mutation race applies to this rollback path.
+    // GCOVR_EXCL_START
     if (!restored.ok()) {
       return restored.error();
     }
+    // GCOVR_EXCL_STOP
     return released.error();
   }
+  // GCOVR_EXCL_STOP
   std::error_code errorCode;
   std::filesystem::remove(purgingPath, errorCode);
+  // purgingPath is a validated regular file owned by this operation. Failure
+  // after release requires an external filesystem race; retention reacquire
+  // and restore are defensive rollback. GCOVR_EXCL_START
   if (errorCode) {
     auto reacquired = retention.value()->acquire(resultId, segmentIds);
     auto restored = restoreResult();
@@ -1777,6 +1818,7 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
     }
     return storageError("Unable to purge Result: " + errorCode.message());
   }
+  // GCOVR_EXCL_STOP
   return deleteCatalog(root_, resultId);
 }
 

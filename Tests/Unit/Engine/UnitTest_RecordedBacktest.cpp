@@ -601,4 +601,32 @@ TEST_F(RecordedBacktestTest,
   EXPECT_TRUE(std::filesystem::is_empty(root_ / "Store" / "Results"));
 }
 
+TEST_F(RecordedBacktestTest,
+       recordingRejectsUnrepresentableAndDifferentlyRoundedVolume) {
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto unrepresentable = request();
+  unrepresentable.bars.front().volume = std::numeric_limits<double>::max();
+
+  const auto rejected = bte::engine::runBacktestAndRecord(
+      unrepresentable, *store.value(), descriptor());
+
+  ASSERT_FALSE(rejected.ok());
+  EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_TRUE(std::filesystem::is_empty(root_ / "Store" / "Staging"));
+
+  auto roundedStore =
+      bte::results::ResultStore::open(root_ / "RoundedStore", root_ / "Data");
+  ASSERT_TRUE(roundedStore.ok()) << roundedStore.error().message;
+  auto differentlyRounded = request();
+  differentlyRounded.bars.front().volume = 1'200.0000015;
+
+  const auto mismatch = bte::engine::runBacktestAndRecord(
+      differentlyRounded, *roundedStore.value(), descriptor());
+
+  ASSERT_FALSE(mismatch.ok());
+  EXPECT_EQ(mismatch.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_TRUE(std::filesystem::is_empty(root_ / "RoundedStore" / "Staging"));
+}
+
 } // namespace

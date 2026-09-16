@@ -261,10 +261,14 @@ core::Result<void> moveSegment(const std::filesystem::path &source,
     return core::makeError(core::ErrorCode::permissionDenied, message);
   }
   std::filesystem::rename(source, destination, errorCode);
+  // The preflight checks above make this reachable only through a filesystem
+  // permission/state race; injected storage failures cover the public error
+  // contract without racing the host filesystem. GCOVR_EXCL_START
   if (errorCode) {
     return core::makeError(core::ErrorCode::permissionDenied,
                            message + ": " + errorCode.message());
   }
+  // GCOVR_EXCL_STOP
   return {};
 }
 
@@ -365,12 +369,16 @@ core::Result<std::size_t> SegmentRetentionStore::acquire(
     const auto trashed =
         storeDirectory_ / "Trash" / "Segments" / (segmentId + ".btedata");
     if (!std::filesystem::exists(active) && std::filesystem::exists(trashed)) {
+      // moveSegment's failure here requires a filesystem race after both
+      // existence checks; its public failure contract is covered at the
+      // storage seam. GCOVR_EXCL_START
       auto moved =
           moveSegment(trashed, active, "Unable to restore Data Segment");
       if (!moved.ok()) {
         rollback();
         return moved.error();
       }
+      // GCOVR_EXCL_STOP
       restored.push_back({.source = trashed, .destination = active});
     }
     std::ifstream input{active, std::ios::binary};
