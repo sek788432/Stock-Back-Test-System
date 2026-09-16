@@ -168,10 +168,13 @@ not an additional canonical-hash frame.
   then atomically promote it on finalization.
 - Crash recovery produces `Interrupted`, never `Completed`.
 - `Failed`, `Canceled`, `Interrupted`, and `Incomplete` retain diagnostic events but expose no valid final performance metrics.
-- The schema has explicit major and minor versions. The application reads the
-  current and immediately previous major version. Unknown newer majors fail as
-  `ResultSchemaUnsupported`; compatible minor additions are ignored only when
-  their schema declaration permits it.
+- The schema has explicit major and minor versions. Schema 2 is the first
+  released canonical container and the implemented reader accepts schema 2
+  only; older prototypes and unknown newer majors fail as
+  `ResultSchemaUnsupported`. When a subsequent major ships, its migration must
+  read the immediately previous released major, validate the source, and
+  create a new copy. Compatible minor additions may be ignored only when their
+  schema declaration permits it.
 - Migration validates the source and creates a new copy; it never rewrites the
   original.
 - Imports are untrusted data. They validate size, schema, canonical hash,

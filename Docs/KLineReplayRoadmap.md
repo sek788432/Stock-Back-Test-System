@@ -14,13 +14,14 @@ catalog, and Replay seams. It does not own the production prerequisite changes.
 The existing implementation is a limited single-symbol path, and the presence
 of a fixture does not establish completion of every prerequisite below.
 
-All seven plan tasks travel together in
+All seven plan tasks landed as the integrated baseline in merged
 [PR #68](https://github.com/sek788432/Stock-Back-Test-System/pull/68), with one
-semantic commit per task as requested for this integrated delivery. The commit
-subjects below remain stable if the branch is rebased or amended. Every Task
-1–7 checklist item and the acceptance checklist are implemented and verified
-for the plan's accepted single-symbol scope. Items listed by the plan as
-explicitly deferred or blocked remain outside this delivery.
+semantic commit per task. The follow-up `codex/finish-issue10-plan` branch
+hardens failure atomicity, persisted validation, immutable-bar binding,
+Strategy provenance, UTC partial-day detection, and Replay controls. The
+checked [implementation plan](Issue10DeterministicReplayFixturePlan.md) applies
+to the accepted single-symbol scope; §7's explicitly deferred or blocked
+capabilities remain outside this delivery.
 
 | Plan task | Status | Prerequisite scope | Implementation commit | Related issue |
 | --- | --- | --- | --- | --- |
@@ -55,11 +56,30 @@ its own issue and PR.
 - [Replay performance measurements](ReplayPerformanceMeasurements.md) document
   reproducible 10,000-frame open/seek/maximum-playback/memory evidence and a
   1,000-entry catalog measurement; visible chart data is capped at 500 frames.
-- The complete normal, sanitizer, thread-sanitizer, coverage, and static-analysis
-  workflows are the merge gates for PR #68.
-- Manual desktop acceptance completed a selectable-strategy Backtest, opened
-  its exact promoted Result ID, displayed its five-candle K-line chart, volume,
-  four fills, final profit, and advanced one synchronized Replay step.
+- Normal, sanitizer, thread-sanitizer, coverage, and static-analysis workflows
+  remain the implemented merge gates. The follow-up PR records its exact-HEAD
+  local commands and GitHub checks rather than inheriting PR #68's results.
+- Manual desktop acceptance on 2026-09-16 built an immutable synthetic AAPL
+  snapshot, completed a five-bar persisted Backtest, and opened exact promoted
+  Result ID `db588324eb90fca7f74b5626c3c44e24`. Hourly Replay presented the first
+  candle immediately, advanced from 20% to 40% in one Step, and synchronized
+  the buy fill and authoritative portfolio. Daily (UTC) presented three
+  buckets and labelled the truncated first bucket `Partial UTC day`.
+
+## Follow-up hardening evidence
+
+The follow-up branch adds focused regressions for unsupported preview
+timeframes, rollback-safe segment release, exact selection validation,
+interrupted purge recovery, malformed canonical records, exact snapshot-bar
+binding, canonical Strategy provenance, source-coverage-based Daily partial
+labels, promotion visibility, marker shape/color, keyboard controls, and
+bounded maximum-speed event-loop batching.
+
+Task 7's mutation check was also repeated against production code. Temporarily
+using the first hourly close as a Daily bucket close made
+`ReplayFixture.replaySnapshotsMatchExpectedSequence` fail its literal Daily
+snapshot assertions. Restoring the required last close made the identical
+focused command pass. The mutation was never committed.
 
 ## Fixture acceptance boundary
 
