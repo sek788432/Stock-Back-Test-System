@@ -21,6 +21,7 @@
 #include <mutex>
 #include <ranges> // IWYU pragma: keep
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -245,9 +246,9 @@ struct SegmentMove final {
 };
 
 void restoreMoves(std::vector<SegmentMove> &moves) noexcept {
-  for (auto current = moves.rbegin(); current != moves.rend(); ++current) {
+  for (const auto &move : moves | std::views::reverse) {
     std::error_code ignored;
-    std::filesystem::rename(current->destination, current->source, ignored);
+    std::filesystem::rename(move.destination, move.source, ignored);
   }
 }
 

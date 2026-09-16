@@ -4,6 +4,7 @@
 
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
+#include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
 
 #include <algorithm> // IWYU pragma: keep

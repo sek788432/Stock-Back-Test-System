@@ -1033,14 +1033,18 @@ core::Result<void> deleteCatalog(const std::filesystem::path &root,
   return statement.done();
 }
 
+struct PurgeRecoveryLocations final {
+  std::filesystem::path resultStore;
+  std::filesystem::path dataStore;
+};
+
 core::Result<void>
-recoverInterruptedPurges(const std::filesystem::path &root,
-                         const std::filesystem::path &dataStore,
+recoverInterruptedPurges(const PurgeRecoveryLocations &locations,
                          const core::CancellationToken &cancellation) {
   constexpr std::string_view suffix = ".purging.bteresult";
   std::error_code iterationError;
-  for (const auto &entry :
-       std::filesystem::directory_iterator(root / "Staging", iterationError)) {
+  for (const auto &entry : std::filesystem::directory_iterator(
+           locations.resultStore / "Staging", iterationError)) {
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
                              "Result purge recovery was cancelled");
@@ -1054,7 +1058,7 @@ recoverInterruptedPurges(const std::filesystem::path &root,
       continue;
     }
     const auto resultId = filename.substr(0, filename.size() - suffix.size());
-    auto opened = readResultFile(entry.path(), dataStore, false);
+    auto opened = readResultFile(entry.path(), locations.dataStore, false);
     if (!opened.ok()) {
       return opened.error();
     }
@@ -1068,8 +1072,9 @@ recoverInterruptedPurges(const std::filesystem::path &root,
       segmentIds.push_back(span.segmentId);
     }
     std::ranges::sort(segmentIds);
-    segmentIds.erase(std::ranges::unique(segmentIds).begin(), segmentIds.end());
-    auto retention = data::SegmentRetentionStore::open(dataStore);
+    const auto duplicateSegmentIds = std::ranges::unique(segmentIds);
+    segmentIds.erase(duplicateSegmentIds.begin(), duplicateSegmentIds.end());
+    auto retention = data::SegmentRetentionStore::open(locations.dataStore);
     if (!retention.ok()) {
       return retention.error();
     }
@@ -1077,9 +1082,10 @@ recoverInterruptedPurges(const std::filesystem::path &root,
     if (!acquired.ok()) {
       return acquired.error();
     }
-    auto restored =
-        moveNoClobber(entry.path(), root / "Trash" / (resultId + ".bteresult"),
-                      "Unable to roll back interrupted Result purge");
+    auto restored = moveNoClobber(
+        entry.path(),
+        locations.resultStore / "Trash" / (resultId + ".bteresult"),
+        "Unable to roll back interrupted Result purge");
     if (!restored.ok()) {
       return restored.error();
     }
@@ -1519,8 +1525,8 @@ ResultStore::open(const std::filesystem::path &root,
   if (!initialized.ok()) {
     return initialized.error();
   }
-  auto recoveredPurges =
-      recoverInterruptedPurges(root, dataStore, cancellation);
+  auto recoveredPurges = recoverInterruptedPurges(
+      {.resultStore = root, .dataStore = dataStore}, cancellation);
   if (!recoveredPurges.ok()) {
     return recoveredPurges.error();
   }
@@ -1729,7 +1735,8 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
     segmentIds.push_back(span.segmentId);
   }
   std::ranges::sort(segmentIds);
-  segmentIds.erase(std::ranges::unique(segmentIds).begin(), segmentIds.end());
+  const auto duplicateSegmentIds = std::ranges::unique(segmentIds);
+  segmentIds.erase(duplicateSegmentIds.begin(), duplicateSegmentIds.end());
 
   const auto purgingPath =
       root_ / "Staging" / (resultId + ".purging.bteresult");

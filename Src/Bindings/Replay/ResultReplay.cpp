@@ -1,11 +1,13 @@
 #include "Bte/Bindings/ResultReplay.h"
 
 #include "Bte/Core/Result.h"
+#include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
 
 #include <algorithm>
 #include <chrono>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -14,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <ranges> // IWYU pragma: keep
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -168,12 +171,18 @@ makeHourlyFrames(const results::OpenedResult &result,
   return frames;
 }
 
+struct DailyBarSets final {
+  std::span<const data::SnapshotBar> selected;
+  std::span<const data::SnapshotBar> fullSource;
+};
+
 core::Result<std::vector<ResultReplayFrame>>
 makeDailyFrames(const results::OpenedResult &result,
-                const std::vector<data::SnapshotBar> &bars,
-                const std::vector<data::SnapshotBar> &fullSourceBars,
+                const DailyBarSets &barSets,
                 const core::CancellationToken &cancellation) {
   using namespace std::chrono;
+  const auto &bars = barSets.selected;
+  const auto &fullSourceBars = barSets.fullSource;
   const ReplayRecordIndex records{result};
   std::vector<ResultReplayFrame> frames;
   std::size_t begin = 0;
@@ -316,8 +325,9 @@ ResultReplay::open(const std::filesystem::path &resultStore,
     frames = makeHourlyFrames(result.value(), bars, cancellation);
     break;
   case ResultReplayTimeframe::dailyUtc:
-    frames = makeDailyFrames(result.value(), bars, fullDailySourceBars,
-                             cancellation);
+    frames = makeDailyFrames(
+        result.value(), {.selected = bars, .fullSource = fullDailySourceBars},
+        cancellation);
     break;
   }
   if (!frames.ok()) {
