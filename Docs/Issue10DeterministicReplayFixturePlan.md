@@ -54,14 +54,15 @@ Qt Test.
 
 ---
 
-## 1. Scope and Current Baseline
+## 1. Scope and Pre-Implementation Baseline
 
 [Issue #10](https://github.com/sek788432/Stock-Back-Test-System/issues/10)
 remains the final small, offline determinism fixture. The production
 prerequisites below belong in separate linked issues/PRs; they must not be
 hidden inside the issue #10 test change.
 
-Verified current behavior:
+Verified behavior when this plan was written, before the implementation in
+merged PR #68 and the follow-up hardening:
 
 - Backtest returns only final accounting and ordered fills in memory.
 - Replay loads tracked hourly CSV data and can aggregate it by UTC date.
@@ -384,4 +385,3 @@ workflow, offline and independent of wall-clock time.
   placeholder record implies implementation.
 - Public data-bearing release remains blocked by redistribution and verified
   split-manifest requirements even when synthetic/local fixtures pass.
-
