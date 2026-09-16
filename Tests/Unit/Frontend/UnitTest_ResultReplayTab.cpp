@@ -70,6 +70,7 @@ private slots:
   void cleanupTestCase();
   void rapidSwitchRejectsStaleCompletionAndPresentsExactFirstFrame();
   void resultControlsAndPersistedFillDetailsAreAccessible();
+  void resultKeyboardShortcutsRestartAndSpeedMapping();
   void selectionWhilePlayingStopsPriorPlayback();
   void timeframeChangeDuringOpenReplacesThePendingRequest();
   void resultControlsCoverEmptyTerminalUnavailableAndNavigationBoundaries();
@@ -362,6 +363,54 @@ void ResultReplayTabTest::resultControlsAndPersistedFillDetailsAreAccessible() {
   QVERIFY(fillDescription.contains(trades->item(0, 2)->text()));
 }
 
+void ResultReplayTabTest::resultKeyboardShortcutsRestartAndSpeedMapping() {
+  bte::frontend::ReplayTab tab{root_ / "Store", root_ / "Data"};
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  auto *seek = tab.findChild<QSlider *>("replaySeekSlider");
+  auto *speed = tab.findChild<QComboBox *>("replaySpeedCombo");
+  auto *timer = tab.findChild<QTimer *>("replayPlaybackTimer");
+  auto *play = tab.findChild<QToolButton *>("replayPlayPauseButton");
+  QVERIFY(status != nullptr);
+  QVERIFY(seek != nullptr);
+  QVERIFY(speed != nullptr);
+  QVERIFY(timer != nullptr);
+  QVERIFY(play != nullptr);
+  tab.show();
+  tab.activateWindow();
+  tab.setFocus();
+  tab.openResult(QString::fromStdString(firstResultId_));
+  QVERIFY(bte::test::waitUntil([&] {
+    return status->text().startsWith("Result ") && seek->maximum() == 2;
+  }));
+
+  QTest::keyClick(&tab, Qt::Key_Right);
+  QCOMPARE(seek->value(), 1);
+  QTest::keyClick(&tab, Qt::Key_Left);
+  QCOMPARE(seek->value(), 0);
+
+  speed->setCurrentText("5x");
+  QCOMPARE(timer->interval(), 200);
+  speed->setCurrentText("10x");
+  QCOMPARE(timer->interval(), 100);
+  speed->setCurrentText("max");
+  QCOMPARE(timer->interval(), 0);
+  speed->setCurrentText("1x");
+  QCOMPARE(timer->interval(), 1000);
+
+  QTest::keyClick(&tab, Qt::Key_Space);
+  QCOMPARE(seek->value(), 1);
+  QVERIFY(timer->isActive());
+  QTest::keyClick(&tab, Qt::Key_Space);
+  QVERIFY(!timer->isActive());
+  seek->setValue(2);
+  QTest::keyClick(&tab, Qt::Key_Space);
+  QCOMPARE(seek->value(), 1);
+  QVERIFY(timer->isActive());
+  QTest::keyClick(&tab, Qt::Key_Space);
+  QCOMPARE(play->text(), QString{"Play"});
+  QVERIFY(!timer->isActive());
+}
+
 void ResultReplayTabTest::
     resultControlsCoverEmptyTerminalUnavailableAndNavigationBoundaries() {
   bte::frontend::ReplayTab tab{root_ / "Store", root_ / "Data"};
@@ -427,7 +476,7 @@ void ResultReplayTabTest::
     return status->text().startsWith("Result ") && seek->maximum() == 1;
   }));
   QCOMPARE(partial->text(), QString{"Partial UTC day"});
-  QVERIFY(!partial->isHidden());
+  QVERIFY(partial->isHidden());
   selector->setCurrentText(QString::fromStdString(secondResultId_));
   QVERIFY(QMetaObject::invokeMethod(selector, "textActivated",
                                     Q_ARG(QString, selector->currentText())));
@@ -516,9 +565,13 @@ void ResultReplayTabTest::maximumPlaybackBatchesFramesAndCapsRenderedWindow() {
   const auto beforeBatch = seek->value();
   QVERIFY(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection));
 
-  QVERIFY(seek->value() > beforeBatch + 1);
+  QCOMPARE(seek->value(), beforeBatch + 32);
   QVERIFY(chart->candleCount() <= 500U);
   QCOMPARE(chart->candleCount(), chart->volumePointCount());
+  bool eventLoopResponsive = false;
+  QTimer::singleShot(0, &tab, [&] { eventLoopResponsive = true; });
+  QCoreApplication::processEvents();
+  QVERIFY(eventLoopResponsive);
 }
 
 void ResultReplayTabTest::maximumPlaybackStopsAtAndAfterTheFinalFrame() {
