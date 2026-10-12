@@ -1,14 +1,25 @@
 # Backtest Result K-Line Replay Implementation Plan
 
-> **Implementation status (2026-09-16):** Tasks 1–7 and the acceptance
+> **Historical baseline statement (2026-09-16):** Tasks 1–7 and the acceptance
 > checklist are implemented for the plan's declared current single-symbol
 > Engine scope. Unsupported future record families remain explicit capability
 > flags, as required by §3 and §7; they are not fabricated.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: use
-> `superpowers:subagent-driven-development` (recommended) or
-> `superpowers:executing-plans` to implement this plan task by task. Track work
-> with the checkboxes below.
+> **Current re-acceptance status (2026-10-12): Needs changes.** Later review
+> identified persistence, Replay and verification gaps, and the maintainer
+> added Save/Results, naming, chart and historical-condition requirements.
+> The historical checkboxes below do not accept those later requirements or
+> prove the remaining defects are resolved. Follow the
+> [incremental delivery inventory](Plans/Issue10IncrementalDeliveryInventory.md)
+> for the preserved 82-commit/64-path source, small PRs and outstanding work.
+> The R4 rounding repair is merged in PR #71; the rest is not thereby accepted.
+
+> **Historical body, not current execution instructions:** The remainder of
+> this document preserves the earlier baseline plan for traceability. Do not
+> execute its old lifecycle or chart constraints as the incremental delivery
+> plan. Use the inventory above and each slice's current approved requirements
+> and owning specifications. In particular, do not reintroduce automatic catalog
+> publication because the historical text says there is no manual Save.
 
 **Goal:** Persist every supported Backtest as a canonical `.bteresult` and let
 the user open or select that result in K-line Replay to inspect its exact
@@ -29,7 +40,11 @@ Qt Test.
 [CI](Specs/CiDevFlow.md), [Product](Specs/BacktestReplayProduct.md), and
 [ADR 0011](Decisions/ImportantDecisions.md#canonical-result-storage-and-lifecycle).
 
-## Global Constraints
+## Historical Baseline Constraints
+
+These describe the earlier delivered baseline, not the later approved explicit
+Save/draft requirements tracked in group S. The S implementation is still
+unmerged; this distinction does not claim Save is already available on main.
 
 - Every valid Backtest automatically targets one staged `.bteresult`; there is
   no manual Save operation.
