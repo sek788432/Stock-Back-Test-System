@@ -121,7 +121,7 @@ moneyForWholeShares(const std::int64_t priceNanodollars,
   const auto roundingRemainder = remainderProduct % priceToMoneyDivisor;
   if (roundingRemainder > priceToMoneyDivisor / 2 ||
       (roundingRemainder == priceToMoneyDivisor / 2 &&
-       remainderMoney % 2 != 0)) {
+       base.value() % 2 != remainderMoney % 2)) {
     ++remainderMoney;
   }
   return checkedAdd(base.value(), remainderMoney);

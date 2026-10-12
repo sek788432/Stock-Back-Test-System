@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -762,6 +763,75 @@ TEST(BacktestTest, priceNormalizationUsesHalfEvenTies) {
   ASSERT_TRUE(tieToOdd.ok());
   EXPECT_EQ(tieToEven.value().finalPriceNanodollars, 2);
   EXPECT_EQ(tieToOdd.value().finalPriceNanodollars, 4);
+}
+
+TEST(BacktestTest, monetaryHalfEvenUsesTheEntireIntegerAmount) {
+  struct Example {
+    std::int64_t shares;
+    double finalPrice;
+    std::int64_t marketValue;
+    std::int64_t cash;
+    std::int64_t equity;
+    std::int64_t pnl;
+  };
+  const std::array examples{
+      Example{1, 1.0000015, 1'000'002, 998'999'900, 999'999'902, -98},
+      Example{3, 1.0000015, 3'000'004, 996'999'700, 999'999'704, -296},
+      Example{5, 1.0000015, 5'000'008, 994'999'500, 999'999'508, -492},
+      Example{2, 1.0000015, 2'000'003, 997'999'800, 999'999'803, -197},
+      Example{1, 1.000001499, 1'000'001, 998'999'900, 999'999'901, -99},
+      Example{1, 1.000001501, 1'000'002, 998'999'900, 999'999'902, -98},
+      Example{1, 1.0000005, 1'000'000, 998'999'900, 999'999'900, -100},
+      Example{3, 1.0000005, 3'000'002, 996'999'700, 999'999'702, -298},
+      Example{5, 1.0000005, 5'000'002, 994'999'500, 999'999'502, -498},
+      Example{1, 1.000000499, 1'000'000, 998'999'900, 999'999'900, -100},
+      Example{1, 1.000000501, 1'000'001, 998'999'900, 999'999'901, -99},
+  };
+  for (const auto &example : examples) {
+    SCOPED_TRACE(example.shares);
+    SCOPED_TRACE(example.finalPrice);
+    const auto result = bte::engine::runBacktest({
+        .bars = {makeFlatBar(2, 1.0), makeFlatBar(3, 1.0),
+                 makeFlatBar(4, example.finalPrice)},
+        .initialCapitalMicrodollars = 1'000'000'000,
+        .quantityShares = example.shares,
+    });
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    EXPECT_EQ(result.value().marketValueMicrodollars, example.marketValue);
+    EXPECT_EQ(result.value().cashMicrodollars, example.cash);
+    EXPECT_EQ(result.value().equityMicrodollars, example.equity);
+    EXPECT_EQ(result.value().pnlMicrodollars, example.pnl);
+    ASSERT_FALSE(result.value().canonicalRecords.empty());
+    const auto &portfolio = result.value().canonicalRecords.back();
+    EXPECT_EQ(portfolio.family, bte::results::RecordFamily::portfolio);
+    EXPECT_EQ(portfolio.marketValueMicrodollars, example.marketValue);
+    EXPECT_EQ(portfolio.cashMicrodollars, example.cash);
+    EXPECT_EQ(portfolio.equityMicrodollars, example.equity);
+    EXPECT_EQ(portfolio.pnlMicrodollars, example.pnl);
+  }
+}
+
+TEST(BacktestTest, monetaryConversionChecksTheFullSumAtTheInt64Boundary) {
+  const auto makeRequest = [](const double finalPrice) {
+    return bte::engine::BacktestRequest{
+        .bars = {makeFlatBar(2, 0.000000001), makeFlatBar(3, 0.000000001),
+                 makeFlatBar(4, finalPrice)},
+        .initialCapitalMicrodollars = 2'000'000,
+        .quantityShares = 1'000'000'000,
+    };
+  };
+  const auto inside = bte::engine::runBacktest(makeRequest(9'223.372036854));
+  const auto outside = bte::engine::runBacktest(makeRequest(9'223.372036855));
+
+  ASSERT_TRUE(inside.ok()) << inside.error().message;
+  EXPECT_EQ(inside.value().cashMicrodollars, 0);
+  EXPECT_EQ(inside.value().marketValueMicrodollars, 9'223'372'036'854'000'000);
+  EXPECT_EQ(inside.value().equityMicrodollars, 9'223'372'036'854'000'000);
+  EXPECT_EQ(inside.value().pnlMicrodollars, 9'223'372'036'852'000'000);
+  ASSERT_FALSE(outside.ok());
+  EXPECT_EQ(outside.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(outside.error().message,
+            "accounting value exceeds the supported range");
 }
 
 TEST(BacktestTest, requestedStopCancelsBeforeExecution) {

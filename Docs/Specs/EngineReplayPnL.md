@@ -132,6 +132,10 @@ Authoritative accounting uses checked fixed-point strong types:
 
 - Overflow and invalid precision are errors.
 - General monetary conversion rounds half-even once at the domain seam; intermediate arithmetic retains checked higher precision.
+- Half-even tie parity applies to the complete integer monetary amount, not
+  just a fractional-product component. For example, one share marked at
+  $1.0000015 becomes 1,000,002 microdollars; three shares become 3,000,004.
+  Computing parity must not overflow before the checked final addition.
 - Slippage-adjusted buys round price up and sells down.
 - Commission, borrow fee, and margin requirements round upward.
 - Forced-cover quantity rounds upward only as far as required to restore margin.
