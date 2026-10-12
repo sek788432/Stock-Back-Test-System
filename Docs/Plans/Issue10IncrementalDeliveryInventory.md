@@ -30,9 +30,9 @@ each extracted submission requires fresh applicable checks on its exact SHA.
 | L | CSV-derived development snapshot `d21cfc1`/`c28ddec`, launcher/build provenance `3245574` | Local source only; separate snapshot preparation from provenance, include script/data tests. Final delivered-checkout Launch.sh scenario is pending; this is not a public data release |
 | S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Local implementation, not fully accepted. Split Save, Results and naming PRs; do not merge with known live-writer/retention/mid-run durability gaps or incomplete UI acceptance |
 | U | Metric units/period explanations `236d97b`/`cf65e2a`, threshold coverage `d8b3c76` | Local source only; extract UI-only changes without S-group code. Label traversal is evidenced; unchanged Engine-record/hash acceptance still needs confirmation |
-| P | SQLite manifest-pin regression, `9bb2a9e` | Local source only; ported assertion matches the actual manifest, not the stale root draft |
+| P | SQLite manifest-pin regression, `9bb2a9e` | Extracted on `codex/issue10-manifest-regression`; publication/verification evidence belongs to that independent PR. Not yet merged. The assertion matches the actual manifest, not the stale root draft |
 | H | Approved CSV/UTC historical-condition semantics, `89d7704` | Requirements only. Previous-data-day, N-day gain, prior-21-day extrema/breakouts and immutable pre-range warm-up are not implemented |
-| D | Plan ledger and workspace reconciliation, through `6ac45ea` | Preserve dated evidence and open findings. Publish focused status updates separately; never label remaining tasks complete merely because a code checkpoint passed |
+| D | Plan ledger and workspace reconciliation, through `6ac45ea` | This focused inventory was submitted as [PR #72](https://github.com/sek788432/Stock-Back-Test-System/pull/72). Preserve the original dated ledger and open findings; never label remaining tasks complete merely because a code checkpoint passed |
 
 The source contains corrective/style/test commits between the listed checkpoints.
 They remain reachable from the pinned source tip and are part of the final
