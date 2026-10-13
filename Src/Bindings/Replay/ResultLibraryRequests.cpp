@@ -20,6 +20,7 @@
 #include <thread>
 #endif
 #include <tuple> // IWYU pragma: keep
+#include <type_traits>
 #include <utility>
 #include <vector>
 

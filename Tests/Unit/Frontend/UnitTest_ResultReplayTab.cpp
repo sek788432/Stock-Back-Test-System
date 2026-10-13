@@ -954,9 +954,13 @@ void ResultReplayTabTest::longRangeSeekPresentsEveryReachedCandleAndFill() {
   QVERIFY(follow != nullptr);
   QVERIFY(status != nullptr);
   QVERIFY(chart != nullptr);
+  QElapsedTimer loadTimer;
+  loadTimer.start();
   tab.openResult(QString::fromStdString(result.value().resultId));
-  QVERIFY(
-      bte::test::waitUntil([&] { return seek->maximum() == barCount - 1; }));
+  const auto loaded =
+      bte::test::waitUntil([&] { return seek->maximum() == barCount - 1; });
+  qInfo("23,777-bar / 6,793-fill Replay load: %lld ms", loadTimer.elapsed());
+  QVERIFY2(loaded, qPrintable(status->text()));
   QCOMPARE(chart->candleCount(), 1U);
   QElapsedTimer timer;
   timer.start();

@@ -41,18 +41,29 @@ retained. Do not force-push or delete its history as part of extraction.
 - Historical-condition semantics remain requirements only. The independent
   canonical-hash oracle, exact saved-data comparison, long seek/resizing and
   final delivered-checkout acceptance remain unfinished.
-- The consolidated checkpoint is locally prepared, not published or accepted.
-  Exact-submission tests and complete Quality remain pending; historical gates
-  below must not be reused as if run on the consolidated checkpoint. Independent
+- The consolidated checkpoint is published as Draft
+  [PR #76](https://github.com/sek788432/Stock-Back-Test-System/pull/76), head
+  `d7ce3d1bd546cb8f5610ac54ab67c5a5951b0c75`, not merged or accepted.
+  Exact-head RunTest passed 243/243 (87.94 seconds); complete non-fast Quality
+  exited zero with 243/243 coverage tests (95.59 seconds), reported 98% changed
+  lines and 93.8% changed branches. Separate backend-only ASan and TSan presets
+  passed 200/200 (51.35 and 78.66 seconds); these do not cover all Qt workers.
+  Remote CI then failed macOS/Linux test compilation, Linux IWYU and the
+  long-range Replay coverage test. Repairs and fresh exact-head gates are
+  pending; local success is not evidence of remote success. Independent
   review found no new conflict-resolution defects; four documentation findings
   were corrected. Known original semantic blockers still mean Needs changes.
 - The initial uncommitted integration RunTest passed 243/243 (91.35 seconds).
   This is working-tree characterization, not exact-submission evidence. Owning
   `Overview.md` is additionally updated to align the documented explicit Save
   gate; it is not one of the original 64 source paths.
-- PR #73 remains open while its pin test is included in this integration.
-  Only after publication is verified may it be marked superseded; no pin
-  assertion or original branch is discarded.
+- PR #73 was closed as superseded after #76 publication and the identical pin
+  test blob were verified; no assertion or original branch was discarded.
+- The maintainer approved the SQLite lease / pin-before-visibility / atomic
+  completed-bar / committed-prefix recovery direction on 2026-10-13. Legacy
+  unleased staging must be preserved with a warning. The owning spec and
+  decision now record this direction; detailed design and implementation
+  remain pending, not accepted as already repaired.
 
 The table below preserves the preceding incremental publication checkpoints;
 it is not a claim that the unaccepted consolidation has merged.
@@ -71,7 +82,7 @@ each extracted submission requires fresh applicable checks on its exact SHA.
 | L | CSV-derived development snapshot `d21cfc1`/`c28ddec`, launcher/build provenance `3245574` | Local source only; separate snapshot preparation from provenance, include script/data tests. Final delivered-checkout Launch.sh scenario is pending; this is not a public data release |
 | S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Included in the current consolidated checkpoint per the latest maintainer request, not fully accepted. The earlier split-PR preference is superseded; known live-writer/retention/mid-run durability gaps and incomplete UI acceptance still prohibit merging main |
 | U | Metric units/period explanations `236d97b`/`cf65e2a`, threshold coverage `d8b3c76` | Display-only [PR #74](https://github.com/sek788432/Stock-Back-Test-System/pull/74) merged as `8ab5ea4b8db7f01d5591a748805b0ae0eb544dfe`; exact submitted head `569bbe3` passed local full tests/quality, both backend-only sanitizer presets and all CI/CodeQL checks. Period editability and typed identity are unchanged. Excluded source period-disable/normalization work and whole Task 16 Engine-record/hash acceptance remain open |
-| P | SQLite manifest-pin regression, `9bb2a9e` | [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73) open against main. Content-identical follow-up `cad90be167af94e17920e9c89add3f03c07d9a01` preserves the fully quality-checked `9d39f41` tree; fresh full tests/standards passed and CodeQL was triggered. Main alignment and latest-head CI/merge remain separate requirements |
+| P | SQLite manifest-pin regression, `9bb2a9e` | [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73) closed as superseded by Draft #76, which includes the identical pin regression. Its original refs and locally aligned `9b1c492` remain preserved. Publication is verified; consolidation CI and merge remain open |
 | H | Approved CSV/UTC historical-condition semantics, `89d7704` | Requirements only. Previous-data-day, N-day gain, prior-21-day extrema/breakouts and immutable pre-range warm-up are not implemented |
 | D | Plan ledger and workspace reconciliation, through `6ac45ea` | Focused inventory [PR #72](https://github.com/sek788432/Stock-Back-Test-System/pull/72) merged as `d1722bd448d097d40153bde1fb4a8b5cd1ce6fcf`. The original full dated ledger remains local. Preserve evidence and open findings; never label remaining tasks complete merely because a code checkpoint passed |
 

@@ -51,6 +51,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string> // IWYU pragma: keep
 #include <utility>

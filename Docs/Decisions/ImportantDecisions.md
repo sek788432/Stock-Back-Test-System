@@ -190,6 +190,17 @@ timeline. The approved flow therefore requires durable draft ownership and
 retention in addition to safe promotion; it does not waive existing recovery
 or segment-reference defects.
 
+On 2026-10-13 the maintainer approved the repair direction for those defects:
+use SQLite-backed cross-process writer leases, pin immutable data before
+visibility, atomically persist every completed Engine bar, and recover only
+the committed prefix as an Interrupted Draft after a crash. A persistence
+failure stops execution. Legacy staging without lease metadata remains intact
+with a warning; opening a store must not infer that such a writer is dead or
+automatically clear its artifact. This is an accepted architectural constraint,
+not an implementation claim. Detailed transaction/lifetime and compatibility
+design review and crash/concurrent-process tests remain required; canonical
+schema/hash compatibility and the explicit Save gate are not waived.
+
 **Consequences.** Public Results APIs expose typed identities, records, and
 lifecycle operations rather than SQLite handles. Promotion and recovery require
 more work than writing one file, but incomplete or corrupt artifacts cannot

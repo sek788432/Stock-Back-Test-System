@@ -17,6 +17,7 @@
 #include <cmath>
 #include <compare> // IWYU pragma: keep
 #include <cstdint>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>

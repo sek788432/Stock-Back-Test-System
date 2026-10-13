@@ -15,6 +15,18 @@
 > Follow the [delivery inventory](Plans/Issue10IncrementalDeliveryInventory.md)
 > for consolidation coverage, exact-head gates and publication status.
 
+> **Published checkpoint and approved repair (2026-10-13):** Draft
+> [PR #76](https://github.com/sek788432/Stock-Back-Test-System/pull/76)
+> publishes consolidated commit `d7ce3d1bd546cb8f5610ac54ab67c5a5951b0c75`.
+> Its exact local full tests and Quality passed, but remote CI failed at
+> macOS/Linux test compilation, Linux IWYU, and the long-range Replay coverage
+> test. It is not merge-ready. PR #73 was closed as superseded only after its
+> unchanged manifest-pin regression was verified in #76. The maintainer has
+> now approved the R1–R3 SQLite lease / pin-before-visibility / atomic completed
+> bar / committed-prefix recovery direction, including preservation and a
+> warning for legacy unleased staging. Detailed design review, implementation,
+> crash tests and acceptance remain pending; approval is not completion.
+
 > **Acceptance status (2026-10-12): Needs changes, not fully complete.**
 > The dated ledger preserves prior successes, failed gates, and open defects.
 > The latest exact-HEAD full non-fast RunQuality pass was on `b5be0c8`
@@ -1569,8 +1581,8 @@ not another implementation plan or a replacement for the dated evidence ledger.
 | Persistence, retention, mid-run durability, rounding, golden oracle, honest capabilities | R1–R4/R6/R7 | R4 scoped repair accepted at b5be0c8; R1/R2/R3/R6/R7 remain open and are not hidden behind UI completion or green tests |
 | Publish all in-scope workspace changes and reconcile local branches/PRs | 27 | In progress; #68/#69/#70 are merged, older seven-fix branch is superseded, Issue 10 follow-up and root untracked test disposition remain open |
 | Multiple Buys in one displayed K bar use one Buy glyph | 28 | Scoped Buy-only checkpoint accepted at d209d21 with regressions, full gates, review and isolated AAPL desktop checks; Sell remains per-fill; whole-plan acceptance remains open |
-| Complete tasks, merge a CI-green PR, then remove the confirmed non-main branches | 29 | Requested; no PR, merge or branch deletion performed; five local targets inventoried and scope clarification pending |
-| Fully inspect/operate app, track honestly, create new PR only after finished | 12 | Needs changes; no new PR/push; no universal bug-free promise |
+| Complete tasks, merge a CI-green PR, then remove the confirmed non-main branches | 29 | Draft PR #76 published as the requested consolidated checkpoint; CI red, not merged, no branch deleted; final content reconciliation and cleanup scope remain open |
+| Fully inspect/operate app, track honestly, create new PR only after finished | 12 | Needs changes; the later explicit checkpoint-publication request is fulfilled by Draft #76, not whole-plan completion or a universal bug-free promise |
 
 - [x] Before implementation resumes, confirm outstanding product/lifecycle/history
   definitions through the governance decision process. Plan-only authorization
@@ -2498,15 +2510,19 @@ writer lease, retain source segments before visibility, atomically persist each
 completed bar, stop on persistence failure, and recover only the committed
 prefix into an Interrupted draft; explicit Save remains required. Platform
 file locks need separate implementations, and PID-based liveness is not reliable
-ownership proof. Maintainer confirmation of this combined architectural direction
-has been requested, not received; no written cross-module spec or implementation
-approval is claimed. After direction approval, write and review the English
-owning spec and implementation plan before changing module interfaces.
+ownership proof. The maintainer approved this combined architectural direction
+on 2026-10-13, including retaining and warning about legacy staging without a
+lease rather than automatically clearing it. The accepted constraints are now
+recorded in the owning specification and decision. Detailed cross-module design
+and implementation-plan review remain required before changing module interfaces;
+no lease or per-bar durability implementation is claimed.
 
 ### Task 29 — Merge verified work, then clean up the named branches
 
-**Status:** Inventory complete on 2026-10-12; PR/merge/deletion not started;
-scope clarification pending.
+**Status (2026-10-13):** Draft PR #76 is published; CI is red and merge/deletion
+have not started. Final branch-content reconciliation and cleanup scope remain
+open. The checked inventory below records the historical 2026-10-12 refs, not
+the current consolidation checkout or updated main.
 The maintainer requests completing all tasks, creating and merging the new PR,
 then deleting other user-created branches. This does not authorize premature
 branch deletion, erasing uncommitted work, deleting main, or removing files and
@@ -2525,7 +2541,8 @@ worktrees as an implied cleanup operation.
 - [ ] Confirm whether all five named local branches and their still-existing
   remote counterparts, including the backup branch, are the intended targets.
 - [ ] Complete plan acceptance, exact submission gates and whole-branch review;
-  create/attach the PR, verify all required CI jobs for its exact SHA, then
+  update the existing attached Draft PR #76, verify all required CI jobs for
+  its exact SHA, then
   squash-merge to main. Do not use CI as the first quality check.
 - [ ] Verify the merged main contains every scoped code/test/document change.
   Preserve the older root drafts and any unique unmerged content through a

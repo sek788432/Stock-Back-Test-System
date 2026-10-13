@@ -182,16 +182,18 @@ void ReplayTabTest::zoomAwayFromNewestEnablesFollowLatestButton() {
   auto *timeAxis =
       qobject_cast<QDateTimeAxis *>(priceChart->axes(Qt::Horizontal).first());
   QVERIFY(timeAxis != nullptr);
-  const auto zoomedSlotWidth = priceChart->plotArea().width() * 3'600'000.0 /
-                               timeAxis->min().msecsTo(timeAxis->max());
+  const auto zoomedSlotWidth =
+      priceChart->plotArea().width() * 3'600'000.0 /
+      static_cast<double>(timeAxis->min().msecsTo(timeAxis->max()));
   QTest::mouseClick(follow, Qt::LeftButton);
   for (auto pass = 0; pass < 20; ++pass) {
     QCoreApplication::processEvents();
   }
   const auto followedSlots = chartView->visibleSlots();
   QCOMPARE(followedSlots.end, bars.size());
-  const auto followedSlotWidth = priceChart->plotArea().width() * 3'600'000.0 /
-                                 timeAxis->min().msecsTo(timeAxis->max());
+  const auto followedSlotWidth =
+      priceChart->plotArea().width() * 3'600'000.0 /
+      static_cast<double>(timeAxis->min().msecsTo(timeAxis->max()));
   QVERIFY2(std::abs(followedSlotWidth - zoomedSlotWidth) < 0.05,
            "Follow latest must preserve the zoomed candle density");
   QVERIFY(!follow->isEnabled());

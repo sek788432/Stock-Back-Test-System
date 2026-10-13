@@ -17,6 +17,19 @@ interrupted staging recovers as a diagnostic draft. Explicit discard releases
 its retained segment references. The broader persistence and retention review
 findings remain open despite this limited lifecycle implementation.
 
+**Accepted R1–R3 repair direction (2026-10-13; not implemented):** Results
+must establish cross-process writer ownership using the existing SQLite
+dependency. Immutable source references must be pinned before the run becomes
+visible to another reader. Each completed Engine bar must atomically persist
+its complete canonical record batch; persistence failure stops further execution.
+Crash recovery may expose only the committed prefix as an **Interrupted Draft**,
+never synthesize uncommitted events or a Completed result. Explicit Save remains
+the publication gate. Legacy staging without a lease is preserved and reported
+to the user, not automatically cleared or treated as abandoned solely because
+another process opened the store. The detailed lease lifetime, transaction
+boundary and compatibility design must be reviewed before implementation; the
+current checkpoint does not satisfy these requirements.
+
 | Status | Scope |
 | --- | --- |
 | **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar. |
