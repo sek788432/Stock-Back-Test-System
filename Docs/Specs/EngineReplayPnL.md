@@ -270,6 +270,19 @@ paths, SQLite page layout, pacing delays, and UI state are excluded. CI compares
 canonical bytes/hash, not physical SQLite file bytes. An intentional behavior
 change requires a regression test, fixture update, and explanation.
 
+The registered Qt-enabled `ReplayBacktestDeterminism` suite includes the
+offline `Tests/Fixtures/ReplayMultiFill/SYN.csv` fixture. It selects 12 hourly
+rows from immutable three-row segments, executes real Selectable Conditions
+through Engine, and checks five buys/five sells at the next actual opens.
+Independent literal fill/cost/portfolio ledgers are compared with persisted
+records; candle/fill/portfolio values are checked in Hourly/UTC Daily replay.
+Repeated runs must have distinct Result IDs but equal records and hashes.
+Exclusive-end, excluded-next-open, invalid
+plan and zero-signal cases are also covered. This synthetic test symbol is not
+application market data. These checks do not establish the separate literal
+canonical-hash oracle, crash-durability, Daily interior-gap, or complete
+engine/replay acceptance requirements.
+
 ## 10. Trades and metrics
 
 Completed runs report total return, realized/unrealized P&L, commissions, slippage, borrow cost, exposure, maximum drawdown and duration, trade count, win rate, average win/loss, payoff ratio, expectancy, CAGR, volatility, Sharpe, and Sortino.

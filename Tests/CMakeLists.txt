@@ -337,8 +337,7 @@ if(BTE_BUILD_QT_APP)
     PRIVATE
       GTest::gtest_main
       bte::bindings
-      bte::data
-      bte::results)
+      bte::engine)
 
   gtest_discover_tests(
     bte_replay_backtest_determinism_tests
