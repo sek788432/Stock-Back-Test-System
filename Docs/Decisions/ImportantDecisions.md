@@ -146,11 +146,18 @@ enum integers, and universe/span/record ordering are normative in
 Changing any framing or inclusion rule requires a new schema version and an
 explained deterministic-fixture update; old bytes are never reinterpreted.
 
+The accepted publication policy records recoverable execution drafts outside
+the active saved catalog. **Save Result** validates and publishes the same run;
+**Save & Replay** additionally opens its exact ID. These operations are
+idempotent and never rerun Engine. This limited policy is implemented;
+unsaved drafts survive restart until explicit Save or Discard, and starting a
+new run preserves the previous draft instead of replacing it.
+
 Writes use foreign keys, WAL, full synchronization, explicit record-batch
 transactions, terminal finalization, WAL checkpoint, close, read-only reopen,
 integrity/schema/hash validation, and same-filesystem no-clobber promotion from
-Staging to Results. The lifecycle is Staging to a terminal state to Promoted;
-restart recovery may promote a validated Interrupted diagnostic or quarantine
+Staging to Drafts and then from Drafts to Results on explicit Save. Restart
+recovery may retain a validated Interrupted diagnostic as a draft or quarantine
 untrustworthy staging. Promoted results can move to Trash and restore; purge
 releases segment references transactionally. Catalog state is rebuildable from
 validated artifacts. Imports and migrations create newly validated copies and
@@ -173,6 +180,15 @@ rejected because it duplicates immutable data. Treating abandoned staging as
 Completed was rejected because a crash cannot establish terminal engine
 semantics. Comparing physical SQLite bytes was rejected because page and
 journal layout are non-functional.
+
+Explicit publication was chosen to give the user control over which runs enter
+Results without sacrificing execution-time recovery. Keeping automatic catalog
+publication with navigation-only buttons labelled Save was rejected because
+those buttons would not perform the promised storage transition. Deferring all
+recording until Save was rejected because a crash would discard the execution
+timeline. The approved flow therefore requires durable draft ownership and
+retention in addition to safe promotion; it does not waive existing recovery
+or segment-reference defects.
 
 **Consequences.** Public Results APIs expose typed identities, records, and
 lifecycle operations rather than SQLite handles. Promotion and recovery require
@@ -245,6 +261,18 @@ execution was rejected because the typed C++ plan is authoritative.
 explicitly limited and regression-tested. New abstractions must arrive with a
 real second caller or adapter and complete contract tests. Indicator warm-up
 never fabricates values, and a signal cannot fill on the bar that produced it.
+
+The accepted, not-yet-implemented local historical-condition convention uses
+CSV-derived **UTC data days**, not official exchange sessions. Each UTC date
+with actual immutable source rows counts once; its last close includes extended
+hours. N-day gain uses the close exactly N available data dates earlier (30 in
+the approved example); one-month extrema use the previous 21 completed data
+dates, excluding the current date. Breakouts are strict and persistent per K
+bar. This aligns historical predicates with the existing UTC Daily Replay and
+available source data. Requiring an entitled official daily series or inferring
+a regular-session close was rejected for this local path. The UI must disclose
+the CSV/UTC convention, and future exchange-session semantics must receive a
+distinct versioned identity rather than silently changing existing plans.
 
 **Owning specification.** [`Architecture.md`](../Specs/Architecture.md),
 [`StrategyAuthoring.md`](../Specs/StrategyAuthoring.md),

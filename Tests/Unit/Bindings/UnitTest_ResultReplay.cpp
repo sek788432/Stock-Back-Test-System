@@ -98,6 +98,12 @@ protected:
     });
     ASSERT_TRUE(selected.ok()) << selected.error().message;
     selection_ = std::move(selected).value().identity;
+    const auto storage = bte::bindings::PersistedBacktestStorage{
+        .resultStore = root_ / "Store",
+        .dataStore = root_ / "Data",
+        .snapshotId = snapshotId_,
+        .strategyHash = std::string(64, 'c'),
+    };
     auto recorded = bte::bindings::runPersistedBacktestConfiguration(
         {.symbol = "SYN",
          .schema = "ohlcv-1h",
@@ -106,14 +112,19 @@ protected:
          .initialCapital = 2'000,
          .quantityShares = 10,
          .selectableStrategy = {}},
-        {.resultStore = root_ / "Store",
-         .dataStore = root_ / "Data",
-         .snapshotId = snapshotId_,
-         .strategyHash = std::string(64, 'c')});
+        storage);
     ASSERT_TRUE(recorded.ok()) << recorded.error().message;
     ASSERT_EQ(recorded.value().resultId.size(), 32);
     ASSERT_EQ(recorded.value().canonicalResultHash.size(), 64);
     resultId_ = recorded.value().resultId;
+    const auto published =
+        bte::bindings::publishBacktestDraft(storage, resultId_);
+    ASSERT_TRUE(published.ok()) << published.error().message;
+    EXPECT_EQ(published.value(), resultId_);
+    const auto repeated =
+        bte::bindings::publishBacktestDraft(storage, resultId_);
+    ASSERT_TRUE(repeated.ok()) << repeated.error().message;
+    EXPECT_EQ(repeated.value(), resultId_);
   }
 
   void TearDown() override {
@@ -180,6 +191,9 @@ TEST_F(ResultReplayTest,
             timestamp("2024-01-01 23:00:00+00:00"));
   EXPECT_EQ(replay.value()->currentIndex(), 0);
   EXPECT_EQ(replay.value()->totalFrames(), 3);
+  EXPECT_EQ(replay.value()->timeline().size(), 3U);
+  EXPECT_EQ(replay.value()->timeline().front().candle.ts,
+            replay.value()->current()->candle.ts);
 
   ASSERT_TRUE(replay.value()->stepForward());
   ASSERT_EQ(replay.value()->current()->fills.size(), 1);
@@ -198,11 +212,15 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   ASSERT_TRUE(reader.ok()) << reader.error().message;
   auto narrow = reader.value()->select({
       .symbols = {"SYN"},
-      .range = {.start = timestamp("2024-01-02 01:00:00+00:00"),
-                .end = timestamp("2024-01-02 02:00:00+00:00")},
+      .range = {.start = timestamp("2024-01-02 00:00:00+00:00"),
+                .end = timestamp("2024-01-02 01:00:00+00:00")},
       .timeframe = "ohlcv-1h",
   });
   ASSERT_TRUE(narrow.ok()) << narrow.error().message;
+  // Source has a bar before start and exactly at end; neither is selected.
+  ASSERT_EQ(narrow.value().bars.size(), 1U);
+  EXPECT_EQ(narrow.value().bars.front().timestamp,
+            timestamp("2024-01-02 00:00:00+00:00"));
   auto store =
       bte::results::ResultStore::open(root_ / "ExactStore", root_ / "Data");
   ASSERT_TRUE(store.ok()) << store.error().message;
@@ -239,14 +257,28 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   ASSERT_TRUE(replay.ok()) << replay.error().message;
   ASSERT_EQ(replay.value()->totalFrames(), 1U);
   EXPECT_EQ(replay.value()->current()->candle.ts,
-            timestamp("2024-01-02 01:00:00+00:00"));
+            timestamp("2024-01-02 00:00:00+00:00"));
+  EXPECT_DOUBLE_EQ(replay.value()->current()->candle.open, 101);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->candle.volume, 2300);
+  EXPECT_TRUE(replay.value()->current()->fills.empty());
+  EXPECT_FALSE(replay.value()->stepForward());
   EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 123.0);
   auto daily = bte::bindings::ResultReplay::open(
       root_ / "ExactStore", root_ / "Data", finalized.value().resultId,
       bte::bindings::ResultReplayTimeframe::dailyUtc);
   ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_EQ(daily.value()->totalFrames(), 1U);
   ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.open, 101);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.high, 104);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.low, 100);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.close, 103);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.volume, 2300);
+  EXPECT_TRUE(daily.value()->current()->fills.empty());
   EXPECT_TRUE(daily.value()->current()->partialUtcDay);
+  EXPECT_EQ(daily.value()->current()->portfolio,
+            replay.value()->current()->portfolio);
+  EXPECT_FALSE(daily.value()->stepForward());
 }
 
 TEST_F(ResultReplayTest, resultStoreRejectsMalformedCanonicalReplayPayloads) {
@@ -533,9 +565,12 @@ TEST_F(ResultReplayTest,
   ASSERT_TRUE(store.ok()) << store.error().message;
   auto listed = store.value()->list();
   ASSERT_TRUE(listed.ok()) << listed.error().message;
-  ASSERT_EQ(listed.value().size(), 1U);
-  EXPECT_EQ(listed.value().front().status, bte::results::RunStatus::failed);
-  EXPECT_TRUE(listed.value().front().available);
+  EXPECT_TRUE(listed.value().empty());
+  auto drafts = store.value()->listDrafts();
+  ASSERT_TRUE(drafts.ok()) << drafts.error().message;
+  ASSERT_EQ(drafts.value().size(), 1U);
+  EXPECT_EQ(drafts.value().front().status, bte::results::RunStatus::failed);
+  EXPECT_TRUE(drafts.value().front().available);
 }
 
 TEST_F(ResultReplayTest,
@@ -700,6 +735,168 @@ TEST_F(ResultReplayTest, barsBeforeTheFirstPortfolioCheckpointAreNotPresented) {
   ASSERT_EQ(daily.value()->totalFrames(), 1);
   EXPECT_EQ(daily.value()->current()->candle.ts,
             timestamp("2024-01-02 00:00:00+00:00"));
+}
+
+TEST_F(ResultReplayTest,
+       sameDayDailyBucketExcludesBarsBeforeFirstTrustedCheckpoint) {
+  for (const auto status :
+       {bte::results::RunStatus::completed, bte::results::RunStatus::failed}) {
+    SCOPED_TRACE(static_cast<int>(status));
+    const auto trustedTimestamp = timestamp("2024-01-02 01:00:00+00:00");
+    auto persisted = persist(
+        {{.sequence = 0,
+          .timestamp = trustedTimestamp,
+          .symbol = "SYN",
+          .family = bte::results::RecordFamily::portfolio,
+          .cashMicrodollars = 2'000'000'000,
+          .marketValueMicrodollars = 0,
+          .equityMicrodollars = 2'000'000'000,
+          .pnlMicrodollars = 0,
+          .positionShares = 0}},
+        status,
+        status == bte::results::RunStatus::failed ? "trusted prefix" : "");
+    ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+    auto hourly = bte::bindings::ResultReplay::open(
+        root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+        bte::bindings::ResultReplayTimeframe::hourly);
+    ASSERT_TRUE(hourly.ok()) << hourly.error().message;
+    ASSERT_EQ(hourly.value()->totalFrames(), 1U);
+    ASSERT_NE(hourly.value()->current(), nullptr);
+    EXPECT_EQ(hourly.value()->current()->candle.ts, trustedTimestamp);
+    EXPECT_DOUBLE_EQ(hourly.value()->current()->candle.open, 103);
+    EXPECT_DOUBLE_EQ(hourly.value()->current()->candle.volume, 3400);
+
+    auto daily = bte::bindings::ResultReplay::open(
+        root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+        bte::bindings::ResultReplayTimeframe::dailyUtc);
+    ASSERT_TRUE(daily.ok()) << daily.error().message;
+    ASSERT_EQ(daily.value()->totalFrames(), 1U);
+    ASSERT_NE(daily.value()->current(), nullptr);
+    const auto frame = *daily.value()->current();
+    EXPECT_EQ(frame.candle.ts, timestamp("2024-01-02 00:00:00+00:00"));
+    EXPECT_DOUBLE_EQ(frame.candle.open, 103);
+    EXPECT_DOUBLE_EQ(frame.candle.high, 105);
+    EXPECT_DOUBLE_EQ(frame.candle.low, 102);
+    EXPECT_DOUBLE_EQ(frame.candle.close, 104);
+    EXPECT_DOUBLE_EQ(frame.candle.volume, 3400);
+    EXPECT_TRUE(frame.partialUtcDay);
+    EXPECT_TRUE(frame.fills.empty());
+    EXPECT_EQ(frame.portfolio, hourly.value()->current()->portfolio);
+    EXPECT_EQ(daily.value()->progressPercent(), 100);
+    EXPECT_FALSE(daily.value()->stepForward());
+    EXPECT_FALSE(daily.value()->stepBack());
+    EXPECT_FALSE(daily.value()->seek(1));
+    EXPECT_EQ(*daily.value()->current(), frame);
+    ASSERT_TRUE(daily.value()->seek(0));
+    EXPECT_EQ(daily.value()->visibleWindow(),
+              std::vector<bte::bindings::ResultReplayFrame>{frame});
+
+    auto repeated = bte::bindings::ResultReplay::open(
+        root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+        bte::bindings::ResultReplayTimeframe::dailyUtc);
+    ASSERT_TRUE(repeated.ok()) << repeated.error().message;
+    EXPECT_EQ(repeated.value()->visibleWindow(),
+              daily.value()->visibleWindow());
+  }
+}
+
+TEST_F(ResultReplayTest,
+       dailyFillsExcludeRecordsBeforeTrustedSelectedBarWindow) {
+  const auto trustedTimestamp = timestamp("2024-01-02 01:00:00+00:00");
+  auto persisted =
+      persist({{.sequence = 0,
+                .timestamp = timestamp("2024-01-02 00:00:00+00:00"),
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::buy,
+                .quantityShares = 10,
+                .priceNanodollars = 101'000'000'000,
+                .amountMicrodollars = 1'010'000'000},
+               {.sequence = 1,
+                .timestamp = trustedTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::sell,
+                .quantityShares = 10,
+                .priceNanodollars = 104'000'000'000,
+                .amountMicrodollars = 1'040'000'000},
+               {.sequence = 2,
+                .timestamp = trustedTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'030'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'030'000'000,
+                .pnlMicrodollars = 30'000'000,
+                .positionShares = 0}},
+              bte::results::RunStatus::failed, "trusted prefix");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+  const auto expected = std::vector<bte::bindings::ResultReplayFill>{
+      {.timestamp = trustedTimestamp,
+       .isBuy = false,
+       .quantityShares = 10,
+       .price = 104,
+       .amount = 1040}};
+  for (const auto timeframe :
+       {bte::bindings::ResultReplayTimeframe::hourly,
+        bte::bindings::ResultReplayTimeframe::dailyUtc}) {
+    SCOPED_TRACE(static_cast<int>(timeframe));
+    auto replay = bte::bindings::ResultReplay::open(
+        root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+        timeframe);
+    ASSERT_TRUE(replay.ok()) << replay.error().message;
+    ASSERT_EQ(replay.value()->totalFrames(), 1U);
+    ASSERT_NE(replay.value()->current(), nullptr);
+    EXPECT_EQ(replay.value()->current()->fills, expected);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.cash, 2030);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 30);
+  }
+}
+
+TEST_F(ResultReplayTest, diagnosticReplayExcludesFillAfterLastCheckpoint) {
+  const auto trustedTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  auto persisted =
+      persist({{.sequence = 0,
+                .timestamp = trustedTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .pnlMicrodollars = 0,
+                .positionShares = 0},
+               {.sequence = 1,
+                .timestamp = timestamp("2024-01-02 01:00:00+00:00"),
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::buy,
+                .quantityShares = 10,
+                .priceNanodollars = 103'000'000'000,
+                .amountMicrodollars = 1'030'000'000}},
+              bte::results::RunStatus::failed, "incomplete later slice");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+  for (const auto timeframe :
+       {bte::bindings::ResultReplayTimeframe::hourly,
+        bte::bindings::ResultReplayTimeframe::dailyUtc}) {
+    SCOPED_TRACE(static_cast<int>(timeframe));
+    auto replay = bte::bindings::ResultReplay::open(
+        root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+        timeframe);
+    ASSERT_TRUE(replay.ok()) << replay.error().message;
+    ASSERT_EQ(replay.value()->totalFrames(), 1U);
+    ASSERT_NE(replay.value()->current(), nullptr);
+    EXPECT_EQ(replay.value()->current()->candle.ts, trustedTimestamp);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->candle.open, 101);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->candle.high, 104);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->candle.low, 100);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->candle.close, 103);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->candle.volume, 2300);
+    EXPECT_TRUE(replay.value()->current()->fills.empty());
+    EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.cash, 2000);
+    EXPECT_EQ(replay.value()->terminalReason(), "incomplete later slice");
+    EXPECT_FALSE(replay.value()->stepForward());
+  }
 }
 
 TEST_F(ResultReplayTest, catalogBoundariesPropagateCancellationAndStoreFaults) {

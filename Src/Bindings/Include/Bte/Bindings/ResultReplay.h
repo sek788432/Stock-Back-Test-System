@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,7 @@ public:
   [[nodiscard]] std::size_t currentIndex() const noexcept;
   [[nodiscard]] std::size_t totalFrames() const noexcept;
   [[nodiscard]] int progressPercent() const noexcept;
+  [[nodiscard]] std::span<const ResultReplayFrame> timeline() const noexcept;
   [[nodiscard]] std::vector<ResultReplayFrame> visibleWindow() const;
   [[nodiscard]] const std::string &terminalReason() const noexcept;
 

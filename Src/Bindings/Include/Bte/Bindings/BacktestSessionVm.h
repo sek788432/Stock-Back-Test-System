@@ -91,4 +91,19 @@ runBacktestConfiguration(const BacktestConfiguration &configuration,
     const PersistedBacktestStorage &storage,
     const core::CancellationToken &cancellation = {});
 
+[[nodiscard]] core::Result<std::string>
+publishBacktestDraft(const PersistedBacktestStorage &storage,
+                     const std::string &resultId,
+                     const std::string &displayName = {},
+                     const core::CancellationToken &cancellation = {});
+
+[[nodiscard]] core::Result<std::vector<std::string>>
+listBacktestDrafts(const PersistedBacktestStorage &storage,
+                   const core::CancellationToken &cancellation = {});
+
+[[nodiscard]] core::Result<void>
+discardBacktestDraft(const PersistedBacktestStorage &storage,
+                     const std::string &resultId,
+                     const core::CancellationToken &cancellation = {});
+
 } // namespace bte::bindings

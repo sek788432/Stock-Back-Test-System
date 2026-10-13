@@ -43,6 +43,8 @@ struct ReplayPlaybackControls {
   QToolButton *zoomOutButton{};
   QToolButton *zoomInButton{};
   QToolButton *zoomResetButton{};
+  QToolButton *followLatestButton{};
+  QToolButton *fitReachedBarsButton{};
 };
 
 struct ReplayChartSection {

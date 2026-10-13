@@ -2,12 +2,17 @@
 
 #include "Bte/Core/Bar.h"
 
+#include "BacktestSessionVmTestHooks.h"
+
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <algorithm>
 #include <cfenv>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <vector>
 
@@ -44,6 +49,7 @@ private slots:
   void selectablePlanPresentsNoSignalOutcome();
   void invalidSelectablePlanPreservesCompileError();
   void configuredRunComposesTrackedDataAndEngine();
+  void draftLifecycleBoundariesReturnStructuredResults();
 };
 
 void BacktestSessionVmTest::runPresentsFilledStarterBacktest() {
@@ -281,6 +287,79 @@ void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
   QCOMPARE(result.value().positionShares, 7);
   QVERIFY(result.value().barsProcessed > 1U);
   QVERIFY(result.value().fill.has_value());
+}
+
+void BacktestSessionVmTest::draftLifecycleBoundariesReturnStructuredResults() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore =
+          std::filesystem::path{directory.path().toStdString()} / "Results",
+      .dataStore =
+          std::filesystem::path{directory.path().toStdString()} / "Data",
+      .snapshotId = {},
+      .strategyHash = {},
+  };
+  const auto empty = bte::bindings::listBacktestDrafts(storage);
+  QVERIFY(empty.ok());
+  QVERIFY(empty.value().empty());
+
+  const auto missing =
+      bte::bindings::discardBacktestDraft(storage, std::string(32, 'a'));
+  QVERIFY(!missing.ok());
+  QCOMPARE(missing.error().code, bte::core::ErrorCode::notFound);
+  const auto invalid = bte::bindings::publishBacktestDraft(storage, "bad-id");
+  QVERIFY(!invalid.ok());
+  QCOMPARE(invalid.error().code, bte::core::ErrorCode::invalidArgument);
+
+  auto invalidStorage = storage;
+  invalidStorage.resultStore.clear();
+  const auto unopenablePublish =
+      bte::bindings::publishBacktestDraft(invalidStorage, std::string(32, 'a'));
+  const auto unopenableDiscard =
+      bte::bindings::discardBacktestDraft(invalidStorage, std::string(32, 'a'));
+  QVERIFY(!unopenablePublish.ok());
+  QVERIFY(!unopenableDiscard.ok());
+  auto blockedStorage = storage;
+  blockedStorage.resultStore =
+      std::filesystem::path{directory.path().toStdString()} / "BlockedStore";
+  std::ofstream blocked{blockedStorage.resultStore};
+  blocked << "not a directory";
+  blocked.close();
+  const auto unopenableList = bte::bindings::listBacktestDrafts(blockedStorage);
+  QVERIFY(!unopenableList.ok());
+
+  bte::core::CancellationSource source;
+  source.requestCancellation();
+  const auto cancellation = source.token();
+  const auto cancelledList =
+      bte::bindings::listBacktestDrafts(storage, cancellation);
+  const auto cancelledPublish = bte::bindings::publishBacktestDraft(
+      storage, std::string(32, 'a'), {}, cancellation);
+  const auto cancelledDiscard = bte::bindings::discardBacktestDraft(
+      storage, std::string(32, 'a'), cancellation);
+  QVERIFY(!cancelledList.ok());
+  QVERIFY(!cancelledPublish.ok());
+  QVERIFY(!cancelledDiscard.ok());
+  QCOMPARE(cancelledList.error().code, bte::core::ErrorCode::cancelled);
+  QCOMPARE(cancelledPublish.error().code, bte::core::ErrorCode::cancelled);
+  QCOMPARE(cancelledDiscard.error().code, bte::core::ErrorCode::cancelled);
+
+  bte::core::CancellationSource cancelDuringPublish;
+  bte::bindings::testing::cancelAfterNextDraftStoreOpen(cancelDuringPublish);
+  const auto interruptedPublish = bte::bindings::publishBacktestDraft(
+      storage, std::string(32, 'a'), {}, cancelDuringPublish.token());
+  bte::bindings::testing::clearDraftStoreOpenHook();
+  QVERIFY(!interruptedPublish.ok());
+  QCOMPARE(interruptedPublish.error().code, bte::core::ErrorCode::cancelled);
+
+  bte::core::CancellationSource cancelDuringDiscard;
+  bte::bindings::testing::cancelAfterNextDraftStoreOpen(cancelDuringDiscard);
+  const auto interruptedDiscard = bte::bindings::discardBacktestDraft(
+      storage, std::string(32, 'a'), cancelDuringDiscard.token());
+  bte::bindings::testing::clearDraftStoreOpenHook();
+  QVERIFY(!interruptedDiscard.ok());
+  QCOMPARE(interruptedDiscard.error().code, bte::core::ErrorCode::cancelled);
 }
 
 } // namespace

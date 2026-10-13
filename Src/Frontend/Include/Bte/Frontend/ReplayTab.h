@@ -23,6 +23,7 @@ public:
   ReplayTab &operator=(ReplayTab &&) = delete;
 
   Q_SLOT void openResult(const QString &resultId);
+  Q_SLOT void closeResultIfId(const QString &resultId);
 
 private:
   struct State;

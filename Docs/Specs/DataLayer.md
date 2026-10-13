@@ -8,8 +8,14 @@ This spec owns market-data provenance, release snapshots, chronology-safe access
   C++ `CsvBarStream` reads tracked files under `StockData/Extracted` into
   memory. The direct reader currently supports symbols whose CSV filename stem
   exactly equals the canonical symbol; dotted-symbol exports are a known gap.
-  Limited immutable snapshot construction, segment reading, selection identity,
-  and result reference retention also exist for the single-symbol Backtest path.
+  Limited immutable snapshot construction accepts the canonical seven-column
+  extracted CSV layout and the existing explicit `schemaName` fixture form.
+  Only the explicit form validates the declared hourly schema. The seven-column
+  path currently has no source-timeframe evidence and can mislabel a same-layout
+  daily export as hourly; trustworthy seven-column hourly validation remains
+  an open defect, not an implemented guarantee.
+  Segment reading, selection identity, and result reference retention also
+  exist for the single-symbol Backtest path.
 - **Planned:** complete release snapshot pipeline,
   streaming/prefetch, synchronized multi-symbol slices, calendar/split
   manifests, and full release-profile retention.
@@ -94,6 +100,18 @@ Release CI, not the application runtime, builds the snapshot:
 7. Re-read and verify every artifact before packaging.
 
 The snapshot profile is `vendorExtendedHours`: every actual hourly row is eligible, including pre-market and after-hours rows. The product must not label this regular-session-only data.
+
+When no existing `BTE_DATA_STORE`/`BTE_DATA_SNAPSHOT_ID` pair is supplied, the
+root `Launch.sh` developer workflow invokes `bte_snapshot_builder` before
+starting the application and selects the resulting snapshot through environment
+configuration. This is a separate build-time process, not runtime CSV fallback:
+the application remains read-only with respect to market data. That generated
+local snapshot is limited to the three symbols currently offered by the UI and
+uses the SHA-256 digest of empty content to state that calendar and split
+manifests are unavailable. If both variables identify a valid existing
+snapshot, the launcher uses it without rebuilding. The generated local
+snapshot is not redistribution-cleared release data and cannot satisfy the
+release gates below.
 
 ## 4. Release reader contract
 

@@ -111,8 +111,8 @@ private:
 runBacktest(const BacktestRequest &request,
             const core::CancellationToken &cancellation = {});
 
-/// Executes an already-described run, persists its authoritative timeline, and
-/// promotes either a completed Result or a typed diagnostic Result.
+/// Executes an already-described run and finalizes its authoritative timeline
+/// as a durable completed or diagnostic draft for explicit publication.
 [[nodiscard]] core::Result<RecordedBacktestOutcome>
 runBacktestAndRecord(const BacktestRequest &request,
                      results::ResultWriter &writer,
@@ -120,7 +120,7 @@ runBacktestAndRecord(const BacktestRequest &request,
 
 /// Preferred complete recording seam. Validation and Strategy construction
 /// finish before the writer is created, so rejected configurations leave no
-/// staged or promoted Result artifact.
+/// staged, draft, or published Result artifact.
 [[nodiscard]] core::Result<RecordedBacktestOutcome>
 runBacktestAndRecord(const BacktestRequest &request,
                      const results::ResultStore &store,

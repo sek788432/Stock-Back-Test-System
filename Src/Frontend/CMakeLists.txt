@@ -4,12 +4,16 @@ add_library(
     Include/Bte/Frontend/BacktestTab.h
     Include/Bte/Frontend/IChartView.h
     Include/Bte/Frontend/QtChartsCandlestickView.h
+    Include/Bte/Frontend/ReplayBarViewport.h
     Include/Bte/Frontend/ReplayTab.h
+    Include/Bte/Frontend/ResultsTab.h
+    Charts/ReplayBarViewport.cpp
     Charts/QtChartsCandlestickView.cpp
     Backtest/BacktestTab.cpp
     Replay/ReplayTab.cpp
     Replay/ReplayTabSections.cpp
-    Replay/ReplayTabStyle.cpp)
+    Replay/ReplayTabStyle.cpp
+    Results/ResultsTab.cpp)
 
 add_library(bte::frontend ALIAS bte_frontend)
 

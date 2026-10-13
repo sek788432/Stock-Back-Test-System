@@ -13,6 +13,7 @@
 #include <QString>
 #include <QStyle>
 #include <QtCore/Qt>
+#include <QtCore/qsize.h>
 // IWYU pragma: no_include <QtWidgets/qslider.h>
 #include <qslider.h> // IWYU pragma: keep
 
@@ -38,14 +39,13 @@ QLabel *makeFormLabel(const QString &text, const char *objectName,
   return label.release();
 }
 
-QFrame *makePanel(const char *objectName, QWidget *parent) {
-  auto frame = std::make_unique<QFrame>(parent);
-  frame->setObjectName(QString::fromLatin1(objectName));
-  frame->setAccessibleName(frame->objectName());
-  frame->setFrameShape(QFrame::StyledPanel);
-  frame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  return frame.release();
-}
+class ReplayChartPanel final : public QFrame {
+public:
+  explicit ReplayChartPanel(QWidget *parent) : QFrame(parent) {}
+
+  [[nodiscard]] QSize sizeHint() const override { return {900, 500}; }
+  [[nodiscard]] QSize minimumSizeHint() const override { return {320, 500}; }
+};
 
 QToolButton *makeToolButton(QWidget *owner, const QStyle::StandardPixmap icon,
                             const char *name, const QString &tooltip) {
@@ -232,6 +232,23 @@ ReplayPlaybackControls makeReplayPlaybackControls(QWidget *owner) {
   controls.zoomResetButton->setText(ReplayTab::tr("Reset"));
   controls.zoomResetButton->setMinimumWidth(72);
 
+  controls.followLatestButton = std::make_unique<QToolButton>(owner).release();
+  controls.followLatestButton->setObjectName("replayFollowLatestButton");
+  controls.followLatestButton->setAccessibleName("Follow latest candles");
+  controls.followLatestButton->setToolTip(
+      ReplayTab::tr("Return to the newest reached candle"));
+  controls.followLatestButton->setText(ReplayTab::tr("Follow latest"));
+  controls.followLatestButton->setMinimumWidth(100);
+
+  controls.fitReachedBarsButton =
+      std::make_unique<QToolButton>(owner).release();
+  controls.fitReachedBarsButton->setObjectName("replayFitReachedBarsButton");
+  controls.fitReachedBarsButton->setAccessibleName("Fit reached candles");
+  controls.fitReachedBarsButton->setToolTip(
+      ReplayTab::tr("Fit reached candles when each remains readable"));
+  controls.fitReachedBarsButton->setText(ReplayTab::tr("Fit reached"));
+  controls.fitReachedBarsButton->setMinimumWidth(95);
+
   controls.speedCombo = std::make_unique<QComboBox>(owner).release();
   controls.speedCombo->setObjectName("replaySpeedCombo");
   controls.speedCombo->setAccessibleName("Replay speed");
@@ -242,22 +259,25 @@ ReplayPlaybackControls makeReplayPlaybackControls(QWidget *owner) {
   controls.progress->setAccessibleName("Replay progress");
   controls.progress->setRange(0, 100);
   controls.progress->setValue(0);
-  controls.progress->setFixedWidth(260);
+  controls.progress->setFixedWidth(180);
 
   controls.seekSlider =
       std::make_unique<QSlider>(Qt::Horizontal, owner).release();
   controls.seekSlider->setObjectName("replaySeekSlider");
   controls.seekSlider->setAccessibleName("Replay position");
   controls.seekSlider->setRange(0, 0);
-  controls.seekSlider->setMinimumWidth(180);
+  controls.seekSlider->setMinimumWidth(120);
 
   controls.bar = std::make_unique<QFrame>(owner).release();
   controls.bar->setObjectName("replayPlaybackBar");
   controls.bar->setAccessibleName("Replay playback controls");
   controls.bar->setFrameShape(QFrame::StyledPanel);
-  auto *playbackRow = std::make_unique<QHBoxLayout>(controls.bar).release();
-  playbackRow->setContentsMargins(10, 8, 10, 8);
+  auto *barLayout = std::make_unique<QVBoxLayout>(controls.bar).release();
+  barLayout->setContentsMargins(10, 8, 10, 8);
+  barLayout->setSpacing(4);
+  auto *playbackRow = std::make_unique<QHBoxLayout>().release();
   playbackRow->setSpacing(8);
+  barLayout->addLayout(playbackRow);
   playbackRow->addWidget(controls.stepBackButton);
   playbackRow->addWidget(controls.playPauseButton);
   playbackRow->addWidget(controls.stepForwardButton);
@@ -267,25 +287,35 @@ ReplayPlaybackControls makeReplayPlaybackControls(QWidget *owner) {
   playbackRow->addWidget(controls.speedCombo);
   playbackRow->addWidget(controls.progress);
   playbackRow->addWidget(controls.seekSlider);
-  playbackRow->addSpacing(10);
-  playbackRow->addWidget(controls.zoomOutButton);
-  playbackRow->addWidget(controls.zoomInButton);
-  playbackRow->addWidget(controls.zoomResetButton);
   playbackRow->addStretch(1);
+  auto *navigationRow = std::make_unique<QHBoxLayout>().release();
+  navigationRow->setSpacing(8);
+  navigationRow->addStretch(1);
+  navigationRow->addWidget(controls.zoomOutButton);
+  navigationRow->addWidget(controls.zoomInButton);
+  navigationRow->addWidget(controls.zoomResetButton);
+  navigationRow->addWidget(controls.followLatestButton);
+  navigationRow->addWidget(controls.fitReachedBarsButton);
+  barLayout->addLayout(navigationRow);
 
   return controls;
 }
 
 ReplayChartSection makeReplayChartSection(QWidget *owner) {
   ReplayChartSection section;
-  section.panel = makePanel("replayChartPanel", owner);
+  section.panel = std::make_unique<ReplayChartPanel>(owner).release();
+  section.panel->setObjectName("replayChartPanel");
+  section.panel->setAccessibleName("Replay chart panel");
+  section.panel->setFrameShape(QFrame::StyledPanel);
+  section.panel->setMinimumHeight(500);
+  section.panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   auto *chartLayout = std::make_unique<QVBoxLayout>(section.panel).release();
   chartLayout->setContentsMargins(10, 10, 10, 10);
   chartLayout->setSpacing(8);
 
   section.chartView =
       std::make_unique<QtChartsCandlestickView>(section.panel).release();
-  section.chartView->setMinimumHeight(300);
+  section.chartView->setMinimumHeight(460);
 
   chartLayout->addWidget(section.chartView, 1);
   return section;

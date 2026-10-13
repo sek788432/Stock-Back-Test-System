@@ -13,8 +13,8 @@ in [`EngineReplayPnL.md`](EngineReplayPnL.md).
 | Persisted replay portfolio strip | **Implemented limited slice** | It presents stored post-slice cash, position, market value, equity, and P&L for the implemented single-symbol Backtest path. |
 | Legacy JSON replay summaries | **Removed** | No runtime or test path remains; transactional SQLite `.bteresult` storage is implemented. |
 | Starter Backtest page | **Implemented limited slice** | One symbol/range, fixed starter or limited Selectable Conditions, whole-share long-only market behavior, and next-actual-bar execution. |
-| Saved strategies and complete Results library | **Accepted design / partially implemented** | Backend Result storage, catalog, import, and lifecycle operations exist, but saved Strategies and the complete Results management page remain planned. |
-| Durable results and result replay | **Implemented limited slice** | The current Backtest records canonical warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar; promotes completed or diagnostic `.bteresult` artifacts; and can open them in Replay without engine execution. Unsupported record families are declared in persisted capability metadata. The complete engine, canonical record families, and result migration remain planned. |
+| Saved strategies and complete Results library | **Accepted design / partially implemented** | Backend Result storage and a limited Results management page exist, but saved Strategies and the complete Results library remain planned. |
+| Durable results and result replay | **Implemented limited slice** | The current Backtest records canonical warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar in a durable draft. Save publishes the same `.bteresult` artifact, which Replay can open without engine execution. Unsupported record families are declared in persisted capability metadata. The complete engine, canonical record families, and result migration remain planned. |
 | Python Strategy and Debug Run | **Accepted design / not implemented** | No shipped Python worker or Debug Run path exists yet. |
 | Public data-bearing release | **Blocked** | Redistribution rights and verified split metadata are missing. |
 
@@ -24,8 +24,9 @@ The UI, README, release notes, and screenshots must preserve these distinctions.
 
 The accepted product has separate **Strategies**, **Backtest**, **Results**, and
 **Replay** pages. The current shell exposes exactly those four pages;
-Strategies and Results remain placeholders until their accepted libraries are
-implemented. AI authoring and a canonical Stock Screener remain outside
+Strategies remains a placeholder. Results now has limited list/details,
+Open Replay, Trash and Restore actions; its full library remains planned.
+AI authoring and a canonical Stock Screener remain outside
 accepted scope.
 
 - **Strategies** stores reusable authoring artifacts. A saved strategy can fill
@@ -86,13 +87,38 @@ allowed. Rows expose clear validation and keyboard-accessible reordering.
 
 ## Result library and storage
 
-The implemented limited backend stores staged, promoted, and trashed
+### Implemented explicit-save flow (limited Backtest slice)
+
+The maintainer approved durable recoverable execution drafts with explicit
+publication. A run records trustworthy execution-time records before any Save
+action. Its unsaved draft is not an active saved entry. **Save Result** validates
+and publishes that same run to Results without leaving Backtest; **Save & Replay**
+performs the same idempotent save and navigates using its exact Result ID.
+Neither action starts another Engine execution or changes canonical records.
+An optional Result name is entered beside the save actions. It is trimmed and
+validated before publication; a nonempty name is stored as mutable display
+metadata, never as the immutable Result ID or canonical hash input. Results
+can rename a saved entry later without rerunning Engine. Empty/legacy names
+fall back to the Result ID in catalog and Replay selection. A renamed result
+retains its name through Trash and Restore, while exact-ID navigation remains
+unchanged.
+Unsaved drafts survive restart until explicit Save or Discard. Starting another
+run preserves the prior draft in an Unsaved Runs list; exit neither publishes
+nor discards it. A terminal draft remains outside the active Results catalog;
+interrupted staging with trustworthy records recovers as a diagnostic draft.
+The limited implementation does not establish complete mid-run durability or
+close the separately tracked persistence and retention review findings.
+
+The implemented limited backend stores staged, draft, promoted, and trashed
 `.bteresult` artifacts below the application Results root. Each filename uses
 the run's opaque 32-digit lowercase hexadecimal Result ID. The backend supports
-begin/append/finalize/promote, validated catalog listing/open, import,
-interrupted-run recovery, Trash/restore, and purge for schema 2. The current
-Results tab is still a placeholder; Replay owns the implemented catalog
-selector and Backtest can hand it an exact promoted Result ID.
+begin/append/finalize-draft/explicit-publish, draft listing/discard, validated
+catalog listing/open, import, interrupted-run recovery, Trash/restore, and
+purge for schema 2. The limited Results tab lists Active/Trash entries, opens
+validated details, navigates by exact Result ID, and offers confirmed Move to
+Trash, Restore, and Rename. Replay also has its own named catalog selector,
+and Backtest can
+hand it an exact promoted Result ID.
 
 The accepted complete Results page shows status, Strategy name,
 symbols/universe, timeframe, range, completion time, valid total return,
@@ -109,7 +135,8 @@ Implemented Result writes use same-filesystem staging, validation, close, and
 no-clobber promotion. Backend import treats the artifact as untrusted data and
 validates its current schema, canonical hash, identifiers, and data references;
 it never executes embedded source. Result Trash/restore/purge exists in the
-backend, while its complete UI and 30-day scheduler remain planned. Strategy
+backend; its limited UI exists, while the complete UI and 30-day scheduler
+remain planned. Strategy
 artifact persistence remains wholly planned and must not be inferred from the
 Result implementation.
 
@@ -121,17 +148,18 @@ broader Run date range. An owned Bindings request object performs cancellable
 catalog/open work and publishes only the newest generation as a queued immutable
 value. Replay shows Hourly or UTC Daily candles, synchronized
 volume, persisted fills/markers, post-slice cash/position/market-value/equity/P&L,
-partial UTC-day state, and terminal reason. It uses indexed frames, displays at
-most 500 at once, and never reruns Python, indicators, order evaluation, or
+partial UTC-day state, and terminal reason. It uses indexed frames, progressively
+displays every selected bar through the current cursor without a fixed frame cap,
+and never reruns Python, indicators, order evaluation, or
 fills. Complete warnings/logs/metrics/trade episodes and marker-detail
 interaction remain planned.
 
-The current development chart is Qt Charts with a volume line and secondary
-axis. The accepted project-owned `QPainter` release chart uses a 70/30
-candlestick-to-volume vertical split, initially presents 120 bars, and caps its
-visible window at exactly 1,000 bars. Its pan, zoom, seek, crosshair, accessible
-marker navigation, and keyboard playback must preserve persisted ordering and
-never fabricate data.
+The current development chart is Qt Charts with aligned price-candle and
+colored volume-bar panes. Hourly ticks show UTC date/hour and Daily ticks show
+UTC date; price and volume have separate y scales. The accepted project-owned
+`QPainter` release chart must preserve the complete progressive selected-bar
+timeline, synchronized panes, pan, zoom, seek, crosshair, accessible marker
+navigation, and keyboard playback without fabricating data.
 
 ## Required verification
 

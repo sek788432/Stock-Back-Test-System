@@ -103,6 +103,7 @@ struct FinalizedResult {
 
 struct ResultSummary {
   std::string resultId;
+  std::string displayName;
   std::string canonicalResultHash;
   RunStatus status = RunStatus::incomplete;
   std::int64_t savedUtcMillis = 0;
@@ -112,6 +113,7 @@ struct ResultSummary {
 
 struct OpenedResult {
   std::string resultId;
+  std::string displayName;
   std::string canonicalResultHash;
   RunStatus status = RunStatus::incomplete;
   std::int64_t savedUtcMillis = 0;
@@ -139,10 +141,19 @@ public:
   [[nodiscard]] core::Result<void>
   append(const std::vector<CanonicalRecord> &records);
   [[nodiscard]] core::Result<FinalizedResult>
+  finalizeDraft(RunStatus status, const FinalSummary &summary,
+                const std::string &terminalReason = {});
+  [[nodiscard]] core::Result<FinalizedResult>
   finalizeAndPromote(RunStatus status, const FinalSummary &summary,
                      const std::string &terminalReason = {});
 
 private:
+  enum class FinalizationTarget : std::uint8_t { draft, promoted };
+
+  [[nodiscard]] core::Result<FinalizedResult>
+  finalize(RunStatus status, const FinalSummary &summary,
+           const std::string &terminalReason, FinalizationTarget target);
+
   friend class ResultStore;
   std::unique_ptr<Impl> impl_;
 };
@@ -173,6 +184,18 @@ public:
                        const core::CancellationToken &cancellation = {}) const;
   [[nodiscard]] core::Result<std::vector<ResultSummary>>
   list(const core::CancellationToken &cancellation = {}) const;
+  [[nodiscard]] core::Result<std::vector<ResultSummary>>
+  listDrafts(const core::CancellationToken &cancellation = {}) const;
+  [[nodiscard]] core::Result<std::vector<ResultSummary>>
+  listTrash(const core::CancellationToken &cancellation = {}) const;
+  [[nodiscard]] core::Result<FinalizedResult>
+  publishDraft(const std::string &resultId,
+               const std::string &displayName = {}) const;
+  [[nodiscard]] core::Result<void>
+  renameResult(const std::string &resultId,
+               const std::string &displayName) const;
+  [[nodiscard]] core::Result<void>
+  discardDraft(const std::string &resultId) const;
   [[nodiscard]] core::Result<OpenedResult>
   openResult(const std::string &resultId,
              const core::CancellationToken &cancellation = {}) const;

@@ -71,6 +71,35 @@ Rebuild the warning-clean Qt application and launch its frontend window:
 ./Launch.sh
 ```
 
+`Launch.sh` also prepares the limited immutable developer snapshot used by the
+implemented Backtest path. With no data environment configured, it runs the
+separate `bte_snapshot_builder` process over the tracked AAPL, MSFT, and NVDA
+extracts, publishes content-addressed artifacts under `Output/DevData`, then
+passes the resulting store and exact snapshot ID to the application. This is a
+local developer workflow, not release-data packaging; the empty calendar and
+split-manifest digests explicitly mean those release inputs are unavailable.
+
+The current seven-column builder path cannot verify source timeframe and can
+mislabel a same-layout daily export as hourly. This remains an integration
+blocker tracked in `Docs/Plans/Issue10IncrementalDeliveryInventory.md`; launcher
+execution alone is not evidence of trustworthy hourly data or full acceptance.
+
+To use an already prepared snapshot, set both `BTE_DATA_STORE` and
+`BTE_DATA_SNAPSHOT_ID`. The launcher preserves that pair after validating the
+64-character lowercase hexadecimal ID and manifest path. Supplying only one,
+an invalid ID, or a missing manifest fails before the application starts.
+
+Immediately before starting the freshly built binary, `Launch.sh` prints its
+checkout path, Git branch and commit, dirty state, application SHA-256 digest,
+and selected snapshot ID. The same values are available in the launched app
+under **Help → Build Information**. Launching the binary directly without the
+launcher reports unavailable provenance fields rather than claiming a release.
+A directory without a Git commit is reported as
+`unavailable`/`unknown`, not presented as a clean release. The launcher never
+fetches or switches branches: invoke it from the checkout you intend to run.
+The printed digest identifies the executable bytes; it does not certify the
+market-data snapshot or convert the developer snapshot into release data.
+
 Both scripts use `qt-dev`, so Qt 6.8+ is required. `RunTest.sh` matches the
 implemented all-tests workflow and fails if no tests are registered. Other
 `*.sh` files remain ignored unless explicitly added to `.gitignore`.

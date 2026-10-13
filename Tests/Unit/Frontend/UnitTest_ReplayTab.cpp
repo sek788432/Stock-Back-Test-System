@@ -4,9 +4,13 @@
 
 #include "WaitUntil.h"
 
+#include <QChart>
+#include <QChartView>
 #include <QComboBox>
 #include <QDateEdit>
+#include <QDateTimeAxis>
 #include <QDoubleSpinBox>
+#include <QGroupBox>
 #include <QImage>
 #include <QLabel>
 #include <QProgressBar>
@@ -14,13 +18,17 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSlider>
+#include <QSplitter>
 #include <QTableWidget>
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
 #include <QtGlobal>
 
+#include <chrono>
+#include <cmath>
 #include <filesystem>
+#include <vector>
 
 namespace {
 
@@ -31,6 +39,7 @@ private slots:
   void exposesReplaySetupControls();
   void exactResultIdStartsOwnedAsynchronousOpen();
   void exposesPlaybackControls();
+  void zoomAwayFromNewestEnablesFollowLatestButton();
   void exposesChartAndPortfolioPlaceholders();
   void stepForwardAppendsOneCandle();
   void stepForwardUpdatesPortfolioSnapshot();
@@ -42,6 +51,7 @@ private slots:
   void speedSelectionsUpdatePlaybackInterval();
   void keyboardControlsStepAndTogglePlayback();
   void emptyAndCompletedPlaybackBoundariesRemainStable();
+  void chartFirstLayoutIsCollapsibleAdjustableAndUsesMostOfTheViewport();
   void rendersNonBlankReplaySnapshot();
   void compactViewportCanScrollToTradeLog();
 };
@@ -119,6 +129,72 @@ void ReplayTabTest::exposesPlaybackControls() {
   QCOMPARE(zoomOutButton->text(), QString{"Out"});
   QCOMPARE(zoomInButton->text(), QString{"In"});
   QCOMPARE(zoomResetButton->text(), QString{"Reset"});
+  const auto *follow = tab.findChild<QToolButton *>("replayFollowLatestButton");
+  const auto *fit = tab.findChild<QToolButton *>("replayFitReachedBarsButton");
+  QVERIFY(follow != nullptr);
+  QVERIFY(fit != nullptr);
+  QCOMPARE(follow->text(), QString{"Follow latest"});
+  QCOMPARE(fit->text(), QString{"Fit reached"});
+  QVERIFY(!follow->accessibleName().isEmpty());
+  QVERIFY(!fit->accessibleName().isEmpty());
+}
+
+void ReplayTabTest::zoomAwayFromNewestEnablesFollowLatestButton() {
+  bte::frontend::ReplayTab tab;
+  auto *chartView = tab.findChild<bte::frontend::QtChartsCandlestickView *>(
+      "replayCandlestickChartView");
+  auto *zoomIn = tab.findChild<QToolButton *>("replayZoomInButton");
+  auto *follow = tab.findChild<QToolButton *>("replayFollowLatestButton");
+  QVERIFY(chartView != nullptr);
+  QVERIFY(zoomIn != nullptr);
+  QVERIFY(follow != nullptr);
+  QVERIFY(!follow->isEnabled());
+
+  std::vector<bte::core::Bar> bars;
+  bars.reserve(200);
+  const auto start = bte::core::Timestamp{
+      std::chrono::sys_days{std::chrono::year{2024} / 1 / 1}};
+  for (auto index = 0; index < 200; ++index) {
+    bars.push_back({.ts = start + std::chrono::hours{index},
+                    .open = 100.0,
+                    .high = 104.0,
+                    .low = 98.0,
+                    .close = 102.0,
+                    .volume = 1'000.0});
+  }
+  chartView->setBarWindow(bars);
+  tab.resize(1200, 800);
+  tab.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&tab));
+  for (auto pass = 0; pass < 20; ++pass) {
+    QCoreApplication::processEvents();
+  }
+  QVERIFY(!follow->isEnabled());
+
+  QTest::mouseClick(zoomIn, Qt::LeftButton);
+  const auto zoomedSlots = chartView->visibleSlots();
+  QVERIFY(zoomedSlots.end < bars.size());
+  QVERIFY2(follow->isEnabled(),
+           "Follow latest must be clickable when zoom hides the newest bar");
+  auto *priceView = chartView->findChild<QChartView *>("replayChartView");
+  QVERIFY(priceView != nullptr);
+  auto *priceChart = priceView->chart();
+  auto *timeAxis =
+      qobject_cast<QDateTimeAxis *>(priceChart->axes(Qt::Horizontal).first());
+  QVERIFY(timeAxis != nullptr);
+  const auto zoomedSlotWidth = priceChart->plotArea().width() * 3'600'000.0 /
+                               timeAxis->min().msecsTo(timeAxis->max());
+  QTest::mouseClick(follow, Qt::LeftButton);
+  for (auto pass = 0; pass < 20; ++pass) {
+    QCoreApplication::processEvents();
+  }
+  const auto followedSlots = chartView->visibleSlots();
+  QCOMPARE(followedSlots.end, bars.size());
+  const auto followedSlotWidth = priceChart->plotArea().width() * 3'600'000.0 /
+                                 timeAxis->min().msecsTo(timeAxis->max());
+  QVERIFY2(std::abs(followedSlotWidth - zoomedSlotWidth) < 0.05,
+           "Follow latest must preserve the zoomed candle density");
+  QVERIFY(!follow->isEnabled());
 }
 
 void ReplayTabTest::exposesChartAndPortfolioPlaceholders() {
@@ -151,9 +227,11 @@ void ReplayTabTest::stepForwardAppendsOneCandle() {
   auto *chartView = tab.findChild<bte::frontend::QtChartsCandlestickView *>(
       "replayCandlestickChartView");
   auto *progress = tab.findChild<QProgressBar *>("replayProgressBar");
+  auto *fit = tab.findChild<QToolButton *>("replayFitReachedBarsButton");
   QVERIFY(stepForwardButton != nullptr);
   QVERIFY(chartView != nullptr);
   QVERIFY(progress != nullptr);
+  QVERIFY(fit != nullptr);
 
   QCOMPARE(chartView->candleCount(), 0U);
   QCOMPARE(progress->value(), 0);
@@ -162,6 +240,9 @@ void ReplayTabTest::stepForwardAppendsOneCandle() {
 
   QCOMPARE(chartView->candleCount(), 1U);
   QVERIFY(progress->value() > 0);
+  QVERIFY(fit->isEnabled());
+  QTest::mouseClick(fit, Qt::LeftButton);
+  QCOMPARE(chartView->candleCount(), 1U);
 }
 
 void ReplayTabTest::stepForwardUpdatesPortfolioSnapshot() {
@@ -451,6 +532,60 @@ void ReplayTabTest::rendersNonBlankReplaySnapshot() {
   if (qEnvironmentVariableIsSet("BTE_REPLAY_SNAPSHOT_PATH")) {
     QVERIFY(snapshot.save(qEnvironmentVariable("BTE_REPLAY_SNAPSHOT_PATH")));
   }
+}
+
+void ReplayTabTest::
+    chartFirstLayoutIsCollapsibleAdjustableAndUsesMostOfTheViewport() {
+  bte::frontend::ReplayTab tab;
+  auto *setup = tab.findChild<QGroupBox *>("replaySetupBox");
+  auto *setupToggle = tab.findChild<QToolButton *>("replaySetupToggleButton");
+  auto *splitter = tab.findChild<QSplitter *>("replayChartTradeSplitter");
+  auto *chartPanel = tab.findChild<QWidget *>("replayChartPanel");
+  auto *tradeLogPanel = tab.findChild<QWidget *>("replayTradeLogPanel");
+  auto *scrollArea = tab.findChild<QScrollArea *>("replayScrollArea");
+  QVERIFY(setup != nullptr);
+  QVERIFY(setupToggle != nullptr);
+  QVERIFY(splitter != nullptr);
+  QVERIFY(chartPanel != nullptr);
+  QVERIFY(tradeLogPanel != nullptr);
+  QVERIFY(scrollArea != nullptr);
+  QVERIFY(setup->isHidden());
+  QVERIFY(setupToggle->isCheckable());
+  QCOMPARE(setupToggle->text(), QString{"Show replay setup"});
+  QVERIFY(setupToggle->focusPolicy() != Qt::NoFocus);
+  QCOMPARE(splitter->orientation(), Qt::Vertical);
+  QVERIFY(!splitter->childrenCollapsible());
+
+  const auto verifyChartShare = [&] {
+    QCoreApplication::processEvents();
+    QVERIFY2(chartPanel->height() * 100 >=
+                 scrollArea->viewport()->height() * 55,
+             qPrintable(QString{"chart=%1 viewport=%2"}
+                            .arg(chartPanel->height())
+                            .arg(scrollArea->viewport()->height())));
+  };
+  tab.resize(1200, 800);
+  tab.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&tab));
+  verifyChartShare();
+  tab.resize(1440, 900);
+  verifyChartShare();
+
+  splitter->setSizes({350, 240});
+  QCoreApplication::processEvents();
+  QVERIFY(chartPanel->height() >= chartPanel->minimumHeight());
+  QVERIFY(tradeLogPanel->height() >= tradeLogPanel->minimumHeight());
+
+  QTest::mouseClick(setupToggle, Qt::LeftButton);
+  QVERIFY(setup->isVisible());
+  QCOMPARE(setupToggle->text(), QString{"Hide replay setup"});
+  QTest::mouseClick(setupToggle, Qt::LeftButton);
+  QVERIFY(setup->isHidden());
+
+  tab.resize(1024, 768);
+  QCoreApplication::processEvents();
+  QCOMPARE(scrollArea->horizontalScrollBar()->maximum(), 0);
+  verifyChartShare();
 }
 
 void ReplayTabTest::compactViewportCanScrollToTradeLog() {

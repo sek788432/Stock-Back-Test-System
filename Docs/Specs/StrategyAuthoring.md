@@ -10,7 +10,7 @@ C++ backtest engine. Execution semantics live in
 | Status | Scope |
 | --- | --- |
 | **Implemented** | An in-memory typed Selectable Conditions plan validates finite thresholds, fields, and indicator definitions; evaluates flat `all` / `any` buy and sell groups over chronological single-symbol bars; and feeds the limited C++ Backtest path. The current Qt page exposes up to two rows per group. |
-| **Accepted design / not implemented** | Saved/versioned plans; up to five buy and five sell conditions; Python Script Mode; Debug Run; immutable managed runtimes; and the worker protocol below. |
+| **Accepted design / not implemented** | CSV/UTC-day historical conditions below; saved/versioned plans; up to five buy and five sell conditions; Python Script Mode; Debug Run; immutable managed runtimes; and the worker protocol below. |
 | **Blocked** | No strategy feature may be presented as available until its engine path and required tests exist. Public release also depends on the data-release blockers in [`DataLayer.md`](DataLayer.md). |
 
 Status words are factual, not roadmap promises. Only **Implemented** behavior may appear as shipped in user documentation.
@@ -48,6 +48,36 @@ Unit labels do not normalize that metadata.
 - The compiler validates fields, numeric domains, indicator parameters, symbols, sizing, and actions before a run.
 - The plan executes directly in C++ through the same strategy seam as Python commands; it does not invoke an external backtest engine.
 - Results retain the canonical plan, plan hash, and compiler version.
+
+#### Accepted CSV/UTC-day historical conditions — not implemented
+
+The limited local workflow will use the existing CSV-derived immutable snapshot
+as its historical price standard. A **UTC data day** is a UTC date with actual
+source rows. Its close is the last chronological source close, including
+extended hours; its high/low are the maximum high/minimum low of those rows.
+This is not an official regular-session close or an exchange trading calendar.
+Dates without rows do not consume a lookback and no missing row is synthesized.
+
+The approved predicates compare the current K bar's close with completed prior
+UTC data days, excluding the entire current UTC date from historical references:
+
+- Prior-day up/down X% uses the previous available data day's last close.
+- An N-day gain uses the last close exactly N available data dates before the
+  current date; the approved example is 30 data days.
+- Drawdown from a period high and rebound from a period low use prior-day OHLC
+  extrema; the one-month preset is the previous 21 completed data days.
+- A period-high/low breakout is a strict current-close comparison. Equality
+  does not break out; every qualifying K bar matches, not only the first crossing.
+- Percentage choices use positive magnitude X and inclusive at-least thresholds.
+  Missing, zero or insufficient references are absent/nonmatching, never a
+  fabricated value or a future lookup.
+
+Pre-range history warms only the Strategy's bounded chronological state. It
+must not become extra executed bars, orders, fills or Replay candles. New
+functional fields require versioned Strategy framing and compatibility review;
+the existing prior-actual-bar close-change option and its saved identity remain
+distinct and must not be reinterpreted. Implementation, immutable warm-up
+provenance and its contract tests remain pending.
 
 ### 2.2 Python Script Mode
 

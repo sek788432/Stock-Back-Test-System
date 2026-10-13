@@ -191,6 +191,11 @@ makeDailyFrames(const results::OpenedResult &result,
       return core::makeError(core::ErrorCode::cancelled,
                              "Result Replay open was cancelled");
     }
+    // Match Hourly's trust boundary before computing any Daily OHLCV.
+    if (!records.portfolioAt(bars[begin].timestamp).has_value()) {
+      ++begin;
+      continue;
+    }
     const auto day = floor<days>(bars[begin].timestamp);
     auto end = begin + 1;
     auto high = bars[begin].highNanodollars;
@@ -230,7 +235,9 @@ makeDailyFrames(const results::OpenedResult &result,
                      .close = price(bars[end - 1].closeNanodollars),
                      .volume =
                          static_cast<double>(volume) / microsharesPerShare},
-          .fills = records.fillsAt(core::Timestamp{day}, bucketEnd),
+          .fills = records.fillsAt(bars[begin].timestamp,
+                                   bars[end - 1].timestamp +
+                                       std::chrono::milliseconds{1}),
           .portfolio = *portfolio,
           .partialUtcDay = !completeSourceDay || rangeCutsUtcDay,
       });
@@ -400,6 +407,10 @@ int ResultReplay::progressPercent() const noexcept {
     return 0;
   }
   return static_cast<int>(((currentIndex_ + 1) * 100) / frames_.size());
+}
+
+std::span<const ResultReplayFrame> ResultReplay::timeline() const noexcept {
+  return frames_;
 }
 
 std::vector<ResultReplayFrame> ResultReplay::visibleWindow() const {

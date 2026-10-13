@@ -9,12 +9,53 @@ The preserved source branch is `codex/issue10-replay-ux` at
 64 changed paths (11,627 additions and 475 deletions). Those are the original
 source totals, not the size of any individual PR.
 
-The maintainer requested small, independently reviewable PRs instead of a
-single accumulated change. Preserve the source branch until the final
+The earlier maintainer request was small, independently reviewable PRs.
+On 2026-10-13 the maintainer instead requested one consolidated commit/PR
+for the current implementation, followed by completion of the remaining plan.
+Preserve the source branch until the final
 file/hunk reconciliation proves every intended change is merged or explicitly
 retained. Do not force-push or delete its history as part of extraction.
 
 ## Delivery groups
+
+### Current consolidation checkpoint
+
+- Branch: `codex/issue10-consolidated`, fixed main base
+  `999c1b90a2748fe09fbe6d1003f64633f124c285`; original source tip remains
+  `6ac45eaeecfdf1f840a994b951957340bf78fafd` without rewriting its 82 commits.
+- A normal squash integration gathers the remaining tracked source paths.
+  Already merged rounding and fixture tests are retained, including the stronger
+  literal metric descriptions, `[[nodiscard]]` helpers and Engine public-link
+  dependency closure. No root untracked drafts, personal documents, snapshots,
+  build output or existing stashes are included or deleted.
+- The source period-disable behavior and its weaker label-only expectations
+  are not reapplied: #74's editable identity metadata and literal tests remain.
+  No period normalization or compatibility decision is implied.
+- The integration retains the source Save/Results/naming, chart/viewport,
+  snapshot-launch/provenance and Replay changes as a checkpoint, not acceptance.
+  Known live-writer, pin-visibility, durability, Daily interior-gap and
+  seven-column source-timeframe findings remain blockers to merging main.
+  The original source's stricter CSV trailing-column rejection is also retained
+  as an unaccepted checkpoint, not an approved compatibility change; the separate
+  narrow CSV stash preserves the earlier compatibility-aware repair proposal.
+- Historical-condition semantics remain requirements only. The independent
+  canonical-hash oracle, exact saved-data comparison, long seek/resizing and
+  final delivered-checkout acceptance remain unfinished.
+- The consolidated checkpoint is locally prepared, not published or accepted.
+  Exact-submission tests and complete Quality remain pending; historical gates
+  below must not be reused as if run on the consolidated checkpoint. Independent
+  review found no new conflict-resolution defects; four documentation findings
+  were corrected. Known original semantic blockers still mean Needs changes.
+- The initial uncommitted integration RunTest passed 243/243 (91.35 seconds).
+  This is working-tree characterization, not exact-submission evidence. Owning
+  `Overview.md` is additionally updated to align the documented explicit Save
+  gate; it is not one of the original 64 source paths.
+- PR #73 remains open while its pin test is included in this integration.
+  Only after publication is verified may it be marked superseded; no pin
+  assertion or original branch is discarded.
+
+The table below preserves the preceding incremental publication checkpoints;
+it is not a claim that the unaccepted consolidation has merged.
 
 A group may need several PRs. Shared files must be split by concern rather
 than copied wholesale. A historical checkpoint proves only its recorded scope;
@@ -24,11 +65,11 @@ each extracted submission requires fresh applicable checks on its exact SHA.
 | --- | --- | --- |
 | R | Full-money half-even rounding, `b5be0c8` | [PR #71](https://github.com/sek788432/Stock-Back-Test-System/pull/71) merged as `a0c69c5c6bf2aa8565f1c82887a56e5351f42465`; source `Backtest.cpp` also contains an unmerged S-group lifecycle change |
 | T | Trusted Hourly/Daily Replay boundaries, `a098577` | Extracted locally; not submitted. New review found same-day interior-gap fills can appear in Daily without a selected candle. Repair direction is awaiting confirmation; no scoped acceptance claimed |
-| F | Real selectable five-Buy/five-Sell offline fixture, `6b9b3e7` | Test-only extraction in `codex/issue10-multi-fill-fixture`, initially based on `d1722bd`, now aligned with `8ab5ea4` main. Includes fixture, Engine-linked registration and owning documentation; no Save/lifecycle hunks from the source checkpoint. Fresh characterization, review and full extraction gates are in progress; no PR or whole-plan acceptance yet |
+| F | Real selectable five-Buy/five-Sell offline fixture, `6b9b3e7` | [PR #75](https://github.com/sek788432/Stock-Back-Test-System/pull/75) merged as `999c1b90a2748fe09fbe6d1003f64633f124c285`; submitted `ba780948ca5b788c411791d5f5cfd934af2e239b` passed full RunTest 219/219, complete Quality, independent review and all CI/CodeQL. Additional Qt-enabled focused ASan/TSan each passed seven tests. Its literal fixture/tests and public-link closure are retained in consolidation; whole-plan acceptance remains open |
 | M | Directional glyphs `f94fc7a` through `e43c7fb`, candle anchoring `2d5c034` through its `6f6fc86` audit, wick clearance `8879169`/`9ae0f5e`, Buy-only grouping `d209d21` | Local source only; separate rendering, anchoring and grouping concerns. Include ReplayTab's containing-candle adapter wiring and tests. Raw fills and financial records must remain ungrouped; Sell grouping is not approved |
 | V | Progressive playback `05c23eb`/`711626d`, wheel zoom `cf4d85b`, axes/volume `6994ae7`, readable sliding viewport `ca3323c`/`e37057a`, stable geometry `01620b9` | Local source only; extract in dependency order. Full three-size/playing-resize, exact-data comparison and long-seek responsiveness acceptance remains open |
 | L | CSV-derived development snapshot `d21cfc1`/`c28ddec`, launcher/build provenance `3245574` | Local source only; separate snapshot preparation from provenance, include script/data tests. Final delivered-checkout Launch.sh scenario is pending; this is not a public data release |
-| S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Local implementation, not fully accepted. Split Save, Results and naming PRs; do not merge with known live-writer/retention/mid-run durability gaps or incomplete UI acceptance |
+| S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Included in the current consolidated checkpoint per the latest maintainer request, not fully accepted. The earlier split-PR preference is superseded; known live-writer/retention/mid-run durability gaps and incomplete UI acceptance still prohibit merging main |
 | U | Metric units/period explanations `236d97b`/`cf65e2a`, threshold coverage `d8b3c76` | Display-only [PR #74](https://github.com/sek788432/Stock-Back-Test-System/pull/74) merged as `8ab5ea4b8db7f01d5591a748805b0ae0eb544dfe`; exact submitted head `569bbe3` passed local full tests/quality, both backend-only sanitizer presets and all CI/CodeQL checks. Period editability and typed identity are unchanged. Excluded source period-disable/normalization work and whole Task 16 Engine-record/hash acceptance remain open |
 | P | SQLite manifest-pin regression, `9bb2a9e` | [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73) open against main. Content-identical follow-up `cad90be167af94e17920e9c89add3f03c07d9a01` preserves the fully quality-checked `9d39f41` tree; fresh full tests/standards passed and CodeQL was triggered. Main alignment and latest-head CI/merge remain separate requirements |
 | H | Approved CSV/UTC historical-condition semantics, `89d7704` | Requirements only. Previous-data-day, N-day gain, prior-21-day extrema/breakouts and immutable pre-range warm-up are not implemented |
@@ -113,7 +154,7 @@ the other hunks in that file.
 
 ## Additional workspace state
 
-- The current T-group extraction modifies four tracked files only. It was
+- The earlier narrow T-group extraction modified four tracked files only. It was
   retained in a named local stash before switching to this inventory branch;
   it has not been discarded, pushed, or claimed accepted.
 - The older root `Docs/Issue10DeterministicReplayFixturePlan.md` and

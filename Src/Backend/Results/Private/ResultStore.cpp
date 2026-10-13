@@ -11,9 +11,9 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <mutex>
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include <atomic>
-#include <mutex>
 #endif
 #include <chrono>
 #include <compare>
@@ -26,6 +26,7 @@
 #include <optional>
 #include <random>
 #include <ranges> // IWYU pragma: keep
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -38,6 +39,18 @@ namespace {
 constexpr auto schemaVersion = 2;
 constexpr std::string_view numericPolicy = "fixed-point-v1";
 constexpr std::string_view aggregationPolicy = "utcCalendarDayV1";
+
+struct ActiveWriterRegistry final {
+  // A begin/recovery scan holds mutex across staging I/O so a newly created
+  // file cannot be mistaken for an interrupted writer in this process.
+  std::mutex mutex;
+  std::set<std::filesystem::path> paths;
+};
+
+ActiveWriterRegistry &activeWriters() {
+  static ActiveWriterRegistry registry;
+  return registry;
+}
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
 std::atomic<testing::FailurePoint> &configuredFailurePoint() {
@@ -287,6 +300,114 @@ bool validResultId(const std::string_view value) {
            return (character >= '0' && character <= '9') ||
                   (character >= 'a' && character <= 'f');
          });
+}
+
+std::size_t utf8SequenceLength(const unsigned char lead) {
+  if (lead < 0x80) {
+    return 1;
+  }
+  if (lead >= 0xC2 && lead <= 0xDF) {
+    return 2;
+  }
+  if (lead >= 0xE0 && lead <= 0xEF) {
+    return 3;
+  }
+  if (lead >= 0xF0 && lead <= 0xF4) {
+    return 4;
+  }
+  return 0;
+}
+
+bool validUtf8SecondByte(const unsigned char lead, const unsigned char second) {
+  if (second < 0x80 || second > 0xBF) {
+    return false;
+  }
+  if (lead == 0xE0 || lead == 0xF0) {
+    return second >= (lead == 0xE0 ? 0xA0 : 0x90);
+  }
+  if (lead == 0xED || lead == 0xF4) {
+    return second <= (lead == 0xED ? 0x9F : 0x8F);
+  }
+  return true;
+}
+
+bool validUtf8(const std::string_view value) {
+  for (std::size_t index = 0; index < value.size();) {
+    const auto lead = static_cast<unsigned char>(value[index]);
+    const auto length = utf8SequenceLength(lead);
+    if (length == 0 || index + length > value.size()) {
+      return false;
+    }
+    if (length > 1 && !validUtf8SecondByte(
+                          lead, static_cast<unsigned char>(value[index + 1]))) {
+      return false;
+    }
+    for (auto offset = 2U; offset < length; ++offset) {
+      const auto continuation =
+          static_cast<unsigned char>(value[index + offset]);
+      if (continuation < 0x80 || continuation > 0xBF) {
+        return false;
+      }
+    }
+    index += length;
+  }
+  return true;
+}
+
+bool validDisplayName(const std::string_view value) {
+  if (value.empty() || value.size() > 160 || value.front() == ' ' ||
+      value.back() == ' ') {
+    return false;
+  }
+  return validUtf8(value) &&
+         std::ranges::none_of(value, [](const unsigned char character) {
+           return character < 32 || character == 127;
+         });
+}
+
+core::Result<void> writeDisplayName(const std::filesystem::path &path,
+                                    const std::string_view displayName) {
+  auto database = openDatabase(path);
+  if (!database.ok()) {
+    return database.error();
+  }
+  for (const auto *const sql : {"BEGIN IMMEDIATE",
+                                "CREATE TABLE IF NOT EXISTS "
+                                "result_display_name(name TEXT NOT NULL)",
+                                "DELETE FROM result_display_name"}) {
+    auto executed = database.value()->execute(sql);
+    if (!executed.ok()) {
+      return executed.error();
+    }
+  }
+  {
+    Statement name;
+    auto prepared = name.prepare(*database.value(),
+                                 "INSERT INTO result_display_name VALUES(?1)");
+    if (!prepared.ok()) {
+      return prepared.error();
+    }
+    auto bound = name.text(1, displayName);
+    if (!bound.ok()) {
+      return bound.error();
+    }
+    auto inserted = name.done();
+    if (!inserted.ok()) {
+      return inserted.error();
+    }
+  }
+  auto committed = database.value()->execute("COMMIT");
+  if (!committed.ok()) {
+    return committed.error();
+  }
+  Statement checkpoint;
+  auto prepared =
+      checkpoint.prepare(*database.value(), "PRAGMA wal_checkpoint(TRUNCATE)");
+  if (!prepared.ok() || checkpoint.step() != SQLITE_ROW ||
+      sqlite3_column_int(checkpoint.handle(), 0) != 0) {
+    return storageError("Result display name checkpoint is blocked");
+  }
+  return {};
 }
 
 bool validRunStatus(const RunStatus status) {
@@ -760,6 +881,30 @@ core::Result<OpenedResult> readResultFile(
                            "Result metadata is incomplete");
   }
 
+  Statement nameTable;
+  prepared = nameTable.prepare(
+      *database.value(),
+      "SELECT count(*) FROM sqlite_master WHERE type='table' AND "
+      "name='result_display_name'");
+  if (!prepared.ok() || nameTable.step() != SQLITE_ROW) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Result display metadata cannot be inspected");
+  }
+  if (sqlite3_column_int(nameTable.handle(), 0) != 0) {
+    Statement name;
+    prepared =
+        name.prepare(*database.value(), "SELECT name FROM result_display_name");
+    if (!prepared.ok() || name.step() != SQLITE_ROW) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Result display name is invalid");
+    }
+    result.displayName = textColumn(name.handle(), 0);
+    if (!validDisplayName(result.displayName) || name.step() != SQLITE_DONE) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Result display name is invalid");
+    }
+  }
+
   Statement run;
   prepared = run.prepare(*database.value(),
                          "SELECT universe,range_start_ms,range_end_ms,"
@@ -1033,35 +1178,44 @@ core::Result<void> deleteCatalog(const std::filesystem::path &root,
   return statement.done();
 }
 
-struct PurgeRecoveryLocations final {
+struct RemovalRecoveryLocations final {
   std::filesystem::path resultStore;
   std::filesystem::path dataStore;
 };
 
+struct RemovalRecoveryPolicy final {
+  std::string_view suffix;
+  std::string_view destinationDirectory;
+  std::string_view operation;
+};
+
 core::Result<void>
-recoverInterruptedPurges(const PurgeRecoveryLocations &locations,
-                         const core::CancellationToken &cancellation) {
-  constexpr std::string_view suffix = ".purging.bteresult";
+recoverInterruptedRemovals(const RemovalRecoveryLocations &locations,
+                           const RemovalRecoveryPolicy &policy,
+                           const core::CancellationToken &cancellation) {
   std::error_code iterationError;
   for (const auto &entry : std::filesystem::directory_iterator(
            locations.resultStore / "Staging", iterationError)) {
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
-                             "Result purge recovery was cancelled");
+                             "Result " + std::string{policy.operation} +
+                                 " recovery was cancelled");
     }
     // directory_iterator reports this only for a host filesystem race after
     // construction; storage-root failures are covered before iteration.
     // GCOVR_EXCL_START
     if (iterationError) {
-      return storageError("Unable to inspect interrupted Result purges: " +
-                          iterationError.message());
+      return storageError("Unable to inspect interrupted Result " +
+                          std::string{policy.operation} +
+                          " operations: " + iterationError.message());
     }
     // GCOVR_EXCL_STOP
     const auto filename = entry.path().filename().string();
-    if (!entry.is_regular_file() || !filename.ends_with(suffix)) {
+    if (!entry.is_regular_file() || !filename.ends_with(policy.suffix)) {
       continue;
     }
-    const auto resultId = filename.substr(0, filename.size() - suffix.size());
+    const auto resultId =
+        filename.substr(0, filename.size() - policy.suffix.size());
     auto opened = readResultFile(entry.path(), locations.dataStore, false);
     // readResultFile's corrupt/incompatible artifact failures have exhaustive
     // contract coverage; this seam only preserves the structured error.
@@ -1072,8 +1226,9 @@ recoverInterruptedPurges(const PurgeRecoveryLocations &locations,
     // GCOVR_EXCL_STOP
     if (opened.value().resultId != resultId) {
       return core::makeError(core::ErrorCode::schemaMismatch,
-                             "Interrupted purge Result ID does not match its "
-                             "filename");
+                             "Interrupted Result " +
+                                 std::string{policy.operation} +
+                                 " ID does not match its filename");
     }
     std::vector<std::string> segmentIds;
     for (const auto &span : opened.value().descriptor.dataSelection.spans) {
@@ -1093,10 +1248,12 @@ recoverInterruptedPurges(const PurgeRecoveryLocations &locations,
       return acquired.error();
     }
     // GCOVR_EXCL_STOP
-    auto restored = moveNoClobber(
-        entry.path(),
-        locations.resultStore / "Trash" / (resultId + ".bteresult"),
-        "Unable to roll back interrupted Result purge");
+    auto restored =
+        moveNoClobber(entry.path(),
+                      locations.resultStore / policy.destinationDirectory /
+                          (resultId + ".bteresult"),
+                      "Unable to roll back interrupted Result " +
+                          std::string{policy.operation});
     // A collision here requires an external filesystem mutation after the
     // recovery scan selected this unique staged artifact. GCOVR_EXCL_START
     if (!restored.ok()) {
@@ -1126,7 +1283,11 @@ core::Result<void> recoverStaging(
                           iterationError.message());
     }
     if (!entry.is_regular_file() || entry.path().extension() != ".bteresult" ||
-        entry.path().filename().string().ends_with(".purging.bteresult")) {
+        entry.path().filename().string().ends_with(".purging.bteresult") ||
+        entry.path().filename().string().ends_with(".discarding.bteresult")) {
+      continue;
+    }
+    if (activeWriters().paths.contains(entry.path().lexically_normal())) {
       continue;
     }
     auto staged =
@@ -1205,9 +1366,9 @@ core::Result<void> recoverStaging(
     if (!validated.ok()) {
       return validated.error();
     }
-    const auto destination = root / "Results" / entry.path().filename();
+    const auto destination = root / "Drafts" / entry.path().filename();
     auto promoted = moveNoClobber(entry.path(), destination,
-                                  "Unable to promote recovered Result");
+                                  "Unable to recover Result draft");
     if (!promoted.ok()) {
       return promoted.error();
     }
@@ -1227,17 +1388,6 @@ core::Result<void> recoverStaging(
         retention.value()->acquire(validated.value().resultId, segmentIds);
     if (!acquired.ok()) {
       return acquired.error();
-    }
-
-    auto cataloged = upsertCatalog(
-        root, {.resultId = validated.value().resultId,
-               .canonicalResultHash = validated.value().canonicalResultHash,
-               .status = validated.value().status,
-               .savedUtcMillis = validated.value().savedUtcMillis,
-               .available = true,
-               .unavailableReason = {}});
-    if (!cataloged.ok()) {
-      return cataloged.error();
     }
   }
   return {};
@@ -1289,7 +1439,11 @@ struct ResultWriter::Impl {
 ResultWriter::ResultWriter(ConstructionKey, std::unique_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
 
-ResultWriter::~ResultWriter() = default;
+ResultWriter::~ResultWriter() {
+  impl_->database.reset();
+  const std::scoped_lock lock{activeWriters().mutex};
+  activeWriters().paths.erase(impl_->stagingPath.lexically_normal());
+}
 
 const std::string &ResultWriter::resultId() const noexcept { return impl_->id; }
 
@@ -1371,10 +1525,24 @@ ResultWriter::append(const std::vector<CanonicalRecord> &records) {
 }
 
 core::Result<FinalizedResult>
-// NOLINTNEXTLINE(readability-function-cognitive-complexity): transaction
+ResultWriter::finalizeDraft(const RunStatus status, const FinalSummary &summary,
+                            const std::string &terminalReason) {
+  return finalize(status, summary, terminalReason, FinalizationTarget::draft);
+}
+
+core::Result<FinalizedResult>
 ResultWriter::finalizeAndPromote(const RunStatus status,
                                  const FinalSummary &summary,
                                  const std::string &terminalReason) {
+  return finalize(status, summary, terminalReason,
+                  FinalizationTarget::promoted);
+}
+
+core::Result<FinalizedResult>
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): transaction
+ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
+                       const std::string &terminalReason,
+                       const FinalizationTarget target) {
   if (impl_->finalized || impl_->database == nullptr ||
       !validRunStatus(status) || status == RunStatus::running ||
       (status == RunStatus::completed &&
@@ -1467,33 +1635,42 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
     return acquired.error();
   }
 
-  const auto destination = impl_->root / "Results" / (impl_->id + ".bteresult");
-  if (consumeFailure(testing::FailurePoint::catalogVisibility)) {
-    return injectedFailure("catalog visibility");
-  }
-  auto cataloged = upsertCatalog(impl_->root, {.resultId = impl_->id,
-                                               .canonicalResultHash = hash,
-                                               .status = status,
-                                               .savedUtcMillis = saved,
-                                               .available = true,
-                                               .unavailableReason = {}});
-  if (!cataloged.ok()) {
-    return cataloged.error();
-  }
+  const auto promoted = target == FinalizationTarget::promoted;
+  const auto destination = impl_->root / (promoted ? "Results" : "Drafts") /
+                           (impl_->id + ".bteresult");
   const auto rollBackCatalog = [&] {
     return deleteCatalog(impl_->root, impl_->id);
   };
+  if (promoted) {
+    if (consumeFailure(testing::FailurePoint::catalogVisibility)) {
+      return injectedFailure("catalog visibility");
+    }
+    auto cataloged = upsertCatalog(impl_->root, {.resultId = impl_->id,
+                                                 .displayName = {},
+                                                 .canonicalResultHash = hash,
+                                                 .status = status,
+                                                 .savedUtcMillis = saved,
+                                                 .available = true,
+                                                 .unavailableReason = {}});
+    if (!cataloged.ok()) {
+      return cataloged.error();
+    }
+  }
   if (consumeFailure(testing::FailurePoint::promotion)) {
-    const auto ignored = rollBackCatalog();
-    static_cast<void>(ignored);
+    if (promoted) {
+      const auto ignored = rollBackCatalog();
+      static_cast<void>(ignored);
+    }
     return injectedFailure("promotion");
   }
   std::error_code errorCode;
   std::filesystem::create_hard_link(impl_->stagingPath, destination, errorCode);
   if (errorCode) {
-    const auto ignored = rollBackCatalog();
-    static_cast<void>(ignored);
-    return storageError("Unable to promote Result without clobbering: " +
+    if (promoted) {
+      const auto ignored = rollBackCatalog();
+      static_cast<void>(ignored);
+    }
+    return storageError("Unable to finalize Result without clobbering: " +
                         errorCode.message());
   }
   std::filesystem::remove(impl_->stagingPath, errorCode);
@@ -1503,9 +1680,11 @@ ResultWriter::finalizeAndPromote(const RunStatus status,
   if (errorCode) {
     std::error_code ignoredFilesystemError;
     std::filesystem::remove(destination, ignoredFilesystemError);
-    const auto ignoredCatalog = rollBackCatalog();
-    static_cast<void>(ignoredCatalog);
-    return storageError("Unable to remove promoted staging Result: " +
+    if (promoted) {
+      const auto ignoredCatalog = rollBackCatalog();
+      static_cast<void>(ignoredCatalog);
+    }
+    return storageError("Unable to remove finalized staging Result: " +
                         errorCode.message());
   }
   // GCOVR_EXCL_STOP
@@ -1531,7 +1710,7 @@ ResultStore::open(const std::filesystem::path &root,
   }
   try {
     for (const auto *const name :
-         {"Staging", "Results", "Trash", "Quarantine"}) {
+         {"Staging", "Drafts", "Results", "Trash", "Quarantine"}) {
       std::filesystem::create_directories(root / name);
     }
   } catch (const std::filesystem::filesystem_error &error) {
@@ -1543,11 +1722,27 @@ ResultStore::open(const std::filesystem::path &root,
   if (!initialized.ok()) {
     return initialized.error();
   }
-  auto recoveredPurges = recoverInterruptedPurges(
-      {.resultStore = root, .dataStore = dataStore}, cancellation);
+  const auto locations =
+      RemovalRecoveryLocations{.resultStore = root, .dataStore = dataStore};
+  auto recoveredPurges =
+      recoverInterruptedRemovals(locations,
+                                 {.suffix = ".purging.bteresult",
+                                  .destinationDirectory = "Trash",
+                                  .operation = "purge"},
+                                 cancellation);
   if (!recoveredPurges.ok()) {
     return recoveredPurges.error();
   }
+  auto recoveredDiscards =
+      recoverInterruptedRemovals(locations,
+                                 {.suffix = ".discarding.bteresult",
+                                  .destinationDirectory = "Drafts",
+                                  .operation = "draft discard"},
+                                 cancellation);
+  if (!recoveredDiscards.ok()) {
+    return recoveredDiscards.error();
+  }
+  const std::scoped_lock lock{activeWriters().mutex};
   auto recovered = recoverStaging(root, dataStore, cancellation);
   if (!recovered.ok()) {
     return recovered.error();
@@ -1565,10 +1760,12 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
   if (!exact.ok()) {
     return exact.error();
   }
+  const std::scoped_lock lock{activeWriters().mutex};
   for (int attempt = 0; attempt < 8; ++attempt) {
     const auto resultId = allocateResultId();
     const auto stagingPath = root_ / "Staging" / (resultId + ".bteresult");
     if (std::filesystem::exists(stagingPath) ||
+        std::filesystem::exists(root_ / "Drafts" / (resultId + ".bteresult")) ||
         std::filesystem::exists(root_ / "Results" /
                                 (resultId + ".bteresult")) ||
         std::filesystem::exists(root_ / "Trash" / (resultId + ".bteresult"))) {
@@ -1592,6 +1789,7 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
     impl->id = resultId;
     impl->descriptor = descriptor;
     impl->database = std::move(database).value();
+    activeWriters().paths.insert(stagingPath.lexically_normal());
     return std::make_unique<ResultWriter>(ResultWriter::ConstructionKey{},
                                           std::move(impl));
   }
@@ -1623,37 +1821,45 @@ core::Result<void> ResultStore::validateSelectedBars(
   return {};
 }
 
+struct ArtifactLocations final {
+  std::filesystem::path directory;
+  std::filesystem::path dataStore;
+};
+
 core::Result<std::vector<ResultSummary>>
-ResultStore::list(const core::CancellationToken &cancellation) const {
+listArtifacts(const ArtifactLocations &locations,
+              const std::string &description,
+              const core::CancellationToken &cancellation) {
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
-                           "Result catalog load was cancelled");
+                           description + " load was cancelled");
   }
   std::vector<ResultSummary> summaries;
   std::error_code errorCode;
   const auto entries =
-      std::filesystem::directory_iterator(root_ / "Results", errorCode);
+      std::filesystem::directory_iterator(locations.directory, errorCode);
   if (errorCode) {
-    return storageError("Unable to inspect Result catalog: " +
+    return storageError("Unable to inspect " + description + ": " +
                         errorCode.message());
   }
   for (const auto &entry : entries) {
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
-                             "Result catalog load was cancelled");
+                             description + " load was cancelled");
     }
     if (!entry.is_regular_file() || entry.path().extension() != ".bteresult") {
       continue;
     }
     const auto resultId = entry.path().stem().string();
-    auto opened =
-        readResultFile(entry.path(), dataStore_, true, false, cancellation);
+    auto opened = readResultFile(entry.path(), locations.dataStore, true, false,
+                                 cancellation);
     if (!opened.ok()) {
       if (cancellation.isCancellationRequested()) {
         return core::makeError(core::ErrorCode::cancelled,
-                               "Result catalog load was cancelled");
+                               description + " load was cancelled");
       }
       summaries.push_back({.resultId = resultId,
+                           .displayName = {},
                            .canonicalResultHash = {},
                            .status = RunStatus::incomplete,
                            .savedUtcMillis = 0,
@@ -1663,6 +1869,7 @@ ResultStore::list(const core::CancellationToken &cancellation) const {
     }
     summaries.push_back(
         {.resultId = resultId,
+         .displayName = opened.value().displayName,
          .canonicalResultHash = opened.value().canonicalResultHash,
          .status = opened.value().status,
          .savedUtcMillis = opened.value().savedUtcMillis,
@@ -1671,7 +1878,7 @@ ResultStore::list(const core::CancellationToken &cancellation) const {
   }
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
-                           "Result catalog load was cancelled");
+                           description + " load was cancelled");
   }
   std::ranges::sort(summaries, [](const auto &left, const auto &right) {
     if (left.savedUtcMillis != right.savedUtcMillis) {
@@ -1680,6 +1887,25 @@ ResultStore::list(const core::CancellationToken &cancellation) const {
     return left.resultId < right.resultId;
   });
   return summaries;
+}
+
+core::Result<std::vector<ResultSummary>>
+ResultStore::list(const core::CancellationToken &cancellation) const {
+  return listArtifacts(
+      {.directory = root_ / "Results", .dataStore = dataStore_},
+      "Result catalog", cancellation);
+}
+
+core::Result<std::vector<ResultSummary>>
+ResultStore::listDrafts(const core::CancellationToken &cancellation) const {
+  return listArtifacts({.directory = root_ / "Drafts", .dataStore = dataStore_},
+                       "Result drafts", cancellation);
+}
+
+core::Result<std::vector<ResultSummary>>
+ResultStore::listTrash(const core::CancellationToken &cancellation) const {
+  return listArtifacts({.directory = root_ / "Trash", .dataStore = dataStore_},
+                       "Result Trash", cancellation);
 }
 
 core::Result<OpenedResult>
@@ -1694,6 +1920,169 @@ ResultStore::openResult(const std::string &resultId,
     return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
   }
   return readResultFile(path, dataStore_, true, false, cancellation);
+}
+
+core::Result<FinalizedResult>
+ResultStore::publishDraft(const std::string &resultId,
+                          const std::string &displayName) const {
+  if (!validResultId(resultId)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result ID is invalid");
+  }
+  if (!displayName.empty() && !validDisplayName(displayName)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result name must be 1–160 bytes without leading, "
+                           "trailing, or control characters");
+  }
+  const auto filename = resultId + ".bteresult";
+  const auto resultPath = root_ / "Results" / filename;
+  if (std::filesystem::exists(resultPath)) {
+    auto opened = readResultFile(resultPath, dataStore_, true);
+    if (!opened.ok()) {
+      return opened.error();
+    }
+    return FinalizedResult{
+        .resultId = resultId,
+        .canonicalResultHash = opened.value().canonicalResultHash,
+    };
+  }
+
+  const auto draftPath = root_ / "Drafts" / filename;
+  if (!std::filesystem::exists(draftPath)) {
+    return core::makeError(core::ErrorCode::notFound,
+                           "Result draft is unavailable");
+  }
+  auto opened = readResultFile(draftPath, dataStore_, true);
+  if (!opened.ok()) {
+    return opened.error();
+  }
+  if (!displayName.empty()) {
+    auto named = writeDisplayName(draftPath, displayName);
+    if (!named.ok()) {
+      return named.error();
+    }
+  }
+  const auto summary = ResultSummary{
+      .resultId = resultId,
+      .displayName =
+          displayName.empty() ? opened.value().displayName : displayName,
+      .canonicalResultHash = opened.value().canonicalResultHash,
+      .status = opened.value().status,
+      .savedUtcMillis = opened.value().savedUtcMillis,
+      .available = true,
+      .unavailableReason = {},
+  };
+  if (consumeFailure(testing::FailurePoint::catalogVisibility)) {
+    return injectedFailure("catalog visibility");
+  }
+  auto cataloged = upsertCatalog(root_, summary);
+  if (!cataloged.ok()) {
+    return cataloged.error();
+  }
+  const auto rollBackCatalog = [&] { return deleteCatalog(root_, resultId); };
+  if (consumeFailure(testing::FailurePoint::promotion)) {
+    const auto ignored = rollBackCatalog();
+    static_cast<void>(ignored);
+    return injectedFailure("promotion");
+  }
+  auto promoted =
+      consumeFailure(testing::FailurePoint::draftPromotionMove)
+          ? core::Result<void>{injectedFailure("draft promotion move")}
+          : moveNoClobber(draftPath, resultPath,
+                          "Unable to publish Result draft");
+  if (!promoted.ok()) {
+    const auto ignored = rollBackCatalog();
+    static_cast<void>(ignored);
+    return promoted.error();
+  }
+  return FinalizedResult{
+      .resultId = resultId,
+      .canonicalResultHash = opened.value().canonicalResultHash,
+  };
+}
+
+core::Result<void>
+ResultStore::renameResult(const std::string &resultId,
+                          const std::string &displayName) const {
+  if (!validResultId(resultId) || !validDisplayName(displayName)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result ID or name is invalid");
+  }
+  const auto path = root_ / "Results" / (resultId + ".bteresult");
+  if (!std::filesystem::exists(path)) {
+    return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
+  }
+  auto opened = readResultFile(path, dataStore_, true);
+  if (!opened.ok()) {
+    return opened.error();
+  }
+  return writeDisplayName(path, displayName);
+}
+
+core::Result<void>
+ResultStore::discardDraft(const std::string &resultId) const {
+  if (!validResultId(resultId)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result ID is invalid");
+  }
+  const auto draftPath = root_ / "Drafts" / (resultId + ".bteresult");
+  if (!std::filesystem::exists(draftPath)) {
+    return core::makeError(core::ErrorCode::notFound,
+                           "Result draft is unavailable");
+  }
+  auto opened = readResultFile(draftPath, dataStore_, false);
+  if (!opened.ok()) {
+    return opened.error();
+  }
+  std::vector<std::string> segmentIds;
+  segmentIds.reserve(opened.value().descriptor.dataSelection.spans.size());
+  for (const auto &span : opened.value().descriptor.dataSelection.spans) {
+    segmentIds.push_back(span.segmentId);
+  }
+  std::ranges::sort(segmentIds);
+  const auto duplicates = std::ranges::unique(segmentIds);
+  segmentIds.erase(duplicates.begin(), duplicates.end());
+
+  const auto discardingPath =
+      root_ / "Staging" / (resultId + ".discarding.bteresult");
+  auto staged = moveNoClobber(draftPath, discardingPath,
+                              "Unable to stage Result draft discard");
+  if (!staged.ok()) {
+    return staged.error();
+  }
+  const auto restoreDraft = [&] {
+    return moveNoClobber(discardingPath, draftPath,
+                         "Unable to roll back Result draft discard");
+  };
+  auto retention = data::SegmentRetentionStore::open(dataStore_);
+  if (!retention.ok()) {
+    const auto restored = restoreDraft();
+    return restored.ok() ? retention.error() : restored.error();
+  }
+  auto released = retention.value()->release(resultId);
+  if (!released.ok()) {
+    const auto restored = restoreDraft();
+    return restored.ok() ? released.error() : restored.error();
+  }
+  std::error_code errorCode;
+  if (consumeFailure(testing::FailurePoint::draftDiscardRemoval)) {
+    errorCode = std::make_error_code(std::errc::io_error);
+  } else {
+    std::filesystem::remove(discardingPath, errorCode);
+  }
+  if (errorCode) {
+    auto reacquired = retention.value()->acquire(resultId, segmentIds);
+    auto restored = restoreDraft();
+    if (!reacquired.ok()) {
+      return reacquired.error();
+    }
+    if (!restored.ok()) {
+      return restored.error();
+    }
+    return storageError("Unable to discard Result draft: " +
+                        errorCode.message());
+  }
+  return {};
 }
 
 core::Result<void> ResultStore::moveToTrash(const std::string &resultId) const {
@@ -1727,6 +2116,7 @@ core::Result<void> ResultStore::restore(const std::string &resultId) const {
   }
   return upsertCatalog(
       root_, {.resultId = resultId,
+              .displayName = opened.value().displayName,
               .canonicalResultHash = opened.value().canonicalResultHash,
               .status = opened.value().status,
               .savedUtcMillis = nowUtcMillis(),
@@ -1924,6 +2314,7 @@ ResultStore::importResult(const std::filesystem::path &source) const {
   }
   auto cataloged = upsertCatalog(
       root_, {.resultId = importedId,
+              .displayName = validated.value().displayName,
               .canonicalResultHash = validated.value().canonicalResultHash,
               .status = validated.value().status,
               .savedUtcMillis = saved,
