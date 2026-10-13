@@ -52,6 +52,18 @@ the accepted scope.
   percentage, or scalar domain at the C++ seam.
 - Python receives finite `float` values for warmed indicators and `None` before warm-up.
 - Selectable Conditions compare typed values and reject incompatible operands at compile time.
+- The current Backtest editor labels quote-price and price-difference outputs in
+  USD, volume/OBV in shares, signed close change and ROC in percent points,
+  and RSI/ADX/Stochastic %K as dimensionless 0–100 oscillator levels. The
+  backend's existing `percent` domain for oscillators is a type category, not
+  a claim that RSI 30 means a 30% fall in the share price. A threshold of 5
+  for close change or ROC means 5%, not 0.05%. UI labels do not rescale values.
+- The editor's period is a lookback in actual bars (hourly bars for hourly
+  backtests), not calendar days or months. Close, volume, previous-actual-bar
+  close change, OBV, and true range do not use its period in their formula.
+  The editor preserves the editable value and existing strategy identity;
+  changing or normalizing that metadata is not part of the unit-label slice. A
+  period-based indicator with insufficient warm-up bars produces no signal.
 - History defaults to a bounded 4,096-value ring for display. An indicator retains any larger internal window needed for correctness.
 - Strategy history follows the declared limits in
   [`StrategyAuthoring.md`](StrategyAuthoring.md) §3; exceeding a display ring

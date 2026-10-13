@@ -28,6 +28,18 @@ indicator warm-up does not match. The current engine uses the configured whole
 share quantity, opens long only, and allows a sell group to close that position
 at the next actual open. The plan is not saved yet.
 
+The Backtest editor shows a unit and an example for every offered threshold.
+Price and price-difference values use USD for the current run; close change and
+ROC use signed percent points (5 means 5%, not 0.05%); RSI, ADX, and
+Stochastic %K show 0–100 oscillator levels rather than a price-change percent;
+volume and signed OBV use shares. Display units do not rescale the entered
+threshold or alter its typed numeric domain; selecting another metric still
+changes the condition's metric normally. A period is an actual-bar
+lookback (one hour per bar for hourly runs). Metrics whose formula does not
+use the period explain that distinction; the control remains editable and
+its typed value continues to participate in the existing strategy identity.
+Unit labels do not normalize that metadata.
+
 - The saved source of truth is a versioned, typed condition plan, not Python text.
 - The accepted editor supports one to five conditions in each buy and sell
   group, with explicit `all` (AND) or `any` (OR) composition.

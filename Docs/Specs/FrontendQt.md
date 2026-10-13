@@ -105,6 +105,16 @@ navigation. This is an incremental implementation of the layout below; saved
 Run Configurations, the equity curve, complete metrics, and sortable/proxy-model
 trade-log behavior remain planned.
 
+Each Selectable Conditions metric updates its threshold suffix, tooltip, and
+accessible description immediately to explain USD price or difference,
+percent-point change, 0–100 oscillator level, or shares, with a concrete
+example. This is a display-only mapping; it neither rescales the threshold nor
+changes the condition's numeric domain. Period tooltips say actual bars
+and explain warm-up. Metrics whose formula does not use a period say so;
+their period remains visible and editable because its existing typed value
+participates in strategy identity. This display-only slice does not normalize
+that value or change identity semantics.
+
 | Region | Content |
 |---|---|
 | Top toolbar | Universe, range, timeframe, capital, costs, and Strategy from the Run Configuration; **Run** starts the default single active Backtest. |
