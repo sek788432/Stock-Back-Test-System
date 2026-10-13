@@ -51,11 +51,15 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string> // IWYU pragma: keep
 #include <utility>
 #include <vector>
+
+// libstdc++ attributes ranges algorithm return types to this header.
+#if defined(__GLIBCXX__)
+#include <ranges>
+#endif
 
 #include "Bte/Core/Bar.h"
 

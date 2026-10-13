@@ -64,6 +64,13 @@ retained. Do not force-push or delete its history as part of extraction.
   unleased staging must be preserved with a warning. The owning spec and
   decision now record this direction; detailed design and implementation
   remain pending, not accepted as already repaired.
+- Local follow-up `1fb6b10be0401c6a555e59a1dfc6af23dded4152` passed exact-head
+  RunTest 243/243 (84.65 seconds), but complete Quality exited 1 at IWYU:
+  libc++ considered the new Linux/libstdc++ provider headers unused. This head
+  was not pushed. The next repair conditions only those headers on libstdc++;
+  it adds no suppression or gate change. Fresh complete exact-head gates and
+  remote confirmation remain required. The long-load coverage failure still
+  has diagnostics only, not an accepted performance repair.
 
 The table below preserves the preceding incremental publication checkpoints;
 it is not a claim that the unaccepted consolidation has merged.

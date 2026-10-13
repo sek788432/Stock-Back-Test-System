@@ -17,12 +17,17 @@
 #include <cmath>
 #include <compare> // IWYU pragma: keep
 #include <cstdint>
-#include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <string> // IWYU pragma: keep
 #include <utility>
+
+// libstdc++ attributes the ranges algorithm's default projection to this
+// header.
+#if defined(__GLIBCXX__)
+#include <functional>
+#endif
 
 namespace bte::bindings {
 namespace {

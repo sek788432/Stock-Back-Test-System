@@ -28,13 +28,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <optional>
-#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
+
+// libstdc++ exposes default projections and borrowed iterator result types
+// here.
+#if defined(__GLIBCXX__)
+#include <functional>
+#include <ranges>
+#endif
 
 namespace bte::frontend {
 namespace {

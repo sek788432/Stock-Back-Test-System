@@ -20,9 +20,13 @@
 #include <thread>
 #endif
 #include <tuple> // IWYU pragma: keep
-#include <type_traits>
 #include <utility>
 #include <vector>
+
+// QtConcurrent's instantiated argument types have this provider in libstdc++.
+#if defined(__GLIBCXX__)
+#include <type_traits>
+#endif
 
 namespace bte::bindings {
 
