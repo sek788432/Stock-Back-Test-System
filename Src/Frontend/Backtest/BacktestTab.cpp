@@ -306,6 +306,100 @@ ConditionMetric metricFrom(const QComboBox *combo) {
   return static_cast<ConditionMetric>(combo->currentData().toInt());
 }
 
+struct MetricDisplay {
+  QString suffix;
+  QString meaning;
+  QString example;
+  bool usesPeriod{false};
+};
+
+MetricDisplay displayFor(const ConditionMetric metric) {
+  switch (metric) {
+  case ConditionMetric::closeChangePercent:
+    return {" %",
+            BacktestTab::tr("Signed change from the previous actual bar close "
+                            "in percent points."),
+            BacktestTab::tr("Example: 5 means a 5% rise; -5 means a 5% fall."),
+            false};
+  case ConditionMetric::close:
+    return {" USD", BacktestTab::tr("Current close price in USD."),
+            BacktestTab::tr("Example: 100 means $100 per share."), false};
+  case ConditionMetric::sma:
+  case ConditionMetric::ema:
+  case ConditionMetric::wma:
+  case ConditionMetric::bollingerUpper:
+  case ConditionMetric::donchianUpper:
+  case ConditionMetric::vwap:
+    return {" USD", BacktestTab::tr("Indicator price in USD."),
+            BacktestTab::tr("Example: 100 means $100 per share."), true};
+  case ConditionMetric::macdHistogram:
+  case ConditionMetric::momentum:
+    return {
+        " USD",
+        BacktestTab::tr("Signed price difference in USD, not a percentage."),
+        BacktestTab::tr("Example: -2 means a $2 negative difference."), true};
+  case ConditionMetric::atr:
+    return {" USD",
+            BacktestTab::tr("Average price range in USD, not a percentage."),
+            BacktestTab::tr("Example: 2 means a $2 range."), true};
+  case ConditionMetric::trueRange:
+    return {" USD",
+            BacktestTab::tr("Current bar true range in USD, not a percentage."),
+            BacktestTab::tr("Example: 2 means a $2 range."), false};
+  case ConditionMetric::rsi:
+  case ConditionMetric::adx:
+  case ConditionMetric::stochasticPercentK:
+    return {" level",
+            BacktestTab::tr("Dimensionless oscillator level from 0 to 100, not "
+                            "a price change."),
+            BacktestTab::tr(
+                "Example: 30 means oscillator level 30, not a 30% price drop."),
+            true};
+  case ConditionMetric::obv:
+    return {" shares",
+            BacktestTab::tr(
+                "Signed cumulative on-balance volume in shares, not dollars."),
+            BacktestTab::tr("Example: -100 means net negative 100 shares."),
+            false};
+  case ConditionMetric::roc:
+    return {" %",
+            BacktestTab::tr("Signed rate of change over the selected bar "
+                            "lookback in percent points."),
+            BacktestTab::tr("Example: 5 means a 5% rise, not 0.05%."), true};
+  case ConditionMetric::volume:
+    return {" shares", BacktestTab::tr("Current bar trading volume in shares."),
+            BacktestTab::tr("Example: 100 means 100 shares."), false};
+  }
+  return {};
+}
+
+void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
+                         QSpinBox *period) {
+  const auto display = displayFor(metricFrom(metric));
+  const auto name = metric->currentText();
+  const auto explanation =
+      QString{"%1: %2 %3"}.arg(name, display.meaning, display.example);
+  metric->setToolTip(explanation);
+  metric->setAccessibleDescription(explanation);
+  threshold->setSuffix(display.suffix);
+  threshold->setToolTip(explanation);
+  threshold->setAccessibleDescription(explanation);
+  const auto periodExplanation =
+      metricFrom(metric) == ConditionMetric::macdHistogram
+          ? BacktestTab::tr("MACD slow period in bars; insufficient warm-up "
+                            "bars produce no signal.")
+          : BacktestTab::tr(
+                "Indicator lookback in bars, not calendar days or months; "
+                "insufficient warm-up bars produce no signal.");
+  period->setToolTip(
+      display.usesPeriod
+          ? periodExplanation
+          : BacktestTab::tr("This metric does not use a period in its formula. "
+                            "The editable value remains part of the strategy "
+                            "identity for compatibility."));
+  period->setAccessibleDescription(period->toolTip());
+}
+
 } // namespace
 
 struct BacktestTab::RunState final {
@@ -630,6 +724,20 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         threshold->setEnabled(enabled);
         period->setEnabled(enabled);
       };
+  const auto connectMetricDisplay = [this](QComboBox *metric,
+                                           QDoubleSpinBox *threshold,
+                                           QSpinBox *period) {
+    const auto refresh = [metric, threshold, period] {
+      updateMetricDisplay(metric, threshold, period);
+    };
+    QObject::connect(metric, qOverload<int>(&QComboBox::currentIndexChanged),
+                     this, [refresh](int) { refresh(); });
+    refresh();
+  };
+  connectMetricDisplay(buyMetric, buyThreshold, buyPeriod);
+  connectMetricDisplay(buySecondMetric, buySecondThreshold, buySecondPeriod);
+  connectMetricDisplay(sellMetric, sellThreshold, sellPeriod);
+  connectMetricDisplay(sellSecondMetric, sellSecondThreshold, sellSecondPeriod);
   setSecondConditionEnabled(false, buySecondMetric, buySecondComparison,
                             buySecondThreshold, buySecondPeriod);
   setSecondConditionEnabled(false, sellSecondMetric, sellSecondComparison,
