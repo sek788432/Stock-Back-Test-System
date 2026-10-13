@@ -50,7 +50,7 @@ protected:
     };
   }
 
-  bte::core::Result<bte::data::SnapshotSelection>
+  [[nodiscard]] bte::core::Result<bte::data::SnapshotSelection>
   multiFillSelection(const int endHour = 13) const {
     const auto built = bte::data::buildReleaseSnapshot({
         .sourceDirectory = std::filesystem::path{BTE_TEST_SOURCE_DIR} /
@@ -76,7 +76,7 @@ protected:
     });
   }
 
-  bte::core::Result<bte::engine::RecordedBacktestOutcome>
+  [[nodiscard]] bte::core::Result<bte::engine::RecordedBacktestOutcome>
   recordSelection(const bte::data::SnapshotSelection &selection,
                   const bte::strategy::SelectableStrategyPlan &plan) const {
     auto bars = std::vector<bte::core::Bar>{};
