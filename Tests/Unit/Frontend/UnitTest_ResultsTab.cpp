@@ -1,5 +1,7 @@
 #include "Bte/Frontend/ResultsTab.h"
 
+#include "WaitUntil.h"
+
 #include "Bte/Bindings/BacktestSessionVm.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
@@ -113,7 +115,8 @@ void ResultsTabTest::emptyLibraryHasNoEnabledResultActions() {
   QVERIFY(open != nullptr);
   QVERIFY(remove != nullptr);
   QVERIFY(rename != nullptr);
-  QTRY_COMPARE(table->rowCount(), 0);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (0); }));
+  QCOMPARE(table->rowCount(), 0);
   QVERIFY(!view->isEnabled());
   QVERIFY(!open->isEnabled());
   QVERIFY(!remove->isEnabled());
@@ -139,7 +142,10 @@ void ResultsTabTest::configuredDefaultStoreUsesEnvironmentOverride() {
   auto *status = tab.findChild<QLabel *>("resultsStatusLabel");
   QVERIFY(table != nullptr);
   QVERIFY(status != nullptr);
-  QTRY_COMPARE(status->text(), QString{"No results in this location."});
+  QVERIFY(bte::test::waitUntil([&] {
+    return (status->text()) == (QString{"No results in this location."});
+  }));
+  QCOMPARE(status->text(), QString{"No results in this location."});
   QVERIFY(std::filesystem::is_directory(root / "Store" / "Results"));
 }
 
@@ -162,7 +168,8 @@ void ResultsTabTest::corruptResultCannotOpenReplayAndKeepsReadableReason() {
   QVERIFY(table != nullptr);
   QVERIFY(view != nullptr);
   QVERIFY(open != nullptr);
-  QTRY_COMPARE(table->rowCount(), 1);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (1); }));
+  QCOMPARE(table->rowCount(), 1);
   table->selectRow(0);
   QVERIFY(!view->isEnabled());
   QVERIFY(!open->isEnabled());
@@ -227,14 +234,16 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   QVERIFY(location != nullptr);
   QVERIFY(details != nullptr);
   QVERIFY(status != nullptr);
-  QTRY_COMPARE(table->rowCount(), 1);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (1); }));
+  QCOMPARE(table->rowCount(), 1);
   QCOMPARE(table->item(0, 0)->text(),
            QString::fromStdString(run.value().resultId));
   table->selectRow(0);
   QVERIFY(view->isEnabled());
   QVERIFY(open->isEnabled());
   view->click();
-  QTRY_VERIFY(details->text().contains("Symbol: SYN"));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (details->text().contains("Symbol: SYN")); }));
   QVERIFY(details->text().contains(
       QString::fromStdString(published.value().canonicalResultHash)));
   QSignalSpy replayRequested{&tab,
@@ -279,10 +288,15 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
     }
   });
   rename->click();
-  QTRY_COMPARE(table->item(0, 0)->text(), QString{"Named SYN run"});
+  QVERIFY(bte::test::waitUntil([&] {
+    const auto *item = table->item(0, 0);
+    return item != nullptr && item->text() == QString{"Named SYN run"};
+  }));
+  QCOMPARE(table->item(0, 0)->text(), QString{"Named SYN run"});
   table->selectRow(0);
   view->click();
-  QTRY_VERIFY(details->text().contains("Name: Named SYN run"));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (details->text().contains("Name: Named SYN run")); }));
   const auto namedResult = store.value()->openResult(run.value().resultId);
   QVERIFY(namedResult.ok());
   QCOMPARE(namedResult.value().canonicalResultHash,
@@ -310,20 +324,26 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   remove->click();
   tab.refresh();
   QCOMPARE(table->rowCount(), 1);
-  QTRY_VERIFY(moved.size() == 1 || status->text().startsWith("Cannot"));
+  QVERIFY(bte::test::waitUntil([&] {
+    return (moved.size() == 1 || status->text().startsWith("Cannot"));
+  }));
   QVERIFY2(moved.size() == 1, status->text().toUtf8().constData());
-  QTRY_COMPARE(table->rowCount(), 0);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (0); }));
+  QCOMPARE(table->rowCount(), 0);
   QCOMPARE(moved.first().first().toString(),
            QString::fromStdString(run.value().resultId));
 
   location->setCurrentIndex(1);
-  QTRY_COMPARE(table->rowCount(), 1);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (1); }));
+  QCOMPARE(table->rowCount(), 1);
   table->selectRow(0);
   QVERIFY(restore->isEnabled());
   restore->click();
-  QTRY_COMPARE(table->rowCount(), 0);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (0); }));
+  QCOMPARE(table->rowCount(), 0);
   location->setCurrentIndex(0);
-  QTRY_COMPARE(table->rowCount(), 1);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (1); }));
+  QCOMPARE(table->rowCount(), 1);
   QCOMPARE(table->item(0, 0)->text(), QString{"Named SYN run"});
   const auto reopened = store.value()->openResult(run.value().resultId);
   QVERIFY2(reopened.ok(), reopened.error().message.c_str());
@@ -334,7 +354,8 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   table->selectRow(0);
   QVERIFY(store.value()->moveToTrash(run.value().resultId).ok());
   view->click();
-  QTRY_VERIFY(details->text().startsWith("Cannot view result"));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (details->text().startsWith("Cannot view result")); }));
   QTimer::singleShot(0, []() {
     for (auto *widget : QApplication::topLevelWidgets()) {
       if (auto *dialog = qobject_cast<QMessageBox *>(widget);
@@ -344,14 +365,18 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
     }
   });
   remove->click();
-  QTRY_VERIFY(status->text().startsWith("Cannot move result to Trash"));
+  QVERIFY(bte::test::waitUntil([&] {
+    return (status->text().startsWith("Cannot move result to Trash"));
+  }));
 
   location->setCurrentIndex(1);
-  QTRY_COMPARE(table->rowCount(), 1);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (1); }));
+  QCOMPARE(table->rowCount(), 1);
   table->selectRow(0);
   QVERIFY(store.value()->restore(run.value().resultId).ok());
   restore->click();
-  QTRY_VERIFY(status->text().startsWith("Cannot restore result"));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (status->text().startsWith("Cannot restore result")); }));
 
   const auto descriptor = reopened.value().descriptor;
   for (const auto terminalStatus : {
@@ -367,7 +392,8 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
     QVERIFY2(finalized.ok(), finalized.error().message.c_str());
   }
   location->setCurrentIndex(0);
-  QTRY_COMPARE(table->rowCount(), 5);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (5); }));
+  QCOMPARE(table->rowCount(), 5);
   auto failedRow = -1;
   for (const auto &label :
        {"Failed", "Canceled", "Interrupted", "Incomplete"}) {
@@ -385,7 +411,8 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   QVERIFY(failedRow >= 0);
   table->selectRow(failedRow);
   view->click();
-  QTRY_VERIFY(details->text().contains("Final equity: Unavailable"));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (details->text().contains("Final equity: Unavailable")); }));
 
   const auto corruptId = std::string(32, 'e');
   std::ofstream corrupt{root / "Store" / "Results" /
@@ -393,7 +420,8 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   corrupt << "not a Result database";
   corrupt.close();
   tab.refresh();
-  QTRY_COMPARE(table->rowCount(), 6);
+  QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (6); }));
+  QCOMPARE(table->rowCount(), 6);
   const auto listed = store.value()->list();
   QVERIFY(listed.ok());
   QCOMPARE(listed.value().size(), std::size_t{6});
@@ -435,7 +463,8 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
     }
   });
   rename->click();
-  QTRY_VERIFY(status->text().startsWith("Cannot rename result"));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (status->text().startsWith("Cannot rename result")); }));
 }
 
 } // namespace

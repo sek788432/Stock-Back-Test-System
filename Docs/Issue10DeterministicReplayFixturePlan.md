@@ -1,5 +1,17 @@
 # Backtest Result K-Line Replay Implementation Plan
 
+> **Current delivery status (2026-10-14): Needs changes.** The maintainer now
+> requests safe completed-only merges while unfinished work is repaired.
+> PR #73's independent manifest regression passed all current-head CI/CodeQL
+> and merged as `34b958d`; remote main was verified. Draft #76 at `b7e27a9`
+> is not merged: remaining GCC Qt-macro/IWYU failures, a Results rename-test
+> crash and the long-load wait failed remote CI. The rename crash reproduced
+> locally; a null-safe predicate and the current portable waits passed focused
+> tests, but fresh full/exact-head gates are still required. Data-safety,
+> historical conditions, exact saved-data completeness and native acceptance
+> remain unfinished. See the [current remaining-work summary](Plans/Issue10RemainingWork.md)
+> and [delivery inventory](Plans/Issue10IncrementalDeliveryInventory.md).
+
 > **Current consolidation status (2026-10-13): Needs changes.**
 > The maintainer now requests one consolidated implementation commit/PR before
 > completing the remaining plan, superseding the earlier small-PR delivery

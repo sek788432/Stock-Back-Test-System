@@ -25,6 +25,7 @@
 
 // QtConcurrent's instantiated argument types have this provider in libstdc++.
 #if defined(__GLIBCXX__)
+#include <iosfwd>
 #include <type_traits>
 #endif
 

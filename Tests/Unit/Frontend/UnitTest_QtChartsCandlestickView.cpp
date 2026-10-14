@@ -1,5 +1,7 @@
 #include "Bte/Frontend/QtChartsCandlestickView.h"
 
+#include "WaitUntil.h"
+
 #include <QCandlestickSeries>
 #include <QCandlestickSet>
 #include <QChart>
@@ -261,10 +263,12 @@ void QtChartsCandlestickViewTest::
   const auto *volume = view.findChild<QChartView *>("replayVolumeChartView");
   QVERIFY(volume != nullptr);
   QVERIFY(price->geometry().bottom() < volume->geometry().top());
-  QTRY_VERIFY(std::abs(price->chart()->plotArea().left() -
-                       volume->chart()->plotArea().left()) <= 2.0 &&
-              std::abs(price->chart()->plotArea().right() -
-                       volume->chart()->plotArea().right()) <= 2.0);
+  QVERIFY(bte::test::waitUntil([&] {
+    return (std::abs(price->chart()->plotArea().left() -
+                     volume->chart()->plotArea().left()) <= 2.0 &&
+            std::abs(price->chart()->plotArea().right() -
+                     volume->chart()->plotArea().right()) <= 2.0);
+  }));
   QCOMPARE(price->chart()->axes(Qt::Vertical).size(), 1);
   const auto *priceAxis =
       qobject_cast<QValueAxis *>(price->chart()->axes(Qt::Vertical).front());
@@ -330,10 +334,12 @@ void QtChartsCandlestickViewTest::
         volume->chart()->axes(Qt::Horizontal).front());
     QVERIFY(priceTime != nullptr);
     QVERIFY(volumeTime != nullptr);
-    QTRY_VERIFY(std::abs(price->chart()->plotArea().right() -
-                         volume->chart()->plotArea().right()) <= 2.0 &&
-                std::abs(price->chart()->plotArea().left() -
-                         volume->chart()->plotArea().left()) <= 2.0);
+    QVERIFY(bte::test::waitUntil([&] {
+      return (std::abs(price->chart()->plotArea().right() -
+                       volume->chart()->plotArea().right()) <= 2.0 &&
+              std::abs(price->chart()->plotArea().left() -
+                       volume->chart()->plotArea().left()) <= 2.0);
+    }));
     QVERIFY2(price->chart()->plotArea().right() >= price->width() - 160.0,
              qPrintable(QString{"requested=%1 view=%2 price=%3 plot=%4"}
                             .arg(width)
@@ -503,8 +509,10 @@ void QtChartsCandlestickViewTest::
     for (auto iteration = 0; iteration < 20; ++iteration) {
       QCoreApplication::processEvents();
     }
-    QTRY_VERIFY(std::abs(price->chart()->plotArea().left() - ordinaryLeft) <=
-                2.0);
+    QVERIFY(bte::test::waitUntil([&] {
+      return (std::abs(price->chart()->plotArea().left() - ordinaryLeft) <=
+              2.0);
+    }));
     bars.at(index).volume = 1.0e18;
     view.setBarWindow(bars);
     const auto initiallyVisible = view.visibleSlots();
@@ -543,8 +551,9 @@ void QtChartsCandlestickViewTest::
     bars.at(index).volume = 1.0;
   }
   view.setBarWindow(bars);
-  QTRY_VERIFY(std::abs(price->chart()->plotArea().left() - ordinaryLeft) <=
-              2.0);
+  QVERIFY(bte::test::waitUntil([&] {
+    return (std::abs(price->chart()->plotArea().left() - ordinaryLeft) <= 2.0);
+  }));
 }
 
 void QtChartsCandlestickViewTest::
@@ -650,9 +659,11 @@ void QtChartsCandlestickViewTest::longRangeDoesNotTruncateCandles() {
           .x();
   QVERIFY2(lastX - penultimateX >= 6.0,
            "The last two reached candles must remain separately readable");
-  QTRY_VERIFY2(renderedCandleBodyPixels(*price, *series, *last) >= 16 &&
-                   renderedCandleBodyPixels(*price, *series, *last) <= 20,
-               "The long-range tail must retain a readable candle body");
+  QVERIFY2(bte::test::waitUntil([&] {
+             return (renderedCandleBodyPixels(*price, *series, *last) >= 16 &&
+                     renderedCandleBodyPixels(*price, *series, *last) <= 20);
+           }),
+           "The long-range tail must retain a readable candle body");
 
   std::vector<bte::frontend::ChartMarker> markers;
   markers.reserve(5'261);
@@ -936,8 +947,10 @@ void QtChartsCandlestickViewTest::
   view.zoomIn();
   QVERIFY(resized);
   QCOMPARE(maximumDepth, 1);
-  QTRY_VERIFY(view.visibleSlots().end - view.visibleSlots().first >
-              slotsBeforeResize.end - slotsBeforeResize.first);
+  QVERIFY(bte::test::waitUntil([&] {
+    return (view.visibleSlots().end - view.visibleSlots().first >
+            slotsBeforeResize.end - slotsBeforeResize.first);
+  }));
   const auto slotsAfterResize = view.visibleSlots();
   QVERIFY(slotsAfterResize.end - slotsAfterResize.first >
           slotsBeforeResize.end - slotsBeforeResize.first);
@@ -1016,10 +1029,13 @@ void QtChartsCandlestickViewTest::
   auto transientMargins = volume->margins();
   transientMargins.setLeft(transientMargins.left() + 120);
   volume->setMargins(transientMargins);
-  QTRY_VERIFY(!changes.isEmpty());
-  QTRY_VERIFY(
-      std::abs(price->plotArea().right() - volume->plotArea().right()) <= 2.0 &&
-      std::abs(price->plotArea().left() - volume->plotArea().left()) <= 2.0);
+  QVERIFY(bte::test::waitUntil([&] { return (!changes.isEmpty()); }));
+  QVERIFY(bte::test::waitUntil([&] {
+    return (std::abs(price->plotArea().right() - volume->plotArea().right()) <=
+                2.0 &&
+            std::abs(price->plotArea().left() - volume->plotArea().left()) <=
+                2.0);
+  }));
   const auto settledChanges = changes.size();
   for (auto pass = 0; pass < 3; ++pass) {
     QCoreApplication::processEvents();
@@ -1326,18 +1342,22 @@ void QtChartsCandlestickViewTest::
   view.resize(640, 400);
   view.zoomIn();
   view.setDailyTimeframe(true);
-  QTRY_VERIFY(
-      buyGlyph->mapRectToParent(buyGlyph->boundingRect()).top() >=
-      viewport->chart()
-              ->mapToPosition({sets.at(1)->timestamp(), bars[1].low}, buySeries)
-              .y() +
-          8.0);
-  QTRY_VERIFY(sellGlyph->mapRectToParent(sellGlyph->boundingRect()).bottom() <=
-              viewport->chart()
-                      ->mapToPosition({sets.at(2)->timestamp(), bars[2].high},
-                                      sellSeries)
-                      .y() -
-                  8.0);
+  QVERIFY(bte::test::waitUntil([&] {
+    return (buyGlyph->mapRectToParent(buyGlyph->boundingRect()).top() >=
+            viewport->chart()
+                    ->mapToPosition({sets.at(1)->timestamp(), bars[1].low},
+                                    buySeries)
+                    .y() +
+                8.0);
+  }));
+  QVERIFY(bte::test::waitUntil([&] {
+    return (sellGlyph->mapRectToParent(sellGlyph->boundingRect()).bottom() <=
+            viewport->chart()
+                    ->mapToPosition({sets.at(2)->timestamp(), bars[2].high},
+                                    sellSeries)
+                    .y() -
+                8.0);
+  }));
   QVERIFY(viewport->chart()->plotArea().contains(
       buyGlyph->mapRectToParent(buyGlyph->boundingRect())));
   QVERIFY(viewport->chart()->plotArea().contains(
@@ -1389,11 +1409,11 @@ void QtChartsCandlestickViewTest::
     }
     return count == 2;
   };
-  QTRY_VERIFY(clearAndVisible());
+  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
   view.resize(900, 360);
-  QTRY_VERIFY(clearAndVisible());
+  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
   view.setDailyTimeframe(true);
-  QTRY_VERIFY(clearAndVisible());
+  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
   QCOMPARE(view.markerCount(), 2U);
   QCOMPARE(view.candleCount(), 1U);
 }
@@ -1416,11 +1436,15 @@ void QtChartsCandlestickViewTest::onlyCoincidentSellFillsShowLeaders() {
           return item->data(0).toString() == kind && item->isVisible();
         });
   };
-  QTRY_COMPARE(visibleItems("replayTradeGlyph"), 2);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (visibleItems("replayTradeGlyph")) == (2); }));
+  QCOMPARE(visibleItems("replayTradeGlyph"), 2);
   QCOMPARE(visibleItems("replayTradeLeader"), 0);
   view.appendMarkers(std::array{bte::frontend::ChartMarker{
       .timestamp = makeTimestamp(2), .price = 102.0, .isBuy = true}});
-  QTRY_COMPARE(visibleItems("replayTradeGlyph"), 2);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (visibleItems("replayTradeGlyph")) == (2); }));
+  QCOMPARE(visibleItems("replayTradeGlyph"), 2);
   QCOMPARE(visibleItems("replayTradeLeader"), 0);
   QCOMPARE(view.markerCount(), 3U);
   QVERIFY(std::ranges::any_of(viewport->scene()->items(), [](const auto *item) {
@@ -1430,7 +1454,9 @@ void QtChartsCandlestickViewTest::onlyCoincidentSellFillsShowLeaders() {
   }));
   view.appendMarkers(std::array{bte::frontend::ChartMarker{
       .timestamp = makeTimestamp(2), .price = 102.5, .isBuy = false}});
-  QTRY_COMPARE(visibleItems("replayTradeGlyph"), 3);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (visibleItems("replayTradeGlyph")) == (3); }));
+  QCOMPARE(visibleItems("replayTradeGlyph"), 3);
   QCOMPARE(visibleItems("replayTradeLeader"), 2);
   QCOMPARE(view.markerCount(), 4U);
   view.clearMarkers();
@@ -1546,10 +1572,12 @@ void QtChartsCandlestickViewTest::
     }
     return result;
   };
-  QTRY_COMPARE(glyphs().size(), 1U);
+  QVERIFY(bte::test::waitUntil([&] { return (glyphs().size()) == (1U); }));
+  QCOMPARE(glyphs().size(), 1U);
   QVERIFY(!glyphs().front()->toolTip().contains("2 reached"));
   view.appendMarkers(std::array{second});
-  QTRY_COMPARE(glyphs().size(), 1U);
+  QVERIFY(bte::test::waitUntil([&] { return (glyphs().size()) == (1U); }));
+  QCOMPARE(glyphs().size(), 1U);
   QVERIFY(glyphs().front()->toolTip().contains("2 reached Buy fills"));
   QVERIFY(glyphs().front()->toolTip().contains("2024-01-02T01:00:00Z"));
   QVERIFY(glyphs().front()->toolTip().contains("Price: 101"));
@@ -1583,19 +1611,22 @@ void QtChartsCandlestickViewTest::
   auto hourlySecond = second;
   hourlySecond.candleTimestamp.reset();
   view.setMarkers(std::array{hourlyFirst, hourlySecond});
-  QTRY_COMPARE(glyphs().size(), 2U);
+  QVERIFY(bte::test::waitUntil([&] { return (glyphs().size()) == (2U); }));
+  QCOMPARE(glyphs().size(), 2U);
   QCOMPARE(view.markerCount(), 2U);
   for (const auto *glyph : glyphs()) {
     QVERIFY(!glyph->toolTip().contains("2 reached"));
   }
   view.setBarWindow(std::array{firstHour});
   view.setMarkers(std::array{hourlyFirst});
-  QTRY_COMPARE(glyphs().size(), 1U);
+  QVERIFY(bte::test::waitUntil([&] { return (glyphs().size()) == (1U); }));
+  QCOMPARE(glyphs().size(), 1U);
   QCOMPARE(view.markerCount(), 1U);
   view.setDailyTimeframe(true);
   view.setBarWindow(std::array{makeBar(2, 100.0, 104.0)});
   view.setMarkers(std::array{first});
-  QTRY_COMPARE(glyphs().size(), 1U);
+  QVERIFY(bte::test::waitUntil([&] { return (glyphs().size()) == (1U); }));
+  QCOMPARE(glyphs().size(), 1U);
   QVERIFY(!glyphs().front()->toolTip().contains("2 reached"));
   view.clearMarkers();
   QCOMPARE(glyphs().size(), 0U);

@@ -277,9 +277,11 @@ void ResultReplayTabTest::trashedActiveResultStopsReplayAndClearsSelection() {
   QVERIFY(selector != nullptr);
   QVERIFY(status != nullptr);
   const auto resultId = QString::fromStdString(firstResultId_);
-  QTRY_VERIFY(selector->findText(resultId) >= 0);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (selector->findText(resultId) >= 0); }));
   tab.openResult(resultId);
-  QTRY_VERIFY(status->text().startsWith("Result "));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (status->text().startsWith("Result ")); }));
   tab.closeResultIfId("other-result");
   QCOMPARE(selector->currentText(), resultId);
   tab.closeResultIfId(resultId);
@@ -1041,11 +1043,15 @@ void ResultReplayTabTest::
   QVERIFY(store.value()->renameResult(secondResultId_, "Renamed fixture").ok());
 
   tab.openResult(QString::fromStdString(secondResultId_));
-  QTRY_VERIFY(selector->currentText().startsWith("Renamed fixture — "));
+  QVERIFY(bte::test::waitUntil([&] {
+    return (selector->currentText().startsWith("Renamed fixture — "));
+  }));
   QCOMPARE(selector->currentData().toString(),
            QString::fromStdString(secondResultId_));
-  QTRY_VERIFY(status->text().startsWith(
-      QString{"Result %1"}.arg(QString::fromStdString(secondResultId_))));
+  QVERIFY(bte::test::waitUntil([&] {
+    return (status->text().startsWith(
+        QString{"Result %1"}.arg(QString::fromStdString(secondResultId_))));
+  }));
 }
 
 void ResultReplayTabTest::
@@ -1062,13 +1068,17 @@ void ResultReplayTabTest::
   QVERIFY(selector != nullptr);
   QVERIFY(open != nullptr);
   QVERIFY(status != nullptr);
-  QTRY_VERIFY(selector->findData(QString::fromStdString(secondResultId_)) >= 0);
+  QVERIFY(bte::test::waitUntil([&] {
+    return (selector->findData(QString::fromStdString(secondResultId_)) >= 0);
+  }));
   selector->setCurrentIndex(
       selector->findData(QString::fromStdString(secondResultId_)));
   QCOMPARE(selector->currentText().size(), 32);
   QTest::mouseClick(open, Qt::LeftButton);
-  QTRY_VERIFY(status->text().startsWith(
-      QString{"Result %1"}.arg(QString::fromStdString(secondResultId_))));
+  QVERIFY(bte::test::waitUntil([&] {
+    return (status->text().startsWith(
+        QString{"Result %1"}.arg(QString::fromStdString(secondResultId_))));
+  }));
 }
 
 } // namespace

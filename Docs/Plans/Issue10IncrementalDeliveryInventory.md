@@ -71,6 +71,24 @@ retained. Do not force-push or delete its history as part of extraction.
   it adds no suppression or gate change. Fresh complete exact-head gates and
   remote confirmation remain required. The long-load coverage failure still
   has diagnostics only, not an accepted performance repair.
+- Published `b7e27a91ffcbb441b1d8ab0042177a7245530d46` passed exact-head
+  RunTest 243/243 (90.15 seconds) and complete Quality, including 243/243
+  coverage tests (94.80 seconds), 98% reported changed lines and 93.8% branches.
+  Remote CI still failed: remaining Qt waiting macros narrow in GCC, one
+  libstdc++ macro-provider include is missing, Results rename testing segfaults
+  while the asynchronous refresh clears cells, and long-range Replay loading
+  exceeds its unchanged five-second wait. The rename crash was reproduced
+  locally (exit 139); a null-safe observed-name predicate then passed the same
+  real widget interaction. Further full/exact-head checks remain pending.
+- On 2026-10-14 the maintainer requested safe completed-only merges while the
+  broad checkpoint is repaired. PR #73 was reopened and aligned to exact
+  `9b1c492`; its two-file manifest-test/inventory diff retains prior exact-head
+  RunTest 219/219 and full Quality evidence, plus a fresh focused test. Current
+  head CI/CodeQL and every required gate then succeeded. Expected-SHA-guarded
+  squash merge landed as `34b958d8283a5d142e190a40bce0b9fb868654d7`, and the
+  remote main ref was verified at that commit. This does not accept Draft #76.
+  The [remaining-work summary](Issue10RemainingWork.md) separates data safety,
+  real-data completeness, CI/performance and final native acceptance.
 
 The table below preserves the preceding incremental publication checkpoints;
 it is not a claim that the unaccepted consolidation has merged.
@@ -89,7 +107,7 @@ each extracted submission requires fresh applicable checks on its exact SHA.
 | L | CSV-derived development snapshot `d21cfc1`/`c28ddec`, launcher/build provenance `3245574` | Local source only; separate snapshot preparation from provenance, include script/data tests. Final delivered-checkout Launch.sh scenario is pending; this is not a public data release |
 | S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Included in the current consolidated checkpoint per the latest maintainer request, not fully accepted. The earlier split-PR preference is superseded; known live-writer/retention/mid-run durability gaps and incomplete UI acceptance still prohibit merging main |
 | U | Metric units/period explanations `236d97b`/`cf65e2a`, threshold coverage `d8b3c76` | Display-only [PR #74](https://github.com/sek788432/Stock-Back-Test-System/pull/74) merged as `8ab5ea4b8db7f01d5591a748805b0ae0eb544dfe`; exact submitted head `569bbe3` passed local full tests/quality, both backend-only sanitizer presets and all CI/CodeQL checks. Period editability and typed identity are unchanged. Excluded source period-disable/normalization work and whole Task 16 Engine-record/hash acceptance remain open |
-| P | SQLite manifest-pin regression, `9bb2a9e` | [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73) closed as superseded by Draft #76, which includes the identical pin regression. Its original refs and locally aligned `9b1c492` remain preserved. Publication is verified; consolidation CI and merge remain open |
+| P | SQLite manifest-pin regression, `9bb2a9e` | [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73) reopened on 2026-10-14, then merged as `34b958d8283a5d142e190a40bce0b9fb868654d7` after every exact-head CI/CodeQL gate succeeded; two-file diff at `9b1c492`, exact local full tests/Quality and fresh focused test passed. The same assertion remains in Draft #76; no source ref was discarded |
 | H | Approved CSV/UTC historical-condition semantics, `89d7704` | Requirements only. Previous-data-day, N-day gain, prior-21-day extrema/breakouts and immutable pre-range warm-up are not implemented |
 | D | Plan ledger and workspace reconciliation, through `6ac45ea` | Focused inventory [PR #72](https://github.com/sek788432/Stock-Back-Test-System/pull/72) merged as `d1722bd448d097d40153bde1fb4a8b5cd1ce6fcf`. The original full dated ledger remains local. Preserve evidence and open findings; never label remaining tasks complete merely because a code checkpoint passed |
 
