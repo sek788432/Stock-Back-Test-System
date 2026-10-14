@@ -1,7 +1,6 @@
 #include "Bte/Core/Digest.h"
 
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -28,6 +27,14 @@ constexpr std::array<std::uint32_t, 64> roundConstants{
     0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU,
     0x682e6ff3U, 0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
     0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U};
+
+// SHA-256 uses fixed, nonzero rotations. Keep their normalization out of the
+// measured hashing hot path, including unoptimized coverage builds.
+template <unsigned int shift>
+  requires(shift > 0 && shift < 32)
+constexpr std::uint32_t rotateRight(const std::uint32_t value) noexcept {
+  return (value >> shift) | (value << (32U - shift));
+}
 
 std::uint32_t readBigEndianWord(const std::span<const std::byte> bytes,
                                 const std::size_t offset) {
@@ -63,11 +70,11 @@ std::string sha256(const std::span<const std::byte> bytes) {
       words.at(index) = readBigEndianWord(padded, chunk + index * 4);
     }
     for (std::size_t index = 16; index < words.size(); ++index) {
-      const auto sigmaZero = std::rotr(words.at(index - 15), 7) ^
-                             std::rotr(words.at(index - 15), 18) ^
+      const auto sigmaZero = rotateRight<7>(words.at(index - 15)) ^
+                             rotateRight<18>(words.at(index - 15)) ^
                              (words.at(index - 15) >> 3U);
-      const auto sigmaOne = std::rotr(words.at(index - 2), 17) ^
-                            std::rotr(words.at(index - 2), 19) ^
+      const auto sigmaOne = rotateRight<17>(words.at(index - 2)) ^
+                            rotateRight<19>(words.at(index - 2)) ^
                             (words.at(index - 2) >> 10U);
       words.at(index) =
           words.at(index - 16) + sigmaZero + words.at(index - 7) + sigmaOne;
@@ -83,13 +90,14 @@ std::string sha256(const std::span<const std::byte> bytes) {
     auto workingH = hash.at(7);
 
     for (std::size_t index = 0; index < words.size(); ++index) {
-      const auto sumOne = std::rotr(workingE, 6) ^ std::rotr(workingE, 11) ^
-                          std::rotr(workingE, 25);
+      const auto sumOne = rotateRight<6>(workingE) ^ rotateRight<11>(workingE) ^
+                          rotateRight<25>(workingE);
       const auto choose = (workingE & workingF) ^ ((~workingE) & workingG);
       const auto tempOne = workingH + sumOne + choose +
                            roundConstants.at(index) + words.at(index);
-      const auto sumZero = std::rotr(workingA, 2) ^ std::rotr(workingA, 13) ^
-                           std::rotr(workingA, 22);
+      const auto sumZero = rotateRight<2>(workingA) ^
+                           rotateRight<13>(workingA) ^
+                           rotateRight<22>(workingA);
       const auto majority =
           (workingA & workingB) ^ (workingA & workingC) ^ (workingB & workingC);
       const auto tempTwo = sumZero + majority;
