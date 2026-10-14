@@ -36,8 +36,15 @@ from main or that any broader source checkpoint is fully accepted.
   without changing their predicates or five-second limit, supplies the reported
   libstdc++ macro-provider header, and guards a transient empty table cell in
   rename testing. The crash reproduced locally with exit 139; the corrected
-  widget flow and 20 repeated full Results test-target runs passed. Fresh whole
-  suite, exact-head Quality and remote confirmation are still required.
+  widget flow and 20 repeated full Results test-target runs passed. This repair
+  is committed locally as `32e5034`, not pushed. Exact RunTest passed 243/243
+  (89.37 seconds). Complete non-fast Quality against main `34b958d` failed
+  changed-line coverage: 1,995/2,038 lines (approximately 97.89%, below 98%).
+  Static analysis completed and coverage tests passed 243/243 (88.96 seconds),
+  but these partial successes do not clear the failed aggregate gate. Initial
+  attempts also stopped at a missing shell VCPKG_ROOT and sandbox DNS; the
+  complete rerun used the documented pinned checkout and approved networking.
+  Coverage repair, fresh passing exact-head gates and remote confirmation remain.
 
 ## Required before the broad implementation can land
 
@@ -48,6 +55,7 @@ from main or that any broader source checkpoint is fully accepted.
 | R3: execution-time durability | Atomically persist every completed bar and its full canonical batch; stop on storage failure; recover only a committed prefix as Interrupted Draft | Current execution still records at terminal time; implementation and crash/commit-boundary tests missing |
 | Legacy staging compatibility | Preserve and warn about old unleased Staging rather than guessing that its process is dead | Explicitly approved policy; code and English warning delivery not implemented |
 | CI / Results rename acceptance | Clear all GCC wait-macro, IWYU and macOS crash failures on the actual submitted SHA | Local portability/null-cell repairs exist; not yet submitted/remote-accepted |
+| Local changed-line coverage | Close meaningful coverage gaps without removing assertions or lowering the 98% gate | Exact `32e5034` full Quality failed at 1,995/2,038 lines; no push or remote CI requested for this repair |
 | CI long-load responsiveness | Diagnose and fix the Linux coverage load that remains “Loading result” beyond five seconds; verify long seek, Max and resizing without stalls | Diagnostic time/status added; no accepted performance fix and no weakened timeout. This is not R8 data-completeness acceptance |
 | R8: long-range saved-data completeness | Compare selected range, exact saved spans, actual source rows and visible Hourly/Daily candles to explain the reported sparse chart | Final real-data correctness comparison remains open; a faster load or longer wait cannot close this finding |
 | T: exact Daily fill selection | Do not show fills from an unselected interior-gap timestamp merely because it lies between the day's first/last selected bars | Defect corroborated; narrow extraction retained in a stash, repair/acceptance open |

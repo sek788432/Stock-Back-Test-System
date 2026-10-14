@@ -89,6 +89,17 @@ retained. Do not force-push or delete its history as part of extraction.
   remote main ref was verified at that commit. This does not accept Draft #76.
   The [remaining-work summary](Issue10RemainingWork.md) separates data safety,
   real-data completeness, CI/performance and final native acceptance.
+- Local follow-up `32e5034854567e1fa2ac07240c52d815c2f25f97` commits the
+  remaining 47 portable Qt waits, the libstdc++ macro-provider include, the
+  null-safe rename-test predicate and current tracking. Exact RunTest passed
+  243/243 (89.37 seconds). Complete non-fast Quality against main `34b958d`
+  failed changed-line coverage: 1,995/2,038 lines (approximately 97.89%, below
+  the unchanged 98% gate). Static analysis completed and coverage tests passed
+  243/243 (88.96 seconds); the aggregate workflow still exited 1. Initial
+  environment/DNS stops were resolved using the documented pinned VCPKG_ROOT
+  and approved networking, not a tooling/gate change. This repair is not pushed;
+  coverage and remote acceptance remain open. The broad checkpoint still has
+  known semantic blockers regardless of mechanical gate status.
 
 The table below preserves the preceding incremental publication checkpoints;
 it is not a claim that the unaccepted consolidation has merged.

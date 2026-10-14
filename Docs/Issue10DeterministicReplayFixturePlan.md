@@ -7,7 +7,10 @@
 > is not merged: remaining GCC Qt-macro/IWYU failures, a Results rename-test
 > crash and the long-load wait failed remote CI. The rename crash reproduced
 > locally; a null-safe predicate and the current portable waits passed focused
-> tests, but fresh full/exact-head gates are still required. Data-safety,
+> tests. Local repair `32e5034` passed full RunTest (243/243, 89.37 seconds),
+> but complete Quality failed changed-line coverage: 1,995/2,038 lines
+> (approximately 97.89%, below 98%), despite 243/243 coverage tests passing.
+> It has not been pushed; fresh passing exact-head gates remain required. Data-safety,
 > historical conditions, exact saved-data completeness and native acceptance
 > remain unfinished. See the [current remaining-work summary](Plans/Issue10RemainingWork.md)
 > and [delivery inventory](Plans/Issue10IncrementalDeliveryInventory.md).
