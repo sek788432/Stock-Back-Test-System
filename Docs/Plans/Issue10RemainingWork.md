@@ -45,6 +45,12 @@ from main or that any broader source checkpoint is fully accepted.
   attempts also stopped at a missing shell VCPKG_ROOT and sandbox DNS; the
   complete rerun used the documented pinned checkout and approved networking.
   Coverage repair, fresh passing exact-head gates and remote confirmation remain.
+- A subsequent test-only follow-up exercises actual inaccessible catalog UI,
+  disabled actions, an empty table, and successful refresh after repairing the
+  isolated temporary store path. The focused test passed; a temporary wrong
+  error-message mutation made it fail and was fully removed. Independent
+  code/docs/tests review found no new scoped P0–P2. This does not yet prove a
+  fresh aggregate coverage pass or resolve the broad checkpoint's blockers.
 
 ## Required before the broad implementation can land
 

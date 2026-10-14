@@ -66,11 +66,48 @@ class ResultsTabTest final : public QObject {
 
 private slots:
   void emptyLibraryHasNoEnabledResultActions();
+  void inaccessibleCatalogDisablesActionsAndRefreshRecovers();
   void configuredDefaultStoreUsesEnvironmentOverride();
   void corruptResultCannotOpenReplayAndKeepsReadableReason();
   void savedResultDetailsReplayTrashAndRestoreKeepExactId();
   void controlsRemainReachableAtThreeWindowSizes();
 };
+
+void ResultsTabTest::inaccessibleCatalogDisablesActionsAndRefreshRecovers() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto blockedStore = root / "BlockedStore";
+  {
+    std::ofstream blocked{blockedStore};
+    blocked << "not a result-store directory";
+    QVERIFY(blocked.good());
+  }
+  bte::frontend::ResultsTab tab{blockedStore, root / "Data"};
+  auto *table = tab.findChild<QTableWidget *>("resultsTable");
+  auto *status = tab.findChild<QLabel *>("resultsStatusLabel");
+  QVERIFY(table != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return status->text().startsWith("Cannot load results"); }));
+  QCOMPARE(table->rowCount(), 0);
+  for (const auto *name :
+       {"resultsViewDetailsButton", "resultsOpenReplayButton",
+        "resultsRenameButton", "resultsMoveToTrashButton",
+        "resultsRestoreButton"}) {
+    auto *button = tab.findChild<QPushButton *>(name);
+    QVERIFY(button != nullptr);
+    QVERIFY2(!button->isEnabled(), name);
+  }
+  QSignalSpy opened{&tab, &bte::frontend::ResultsTab::openResultInReplay};
+  QVERIFY(std::filesystem::remove(blockedStore));
+  tab.refresh();
+  QVERIFY(bte::test::waitUntil(
+      [&] { return status->text() == "No results in this location."; }));
+  QCOMPARE(table->rowCount(), 0);
+  QCOMPARE(opened.count(), 0);
+  QVERIFY(std::filesystem::is_directory(blockedStore));
+}
 
 void ResultsTabTest::controlsRemainReachableAtThreeWindowSizes() {
   QTemporaryDir directory;

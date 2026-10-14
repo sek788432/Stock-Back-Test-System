@@ -100,6 +100,13 @@ retained. Do not force-push or delete its history as part of extraction.
   and approved networking, not a tooling/gate change. This repair is not pushed;
   coverage and remote acceptance remain open. The broad checkpoint still has
   known semantic blockers regardless of mechanical gate status.
+- A subsequent test-only repair adds real Results catalog failure and refresh
+  recovery coverage: an isolated regular file blocks the store directory;
+  the tab must show the error with no rows and disabled result actions, then
+  recover to an empty valid catalog after the fixture path is repaired. The
+  focused case passed and failed against a temporary wrong error display;
+  that mutation was removed. Independent scoped review found no new P0–P2.
+  Fresh full exact-head gates and remote confirmation remain required.
 
 The table below preserves the preceding incremental publication checkpoints;
 it is not a claim that the unaccepted consolidation has merged.
