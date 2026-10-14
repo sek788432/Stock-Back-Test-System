@@ -28,29 +28,42 @@ from main or that any broader source checkpoint is fully accepted.
 - PR #73's independent two-file delivery at main-aligned `9b1c492` is now
   merged. Exact local full tests/Quality and fresh focused tests passed;
   current-head CI/CodeQL succeeded and remote main was verified at `34b958d`.
-- Draft PR #76 publishes the broader implementation at `b7e27a9`. Exact local
+- Draft PR #76 previously published the broader implementation at `b7e27a9`. Exact local
   tests/Quality passed, but remote CI failed Linux test compilation, Linux IWYU,
   a macOS Results widget test and long-range Replay loading. It is not ready
   for main, even if subsequent mechanical gates become green.
-- The current local repair replaces the remaining 47 narrowing Qt wait macros
+- The follow-up repair replaces the remaining 47 narrowing Qt wait macros
   without changing their predicates or five-second limit, supplies the reported
   libstdc++ macro-provider header, and guards a transient empty table cell in
   rename testing. The crash reproduced locally with exit 139; the corrected
   widget flow and 20 repeated full Results test-target runs passed. This repair
-  is committed locally as `32e5034`, not pushed. Exact RunTest passed 243/243
+  was committed locally as `32e5034` and not pushed at that failed-gate checkpoint.
+  Exact RunTest passed 243/243
   (89.37 seconds). Complete non-fast Quality against main `34b958d` failed
   changed-line coverage: 1,995/2,038 lines (approximately 97.89%, below 98%).
   Static analysis completed and coverage tests passed 243/243 (88.96 seconds),
   but these partial successes do not clear the failed aggregate gate. Initial
   attempts also stopped at a missing shell VCPKG_ROOT and sandbox DNS; the
   complete rerun used the documented pinned checkout and approved networking.
-  Coverage repair, fresh passing exact-head gates and remote confirmation remain.
+  At that checkpoint, coverage repair, fresh passing exact-head gates and
+  remote confirmation remained pending. The later `98819b3` repair is below;
+  post-merge exact-head gates and remote acceptance still remain required.
 - A subsequent test-only follow-up exercises actual inaccessible catalog UI,
   disabled actions, an empty table, and successful refresh after repairing the
   isolated temporary store path. The focused test passed; a temporary wrong
   error-message mutation made it fail and was fully removed. Independent
-  code/docs/tests review found no new scoped P0–P2. This does not yet prove a
-  fresh aggregate coverage pass or resolve the broad checkpoint's blockers.
+  code/docs/tests review found no new scoped P0–P2. At that focused-test
+  checkpoint this did not yet prove a fresh aggregate coverage pass; the
+  broad checkpoint's blockers remain unresolved.
+- That follow-up was published as #76 head `98819b3` after exact RunTest
+  passed 243/243 (87.99 seconds) and complete non-fast Quality against `34b958d`
+  exited zero: clean coverage tests 243/243 (87.70 seconds), changed lines
+  1,999/2,038 and branches 224/240. This supersedes the earlier failed local
+  coverage checkpoint, not the original semantic blockers. CodeQL succeeded;
+  required project CI did not start because the PR had an inventory merge
+  conflict. A normal merge aligns with main `2a21657` (concurrent data-only #77),
+  preserves main's data, and resolves compatible document intents. Fresh
+  merge-head local gates and complete required CI remain pending.
 
 ## Required before the broad implementation can land
 
@@ -60,8 +73,8 @@ from main or that any broader source checkpoint is fully accepted.
 | R2: retention before visibility | Pin exact immutable segments before Staging/recovered drafts become visible; keep pins through failure, Drafts, Results and Trash | Current initialization/recovery gaps remain; part of the approved safety direction |
 | R3: execution-time durability | Atomically persist every completed bar and its full canonical batch; stop on storage failure; recover only a committed prefix as Interrupted Draft | Current execution still records at terminal time; implementation and crash/commit-boundary tests missing |
 | Legacy staging compatibility | Preserve and warn about old unleased Staging rather than guessing that its process is dead | Explicitly approved policy; code and English warning delivery not implemented |
-| CI / Results rename acceptance | Clear all GCC wait-macro, IWYU and macOS crash failures on the actual submitted SHA | Local portability/null-cell repairs exist; not yet submitted/remote-accepted |
-| Local changed-line coverage | Close meaningful coverage gaps without removing assertions or lowering the 98% gate | Exact `32e5034` full Quality failed at 1,995/2,038 lines; no push or remote CI requested for this repair |
+| CI / Results rename acceptance | Clear all GCC wait-macro, IWYU and macOS crash failures on the actual submitted SHA | Portability/null-cell repairs were submitted in `98819b3`; CodeQL passed, but required project CI did not run while the PR was conflicted. New merge-head acceptance remains pending |
+| Exact-head CI readiness | Repeat full gates after main alignment, then verify every required remote job | `32e5034` coverage failed; `98819b3` repaired it and passed full local Quality at 1,999/2,038. CodeQL alone passed remotely; project CI was prevented by a document merge conflict. New merge-head gates remain required |
 | CI long-load responsiveness | Diagnose and fix the Linux coverage load that remains “Loading result” beyond five seconds; verify long seek, Max and resizing without stalls | Diagnostic time/status added; no accepted performance fix and no weakened timeout. This is not R8 data-completeness acceptance |
 | R8: long-range saved-data completeness | Compare selected range, exact saved spans, actual source rows and visible Hourly/Daily candles to explain the reported sparse chart | Final real-data correctness comparison remains open; a faster load or longer wait cannot close this finding |
 | T: exact Daily fill selection | Do not show fills from an unselected interior-gap timestamp merely because it lies between the day's first/last selected bars | Defect corroborated; narrow extraction retained in a stash, repair/acceptance open |

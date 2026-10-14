@@ -1,6 +1,16 @@
 # Backtest Result K-Line Replay Implementation Plan
 
-> **Current delivery status (2026-10-14): Needs changes.** The maintainer now
+> **Latest CI repair checkpoint (2026-10-14):** Published #76 head `98819b3`
+> passed exact RunTest (243/243, 87.99 seconds) and complete non-fast Quality
+> against `34b958d` (exit 0; coverage tests 243/243, 87.70 seconds; changed lines
+> 1,999/2,038; branches 224/240). CodeQL passed, but the required project CI did
+> not start because #76 had an inventory-document merge conflict with main.
+> Main concurrently advanced through data-only #77 to `2a21657`. A normal
+> main-alignment merge preserves that data and both documents' evidence without
+> rewriting source history. Fresh merge-head gates and required remote CI are
+> pending; all original semantic and native-acceptance blockers remain open.
+
+> **Earlier delivery checkpoint (2026-10-14): Needs changes.** The maintainer now
 > requests safe completed-only merges while unfinished work is repaired.
 > PR #73's independent manifest regression passed all current-head CI/CodeQL
 > and merged as `34b958d`; remote main was verified. Draft #76 at `b7e27a9`

@@ -41,9 +41,10 @@ retained. Do not force-push or delete its history as part of extraction.
 - Historical-condition semantics remain requirements only. The independent
   canonical-hash oracle, exact saved-data comparison, long seek/resizing and
   final delivered-checkout acceptance remain unfinished.
-- The consolidated checkpoint is published as Draft
+- The initial consolidated checkpoint was published as Draft
   [PR #76](https://github.com/sek788432/Stock-Back-Test-System/pull/76), head
-  `d7ce3d1bd546cb8f5610ac54ab67c5a5951b0c75`, not merged or accepted.
+  `d7ce3d1bd546cb8f5610ac54ab67c5a5951b0c75`, not merged or accepted. This is
+  historical publication evidence; the later published head is recorded below.
   Exact-head RunTest passed 243/243 (87.94 seconds); complete non-fast Quality
   exited zero with 243/243 coverage tests (95.59 seconds), reported 98% changed
   lines and 93.8% changed branches. Separate backend-only ASan and TSan presets
@@ -97,8 +98,9 @@ retained. Do not force-push or delete its history as part of extraction.
   the unchanged 98% gate). Static analysis completed and coverage tests passed
   243/243 (88.96 seconds); the aggregate workflow still exited 1. Initial
   environment/DNS stops were resolved using the documented pinned VCPKG_ROOT
-  and approved networking, not a tooling/gate change. This repair is not pushed;
-  coverage and remote acceptance remain open. The broad checkpoint still has
+  and approved networking, not a tooling/gate change. At that failed-gate
+  checkpoint this repair was not pushed; coverage and remote acceptance were
+  still open. The broad checkpoint still has
   known semantic blockers regardless of mechanical gate status.
 - A subsequent test-only repair adds real Results catalog failure and refresh
   recovery coverage: an isolated regular file blocks the store directory;
@@ -107,6 +109,16 @@ retained. Do not force-push or delete its history as part of extraction.
   focused case passed and failed against a temporary wrong error display;
   that mutation was removed. Independent scoped review found no new P0–P2.
   Fresh full exact-head gates and remote confirmation remain required.
+- The test-only follow-up was published as `98819b334f82c63ec76c370f25f4b0797ccbee82`
+  after exact RunTest passed 243/243 (87.99 seconds) and complete non-fast
+  Quality against `34b958d` exited zero: clean coverage tests 243/243 (87.70
+  seconds), changed lines 1,999/2,038 and branches 224/240. This repairs the
+  previous aggregate coverage failure without weakening a gate. Remote
+  CodeQL succeeded, but project CI did not start: the PR was confirmed
+  merge-conflicted in this inventory, not fully green. Main concurrently
+  advanced via data-only #77 to `2a21657`; a normal merge preserves its CSV
+  changes and reconciles this document's compatible latest/historical facts.
+  Fresh merge-head local gates and required remote CI remain pending.
 
 The table below preserves the preceding incremental publication checkpoints;
 it is not a claim that the unaccepted consolidation has merged.
@@ -119,10 +131,10 @@ each extracted submission requires fresh applicable checks on its exact SHA.
 | --- | --- | --- |
 | R | Full-money half-even rounding, `b5be0c8` | [PR #71](https://github.com/sek788432/Stock-Back-Test-System/pull/71) merged as `a0c69c5c6bf2aa8565f1c82887a56e5351f42465`; source `Backtest.cpp` also contains an unmerged S-group lifecycle change |
 | T | Trusted Hourly/Daily Replay boundaries, `a098577` | Extracted locally; not submitted. New review found same-day interior-gap fills can appear in Daily without a selected candle. Repair direction is awaiting confirmation; no scoped acceptance claimed |
-| F | Real selectable five-Buy/five-Sell offline fixture, `6b9b3e7` | [PR #75](https://github.com/sek788432/Stock-Back-Test-System/pull/75) merged as `999c1b90a2748fe09fbe6d1003f64633f124c285`; submitted `ba780948ca5b788c411791d5f5cfd934af2e239b` passed full RunTest 219/219, complete Quality, independent review and all CI/CodeQL. Additional Qt-enabled focused ASan/TSan each passed seven tests. Its literal fixture/tests and public-link closure are retained in consolidation; whole-plan acceptance remains open |
+| F | Real selectable five-Buy/five-Sell offline fixture, `6b9b3e7` | Test-only [PR #75](https://github.com/sek788432/Stock-Back-Test-System/pull/75) merged as `999c1b90a2748fe09fbe6d1003f64633f124c285`; submitted `ba780948ca5b788c411791d5f5cfd934af2e239b` passed full RunTest 219/219, complete Quality, independent review and all CI/CodeQL. Additional Qt-enabled focused ASan/TSan each passed seven tests. Save lifecycle documentation was excluded from #75; its literal fixture/tests and public-link closure are retained in consolidation. The independent hash oracle and whole-plan acceptance remain open |
 | M | Directional glyphs `f94fc7a` through `e43c7fb`, candle anchoring `2d5c034` through its `6f6fc86` audit, wick clearance `8879169`/`9ae0f5e`, Buy-only grouping `d209d21` | Local source only; separate rendering, anchoring and grouping concerns. Include ReplayTab's containing-candle adapter wiring and tests. Raw fills and financial records must remain ungrouped; Sell grouping is not approved |
 | V | Progressive playback `05c23eb`/`711626d`, wheel zoom `cf4d85b`, axes/volume `6994ae7`, readable sliding viewport `ca3323c`/`e37057a`, stable geometry `01620b9` | Local source only; extract in dependency order. Full three-size/playing-resize, exact-data comparison and long-seek responsiveness acceptance remains open |
-| L | CSV-derived development snapshot `d21cfc1`/`c28ddec`, launcher/build provenance `3245574` | Local source only; separate snapshot preparation from provenance, include script/data tests. Final delivered-checkout Launch.sh scenario is pending; this is not a public data release |
+| L | CSV-derived development snapshot `d21cfc1`/`c28ddec`, launcher/build provenance `3245574` | Narrow seven-column extraction is preserved in a named local stash: its old-main regression failed with unsupported columns, then 39 Data tests passed. Review found daily exports can share that layout and be mislabeled hourly; explicit source-timeframe API/CLI confirmation remains pending, so the narrow slice is not accepted or published. Its explicit-form trailing-column compatibility is retained in the stash; the broad checkpoint's stricter source rejection remains unaccepted. Launcher preparation/provenance and final delivered-checkout Launch.sh remain separate; no public data release |
 | S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Included in the current consolidated checkpoint per the latest maintainer request, not fully accepted. The earlier split-PR preference is superseded; known live-writer/retention/mid-run durability gaps and incomplete UI acceptance still prohibit merging main |
 | U | Metric units/period explanations `236d97b`/`cf65e2a`, threshold coverage `d8b3c76` | Display-only [PR #74](https://github.com/sek788432/Stock-Back-Test-System/pull/74) merged as `8ab5ea4b8db7f01d5591a748805b0ae0eb544dfe`; exact submitted head `569bbe3` passed local full tests/quality, both backend-only sanitizer presets and all CI/CodeQL checks. Period editability and typed identity are unchanged. Excluded source period-disable/normalization work and whole Task 16 Engine-record/hash acceptance remain open |
 | P | SQLite manifest-pin regression, `9bb2a9e` | [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73) reopened on 2026-10-14, then merged as `34b958d8283a5d142e190a40bce0b9fb868654d7` after every exact-head CI/CodeQL gate succeeded; two-file diff at `9b1c492`, exact local full tests/Quality and fresh focused test passed. The same assertion remains in Draft #76; no source ref was discarded |
