@@ -63,7 +63,30 @@ from main or that any broader source checkpoint is fully accepted.
   required project CI did not start because the PR had an inventory merge
   conflict. A normal merge aligns with main `2a21657` (concurrent data-only #77),
   preserves main's data, and resolves compatible document intents. Fresh
-  merge-head local gates and complete required CI remain pending.
+  merge-head local gates and complete required CI were pending at that point.
+- Published merge head `e45ac7b` then passed exact RunTest 243/243 (89.43
+  seconds) and complete non-fast Quality against `2a21657`: clean coverage
+  tests 243/243 (90.28 seconds), changed lines 1,999/2,038 and branches 224/240.
+  Remote run `38538578246` passed standards, static analysis, Ubuntu/macOS
+  tests and ASan/UBSan/TSan; CodeQL also passed. Coverage failed the unchanged
+  five-second long-range load wait at 5,002 ms, before generating coverage.
+- The existing `longRangeSeekPresentsEveryReachedCandleAndFill` test is the
+  actual remote red regression. Local old-code runs pass, so local timing is
+  comparative evidence, not a locally reproduced timeout. macOS 14.6 arm64,
+  Apple LLVM 16, checked-in coverage configuration (`--coverage -O0 -g`),
+  offscreen Qt 6.9.1, same synthetic 23,777-bar / 6,793-fill fixture, three
+  sequential runs per implementation: load before 2,376/2,357/2,280 ms and
+  after 1,727/1,698/1,760 ms; seek before 2,470/2,570/2,451 ms and after
+  2,470/2,534/2,475 ms. Reproduce with
+  `QT_QPA_PLATFORM=offscreen Output/coverage/Tests/bte_result_replay_frontend_tests longRangeSeekPresentsEveryReachedCandleAndFill`.
+  CPU sampling identified canonical SHA-256 as dominant in both open/catalog
+  workers. The local repair uses constrained fixed unsigned rotations, without
+  changing public APIs, digests, cancellation, allocation, validation or waits.
+  Independent literal binary/padding and million-a digest tests pass before
+  and after: these characterize preserved behavior, not the performance RED.
+  Incremental coverage counters from the changed test TU were stale and moved
+  out of the build; these focused runs are not aggregate coverage acceptance.
+  Fresh complete exact-head gates and remote confirmation are still required.
 
 ## Required before the broad implementation can land
 
@@ -73,9 +96,9 @@ from main or that any broader source checkpoint is fully accepted.
 | R2: retention before visibility | Pin exact immutable segments before Staging/recovered drafts become visible; keep pins through failure, Drafts, Results and Trash | Current initialization/recovery gaps remain; part of the approved safety direction |
 | R3: execution-time durability | Atomically persist every completed bar and its full canonical batch; stop on storage failure; recover only a committed prefix as Interrupted Draft | Current execution still records at terminal time; implementation and crash/commit-boundary tests missing |
 | Legacy staging compatibility | Preserve and warn about old unleased Staging rather than guessing that its process is dead | Explicitly approved policy; code and English warning delivery not implemented |
-| CI / Results rename acceptance | Clear all GCC wait-macro, IWYU and macOS crash failures on the actual submitted SHA | Portability/null-cell repairs were submitted in `98819b3`; CodeQL passed, but required project CI did not run while the PR was conflicted. New merge-head acceptance remains pending |
-| Exact-head CI readiness | Repeat full gates after main alignment, then verify every required remote job | `32e5034` coverage failed; `98819b3` repaired it and passed full local Quality at 1,999/2,038. CodeQL alone passed remotely; project CI was prevented by a document merge conflict. New merge-head gates remain required |
-| CI long-load responsiveness | Diagnose and fix the Linux coverage load that remains “Loading result” beyond five seconds; verify long seek, Max and resizing without stalls | Diagnostic time/status added; no accepted performance fix and no weakened timeout. This is not R8 data-completeness acceptance |
+| CI / Results rename acceptance | Clear all GCC wait-macro, IWYU and macOS crash failures on the actual submitted SHA | Remote `e45ac7b` standards/static/platform tests and sanitizers passed; this closes those scoped mechanical failures, not native or lifecycle acceptance |
+| Exact-head CI readiness | Verify every required remote job on the repair head | `e45ac7b` passed full local gates but remote coverage failed the long-load wait. Local fixed-rotation repair needs complete exact-head gates and remote confirmation |
+| CI long-load responsiveness | Fix the Linux coverage load beyond five seconds; verify long seek, Max and resizing without stalls | Profiled SHA-256 fixed-rotation repair has three faster local load samples and preserved digest vectors; remote confirmation and broader acceptance pending. Timeout unchanged. This is not R8 data-completeness acceptance |
 | R8: long-range saved-data completeness | Compare selected range, exact saved spans, actual source rows and visible Hourly/Daily candles to explain the reported sparse chart | Final real-data correctness comparison remains open; a faster load or longer wait cannot close this finding |
 | T: exact Daily fill selection | Do not show fills from an unselected interior-gap timestamp merely because it lies between the day's first/last selected bars | Defect corroborated; narrow extraction retained in a stash, repair/acceptance open |
 | L: seven-column source provenance | Distinguish actual hourly CSV from a seven-column daily export; preserve or explicitly decide trailing-column compatibility | Explicit source-timeframe contract unresolved; compatibility-aware extraction retained in a stash |

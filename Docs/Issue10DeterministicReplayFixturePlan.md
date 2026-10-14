@@ -1,6 +1,21 @@
 # Backtest Result K-Line Replay Implementation Plan
 
-> **Latest CI repair checkpoint (2026-10-14):** Published #76 head `98819b3`
+> **Latest CI/performance checkpoint (2026-10-14): Needs changes.** Published
+> #76 head `e45ac7b` passed exact RunTest (243/243, 89.43 seconds) and full
+> non-fast Quality against `2a21657` (coverage tests 243/243, 90.28 seconds;
+> changed lines 1,999/2,038; branches 224/240). Remote CI run `38538578246`
+> passed project standards, static analysis, both platform test jobs and both
+> sanitizer jobs; CodeQL also passed. Coverage still failed the unchanged
+> five-second long-range Replay load wait (5,002 ms), not the coverage ratio.
+> Profiling identified canonical SHA-256 as the dominant worker cost. A local
+> behavior-preserving fixed-rotation repair passed independent digest vectors
+> and three long-range runs: load 1,727/1,698/1,760 ms versus
+> 2,376/2,357/2,280 ms before; seek 2,470/2,534/2,475 ms versus
+> 2,470/2,570/2,451 ms. Complete repair-head gates, publication and remote
+> confirmation remain pending. No timeout, hash validation or CI gate changed;
+> all semantic and native-acceptance blockers remain open.
+
+> **Earlier CI repair checkpoint (2026-10-14):** Published #76 head `98819b3`
 > passed exact RunTest (243/243, 87.99 seconds) and complete non-fast Quality
 > against `34b958d` (exit 0; coverage tests 243/243, 87.70 seconds; changed lines
 > 1,999/2,038; branches 224/240). CodeQL passed, but the required project CI did

@@ -20,6 +20,16 @@ retained. Do not force-push or delete its history as part of extraction.
 
 ### Current consolidation checkpoint
 
+- Latest published #76 head `e45ac7b` passed full exact local tests/Quality
+  against main `2a21657`. Remote run `38538578246` passed standards, static
+  analysis, platform tests and both sanitizer jobs; CodeQL passed. Coverage
+  still failed the long-range load wait at 5,002 ms. A measured local SHA-256
+  fixed-rotation repair preserves public digest behavior and all validation:
+  three coverage-build load samples improved from 2,376/2,357/2,280 ms to
+  1,727/1,698/1,760 ms. Complete repair-head gates, publication and remote
+  acceptance remain pending; this does not resolve persistence or native
+  acceptance blockers. See [remaining work](Issue10RemainingWork.md) for the
+  reproducible command and limitations.
 - Branch: `codex/issue10-consolidated`, fixed main base
   `999c1b90a2748fe09fbe6d1003f64633f124c285`; original source tip remains
   `6ac45eaeecfdf1f840a994b951957340bf78fafd` without rewriting its 82 commits.
