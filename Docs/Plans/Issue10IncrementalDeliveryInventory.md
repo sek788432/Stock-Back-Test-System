@@ -20,6 +20,20 @@ retained. Do not force-push or delete its history as part of extraction.
 
 ### Current consolidation checkpoint
 
+- Published #76 rotation repair `d50dabb` passed full exact local gates but
+  Linux coverage still failed its five-second load wait in `38583994672`.
+  A separate macOS checkout `early EOF` was requested to rerun; it was not a
+  test failure or a passing job. Independently safe rotation-only PR #78 at
+  `e4f9e0c` contains exactly two Core implementation/test files, with full
+  exact local tests/Quality and both backend sanitizers passed. Every required
+  remote check passed; it was squash-merged into `main` as `4750042` on
+  2026-10-15. A further bounded-array / in-place
+  SHA block probe is local only: independent digest/subspan tests and three
+  faster load runs passed, but review/full exact-head gates/remote confirmation
+  remain required. No unfinished persistence/chart/CSV behavior was smuggled
+  into #78, and no known #76 blocker is declared closed. Detailed raw samples,
+  stale-counter diagnostic failure and limitations are in
+  [remaining work](Issue10RemainingWork.md).
 - Latest published #76 head `e45ac7b` passed full exact local tests/Quality
   against main `2a21657`. Remote run `38538578246` passed standards, static
   analysis, platform tests and both sanitizer jobs; CodeQL passed. Coverage

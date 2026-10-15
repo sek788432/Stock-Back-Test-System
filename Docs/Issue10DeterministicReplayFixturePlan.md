@@ -1,5 +1,21 @@
 # Backtest Result K-Line Replay Implementation Plan
 
+> **Latest follow-up (2026-10-15): Needs changes.** Published #76 `d50dabb`
+> passed exact full tests (245/245, 84.28 seconds) and non-fast Quality
+> (coverage tests 245/245, 87.06 seconds; lines 2,010/2,049; branches 225/240).
+> Remote run `38583994672` still failed Linux coverage at the unchanged
+> five-second load wait. The macOS job failed Git checkout with `early EOF`,
+> before testing; only that infrastructure-failed job was requested to rerun.
+> A safe two-file rotation-only extraction, PR #78 (`e4f9e0c`), passed every
+> required remote check and was squash-merged into `main` as `4750042`. A
+> further local probe uses
+> provably bounded internal SHA arrays and in-place full-block hashing with a
+> 128-byte padding tail. Independent digests and borrowed-subspan cases pass;
+> three load samples are 980/1,115/967 ms, versus 1,549/1,564/1,541 ms for the
+> bounded-array-only step. Fresh review, full exact-head gates and remote
+> confirmation are required before publishing this follow-up. No timeout or
+> data/hash validation is weakened, and no persistence/native blocker is closed.
+
 > **Latest CI/performance checkpoint (2026-10-14): Needs changes.** Published
 > #76 head `e45ac7b` passed exact RunTest (243/243, 89.43 seconds) and full
 > non-fast Quality against `2a21657` (coverage tests 243/243, 90.28 seconds;

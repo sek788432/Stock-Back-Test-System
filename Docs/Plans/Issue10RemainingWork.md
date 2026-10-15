@@ -1,6 +1,6 @@
 # Issue 10 Remaining Work
 
-**As of 2026-10-14: Needs changes.** This is a current delivery/acceptance
+**As of 2026-10-15: Needs changes.** This is a current delivery/acceptance
 summary, not a replacement for the full dated
 [implementation plan](../Issue10DeterministicReplayFixturePlan.md) or the
 [source inventory](Issue10IncrementalDeliveryInventory.md).
@@ -89,6 +89,43 @@ from main or that any broader source checkpoint is fully accepted.
   Fresh complete exact-head gates and remote confirmation are still required.
 
 ## Required before the broad implementation can land
+
+Latest follow-up evidence (2026-10-15):
+
+- Published #76 `d50dabb` passed full RunTest 245/245 (84.28 seconds) and
+  complete non-fast Quality: clean coverage tests 245/245 (87.06 seconds),
+  changed lines 2,010/2,049, branches 225/240. Remote run `38583994672` still
+  failed the unchanged Linux long-load wait at 5,002 ms. Its macOS failure was
+  Git checkout `early EOF`, before building/testing; only that job was requested
+  to rerun. These are different failure classes, not a successful CI checkpoint.
+- Rotation-only two-file PR #78 (`e4f9e0c`) excludes all unfinished persistence,
+  chart and CSV behavior. Main baseline tests passed 219/219 (57.74 seconds);
+  exact extraction RunTest passed 221/221 (58.57 seconds), complete non-fast
+  Quality passed with clean coverage tests 221/221 (63.59 seconds), lines 11/11
+  and no changed runtime branches (0/0). Local backend-only ASan/UBSan and TSan
+  passed 184/184 (49.96 and 75.43 seconds). Every required remote check passed
+  and the PR was squash-merged into `main` as `4750042` on 2026-10-15; this
+  independently useful improvement does not fix #76's load RED.
+- New sampling of `d50dabb` found 372 non-const and 59 const fixed-array `.at`
+  top-of-stack samples, plus the already observed full-input padding copy and
+  reallocation. A local bounded-array-only probe passed the independent digests
+  and three original long-range runs: load 1,549/1,564/1,541 ms, seek
+  2,491/2,487/2,475 ms. The next single-variable probe directly hashes complete
+  input blocks and copies only the final padding into a 128-byte stack array:
+  load 980/1,115/967 ms, seek 2,481/2,472/2,491 ms. The unchanged pre-array
+  comparison samples and command/machine limits above still apply. These local
+  sequential measurements are not remote acceptance or a latency guarantee.
+- The follow-up keeps fixed array indices bounded by the round count, changes
+  no canonical framing or public API, and checks independent empty/abc,
+  binary padding-boundary and million-a digests plus nonzero-offset borrowed
+  byte/string views. Review, full exact-head tests/Quality/sanitizers and remote
+  confirmation remain pending for this unsubmitted follow-up.
+- After switching between baseline and broad branches, a diagnostic executable
+  passed its Qt cases but exited 139 while merging stale GCDA counters. It is
+  not counted as a passing execution. Only generated coverage counters were
+  moved to an owned temporary directory; the clean-counter rerun passed.
+  Final full Quality will rebuild fresh coverage; source/user artifacts were
+  neither deleted nor altered for counter cleanup.
 
 | Priority / plan area | What remains | Current state |
 | --- | --- | --- |
