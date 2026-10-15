@@ -61,7 +61,7 @@ std::string sha256(const std::span<const std::byte> bytes) {
         // controls them. Tie the schedule to the constants to preserve that
         // bound.
         std::array<std::uint32_t, roundCount> words{};
-        std::span<std::uint32_t, roundCount> schedule{words};
+        const std::span<std::uint32_t, roundCount> schedule{words};
         for (std::size_t index = 0; index < 16; ++index) {
           schedule[index] = readBigEndianWord(block, index * 4);
         }
