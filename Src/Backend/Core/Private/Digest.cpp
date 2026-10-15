@@ -71,7 +71,6 @@ std::string sha256(const std::span<const std::byte> bytes) {
           words[index] =
               words[index - 16] + sigmaZero + words[index - 7] + sigmaOne;
         }
-
         auto workingA = hash[0];
         auto workingB = hash[1];
         auto workingC = hash[2];
@@ -94,7 +93,6 @@ std::string sha256(const std::span<const std::byte> bytes) {
           const auto majority = (workingA & workingB) ^ (workingA & workingC) ^
                                 (workingB & workingC);
           const auto tempTwo = sumZero + majority;
-
           workingH = workingG;
           workingG = workingF;
           workingF = workingE;

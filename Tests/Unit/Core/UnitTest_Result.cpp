@@ -113,7 +113,6 @@ TEST(DigestTest, sha256MatchesPublishedMillionAVector) {
   EXPECT_EQ(bte::core::sha256(std::string(1'000'000, 'a')),
             "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
 }
-
 TEST(DigestTest, sha256HonorsBorrowedSubspansWithoutHashingSurroundingBytes) {
   std::vector<std::byte> storage(67, std::byte{0xff});
   for (std::size_t index = 1; index <= 65; ++index) {
