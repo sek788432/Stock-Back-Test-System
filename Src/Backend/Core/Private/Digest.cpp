@@ -52,24 +52,26 @@ std::string sha256(const std::span<const std::byte> bytes) {
                                     0x1f83d9abU, 0x5be0cd19U};
 
   constexpr std::size_t blockSize = 64;
+  constexpr auto constants = std::span{roundConstants};
   const auto compressBlock =
-      [&hash](const std::span<const std::byte, blockSize> block) {
+      [&hash, constants](const std::span<const std::byte, blockSize> block) {
         // All indices below are fixed or bounded by this round count; no caller
         // controls them. Tie the schedule to the constants to preserve that
         // bound.
         std::array<std::uint32_t, roundConstants.size()> words{};
+        auto schedule = std::span{words};
         for (std::size_t index = 0; index < 16; ++index) {
-          words[index] = readBigEndianWord(block, index * 4);
+          schedule[index] = readBigEndianWord(block, index * 4);
         }
-        for (std::size_t index = 16; index < words.size(); ++index) {
-          const auto sigmaZero = rotateRight<7>(words[index - 15]) ^
-                                 rotateRight<18>(words[index - 15]) ^
-                                 (words[index - 15] >> 3U);
-          const auto sigmaOne = rotateRight<17>(words[index - 2]) ^
-                                rotateRight<19>(words[index - 2]) ^
-                                (words[index - 2] >> 10U);
-          words[index] =
-              words[index - 16] + sigmaZero + words[index - 7] + sigmaOne;
+        for (std::size_t index = 16; index < schedule.size(); ++index) {
+          const auto sigmaZero = rotateRight<7>(schedule[index - 15]) ^
+                                 rotateRight<18>(schedule[index - 15]) ^
+                                 (schedule[index - 15] >> 3U);
+          const auto sigmaOne = rotateRight<17>(schedule[index - 2]) ^
+                                rotateRight<19>(schedule[index - 2]) ^
+                                (schedule[index - 2] >> 10U);
+          schedule[index] = schedule[index - 16] + sigmaZero +
+                            schedule[index - 7] + sigmaOne;
         }
         auto workingA = hash[0];
         auto workingB = hash[1];
@@ -80,13 +82,14 @@ std::string sha256(const std::span<const std::byte> bytes) {
         auto workingG = hash[6];
         auto workingH = hash[7];
 
-        for (std::size_t index = 0; index < words.size(); ++index) {
+        for (std::size_t index = 0; index < schedule.size(); ++index) {
           const auto sumOne = rotateRight<6>(workingE) ^
                               rotateRight<11>(workingE) ^
                               rotateRight<25>(workingE);
           const auto choose = (workingE & workingF) ^ ((~workingE) & workingG);
           const auto tempOne =
-              workingH + sumOne + choose + roundConstants[index] + words[index];
+              workingH + sumOne + choose + constants[index] +
+              schedule[index];
           const auto sumZero = rotateRight<2>(workingA) ^
                                rotateRight<13>(workingA) ^
                                rotateRight<22>(workingA);
@@ -123,18 +126,19 @@ std::string sha256(const std::span<const std::byte> bytes) {
   }
 
   std::array<std::byte, blockSize * 2> tail{};
-  std::ranges::copy(bytes.subspan(completeSize), tail.begin());
-  tail[remainder] = std::byte{0x80};
+  auto tailBytes = std::span{tail};
+  std::ranges::copy(bytes.subspan(completeSize), tailBytes.begin());
+  tailBytes[remainder] = std::byte{0x80};
   const auto tailSize =
       remainder < blockSize - sizeof(std::uint64_t) ? blockSize : blockSize * 2;
   const auto bitLength = static_cast<std::uint64_t>(bytes.size()) * 8U;
   for (std::size_t index = 0; index < sizeof(bitLength); ++index) {
-    tail[tailSize - sizeof(bitLength) + index] =
+    tailBytes[tailSize - sizeof(bitLength) + index] =
         static_cast<std::byte>((bitLength >> (56U - index * 8U)) & 0xffU);
   }
   for (std::size_t offset = 0; offset < tailSize; offset += blockSize) {
     compressBlock(std::span<const std::byte, blockSize>{
-        std::span{tail}.subspan(offset, blockSize)});
+        tailBytes.subspan(offset, blockSize)});
   }
 
   std::ostringstream output;
