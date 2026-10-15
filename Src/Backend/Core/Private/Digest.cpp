@@ -70,8 +70,8 @@ std::string sha256(const std::span<const std::byte> bytes) {
           const auto sigmaOne = rotateRight<17>(schedule[index - 2]) ^
                                 rotateRight<19>(schedule[index - 2]) ^
                                 (schedule[index - 2] >> 10U);
-          schedule[index] = schedule[index - 16] + sigmaZero +
-                            schedule[index - 7] + sigmaOne;
+          schedule[index] =
+              schedule[index - 16] + sigmaZero + schedule[index - 7] + sigmaOne;
         }
         auto workingA = hash[0];
         auto workingB = hash[1];
@@ -88,8 +88,7 @@ std::string sha256(const std::span<const std::byte> bytes) {
                               rotateRight<25>(workingE);
           const auto choose = (workingE & workingF) ^ ((~workingE) & workingG);
           const auto tempOne =
-              workingH + sumOne + choose + constants[index] +
-              schedule[index];
+              workingH + sumOne + choose + constants[index] + schedule[index];
           const auto sumZero = rotateRight<2>(workingA) ^
                                rotateRight<13>(workingA) ^
                                rotateRight<22>(workingA);
