@@ -8,12 +8,16 @@
 > before testing; only that infrastructure-failed job was requested to rerun.
 > A safe two-file rotation-only extraction, PR #78 (`e4f9e0c`), passed every
 > required remote check and was squash-merged into `main` as `4750042`. A
-> further local probe uses
-> provably bounded internal SHA arrays and in-place full-block hashing with a
-> 128-byte padding tail. Independent digests and borrowed-subspan cases pass;
-> three load samples are 980/1,115/967 ms, versus 1,549/1,564/1,541 ms for the
-> bounded-array-only step. Fresh review, full exact-head gates and remote
-> confirmation are required before publishing this follow-up. No timeout or
+> stream/padding follow-up is committed at `083cf26`. On that exact HEAD,
+> RunTest passed 246/246 (91.25 seconds), complete non-fast Quality passed
+> against `4750042` with coverage tests 246/246, 98% changed lines and 236/252
+> changed branches (93.7%), ASan/UBSan passed 203/203 (53.23 seconds), and
+> TSan passed 203/203 (81.24 seconds). The probe uses provably bounded
+> internal SHA arrays and in-place full-block hashing with a 128-byte padding
+> tail. Independent digests and borrowed-subspan cases pass; three load samples
+> are 980/1,115/967 ms, versus 1,549/1,564/1,541 ms for the bounded-array-only
+> step. Remote confirmation and independent follow-up review remain required
+> before declaring the broad PR ready. No timeout or
 > data/hash validation is weakened, and no persistence/native blocker is closed.
 
 > **Latest CI/performance checkpoint (2026-10-14): Needs changes.** Published

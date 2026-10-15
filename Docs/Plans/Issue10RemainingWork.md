@@ -115,11 +115,13 @@ Latest follow-up evidence (2026-10-15):
   load 980/1,115/967 ms, seek 2,481/2,472/2,491 ms. The unchanged pre-array
   comparison samples and command/machine limits above still apply. These local
   sequential measurements are not remote acceptance or a latency guarantee.
-- The follow-up keeps fixed array indices bounded by the round count, changes
-  no canonical framing or public API, and checks independent empty/abc,
-  binary padding-boundary and million-a digests plus nonzero-offset borrowed
-  byte/string views. Review, full exact-head tests/Quality/sanitizers and remote
-  confirmation remain pending for this unsubmitted follow-up.
+- The follow-up at `083cf26` keeps fixed array indices bounded by an explicit
+  round extent, changes no canonical framing or public API, and checks
+  independent empty/abc, binary padding-boundary and million-a digests plus
+  nonzero-offset borrowed byte/string views. Exact-head RunTest passed 246/246;
+  full Quality passed against `4750042` (98% changed lines, 236/252 branches);
+  ASan/UBSan and TSan each passed 203/203. Remote confirmation and independent
+  follow-up review remain pending; the broad PR is not thereby accepted.
 - After switching between baseline and broad branches, a diagnostic executable
   passed its Qt cases but exited 139 while merging stale GCDA counters. It is
   not counted as a passing execution. Only generated coverage counters were

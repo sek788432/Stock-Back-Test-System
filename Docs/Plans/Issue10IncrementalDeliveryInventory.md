@@ -27,10 +27,12 @@ retained. Do not force-push or delete its history as part of extraction.
   `e4f9e0c` contains exactly two Core implementation/test files, with full
   exact local tests/Quality and both backend sanitizers passed. Every required
   remote check passed; it was squash-merged into `main` as `4750042` on
-  2026-10-15. A further bounded-array / in-place
-  SHA block probe is local only: independent digest/subspan tests and three
-  faster load runs passed, but review/full exact-head gates/remote confirmation
-  remain required. No unfinished persistence/chart/CSV behavior was smuggled
+  2026-10-15. The bounded-array / in-place SHA follow-up is committed at
+  `083cf26`. Its exact-head RunTest passed 246/246, complete Quality passed
+  against `4750042` (98% changed lines; 236/252 branches), and ASan/UBSan and
+  TSan each passed 203/203. Independent digest/subspan tests and three faster
+  load runs passed; remote confirmation and independent follow-up review remain
+  required. No unfinished persistence/chart/CSV behavior was smuggled
   into #78, and no known #76 blocker is declared closed. Detailed raw samples,
   stale-counter diagnostic failure and limitations are in
   [remaining work](Issue10RemainingWork.md).
