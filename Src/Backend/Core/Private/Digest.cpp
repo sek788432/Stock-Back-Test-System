@@ -13,7 +13,8 @@
 namespace bte::core {
 namespace {
 
-constexpr std::array<std::uint32_t, 64> roundConstants{
+constexpr std::size_t roundCount = 64;
+constexpr std::array<std::uint32_t, roundCount> roundConstants{
     0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU,
     0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U, 0xd807aa98U, 0x12835b01U,
     0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U,
@@ -52,14 +53,15 @@ std::string sha256(const std::span<const std::byte> bytes) {
                                     0x1f83d9abU, 0x5be0cd19U};
 
   constexpr std::size_t blockSize = 64;
-  constexpr auto constants = std::span{roundConstants};
+  constexpr std::span<const std::uint32_t, roundCount> constants{
+      roundConstants};
   const auto compressBlock =
       [&hash, constants](const std::span<const std::byte, blockSize> block) {
         // All indices below are fixed or bounded by this round count; no caller
         // controls them. Tie the schedule to the constants to preserve that
         // bound.
-        std::array<std::uint32_t, roundConstants.size()> words{};
-        auto schedule = std::span{words};
+        std::array<std::uint32_t, roundCount> words{};
+        std::span<std::uint32_t, roundCount> schedule{words};
         for (std::size_t index = 0; index < 16; ++index) {
           schedule[index] = readBigEndianWord(block, index * 4);
         }
