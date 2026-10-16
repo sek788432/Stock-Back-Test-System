@@ -1,5 +1,10 @@
 # Backtest Result K-Line Replay Implementation Plan
 
+> **Current delivery inventory (2026-10-16):** See
+> [Issue 10 remaining work](Plans/Issue10RemainingWork.md) for delivered PRs,
+> preserved local work and the unfinished requirements. The historical
+> checkboxes below are not whole-plan acceptance.
+
 > **Historical baseline statement (2026-09-16):** Tasks 1–7 and the acceptance
 > checklist are implemented for the plan's declared current single-symbol
 > Engine scope. Unsupported future record families remain explicit capability

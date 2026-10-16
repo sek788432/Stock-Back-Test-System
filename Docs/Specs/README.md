@@ -25,6 +25,13 @@ protected, non-canonical proposal area. It is excluded from this cleanup phase,
 does not override a canonical specification, and requires a separate maintainer
 review before issue #53 can reach final acceptance.
 
+## Proposed designs
+
+The [Result persistence safety design](ResultPersistenceSafetyDesign.md) is a
+proposed detailed repair for Issue 10 R1–R3. Its architectural direction is
+approved, but the proposed interfaces and protocol are not implemented; it does
+not replace the current owning module contracts.
+
 ## Accepted foundations
 
 - The project-owned C++ engine is the only execution and accounting authority.
