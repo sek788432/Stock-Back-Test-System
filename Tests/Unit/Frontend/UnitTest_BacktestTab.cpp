@@ -2,6 +2,7 @@
 
 #include "WaitUntil.h"
 
+#include <QByteArray>
 #include <QCalendarWidget>
 #include <QCheckBox>
 #include <QComboBox>
@@ -10,20 +11,50 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTest>
 #include <QThread>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 namespace {
+
+class ScopedEnvironmentRestore final {
+public:
+  explicit ScopedEnvironmentRestore(QByteArray name)
+      : name_{std::move(name)},
+        previous_{qEnvironmentVariableIsSet(name_.constData())
+                      ? std::optional<QByteArray>{qgetenv(name_.constData())}
+                      : std::nullopt} {}
+
+  ~ScopedEnvironmentRestore() {
+    if (previous_.has_value()) {
+      qputenv(name_.constData(), *previous_);
+    } else {
+      qunsetenv(name_.constData());
+    }
+  }
+
+  ScopedEnvironmentRestore(const ScopedEnvironmentRestore &) = delete;
+  ScopedEnvironmentRestore &
+  operator=(const ScopedEnvironmentRestore &) = delete;
+  ScopedEnvironmentRestore(ScopedEnvironmentRestore &&) = delete;
+  ScopedEnvironmentRestore &operator=(ScopedEnvironmentRestore &&) = delete;
+
+private:
+  QByteArray name_;
+  std::optional<QByteArray> previous_;
+};
 
 bte::bindings::BacktestSnapshot filledSnapshot() {
   return bte::bindings::BacktestSnapshot{
@@ -51,6 +82,8 @@ bte::bindings::BacktestSnapshot filledSnapshot() {
       .finalPrice = 120.0,
       .positionShares = 10,
       .barsProcessed = 2,
+      .resultId = {},
+      .canonicalResultHash = {},
   };
 }
 
@@ -68,6 +101,8 @@ noFillSnapshot(const bte::bindings::BacktestOutcome outcome) {
       .finalPrice = 200.0,
       .positionShares = 0,
       .barsProcessed = 2,
+      .resultId = {},
+      .canonicalResultHash = {},
   };
 }
 
@@ -76,6 +111,7 @@ class BacktestTabTest final : public QObject {
 
 private slots:
   void exposesAccessibleRunConfiguration();
+  void promotedResultEnablesOpenInReplayAndEmitsExactId();
   void calendarYearsAreDirectlySelectable();
   void runExecutesOffTheUiThreadAndDisplaysFill();
   void failedRunClearsPriorResultAndPreservesError();
@@ -85,11 +121,40 @@ private slots:
   void workerExceptionIsPresentedAsAnError();
   void unknownWorkerExceptionIsPresentedAsAnError();
   void defaultRunnerExecutesTrackedBars();
+  void applicationConfiguredRunnerUsesEnvironmentStorage();
   void selectableConditionsSubmitTypedPlanToBackend();
   void selectableMetricsSubmitTypedPlansToBackend();
+  void selectableMetricUnitsDescribeEveryConditionRow();
+  void metricLabelsDoNotRescaleSignedOrZeroThresholds();
   void selectableConditionStatusNamesItsSelectedStrategy();
   void selectableControlsPresentNoSignalAndSellFill();
 };
+
+void BacktestTabTest::promotedResultEnablesOpenInReplayAndEmitsExactId() {
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = "0123456789abcdef0123456789abcdef";
+  bte::frontend::BacktestTab tab{
+      [snapshot](bte::bindings::BacktestConfiguration,
+                 bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      }};
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *open = tab.findChild<QPushButton *>("backtestOpenInReplayButton");
+  QVERIFY(run != nullptr);
+  QVERIFY(open != nullptr);
+  QVERIFY(!open->isEnabled());
+  QCOMPARE(open->text(), QString{"Open in Replay"});
+  QVERIFY(!open->accessibleName().isEmpty());
+  QSignalSpy opened{&tab, &bte::frontend::BacktestTab::openResultInReplay};
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([open] { return open->isEnabled(); }));
+  QTest::mouseClick(open, Qt::LeftButton);
+
+  QCOMPARE(opened.count(), 1);
+  QCOMPARE(opened.first().first().toString(),
+           QString{"0123456789abcdef0123456789abcdef"});
+}
 
 void BacktestTabTest::exposesAccessibleRunConfiguration() {
   const bte::frontend::BacktestTab tab;
@@ -372,6 +437,34 @@ void BacktestTabTest::defaultRunnerExecutesTrackedBars() {
   QVERIFY(run->isEnabled());
 }
 
+void BacktestTabTest::applicationConfiguredRunnerUsesEnvironmentStorage() {
+  const ScopedEnvironmentRestore resultStoreRestore{"BTE_RESULT_STORE"};
+  const ScopedEnvironmentRestore dataStoreRestore{"BTE_DATA_STORE"};
+  const ScopedEnvironmentRestore snapshotRestore{"BTE_DATA_SNAPSHOT_ID"};
+  const auto configuredRoot =
+      std::filesystem::temp_directory_path() / "bte-configured-backtest-tab";
+  std::filesystem::remove_all(configuredRoot);
+  QVERIFY(qputenv("BTE_RESULT_STORE",
+                  (configuredRoot / "Results").string().c_str()));
+  QVERIFY(
+      qputenv("BTE_DATA_STORE", (configuredRoot / "Data").string().c_str()));
+  QVERIFY(qputenv("BTE_DATA_SNAPSHOT_ID", std::string(64, 'd').c_str()));
+  auto tab = bte::frontend::BacktestTab::createApplicationConfigured();
+  auto *run = tab->findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab->findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+
+  QTest::mouseClick(run, Qt::LeftButton);
+
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text().contains("snapshot", Qt::CaseInsensitive);
+  }));
+  QVERIFY(run->isEnabled());
+  QVERIFY(!std::filesystem::exists(configuredRoot / "Results" / "Results"));
+  std::filesystem::remove_all(configuredRoot);
+}
+
 void BacktestTabTest::selectableConditionsSubmitTypedPlanToBackend() {
   std::mutex captureMutex;
   std::optional<bte::bindings::BacktestConfiguration> captured;
@@ -550,10 +643,218 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
     const auto &condition = captured->selectableStrategy->buy.conditions[0];
     QCOMPARE(condition.source, metricCase.source);
     QCOMPARE(condition.thresholdDomain, metricCase.domain);
+    if (metricCase.label == "MACD histogram") {
+      QCOMPARE(condition.indicator.period, 9);
+      QCOMPARE(condition.indicator.secondaryPeriod, 18);
+      QCOMPARE(condition.indicator.signalPeriod, 6);
+    } else {
+      QCOMPARE(condition.indicator.period, 18);
+    }
     if (metricCase.indicatorKind.has_value()) {
       QCOMPARE(condition.indicator.kind, metricCase.indicatorKind.value());
       QCOMPARE(condition.indicator.output, metricCase.indicatorOutput);
     }
+  }
+}
+
+void BacktestTabTest::selectableMetricUnitsDescribeEveryConditionRow() {
+  bte::frontend::BacktestTab tab{[](bte::bindings::BacktestConfiguration,
+                                    bte::core::CancellationToken) {
+    return bte::core::Result<bte::bindings::BacktestSnapshot>{filledSnapshot()};
+  }};
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  QVERIFY(strategy != nullptr);
+  strategy->setCurrentText("Selectable conditions");
+  auto *buySecondEnabled =
+      tab.findChild<QCheckBox *>("backtestBuySecondEnabledCheckBox");
+  auto *sellSecondEnabled =
+      tab.findChild<QCheckBox *>("backtestSellSecondEnabledCheckBox");
+  QVERIFY(buySecondEnabled != nullptr);
+  QVERIFY(sellSecondEnabled != nullptr);
+  buySecondEnabled->setChecked(true);
+  sellSecondEnabled->setChecked(true);
+
+  struct MetricDisplayCase {
+    QString label;
+    QString suffix;
+    bool usesPeriod;
+    QString meaning;
+    QString example;
+  };
+  const auto metrics = std::array{
+      MetricDisplayCase{"Close change %", " %", false,
+                        "previous actual bar close in percent points",
+                        "5 means a 5% rise; -5 means a 5% fall"},
+      MetricDisplayCase{"Close", " USD", false, "Current close price in USD",
+                        "100 means $100 per share"},
+      MetricDisplayCase{"SMA", " USD", true, "Indicator price in USD",
+                        "100 means $100 per share"},
+      MetricDisplayCase{"EMA", " USD", true, "Indicator price in USD",
+                        "100 means $100 per share"},
+      MetricDisplayCase{"WMA", " USD", true, "Indicator price in USD",
+                        "100 means $100 per share"},
+      MetricDisplayCase{"RSI", " level", true,
+                        "level from 0 to 100, not a price change",
+                        "30 means oscillator level 30, not a 30% price drop"},
+      MetricDisplayCase{"MACD histogram", " USD", true,
+                        "Signed price difference in USD, not a percentage",
+                        "-2 means a $2 negative difference"},
+      MetricDisplayCase{"Bollinger upper", " USD", true,
+                        "Indicator price in USD", "100 means $100 per share"},
+      MetricDisplayCase{"ATR", " USD", true,
+                        "Average price range in USD, not a percentage",
+                        "2 means a $2 range"},
+      MetricDisplayCase{"ADX", " level", true,
+                        "level from 0 to 100, not a price change",
+                        "30 means oscillator level 30, not a 30% price drop"},
+      MetricDisplayCase{"Stochastic %K", " level", true,
+                        "level from 0 to 100, not a price change",
+                        "30 means oscillator level 30, not a 30% price drop"},
+      MetricDisplayCase{"Donchian upper", " USD", true,
+                        "Indicator price in USD", "100 means $100 per share"},
+      MetricDisplayCase{"VWAP", " USD", true, "Indicator price in USD",
+                        "100 means $100 per share"},
+      MetricDisplayCase{"OBV", " shares", false,
+                        "on-balance volume in shares, not dollars",
+                        "-100 means net negative 100 shares"},
+      MetricDisplayCase{"ROC", " %", true,
+                        "selected bar lookback in percent points",
+                        "5 means a 5% rise, not 0.05%"},
+      MetricDisplayCase{"Momentum", " USD", true,
+                        "Signed price difference in USD, not a percentage",
+                        "-2 means a $2 negative difference"},
+      MetricDisplayCase{"True range", " USD", false,
+                        "Current bar true range in USD, not a percentage",
+                        "2 means a $2 range"},
+      MetricDisplayCase{"Volume", " shares", false,
+                        "Current bar trading volume in shares",
+                        "100 means 100 shares"},
+  };
+  const auto rows = std::array{
+      std::tuple{"backtestBuyMetricCombo", "backtestBuyThresholdSpinBox",
+                 "backtestBuyPeriodSpinBox"},
+      std::tuple{"backtestBuySecondMetricCombo",
+                 "backtestBuySecondThresholdSpinBox",
+                 "backtestBuySecondPeriodSpinBox"},
+      std::tuple{"backtestSellMetricCombo", "backtestSellThresholdSpinBox",
+                 "backtestSellPeriodSpinBox"},
+      std::tuple{"backtestSellSecondMetricCombo",
+                 "backtestSellSecondThresholdSpinBox",
+                 "backtestSellSecondPeriodSpinBox"},
+  };
+  for (const auto &[metricName, thresholdName, periodName] : rows) {
+    auto *metric = tab.findChild<QComboBox *>(metricName);
+    auto *threshold = tab.findChild<QDoubleSpinBox *>(thresholdName);
+    auto *period = tab.findChild<QSpinBox *>(periodName);
+    QVERIFY(metric != nullptr);
+    QVERIFY(threshold != nullptr);
+    QVERIFY(period != nullptr);
+    threshold->setValue(5.0);
+    for (const auto &expected : metrics) {
+      metric->setCurrentText(expected.label);
+      QCOMPARE(threshold->suffix(), expected.suffix);
+      QCOMPARE(threshold->value(), 5.0);
+      const auto descriptions =
+          std::array{metric->toolTip(), metric->accessibleDescription(),
+                     threshold->toolTip(), threshold->accessibleDescription()};
+      for (const auto &description : descriptions) {
+        QVERIFY(description.contains(expected.label));
+        QVERIFY(description.contains(expected.meaning));
+        QVERIFY(description.contains(expected.example));
+      }
+      QVERIFY(period->isEnabled());
+      if (expected.usesPeriod) {
+        QVERIFY(period->toolTip().contains("bars"));
+        QVERIFY(period->toolTip().contains("warm-up"));
+        QVERIFY(period->accessibleDescription().contains("bars"));
+        QVERIFY(period->accessibleDescription().contains("warm-up"));
+      } else {
+        QVERIFY(period->toolTip().contains("does not use a period"));
+        QVERIFY(
+            period->accessibleDescription().contains("does not use a period"));
+        QVERIFY(period->toolTip().contains("strategy identity"));
+        QVERIFY(period->accessibleDescription().contains("strategy identity"));
+      }
+    }
+  }
+  buySecondEnabled->setChecked(false);
+  sellSecondEnabled->setChecked(false);
+  for (const auto &periodName : std::array{"backtestBuySecondPeriodSpinBox",
+                                           "backtestSellSecondPeriodSpinBox"}) {
+    auto *period = tab.findChild<QSpinBox *>(periodName);
+    QVERIFY(period != nullptr);
+    QVERIFY(!period->isEnabled());
+  }
+}
+
+void BacktestTabTest::metricLabelsDoNotRescaleSignedOrZeroThresholds() {
+  std::mutex captureMutex;
+  std::optional<bte::bindings::BacktestConfiguration> captured;
+  std::atomic_int runCount = 0;
+  bte::frontend::BacktestTab tab{
+      [&captureMutex, &captured,
+       &runCount](bte::bindings::BacktestConfiguration configuration,
+                  bte::core::CancellationToken) {
+        const std::scoped_lock lock{captureMutex};
+        captured = std::move(configuration);
+        ++runCount;
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  auto *logic = tab.findChild<QComboBox *>("backtestBuyLogicCombo");
+  auto *metric = tab.findChild<QComboBox *>("backtestBuyMetricCombo");
+  auto *threshold =
+      tab.findChild<QDoubleSpinBox *>("backtestBuyThresholdSpinBox");
+  auto *secondEnabled =
+      tab.findChild<QCheckBox *>("backtestBuySecondEnabledCheckBox");
+  auto *secondMetric =
+      tab.findChild<QComboBox *>("backtestBuySecondMetricCombo");
+  auto *secondThreshold =
+      tab.findChild<QDoubleSpinBox *>("backtestBuySecondThresholdSpinBox");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  QVERIFY(strategy != nullptr);
+  QVERIFY(logic != nullptr);
+  QVERIFY(metric != nullptr);
+  QVERIFY(threshold != nullptr);
+  QVERIFY(secondEnabled != nullptr);
+  QVERIFY(secondMetric != nullptr);
+  QVERIFY(secondThreshold != nullptr);
+  QVERIFY(run != nullptr);
+  strategy->setCurrentText("Selectable conditions");
+  secondEnabled->setChecked(true);
+  logic->setCurrentText("Match ANY (OR)");
+  metric->setCurrentText("Close change %");
+  threshold->setValue(5.0);
+  secondMetric->setCurrentText("ROC");
+  secondThreshold->setValue(0.05);
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return runCount.load() == 1 && run->isEnabled(); }));
+  {
+    const std::scoped_lock lock{captureMutex};
+    QVERIFY(captured->selectableStrategy.has_value());
+    const auto &buy = captured->selectableStrategy->buy;
+    QCOMPARE(buy.logic, bte::strategy::ConditionLogic::any);
+    QCOMPARE(buy.conditions.size(), std::size_t{2});
+    QCOMPARE(buy.conditions[0].threshold, 5.0);
+    QCOMPARE(buy.conditions[1].threshold, 0.05);
+  }
+  logic->setCurrentText("Match ALL (AND)");
+  metric->setCurrentText("Momentum");
+  threshold->setValue(-5.0);
+  secondMetric->setCurrentText("OBV");
+  secondThreshold->setValue(0.0);
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return runCount.load() == 2 && run->isEnabled(); }));
+  {
+    const std::scoped_lock lock{captureMutex};
+    QVERIFY(captured->selectableStrategy.has_value());
+    const auto &buy = captured->selectableStrategy->buy;
+    QCOMPARE(buy.logic, bte::strategy::ConditionLogic::all);
+    QCOMPARE(buy.conditions[0].threshold, -5.0);
+    QCOMPARE(buy.conditions[1].threshold, 0.0);
   }
 }
 

@@ -59,26 +59,6 @@ std::unique_ptr<bte::data::BarStream> makeStream() {
 
 } // namespace
 
-TEST(ReplayClockTest, intervalForSpeedMultiplier_matchesPlaybackContract) {
-  bte::engine::ReplayClock clock{};
-
-  clock.setSpeedMultiplier(1.0);
-  EXPECT_EQ(clock.waitInterval(), std::chrono::milliseconds{1000});
-
-  clock.setSpeedMultiplier(5.0);
-  EXPECT_EQ(clock.waitInterval(), std::chrono::milliseconds{200});
-
-  clock.setSpeedMultiplier(10.0);
-  EXPECT_EQ(clock.waitInterval(), std::chrono::milliseconds{100});
-
-  clock.setSpeedMultiplier(0.0);
-  EXPECT_EQ(clock.waitInterval(), std::chrono::milliseconds{0});
-
-  clock.setSpeedMultiplier(-5.0);
-  EXPECT_DOUBLE_EQ(clock.speedMultiplier(), 0.0);
-  EXPECT_EQ(clock.waitInterval(), std::chrono::milliseconds{0});
-}
-
 TEST(ReplayTest, nullStreamIsAStableCompletedReplay) {
   bte::engine::Replay replay{nullptr};
 

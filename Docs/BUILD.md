@@ -1,27 +1,60 @@
 # Building the C++ workspace
 
 This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+**.
-Core, Data, streaming Indicators, the Selectable Strategy path, the bar-only
-Replay, and the limited Engine build in the default preset. Bindings, Frontend,
-and App targets are implemented behind `BTE_BUILD_QT_APP`, including the
-starter and Selectable Conditions Backtest page. General strategy execution,
-broker/accounting/metrics, and canonical result persistence described in Specs
-05 and 07 remain planned.
+Core, Data, streaming Indicators, the Selectable Strategy path, Results,
+result-backed Replay, and the limited Engine build in the default preset.
+Bindings, Frontend, and App targets are implemented behind `BTE_BUILD_QT_APP`,
+including the starter and Selectable Conditions Backtest page. General strategy
+execution, broker/accounting/metrics, and the remaining canonical result
+families described in
+[`Specs/StrategyAuthoring.md`](Specs/StrategyAuthoring.md) and
+[`Specs/EngineReplayPnL.md`](Specs/EngineReplayPnL.md) remain planned.
 
 ## Prerequisites
 
 - **CMake** 3.24 or newer
 - **Make** or **Ninja** — presets use **Unix Makefiles** by default so Xcode Command Line Tools are enough; install Ninja (`brew install ninja`) if you prefer it.
 - A **C++20** compiler (Apple Clang, upstream Clang, or GCC 10+)
+- **Git** and the pinned **vcpkg** checkout below for SQLite 3.53.4. GoogleTest
+  also uses Git on the first test configure.
 
 Optional:
 
-- **Git** (for FetchContent to download Google Test on first configure)
 - **Qt 6.8+** (Core, Concurrent, Widgets, Charts, and Test when tests are enabled) when configuring with `BTE_BUILD_QT_APP=ON`
 - **Local quality bootstrap:** Homebrew on macOS, or `apt` and `sudo` access on
   Ubuntu. `RunQuality.sh` installs the CI-compatible LLVM 18 analyzer toolchain,
   the remaining analyzers, and Python 3.12, then owns a hash-locked Python
   environment under `Output/QualityVenv/` automatically.
+
+### Pinned SQLite setup
+
+From the repository root, bootstrap the same immutable registry used by CI:
+
+```bash
+git clone --branch 2026.07.29 --depth 1 https://github.com/microsoft/vcpkg.git Output/Vcpkg
+test "$(git -C Output/Vcpkg rev-parse HEAD)" = 9e593bb18ea69cc5095e012465dcd675a822ed0d
+Output/Vcpkg/bootstrap-vcpkg.sh -disableMetrics
+export VCPKG_ROOT="$PWD/Output/Vcpkg"
+```
+
+Run the clone/bootstrap once; export `VCPKG_ROOT` again in each new shell.
+Before `project()`, CMake uses that environment variable to select the toolchain
+unless the same vcpkg toolchain is supplied explicitly through
+`CMAKE_TOOLCHAIN_FILE`. Configuration refuses to continue without a vcpkg
+toolchain that installs the root [`vcpkg.json`](../vcpkg.json) in manifest
+mode; exact host/system SQLite discovery is not an accepted fallback. The
+immutable baseline selects SQLite 3.53.4 (port revision 0), and
+`find_package(SQLite3 3.53.4 EXACT REQUIRED)` rejects a different library
+version. Dependency provenance and the compatible public-domain license are
+recorded in
+[`Decisions/Dependencies.md`](Decisions/Dependencies.md).
+
+Use a fresh build directory when switching an existing system-SQLite build to
+vcpkg; cached library paths and toolchain settings can outlive reconfiguration.
+For example, configure with `cmake --preset dev -B Output/ManifestDev`, then
+build with `cmake --build Output/ManifestDev` and test with
+`ctest --test-dir Output/ManifestDev --output-on-failure`. The root scripts and
+other commands below inherit `VCPKG_ROOT`; no Homebrew SQLite probe is used.
 
 ## Root developer scripts
 
@@ -64,9 +97,21 @@ cmake --build --preset dev-sanitize
 ctest --preset dev-sanitize
 ```
 
-MSVC sanitizers are not enabled by this preset; use Visual Studio’s `/fsanitize` options if you need them on Windows.
+ThreadSanitizer is a separate preset because its runtime cannot be combined
+with ASan/UBSan:
+
+```bash
+cmake --preset dev-tsan
+cmake --build --preset dev-tsan
+ctest --preset dev-tsan
+```
+
+These presets support Clang/GNU. A checked-in MSVC sanitizer workflow is not
+available.
 
 ## Manual configure (no preset)
+
+After exporting `VCPKG_ROOT` as shown above:
 
 ```bash
 cmake -S . -B Output -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DBTE_BUILD_TESTS=ON
@@ -80,12 +125,13 @@ cd Output && ctest --output-on-failure
 | ------------------ | ------- | -------------------------------------------- |
 | `BTE_BUILD_TESTS`  | `ON`    | Fetch Google Test and build `Tests/` targets |
 | `BTE_SANITIZERS`   | `OFF`   | ASan/UBSan on Clang/GNU when set to `ON`     |
+| `BTE_THREAD_SANITIZER` | `OFF` | TSan on Clang/GNU; mutually exclusive with `BTE_SANITIZERS` |
 | `BTE_BUILD_QT_APP` | `OFF`   | Build the optional Qt desktop app shell and frontend smoke tests |
 | `BTE_COVERAGE`     | `OFF`   | Add gcov-compatible test coverage instrumentation |
 
 The `analysis` and `coverage` presets back the merge-blocking quality jobs.
 Analyzer and changed-code coverage commands are documented in
-[`Specs/10CiDevFlow.md`](Specs/10CiDevFlow.md) §7.
+[`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) §7.
 
 Before pushing C++ work or requesting CI, run the complete local equivalents on
 the committed revision:
@@ -129,13 +175,13 @@ configuring.
 | Path                         | Role                                              |
 | ---------------------------- | ------------------------------------------------- |
 | `CMakeLists.txt`             | Root project, optional tests, FetchContent (GTest) |
-| `CMakePresets.json`        | `dev`, `qt-dev`, `dev-sanitize`, `analysis`, `coverage`, `release` |
+| `CMakePresets.json`        | `dev`, `qt-dev`, `dev-sanitize`, `dev-tsan`, `analysis`, `coverage`, `release` |
 | `Output/<preset>/`        | CMake binary directory (gitignored; e.g. `Output/dev`) |
 | `CMake/CompilerWarnings.cmake` | Shared warning flags                            |
-| `CMake/Sanitizers.cmake`   | ASan/UBSan when `BTE_SANITIZERS=ON`               |
+| `CMake/Sanitizers.cmake`   | ASan/UBSan or TSan instrumentation                 |
 | `Src/Backend/Core/Include/Bte/Core/` | Public headers (e.g. `Bar.h`)                       |
 | `Src/Backend/Core/Private/`           | Implementation `.cpp` files for Core              |
-| `Tests/`                   | Google Test sources (`UnitTest_<Thing>.cpp`; see Docs/Specs/03 §1) |
+| `Tests/`                   | Google Test sources (`UnitTest_<Thing>.cpp`; see `Docs/Specs/BackendCore.md` §2) |
 
 ## Turning tests off
 

@@ -154,7 +154,6 @@ loadBacktestBars(const QString &symbol, const QString &schemaName,
                 .end = timestampFromDate(exclusiveEnd),
             },
         .csvDir = findCsvDataDir(),
-        .source = bte::data::StreamRequest::Source::csv,
     };
 
     auto stream = bte::data::CsvBarStream::open(request, cancellation);

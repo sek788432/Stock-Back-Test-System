@@ -7,7 +7,9 @@ description: Diagnosis loop for hard bugs and performance regressions. Use when 
 
 A discipline for hard bugs. Skip phases only when explicitly justified.
 
-When exploring the codebase, read `CONTEXT.md` (if it exists) to get a clear mental model of the relevant modules, and check ADRs in the area you're touching.
+Before building a loop, read the owning canonical spec, the relevant public
+header/caller, and active important decisions. Use checked-in commands and
+registered test targets rather than an illustrative path from this skill.
 
 ## Phase 1 — Build a feedback loop
 
@@ -18,15 +20,22 @@ Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give
 ### Ways to construct one — try them in roughly this order
 
 1. **Failing test** at whatever seam reaches the bug — unit, integration, e2e.
-2. **Curl / HTTP script** against a running dev server.
-3. **CLI invocation** with a fixture input, diffing stdout against a known-good snapshot.
-4. **Headless browser script** (Playwright / Puppeteer) — drives the UI, asserts on DOM/console/network.
-5. **Replay a captured trace.** Save a real network request / payload / event log to disk; replay it through the code path in isolation.
-6. **Throwaway harness.** Spin up a minimal subset of the system (one service, mocked deps) that exercises the bug code path with a single function call.
-7. **Property / fuzz loop.** If the bug is "sometimes wrong output", run 1000 random inputs and look for the failure mode.
-8. **Bisection harness.** If the bug appeared between two known states (commit, dataset, version), automate "boot at state X, check, repeat" so you can `git bisect run` it.
-9. **Differential loop.** Run the same input through old-version vs new-version (or two configs) and diff outputs.
-10. **HITL bash script.** Last resort. If a human must click, drive _them_ with `scripts/hitl-loop.template.sh` so the loop is still structured. Captured output feeds back to you.
+2. **Focused registered CTest or Qt test** that reaches the affected public seam.
+3. **Existing CLI invocation** with a fixture input and a known-good result,
+   only when that CLI is present in the checkout.
+4. **Replay a captured input or event trace** through the affected code path.
+5. **Throwaway harness.** Instantiate the smallest real module subset that
+   exercises the bug path through one public call.
+6. **Property / fuzz loop.** If the bug is "sometimes wrong output", run a
+   fixed-seed input set repeatedly and detect the exact failure mode.
+7. **Bisection harness.** If the bug appeared between two known commits,
+   preserve the active checkout and user changes by creating an isolated
+   worktree for `git bisect run`. Verify the historical command before running
+   it, and finish with `git bisect reset` before removing the isolated worktree.
+8. **Differential loop.** Run the same input through old-version vs new-version (or two configs) and diff outputs.
+9. **HITL checklist.** Last resort. If a human must click, write explicit
+    numbered steps in the issue or PR and capture the resulting output. Do not
+    invent a helper-script path.
 
 Build the right feedback loop, and the bug is 90% fixed.
 
@@ -46,16 +55,24 @@ The goal is not a clean repro but a **higher reproduction rate**. Loop the trigg
 
 ### When you genuinely cannot build a loop
 
-Stop and say so explicitly. List what you tried. Ask the user for: (a) access to whatever environment reproduces it, (b) a captured artifact (HAR file, log dump, core dump, screen recording with timestamps), or (c) permission to add temporary production instrumentation. Do **not** proceed to hypothesise without a loop.
+Stop and say so explicitly. List what you tried. Ask the user for: (a) access
+to the environment that reproduces it, (b) a captured log, core dump, input
+fixture, or timestamped screen recording, or (c) permission to add temporary
+production instrumentation. Do **not** proceed to hypothesise without a loop.
 
 ### Completion criterion — a tight loop that goes red
 
-Phase 1 is done when the loop is **tight** and **red-capable**: you can name **one command** — a script path, a test invocation, a curl — that you have **already run at least once** (paste the invocation and its output), and that is:
+Phase 1 is done when the loop is **tight** and **red-capable**: you can name
+one checked-in test/executable/Python command, or the exact command for an
+isolated temporary harness, that you have **already run at least once** (paste
+the invocation and its output), and that is:
 
 - [ ] **Red-capable** — it drives the actual bug code path and asserts the **user's exact symptom**, so it can go red on this bug and green once fixed. Not "runs without erroring" — it must be able to _catch this specific bug_.
 - [ ] **Deterministic** — same verdict every run (flaky bugs: a pinned, high reproduction rate, per above).
 - [ ] **Fast** — seconds, not minutes.
-- [ ] **Agent-runnable** — you can run it unattended; a human in the loop only via `scripts/hitl-loop.template.sh`.
+- [ ] **Agent-runnable** — you can run it unattended. If human action is
+  irreducible, mark the loop Blocked until the documented step is executed and
+  its evidence is captured.
 
 If you catch yourself reading code to build a theory before this command exists, **stop — jumping straight to a hypothesis is the exact failure this skill prevents.** No red-capable command, no Phase 2.
 
@@ -103,17 +120,24 @@ Tool preference:
 
 **Tag every debug log** with a unique prefix, e.g. `[DEBUG-a4f2]`. Cleanup at the end becomes a single grep. Untagged logs survive; tagged logs die.
 
-**Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second.
+**Perf branch.** For performance regressions, logs are usually wrong. Establish
+a baseline with the repository's benchmark when one exists; otherwise use a
+repeatable harness based on `std::chrono::steady_clock` for C++ or
+`time.perf_counter()` for DataFetcher. Use a profiler when available, then
+bisect only through the isolated-worktree procedure above. Measure first, fix
+second.
 
 ## Phase 5 — Fix + regression test
 
-Write the regression test **before the fix** — but only if there is a **correct seam** for it.
+Write the regression test **before the fix** at a seam that exercises the real
+bug pattern.
 
 A correct seam is one where the test exercises the **real bug pattern** as it occurs at the call site. If the only available seam is too shallow (single-caller test when the bug needs multiple callers, unit test that can't replicate the chain that triggered the bug), a regression test there gives false confidence.
 
-**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Flag this for the next phase.
-
-If a correct seam exists:
+If no existing seam can express the regression, add the narrowest appropriate
+production seam without widening the public contract. When that requires a
+material architecture or product decision, the fix is Blocked until the
+decision is approved; do not merge an unprotected bug fix.
 
 1. Turn the minimised repro into a failing test at that seam.
 2. Watch it fail.
@@ -126,9 +150,14 @@ If a correct seam exists:
 Required before declaring done:
 
 - [ ] Original repro no longer reproduces (re-run the Phase 1 loop)
-- [ ] Regression test passes (or absence of seam is documented)
+- [ ] Focused regression test passes
 - [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
-- [ ] Throwaway prototypes deleted (or moved to a clearly-marked debug location)
+- [ ] Throwaway prototypes deleted; a useful harness is retained only after it
+      is promoted through the normal spec, test, implementation, and review workflow
 - [ ] The hypothesis that turned out correct is stated in the commit / PR message — so the next debugger learns
 
-**Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling) hand off to the `/improve-codebase-architecture` skill with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.
+**Then ask: what would have prevented this bug?** If the answer involves
+architectural change (no good test seam, tangled callers, hidden coupling),
+hand off to the `codebase-design` skill with the specifics. Make the
+recommendation **after** the fix is in, not before — you have more information
+now than when you started.

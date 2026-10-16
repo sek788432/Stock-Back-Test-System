@@ -5,6 +5,7 @@
 
 #include <QLabel>
 #include <QMenuBar>
+#include <QObject>
 #include <QStatusBar>
 #include <QString>
 #include <QtCore/Qt>
@@ -14,8 +15,8 @@
 namespace bte::app {
 namespace {
 
-QWidget *makePlaceholderTab(const QString &title) {
-  auto label = std::make_unique<QLabel>(title);
+QWidget *makePlaceholderTab(const QString &message) {
+  auto label = std::make_unique<QLabel>(message);
   label->setAlignment(Qt::AlignCenter);
   label->setObjectName("placeholderTab");
   label->setAccessibleName(label->text());
@@ -89,14 +90,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   tabs_ = std::make_unique<QTabWidget>(this).release();
   tabs_->setObjectName("mainTabWidget");
   tabs_->setAccessibleName("Main tabs");
-  tabs_->addTab(makePlaceholderTab(tr("Strategies")), tr("Strategies"));
-  tabs_->addTab(std::make_unique<frontend::BacktestTab>(tabs_).release(),
-                tr("Backtest"));
-  tabs_->addTab(std::make_unique<frontend::ReplayTab>(tabs_).release(),
-                tr("Replay"));
-  tabs_->addTab(makePlaceholderTab(tr("Screener")), tr("Screener"));
-  tabs_->addTab(makePlaceholderTab(tr("Plugins")), tr("Plugins"));
-  tabs_->addTab(makePlaceholderTab(tr("Logs")), tr("Logs"));
+  tabs_->addTab(
+      makePlaceholderTab(tr("Saved Strategy persistence is planned.")),
+      tr("Strategies"));
+  auto backtestOwner =
+      frontend::BacktestTab::createApplicationConfigured(tabs_);
+  auto *backtest = backtestOwner.release();
+  tabs_->addTab(backtest, tr("Backtest"));
+  tabs_->addTab(
+      makePlaceholderTab(tr("Result library management is planned; stored "
+                            "results can be opened in Replay.")),
+      tr("Results"));
+  auto *replay = std::make_unique<frontend::ReplayTab>(tabs_).release();
+  const auto replayIndex = tabs_->addTab(replay, tr("Replay"));
+  QObject::connect(backtest, &frontend::BacktestTab::openResultInReplay, this,
+                   [this, replay, replayIndex](const QString &resultId) {
+                     replay->openResult(resultId);
+                     tabs_->setCurrentIndex(replayIndex);
+                   });
   tabs_->setCurrentIndex(1);
   setCentralWidget(tabs_);
 

@@ -11,7 +11,7 @@ description: >-
 
 # Static Analysis
 
-Static analysis runs locally, in CI (`Docs/Specs/10CiDevFlow.md` §2), and on demand. The
+Static analysis runs locally, in CI (`Docs/Specs/CiDevFlow.md`), and on demand. The
 repository does not currently install a pre-commit hook. Local and CI execution
 use the same checked-in analyzer and coverage configuration.
 
@@ -29,7 +29,7 @@ use the same checked-in analyzer and coverage configuration.
 
 The implemented merge-blocking analyzer, format, and coverage gates are
 orchestrated locally by `RunQuality.sh`. The sanitizer presets are separate CI
-jobs and local CMake presets. See `Docs/Specs/10CiDevFlow.md` for the
+jobs and local CMake presets. See `Docs/Specs/CiDevFlow.md` for the
 authoritative implemented-versus-planned status.
 
 ## Files that own the configuration
@@ -42,7 +42,8 @@ authoritative implemented-versus-planned status.
 | `Tools/Iwyu.imp` | IWYU mapping file (Qt, std, third-party) |
 | `Cppcheck.suppressions` | cppcheck false-positive suppressions |
 
-If you change one of these files, the PR description must explain why, and it requires CODEOWNER review.
+If you change one of these files, the PR description must explain why and a
+repository maintainer must approve the focused tooling change.
 
 ## Running locally
 
@@ -99,11 +100,13 @@ Each finding looks like:
 Read in this order:
 1. The check name in brackets — Google `clang-tidy modernize-pass-by-value` if unfamiliar.
 2. The fix-it underline — `clang-tidy --fix` will apply suggested fixes for many checks.
-3. If the fix changes semantics or you disagree, suppress with **per-line** `// NOLINT(check-name): reason` and explain in the PR. Never blanket-disable a check in `.clang-tidy` without CODEOWNER approval.
+3. If the fix changes semantics or you disagree, suppress with **per-line** `// NOLINT(check-name): reason` and explain in the PR. Never blanket-disable a check in `.clang-tidy` without maintainer approval.
 
 ### scan-build / clang analyzer
 
-Outputs HTML reports under `Output/scan-build-reports/`. Each report walks you through a path: `here we set p = nullptr; here we deref p`. Trust the path — the analyzer is good. If you think it's wrong, write a comment that proves it can't happen, and add the file/line to suppressions with a CODEOWNER review.
+Outputs HTML reports under `Output/scan-build-reports/`. Reproduce the reported
+path before deciding a finding is false. Any suppression must be narrow,
+justified, and maintainer-approved under governance.
 
 ### Sanitizers
 
@@ -114,7 +117,9 @@ When ASan/UBSan/LSan/TSan fire during `ctest`, the test fails with a stack trace
 3. ASan also prints **previously freed at** / **previously allocated at** — the bug is usually at one of those sites, not the access site.
 4. TSan prints two stacks: thread A and thread B. The bug is the missing synchronization between them.
 
-**Never** suppress a sanitizer report without a written explanation and a CODEOWNER approval. They almost never have false positives in well-formed C++.
+**Never** suppress a sanitizer report merely to make a gate pass. A future
+narrow suppression requires the focused tooling change and maintainer approval
+defined by governance.
 
 ### IWYU
 
@@ -130,44 +135,12 @@ Foo.cpp should remove these lines:
 
 Apply the suggestions unless IWYU is wrong about a private header — in which case add a mapping to `Tools/Iwyu.imp`.
 
-## clang-tidy check selection (this repo)
+## clang-tidy check selection
 
-The `.clang-tidy` enables these check categories with naming/casing rules matching the project's `lowerCamelCase` / `UpperCamelCase` style (see `cpp-modern-style` skill):
-
-```yaml
-Checks: >
-  -*,
-  bugprone-*,
-  cert-*,
-  clang-analyzer-*,
-  concurrency-*,
-  cppcoreguidelines-*,
-  modernize-*,
-  performance-*,
-  portability-*,
-  readability-*,
-  misc-const-correctness,
-  misc-definitions-in-headers,
-  misc-header-include-cycle,
-  -modernize-use-trailing-return-type,        # too noisy on this codebase
-  -readability-named-parameter,               # gtest fixtures need unnamed params
-  -cppcoreguidelines-pro-bounds-pointer-arithmetic,  # span/iterator interop
-
-CheckOptions:
-  - { key: readability-identifier-naming.NamespaceCase,           value: camelBack }
-  - { key: readability-identifier-naming.ClassCase,               value: CamelCase }
-  - { key: readability-identifier-naming.StructCase,              value: CamelCase }
-  - { key: readability-identifier-naming.EnumCase,                value: CamelCase }
-  - { key: readability-identifier-naming.EnumConstantCase,        value: camelBack }
-  - { key: readability-identifier-naming.FunctionCase,            value: camelBack }
-  - { key: readability-identifier-naming.MethodCase,              value: camelBack }
-  - { key: readability-identifier-naming.VariableCase,            value: camelBack }
-  - { key: readability-identifier-naming.PrivateMemberSuffix,     value: _ }
-  - { key: readability-identifier-naming.GlobalConstantCase,      value: camelBack }
-  - { key: readability-identifier-naming.MacroDefinitionCase,     value: UPPER_CASE }
-```
-
-Adjust this only with a written reason and a CODEOWNER review.
+The checked-in [`.clang-tidy`](../../../.clang-tidy) file is the only authority
+for enabled checks and options. Inspect it at the submitted revision rather
+than copying a configuration excerpt into this skill. Adjust it only through a
+focused, tested tooling change with a written reason and maintainer approval.
 
 ## When you disagree with a tool
 

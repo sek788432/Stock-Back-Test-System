@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace bte::strategy {
@@ -57,6 +59,11 @@ struct SelectableStrategySignal {
   bool buy = false;
   bool sell = false;
 };
+
+/// Hashes the complete ordered Strategy configuration with versioned framing.
+/// A missing plan identifies the built-in starter Strategy.
+[[nodiscard]] std::string
+canonicalStrategyHash(const std::optional<SelectableStrategyPlan> &plan);
 
 /// Evaluates the version-one flat Selectable Conditions plan against actual
 /// chronological bars. It has no access to orders, fills, or portfolio state.

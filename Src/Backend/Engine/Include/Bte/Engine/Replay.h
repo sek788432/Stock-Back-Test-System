@@ -3,7 +3,6 @@
 #include "Bte/Core/Bar.h"
 #include "Bte/Data/BarStream.h"
 
-#include <chrono>
 #include <memory>
 #include <optional>
 
@@ -14,17 +13,6 @@ struct ReplayProgressSnapshot {
   int barIndex = 0;
   int totalBars = 0;
   bool done = false;
-};
-
-class ReplayClock {
-public:
-  void setSpeedMultiplier(double multiplier) noexcept;
-  [[nodiscard]] double speedMultiplier() const noexcept;
-  [[nodiscard]] std::chrono::milliseconds waitInterval() const noexcept;
-
-private:
-  double speedMultiplier_ = 1.0;
-  std::chrono::milliseconds intervalAtOneX_{1000};
 };
 
 class Replay {

@@ -25,29 +25,39 @@ Code in this repo must be **easy to maintain six months from now**. That means:
 | Principle | What it means here |
 |---|---|
 | **S**ingle responsibility | A class does one job. `Portfolio` tracks positions; it does not parse bars. `BarStream` reads bars; it does not compute indicators. |
-| **O**pen / closed | Add new strategies/indicators/data sources via plugins or registries (Docs/Specs/06, /08), without touching `Engine`. |
-| **L**iskov substitution | Subtypes work everywhere the base type works. `IStrategy` impls all honor `onInit → onBar* → onShutdown`. No "this subtype throws on this method". |
-| **I**nterface segregation | `IIndicator`, `IMultiIndicator`, `IFillModel` — each tiny and focused. No god-interface with 20 methods. |
-| **D**ependency inversion | Engine depends on `IStrategy`, not on `RuleStrategy` or `LuaStrategy`. Frontend depends on view-model interfaces, not engine internals. |
+| **O**pen / closed | Add a real second implementation behind a narrow registry or Strategy seam without touching `Engine` (`Docs/Specs/Architecture.md`, `Docs/Specs/Indicators.md`, and `Docs/Specs/StrategyAuthoring.md`). |
+| **L**iskov substitution | Every implementation honors the complete documented contract of its seam; callers need no subtype-specific exception. |
+| **I**nterface segregation | Keep a seam focused on one caller need instead of accumulating unrelated methods. |
+| **D**ependency inversion | High-level policy depends on a narrow owning-module seam; presentation does not depend on engine internals. |
 
 ## Composition over inheritance
 
 Default to **composition**. Inherit only to expose polymorphism.
 
-```cpp
-// Yes — composition
-class RuleStrategy : public IStrategy {
-public:
-    explicit RuleStrategy(RuleProgram program, IndicatorRegistry& registry);
-    core::Result<void> onBar(Context& ctx) override;
+The snippets in this skill are illustrative C++20, not declarations of
+repository APIs. Before using a name in production code, find the owning spec
+and implemented header or introduce the type through the normal design review.
 
-private:
-    RuleProgram program_;          // owns the parsed AST
-    Evaluator   evaluator_;        // a separate type with one job
+```cpp
+class ConditionEvaluator final {
+public:
+    [[nodiscard]] bool evaluate(const Input& input) const;
 };
 
-// No — inheritance for code reuse
-class RuleStrategy : public BaseStrategyWithEvaluator { ... };  // don't
+class SelectablePolicy final {
+public:
+    explicit SelectablePolicy(ConditionEvaluator evaluator)
+        : evaluator_{std::move(evaluator)} {}
+
+    [[nodiscard]] bool accepts(const Input& input) const {
+        return evaluator_.evaluate(input);
+    }
+
+private:
+    ConditionEvaluator evaluator_;
+};
+
+// Do not create BasePolicyWithEvaluator solely to share evaluator helpers.
 ```
 
 When you find yourself adding a 3rd level of inheritance, stop. Refactor to composition.
@@ -91,7 +101,7 @@ They **do not** contain:
 - Implementation includes (don't drag third-party headers into public headers if you can avoid it — use forward declarations and Pimpl).
 - Anything that changes when implementation changes.
 
-This is what keeps build times low and ABI stable for plugins (Docs/Specs/08).
+This keeps build times low and module seams stable (`Docs/Specs/Architecture.md`).
 
 ## Design patterns we use in this repo
 
@@ -101,9 +111,10 @@ Apply these when the shape matches. Don't reach for them just to use the name.
 
 A behavior selected at runtime, with a uniform interface.
 
-- `IStrategy` (Docs/Specs/05): `RuleStrategy`, `LuaStrategy`, plugin strategies.
-- `IFillModel` (Docs/Specs/07): different broker fill rules.
-- `IDataSource` (Docs/Specs/04): DuckDB vs CSV.
+The accepted Strategy seam serves Selectable Conditions and Python worker
+commands. Its exact public C++ types must come from implemented headers and
+[`Docs/Specs/StrategyAuthoring.md`](../../../Docs/Specs/StrategyAuthoring.md),
+not from examples in this skill.
 
 When to apply: you have an algorithm with multiple variants, callers choose at runtime, all variants share a small interface.
 
@@ -112,24 +123,36 @@ When to apply: you have an algorithm with multiple variants, callers choose at r
 Construction logic lives in one place; callers don't know concrete types.
 
 ```cpp
-core::Result<std::unique_ptr<IIndicator>>
-IndicatorRegistry::create(std::string_view kind, const ArgMap& args) const;
+enum class SmoothingKind { simple, exponential };
+
+class Smoother {
+public:
+    virtual ~Smoother() = default;
+    [[nodiscard]] virtual double update(double value) = 0;
+};
+
+[[nodiscard]] std::unique_ptr<Smoother>
+makeSmoother(SmoothingKind kind);
 ```
 
-When to apply: you need to construct the right concrete type from a name/config; you want to register new types from plugins (Docs/Specs/08).
+When to apply: configuration selects among at least two implemented concrete types.
 
 ### Observer (Qt signals/slots)
 
 Decoupled notification.
 
 ```cpp
-class ReplaySessionVm : public QObject {
+class ProgressEmitter final : public QObject {
     Q_OBJECT
+
 signals:
-    void barProcessed(BarSnapshot bar);
-    void portfolioChanged(PortfolioSnapshot snap);
+    void progressChanged(ProgressSnapshot snapshot);
 };
 ```
+
+For cross-thread delivery, register the snapshot metatype and use a queued
+connection as required by `cpp-thread-safety`; the observer pattern does not
+make direct widget access from a worker safe.
 
 When to apply: backend produces events; multiple UI views consume them; producer doesn't know about consumers.
 
@@ -137,17 +160,15 @@ When to apply: backend produces events; multiple UI views consume them; producer
 
 Wrap an external type to fit your interface.
 
-- `DuckDbAdapter implements IDataSource` (Docs/Specs/04).
-- `QtChartsCandlestickView implements IChartView` (Docs/Specs/02 §4).
+- The implemented Qt Charts view fits the real `IChartView` seam; the accepted
+  future project-owned `QPainter` view must fit that same seam
+  (`Docs/Specs/FrontendQt.md` §4).
 
 When to apply: a third-party type doesn't match your interface, and you don't want callers to depend on the third party.
 
 ### Builder
 
 Step-by-step construction without a giant constructor.
-
-- `OrderBuilder` (Docs/Specs/05 §2).
-- `EngineConfig{ ... }` with chainable setters.
 
 When to apply: an object has many optional fields and validation rules; you want fluent or staged construction.
 
@@ -171,7 +192,7 @@ private:
 };
 ```
 
-When to apply: you want ABI stability (plugin SDK!), faster build times, or to hide a heavy include.
+When to apply: you need faster rebuilds, stable public layout, or to hide a heavy include.
 
 Cost: extra heap allocation. Don't pimpl tiny value types.
 
@@ -193,33 +214,49 @@ When to apply: a sealed family of types (rule AST nodes, message types). Cleaner
 
 A series of stages, each transforming or short-circuiting.
 
-- The engine bar loop: `data → indicators → strategy → broker → portfolio → metrics` (Docs/Specs/07).
+- The engine bar loop: `data → indicators → strategy → broker → portfolio → metrics` (`Docs/Specs/EngineReplayPnL.md`).
 - Order validation: size checks → cash checks → leverage checks → risk caps.
 
 When to apply: linear processing where each step has a clear local responsibility.
 
 ### Command
 
-Encapsulate a request as an object, queueable / loggable / undoable.
-
-- `core::Order` is a command (the broker fulfills it).
-
-When to apply: actions need to be deferred, queued, replayed, or audited.
+Encapsulate a request as an immutable value when it must be deferred, queued,
+or audited. Use the actual owning-module order and strategy-command types found
+in the checkout; this skill does not declare them.
 
 ### Decorator
 
 Wrap a type to add behavior, preserving the interface.
 
 ```cpp
-class LoggingDataSource : public IDataSource {
+class Reader {
 public:
-    explicit LoggingDataSource(std::unique_ptr<IDataSource> inner);
-    Result<unique_ptr<BarStream>> openStream(...) override;     // logs then delegates
+    virtual ~Reader() = default;
+    [[nodiscard]] virtual std::optional<Record> next() = 0;
+};
+
+class CountingReader final : public Reader {
+public:
+    explicit CountingReader(Reader& inner) noexcept : inner_{inner} {}
+
+    [[nodiscard]] std::optional<Record> next() override {
+        auto record = inner_.next();
+        if (record.has_value()) {
+            ++count_;
+        }
+        return record;
+    }
 
 private:
-    std::unique_ptr<IDataSource> inner_;
+    Reader& inner_;
+    std::size_t count_ = 0;
 };
 ```
+
+The required reference makes null impossible; the wrapped reader must outlive
+the decorator. Use owned composition instead when that lifetime is not already
+guaranteed by the caller.
 
 When to apply: cross-cutting concerns (logging, metrics, retries) without modifying the wrapped class.
 
@@ -228,8 +265,19 @@ When to apply: cross-cutting concerns (logging, metrics, retries) without modify
 When the variant is known at compile time and is in a hot path, prefer policy classes over virtual.
 
 ```cpp
-template <BarSource Src, FillModel Fill>
-class Engine { ... };
+template <typename FillPolicy>
+class Simulator final {
+public:
+    explicit Simulator(FillPolicy fillPolicy)
+        : fillPolicy_{std::move(fillPolicy)} {}
+
+    [[nodiscard]] Fill apply(const Order& order, const Quote& quote) const {
+        return fillPolicy_(order, quote);
+    }
+
+private:
+    FillPolicy fillPolicy_;
+};
 ```
 
 When to apply: hot path, fixed at compile time, you can afford the binary size.
@@ -241,8 +289,10 @@ When to apply: hot path, fixed at compile time, you can afford the binary size.
 - **Inheritance for code reuse** ("base class with shared helpers"). Use composition, free functions, or mixins (CRTP).
 - **`switch` on a type tag for behavior**. Use polymorphism (virtual or `std::variant` + `std::visit`).
 - **Boolean parameters that change behavior** (`f(x, true)`). Two functions or an enum.
-- **Out-parameters**. Return a value or a struct (Docs/Specs/03).
-- **Singleton Manager classes** for state. Prefer dependency injection. The only acceptable singletons are stateless (`IndicatorRegistry::builtin()`, loggers).
+- **Out-parameters**. Return a value or a struct (`Docs/Specs/BackendCore.md`).
+- **Singleton Manager classes** for state. Prefer explicit construction and
+  dependency injection. Any stateless process-wide object still needs a real
+  implemented caller and tests.
 - **Interfaces with one impl, never likely to grow**. Don't pre-abstract; introduce the interface when the second impl arrives.
 - **Header-only "convenience" libraries** that drag in megabytes of templates everywhere. Hide impl in `.cpp`.
 
@@ -254,13 +304,11 @@ If you're tempted to introduce an interface for "future flexibility", don't. **Y
 
 ## Module boundaries (this repo)
 
-Per Docs/Specs/01:
-
-- `Core` depends on stdlib + spdlog/fmt only.
-- `Indicators` depends on `Core`.
-- `Strategy` depends on `Core` + `Indicators` (+ Lua).
-- `Engine` depends on `Strategy`, `Data`, `Metrics`, `Core`.
-- `Frontend` depends on `Bindings` only — never on `Engine` headers directly.
+Use the current graph in `Docs/Specs/Architecture.md` as authority. In
+particular, backend modules stay Qt-independent, Bindings translates backend
+values, and Frontend does not reach into engine internals. Search current CMake
+targets and public headers before naming an edge; planned target modules are not
+proof that their implementations already exist.
 
 If you find yourself adding a new include that violates this, it's a design smell. Either move the type to a lower module or introduce a new interface in a lower module that the higher module implements.
 
@@ -270,5 +318,5 @@ If you find yourself adding a new include that violates this, it's a design smel
 2. Did you copy 5+ lines of logic from another file? → factor.
 3. Does any new public header pull in a heavy third-party type? → Pimpl or forward declaration.
 4. Did you add a virtual to a hot-path interface for a single concrete impl? → drop the virtual until the second impl arrives.
-5. Does the change respect the module dependency graph (Docs/Specs/01 §1)?
+5. Does the change respect the module dependency graph (`Docs/Specs/Architecture.md` §2)?
 6. Did you reach for inheritance when composition fits? Reconsider.

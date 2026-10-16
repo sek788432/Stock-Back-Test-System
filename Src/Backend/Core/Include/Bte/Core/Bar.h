@@ -14,7 +14,7 @@ namespace bte::core {
 using Timestamp = std::chrono::sys_time<std::chrono::milliseconds>;
 
 /// Single OHLCV bar (UTC timestamp at bar close). See
-/// Docs/Specs/03BackendCore.md §3.
+/// Docs/Specs/BackendCore.md §3.
 struct Bar {
   Timestamp ts;
   double open = 0.0;
@@ -22,6 +22,8 @@ struct Bar {
   double low = 0.0;
   double close = 0.0;
   double volume = 0.0;
+
+  bool operator==(const Bar &) const = default;
 
   [[nodiscard]] constexpr bool isValid() const noexcept {
     return std::isfinite(open) && std::isfinite(high) && std::isfinite(low) &&

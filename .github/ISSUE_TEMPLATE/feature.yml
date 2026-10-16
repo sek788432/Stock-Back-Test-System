@@ -1,14 +1,14 @@
 name: Feature request
 description: Propose a new feature or a meaningful change to an existing one.
 title: "feat: <short title>"
-labels: ["feature", "triage"]
+labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        For major design decisions (new dependency, public API change, plugin/Lua API change),
-        consider opening an ADR PR in `Docs/Decisions/` instead — it's a better home for
-        rationale and trade-offs.
+        Resolve ambiguous product and compatibility choices with the maintainer first.
+        When the repository's three-part importance threshold applies, update
+        `Docs/Decisions/ImportantDecisions.md` and the owning specification.
 
   - type: textarea
     id: problem

@@ -24,12 +24,14 @@
 #include <QLocale>
 #include <QObject>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QString>
 #include <QTableWidget>
 #include <QToolButton>
 #include <QVariant>
 #include <QtConcurrentRun>
 #include <QtCore/Qt>
+#include <QtCore/qtenvironmentvariables.h>
 #include <QtCore/qtimezone.h>
 #include <QtGui/qkeysequence.h>
 #include <algorithm>
@@ -37,6 +39,7 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -303,6 +306,100 @@ ConditionMetric metricFrom(const QComboBox *combo) {
   return static_cast<ConditionMetric>(combo->currentData().toInt());
 }
 
+struct MetricDisplay {
+  QString suffix;
+  QString meaning;
+  QString example;
+  bool usesPeriod{false};
+};
+
+MetricDisplay displayFor(const ConditionMetric metric) {
+  switch (metric) {
+  case ConditionMetric::closeChangePercent:
+    return {" %",
+            BacktestTab::tr("Signed change from the previous actual bar close "
+                            "in percent points."),
+            BacktestTab::tr("Example: 5 means a 5% rise; -5 means a 5% fall."),
+            false};
+  case ConditionMetric::close:
+    return {" USD", BacktestTab::tr("Current close price in USD."),
+            BacktestTab::tr("Example: 100 means $100 per share."), false};
+  case ConditionMetric::sma:
+  case ConditionMetric::ema:
+  case ConditionMetric::wma:
+  case ConditionMetric::bollingerUpper:
+  case ConditionMetric::donchianUpper:
+  case ConditionMetric::vwap:
+    return {" USD", BacktestTab::tr("Indicator price in USD."),
+            BacktestTab::tr("Example: 100 means $100 per share."), true};
+  case ConditionMetric::macdHistogram:
+  case ConditionMetric::momentum:
+    return {
+        " USD",
+        BacktestTab::tr("Signed price difference in USD, not a percentage."),
+        BacktestTab::tr("Example: -2 means a $2 negative difference."), true};
+  case ConditionMetric::atr:
+    return {" USD",
+            BacktestTab::tr("Average price range in USD, not a percentage."),
+            BacktestTab::tr("Example: 2 means a $2 range."), true};
+  case ConditionMetric::trueRange:
+    return {" USD",
+            BacktestTab::tr("Current bar true range in USD, not a percentage."),
+            BacktestTab::tr("Example: 2 means a $2 range."), false};
+  case ConditionMetric::rsi:
+  case ConditionMetric::adx:
+  case ConditionMetric::stochasticPercentK:
+    return {" level",
+            BacktestTab::tr("Dimensionless oscillator level from 0 to 100, not "
+                            "a price change."),
+            BacktestTab::tr(
+                "Example: 30 means oscillator level 30, not a 30% price drop."),
+            true};
+  case ConditionMetric::obv:
+    return {" shares",
+            BacktestTab::tr(
+                "Signed cumulative on-balance volume in shares, not dollars."),
+            BacktestTab::tr("Example: -100 means net negative 100 shares."),
+            false};
+  case ConditionMetric::roc:
+    return {" %",
+            BacktestTab::tr("Signed rate of change over the selected bar "
+                            "lookback in percent points."),
+            BacktestTab::tr("Example: 5 means a 5% rise, not 0.05%."), true};
+  case ConditionMetric::volume:
+    return {" shares", BacktestTab::tr("Current bar trading volume in shares."),
+            BacktestTab::tr("Example: 100 means 100 shares."), false};
+  }
+  return {};
+}
+
+void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
+                         QSpinBox *period) {
+  const auto display = displayFor(metricFrom(metric));
+  const auto name = metric->currentText();
+  const auto explanation =
+      QString{"%1: %2 %3"}.arg(name, display.meaning, display.example);
+  metric->setToolTip(explanation);
+  metric->setAccessibleDescription(explanation);
+  threshold->setSuffix(display.suffix);
+  threshold->setToolTip(explanation);
+  threshold->setAccessibleDescription(explanation);
+  const auto periodExplanation =
+      metricFrom(metric) == ConditionMetric::macdHistogram
+          ? BacktestTab::tr("MACD slow period in bars; insufficient warm-up "
+                            "bars produce no signal.")
+          : BacktestTab::tr(
+                "Indicator lookback in bars, not calendar days or months; "
+                "insufficient warm-up bars produce no signal.");
+  period->setToolTip(
+      display.usesPeriod
+          ? periodExplanation
+          : BacktestTab::tr("This metric does not use a period in its formula. "
+                            "The editable value remains part of the strategy "
+                            "identity for compatibility."));
+  period->setAccessibleDescription(period->toolTip());
+}
+
 } // namespace
 
 struct BacktestTab::RunState final {
@@ -332,6 +429,34 @@ BacktestTab::BacktestTab(QWidget *parent)
                                                       cancellation);
           },
           parent) {}
+
+std::unique_ptr<BacktestTab>
+BacktestTab::createApplicationConfigured(QWidget *parent) {
+  const auto applicationRoot = std::filesystem::path{
+      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+          .toStdString()};
+  const auto configuredPath = [](const char *name,
+                                 const std::filesystem::path &fallback) {
+    const auto value = qEnvironmentVariable(name);
+    return value.isEmpty() ? fallback
+                           : std::filesystem::path{value.toStdString()};
+  };
+  const bindings::PersistedBacktestStorage storage{
+      .resultStore =
+          configuredPath("BTE_RESULT_STORE", applicationRoot / "Results"),
+      .dataStore = configuredPath("BTE_DATA_STORE", applicationRoot / "Data"),
+      .snapshotId = qEnvironmentVariable("BTE_DATA_SNAPSHOT_ID").toStdString(),
+      .strategyHash = {},
+  };
+  return std::make_unique<BacktestTab>(
+      // NOLINTNEXTLINE(bugprone-exception-escape): worker catches failures
+      [storage](const bindings::BacktestConfiguration &configuration,
+                const core::CancellationToken &cancellation) {
+        return bindings::runPersistedBacktestConfiguration(
+            configuration, storage, cancellation);
+      },
+      parent);
+}
 
 BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
     : QWidget(parent), runState_(std::make_unique<RunState>()) {
@@ -599,6 +724,20 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         threshold->setEnabled(enabled);
         period->setEnabled(enabled);
       };
+  const auto connectMetricDisplay = [this](QComboBox *metric,
+                                           QDoubleSpinBox *threshold,
+                                           QSpinBox *period) {
+    const auto refresh = [metric, threshold, period] {
+      updateMetricDisplay(metric, threshold, period);
+    };
+    QObject::connect(metric, qOverload<int>(&QComboBox::currentIndexChanged),
+                     this, [refresh](int) { refresh(); });
+    refresh();
+  };
+  connectMetricDisplay(buyMetric, buyThreshold, buyPeriod);
+  connectMetricDisplay(buySecondMetric, buySecondThreshold, buySecondPeriod);
+  connectMetricDisplay(sellMetric, sellThreshold, sellPeriod);
+  connectMetricDisplay(sellSecondMetric, sellSecondThreshold, sellSecondPeriod);
   setSecondConditionEnabled(false, buySecondMetric, buySecondComparison,
                             buySecondThreshold, buySecondPeriod);
   setSecondConditionEnabled(false, sellSecondMetric, sellSecondComparison,
@@ -620,6 +759,21 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
 
   auto *status = makeLabel(tr("Ready to run"), "backtestStatusLabel", this);
   root->addWidget(status);
+
+  auto *openInReplay =
+      std::make_unique<QPushButton>(tr("Open in Replay"), this).release();
+  openInReplay->setObjectName("backtestOpenInReplayButton");
+  openInReplay->setAccessibleName("Open completed result in Replay");
+  openInReplay->setEnabled(false);
+  openInReplay->setProperty("resultId", QString{});
+  root->addWidget(openInReplay, 0, Qt::AlignRight);
+  QObject::connect(
+      openInReplay, &QPushButton::clicked, this, [this, openInReplay]() {
+        const auto resultId = openInReplay->property("resultId").toString();
+        if (!resultId.isEmpty()) {
+          emit openResultInReplay(resultId);
+        }
+      });
 
   auto *summary =
       std::make_unique<QGroupBox>(tr("Result summary"), this).release();
@@ -658,10 +812,12 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
   QObject::connect(
       watcher, &QFutureWatcher<RunState::BacktestResult>::finished, this,
       [this, run, watcher, status, cash, position, market, equity, pnl, bars,
-       tradeLog]() {
+       tradeLog, openInReplay]() {
         run->setEnabled(true);
         const auto result = watcher->result();
         if (!result.ok()) {
+          openInReplay->setEnabled(false);
+          openInReplay->setProperty("resultId", QString{});
           setLabelText(
               status, tr("Cannot run — %1")
                           .arg(QString::fromStdString(result.error().message)));
@@ -669,6 +825,9 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         }
 
         const auto &snapshot = result.value();
+        const auto resultId = QString::fromStdString(snapshot.resultId);
+        openInReplay->setProperty("resultId", resultId);
+        openInReplay->setEnabled(!resultId.isEmpty());
         setLabelText(status, statusText(snapshot.outcome,
                                         runState_->selectableConditions));
         setLabelText(cash, tr("Cash: %1").arg(formatMoney(snapshot.cash)));
@@ -709,13 +868,13 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
   QObject::connect(
       run, &QPushButton::clicked, this,
       [this, tradeLog, status, cash, position, market, equity, pnl, bars, run,
-       symbol, strategyCombo, start, end, capital, quantity, watcher, buyLogic,
-       buyMetric, buyComparison, buyThreshold, buyPeriod, buySecondEnabled,
-       buySecondMetric, buySecondComparison, buySecondThreshold,
-       buySecondPeriod, sellLogic, sellMetric, sellComparison, sellThreshold,
-       sellPeriod, sellSecondEnabled, sellSecondMetric, sellSecondComparison,
-       sellSecondThreshold, sellSecondPeriod,
-       executeBacktest = std::move(runner)]() {
+       openInReplay, symbol, strategyCombo, start, end, capital, quantity,
+       watcher, buyLogic, buyMetric, buyComparison, buyThreshold, buyPeriod,
+       buySecondEnabled, buySecondMetric, buySecondComparison,
+       buySecondThreshold, buySecondPeriod, sellLogic, sellMetric,
+       sellComparison, sellThreshold, sellPeriod, sellSecondEnabled,
+       sellSecondMetric, sellSecondComparison, sellSecondThreshold,
+       sellSecondPeriod, executeBacktest = std::move(runner)]() {
         tradeLog->setRowCount(0);
         setLabelText(status, tr("Running…"));
         setLabelText(cash, tr("Cash: --"));
@@ -725,6 +884,8 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         setLabelText(pnl, tr("PnL: --"));
         setLabelText(bars, tr("Bars: --"));
         run->setEnabled(false);
+        openInReplay->setEnabled(false);
+        openInReplay->setProperty("resultId", QString{});
 
         auto backtestConfiguration = bindings::BacktestConfiguration{
             .symbol = symbol->currentText(),

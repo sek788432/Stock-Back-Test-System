@@ -3,10 +3,8 @@ add_library(
   STATIC
     Include/Bte/Engine/Backtest.h
     Include/Bte/Engine/Replay.h
-    Include/Bte/Engine/ResultSnapshotStore.h
     Private/Backtest.cpp
-    Private/Replay.cpp
-    Private/ResultSnapshotStore.cpp)
+    Private/Replay.cpp)
 
 add_library(bte::engine ALIAS bte_engine)
 
@@ -22,6 +20,7 @@ target_link_libraries(
   PUBLIC
     bte::core
     bte::data
+    bte::results
     bte::strategy)
 
 target_compile_features(bte_engine PUBLIC cxx_std_20)

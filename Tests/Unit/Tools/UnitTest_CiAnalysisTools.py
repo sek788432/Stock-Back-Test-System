@@ -16,6 +16,7 @@ from unittest import mock
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/ci.yml"
+ROOT_CMAKE = REPOSITORY_ROOT / "CMakeLists.txt"
 WORKFLOW_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
 IWYU_MAPPINGS = json.loads(
     (REPOSITORY_ROOT / "Tools/Iwyu.imp").read_text(encoding="utf-8")
@@ -50,6 +51,42 @@ class CiWorkflowSecurityTest(unittest.TestCase):
         for reference in action_references:
             with self.subTest(reference=reference):
                 self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
+
+    def test_fetchcontent_dependencies_are_pinned_to_full_commit_shas(self) -> None:
+        revisions = re.findall(
+            r"^\s*GIT_TAG\s+([^\s)]+)",
+            ROOT_CMAKE.read_text(encoding="utf-8"),
+            flags=re.MULTILINE,
+        )
+
+        self.assertGreater(len(revisions), 0)
+        for revision in revisions:
+            with self.subTest(revision=revision):
+                self.assertRegex(revision, r"^[0-9a-f]{40}$")
+
+    def test_cmake_targets_do_not_repeat_source_entries(self) -> None:
+        cmake_files = [
+            path
+            for path in REPOSITORY_ROOT.rglob("CMakeLists.txt")
+            if "Output" not in path.parts
+        ]
+
+        for path in cmake_files:
+            target_commands = re.findall(
+                r"add_(?:executable|library)\s*\((.*?)\)",
+                path.read_text(encoding="utf-8"),
+                flags=re.DOTALL,
+            )
+            for command in target_commands:
+                entries = re.findall(
+                    r"[^\s()]+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)", command
+                )
+                with self.subTest(path=path, target=command.split()[0]):
+                    self.assertEqual(
+                        len(entries),
+                        len(set(entries)),
+                        f"duplicate source entry in {path}",
+                    )
 
     def test_checkout_steps_do_not_persist_credentials(self) -> None:
         step_blocks = re.findall(
@@ -168,25 +205,82 @@ class StaticAnalysisToolTest(unittest.TestCase):
 
             self.assertEqual(static_analysis.compilation_units(database, root), [source.resolve()])
 
-    def test_changed_translation_units_keep_only_cpp_sources(self) -> None:
-        root = Path("/tmp/repository")
-        completed = mock.Mock(
-            stdout="Src/Core/Bar.cpp\nSrc/Core/Bar.h\nDocs/BUILD.md\n"
-        )
-        with mock.patch.object(
-            static_analysis.subprocess, "run", return_value=completed
-        ) as run:
-            self.assertEqual(
-                static_analysis.changed_translation_units(root, "base", "head"),
-                {(root / "Src/Core/Bar.cpp").resolve()},
-            )
-        run.assert_called_once_with(
-            ["git", "diff", "--name-only", "base", "head", "--", "Src"],
-            cwd=root,
+    def test_cli_does_not_offer_changed_translation_unit_filtering(self) -> None:
+        completed = subprocess.run(
+            ["python3", REPOSITORY_ROOT / "Tools/RunStaticAnalysis.py", "--help"],
             check=True,
             capture_output=True,
             text=True,
         )
+
+        self.assertNotIn("--base", completed.stdout)
+        self.assertNotIn("--head", completed.stdout)
+
+    def test_cli_rejects_obsolete_changed_translation_unit_filtering(self) -> None:
+        completed = subprocess.run(
+            [
+                "python3",
+                REPOSITORY_ROOT / "Tools/RunStaticAnalysis.py",
+                "clang-tidy",
+                "--base",
+                "base",
+                "--head",
+                "head",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("unrecognized arguments: --base base --head head", completed.stderr)
+
+    def test_main_forwards_every_project_translation_unit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build_directory = root / "Output/analysis"
+            build_directory.mkdir(parents=True)
+            sources = [
+                root / "Src/Core/Bar.cpp",
+                root / "Src/Data/CsvBarStream.cpp",
+            ]
+            for source in sources:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.touch()
+            (build_directory / "compile_commands.json").write_text(
+                json.dumps(
+                    [
+                        {"directory": str(root), "file": str(source)}
+                        for source in sources
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            arguments = SimpleNamespace(tool="clang-tidy", build_dir=build_directory)
+            completed = mock.Mock(returncode=0)
+
+            with (
+                mock.patch.object(static_analysis, "REPOSITORY_ROOT", root),
+                mock.patch.object(
+                    static_analysis, "parse_arguments", return_value=arguments
+                ),
+                mock.patch.object(
+                    static_analysis,
+                    "analyzer_command",
+                    return_value=["clang-tidy"],
+                ) as command,
+                mock.patch.object(
+                    static_analysis.subprocess, "run", return_value=completed
+                ),
+            ):
+                self.assertEqual(static_analysis.main(), 0)
+
+            command.assert_called_once_with(
+                "clang-tidy",
+                build_directory.resolve(),
+                [source.resolve() for source in sources],
+            )
+
     @mock.patch.object(static_analysis.shutil, "which", return_value=None)
     def test_missing_analyzer_is_reported(self, unused_which: mock.Mock) -> None:
         with self.assertRaisesRegex(RuntimeError, "required command not found"):
@@ -247,9 +341,7 @@ class StaticAnalysisToolTest(unittest.TestCase):
                 json.dumps([{"directory": str(root), "file": str(source)}]),
                 encoding="utf-8",
             )
-            arguments = SimpleNamespace(
-                tool="clang-tidy", build_dir=build_directory, base=None, head=None
-            )
+            arguments = SimpleNamespace(tool="clang-tidy", build_dir=build_directory)
             completed = mock.Mock(returncode=17)
 
             with (
@@ -259,40 +351,6 @@ class StaticAnalysisToolTest(unittest.TestCase):
                 mock.patch.object(static_analysis.subprocess, "run", return_value=completed),
             ):
                 self.assertEqual(static_analysis.main(), 17)
-
-    def test_main_skips_analyzer_when_no_translation_unit_changed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            build_directory = root / "Output/analysis"
-            build_directory.mkdir(parents=True)
-            source = root / "Src/Core/Bar.cpp"
-            source.parent.mkdir(parents=True)
-            source.touch()
-            (build_directory / "compile_commands.json").write_text(
-                json.dumps([{"directory": str(root), "file": str(source)}]),
-                encoding="utf-8",
-            )
-            arguments = SimpleNamespace(
-                tool="clang-tidy",
-                build_dir=build_directory,
-                base="base",
-                head="head",
-            )
-            with (
-                mock.patch.object(static_analysis, "REPOSITORY_ROOT", root),
-                mock.patch.object(
-                    static_analysis, "parse_arguments", return_value=arguments
-                ),
-                mock.patch.object(
-                    static_analysis,
-                    "changed_translation_units",
-                    return_value=set(),
-                ),
-                mock.patch.object(static_analysis, "analyzer_command") as command,
-            ):
-                self.assertEqual(static_analysis.main(), 0)
-                command.assert_not_called()
-
 
 class ChangedBranchCoverageTest(unittest.TestCase):
     def test_workflow_installs_html_report_dependency_at_an_exact_version(self) -> None:

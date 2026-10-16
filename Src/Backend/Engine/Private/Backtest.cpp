@@ -3,6 +3,9 @@
 // IWYU pragma: no_include <math>
 
 #include "Bte/Core/Result.h"
+#include "Bte/Core/Time.h"
+#include "Bte/Data/ReleaseSnapshot.h"
+#include "Bte/Results/ResultStore.h"
 
 #include <algorithm> // IWYU pragma: keep
 #include <array>
@@ -18,6 +21,7 @@ namespace bte::engine {
 namespace {
 
 constexpr auto nanodollarsPerDollar = 1'000'000'000.0;
+constexpr auto microsharesPerShare = 1'000'000.0;
 constexpr auto int64ExclusiveUpperBound = 9'223'372'036'854'775'808.0;
 constexpr auto priceToMoneyDivisor = std::int64_t{1000};
 constexpr auto slippageDivisor = std::int64_t{10'000};
@@ -46,6 +50,44 @@ core::Result<std::int64_t> checkedPriceNanodollars(const double price) {
     return invalidArgument("bar price is outside the supported range");
   }
   return static_cast<std::int64_t>(rounded);
+}
+
+core::Result<std::int64_t> checkedVolumeMicroshares(const double volume) {
+  const auto scaledVolume = volume * microsharesPerShare;
+  if (!std::isfinite(scaledVolume) || scaledVolume < 0.0 ||
+      scaledVolume >= int64ExclusiveUpperBound) {
+    return invalidArgument("bar volume is outside the supported range");
+  }
+  const auto integral = std::floor(scaledVolume);
+  const auto fraction = scaledVolume - integral;
+  auto rounded = integral;
+  if (fraction > 0.5 || (fraction == 0.5 && std::fmod(integral, 2.0) != 0.0)) {
+    rounded += 1.0;
+  }
+  return static_cast<std::int64_t>(rounded);
+}
+
+core::Result<std::vector<data::SnapshotBar>>
+normalizeBars(const std::vector<core::Bar> &bars) {
+  std::vector<data::SnapshotBar> normalized;
+  normalized.reserve(bars.size());
+  for (const auto &bar : bars) {
+    const auto open = checkedPriceNanodollars(bar.open);
+    const auto high = checkedPriceNanodollars(bar.high);
+    const auto low = checkedPriceNanodollars(bar.low);
+    const auto close = checkedPriceNanodollars(bar.close);
+    const auto volume = checkedVolumeMicroshares(bar.volume);
+    if (!open.ok() || !high.ok() || !low.ok() || !close.ok() || !volume.ok()) {
+      return invalidArgument("Backtest bars cannot be normalized exactly");
+    }
+    normalized.push_back({.timestamp = bar.ts,
+                          .openNanodollars = open.value(),
+                          .highNanodollars = high.value(),
+                          .lowNanodollars = low.value(),
+                          .closeNanodollars = close.value(),
+                          .volumeMicroshares = volume.value()});
+  }
+  return normalized;
 }
 
 core::Result<std::int64_t> checkedAdd(const std::int64_t left,
@@ -79,7 +121,7 @@ moneyForWholeShares(const std::int64_t priceNanodollars,
   const auto roundingRemainder = remainderProduct % priceToMoneyDivisor;
   if (roundingRemainder > priceToMoneyDivisor / 2 ||
       (roundingRemainder == priceToMoneyDivisor / 2 &&
-       remainderMoney % 2 != 0)) {
+       base.value() % 2 != remainderMoney % 2)) {
     ++remainderMoney;
   }
   return checkedAdd(base.value(), remainderMoney);
@@ -116,6 +158,9 @@ validateRequest(const BacktestRequest &request,
   }
   if (request.bars.empty()) {
     return invalidArgument("at least one bar is required");
+  }
+  if (request.symbol.empty()) {
+    return invalidArgument("backtest symbol is required");
   }
 
   for (std::size_t index = 0; index < request.bars.size(); ++index) {
@@ -154,8 +199,163 @@ BacktestResult makeInitialResult(const BacktestRequest &request) {
       .pnlMicrodollars = 0,
       .finalPriceNanodollars = finalPrice,
       .positionShares = 0,
-      .barsProcessed = request.bars.size(),
+      .barsProcessed = 0,
+      .canonicalRecords = {},
+      .status = results::RunStatus::running,
+      .terminalError = {},
   };
+}
+
+void appendRecord(BacktestResult &result, results::CanonicalRecord record) {
+  record.sequence = result.canonicalRecords.size();
+  result.canonicalRecords.push_back(std::move(record));
+}
+
+void appendOrderRecord(BacktestResult &result, const BacktestRequest &request,
+                       const core::Bar &bar, const BacktestOrderSide side) {
+  appendRecord(result, {.timestamp = bar.ts,
+                        .symbol = request.symbol,
+                        .family = results::RecordFamily::order,
+                        .side = side == BacktestOrderSide::buy
+                                    ? results::OrderSide::buy
+                                    : results::OrderSide::sell,
+                        .quantityShares = request.quantityShares,
+                        .priceNanodollars = {},
+                        .amountMicrodollars = {},
+                        .cashMicrodollars = {},
+                        .marketValueMicrodollars = {},
+                        .equityMicrodollars = {},
+                        .positionShares = {},
+                        .text = {}});
+}
+
+void appendFillRecord(BacktestResult &result, const BacktestRequest &request,
+                      const BacktestFill &fill) {
+  appendRecord(result, {.timestamp = fill.timestamp,
+                        .symbol = request.symbol,
+                        .family = results::RecordFamily::fill,
+                        .side = fill.side == BacktestOrderSide::buy
+                                    ? results::OrderSide::buy
+                                    : results::OrderSide::sell,
+                        .quantityShares = fill.quantityShares,
+                        .priceNanodollars = fill.priceNanodollars,
+                        .amountMicrodollars = fill.amountMicrodollars,
+                        .cashMicrodollars = {},
+                        .marketValueMicrodollars = {},
+                        .equityMicrodollars = {},
+                        .positionShares = {},
+                        .text = {}});
+}
+
+core::Result<void>
+appendSlippageCostRecord(BacktestResult &result, const BacktestRequest &request,
+                         const BacktestFill &fill,
+                         const std::int64_t openNanodollars) {
+  const auto priceDifference = fill.side == BacktestOrderSide::buy
+                                   ? fill.priceNanodollars - openNanodollars
+                                   : openNanodollars - fill.priceNanodollars;
+  const auto cost = moneyForWholeShares(priceDifference, fill.quantityShares);
+  // Request validation bounds both price and quantity, making this overflow
+  // guard unreachable for an accepted fill. GCOVR_EXCL_START
+  if (!cost.ok()) {
+    return cost.error();
+  }
+  // GCOVR_EXCL_STOP
+  appendRecord(result, {.timestamp = fill.timestamp,
+                        .symbol = request.symbol,
+                        .family = results::RecordFamily::cost,
+                        .side = fill.side == BacktestOrderSide::buy
+                                    ? results::OrderSide::buy
+                                    : results::OrderSide::sell,
+                        .quantityShares = fill.quantityShares,
+                        .priceNanodollars = {},
+                        .amountMicrodollars = cost.value(),
+                        .cashMicrodollars = {},
+                        .marketValueMicrodollars = {},
+                        .equityMicrodollars = {},
+                        .positionShares = {},
+                        .text = "slippage"});
+  return {};
+}
+
+void appendDividendWarning(BacktestResult &result,
+                           const BacktestRequest &request) {
+  appendRecord(result,
+               {.timestamp = request.bars.front().ts,
+                .symbol = request.symbol,
+                .family = results::RecordFamily::warning,
+                .side = results::OrderSide::none,
+                .quantityShares = {},
+                .priceNanodollars = {},
+                .amountMicrodollars = {},
+                .cashMicrodollars = {},
+                .marketValueMicrodollars = {},
+                .equityMicrodollars = {},
+                .positionShares = {},
+                .text = "dividendAccounting=excluded; price-return only"});
+}
+
+void appendTerminalDiagnostic(BacktestResult &result,
+                              const BacktestRequest &request,
+                              const core::Timestamp timestamp,
+                              const std::string &reason) {
+  appendRecord(result, {.timestamp = timestamp,
+                        .symbol = request.symbol,
+                        .family = results::RecordFamily::terminalDiagnostic,
+                        .side = results::OrderSide::none,
+                        .quantityShares = {},
+                        .priceNanodollars = {},
+                        .amountMicrodollars = {},
+                        .cashMicrodollars = {},
+                        .marketValueMicrodollars = {},
+                        .equityMicrodollars = {},
+                        .positionShares = {},
+                        .text = reason});
+}
+
+core::Result<void> appendPortfolioRecord(BacktestResult &result,
+                                         const BacktestRequest &request,
+                                         const core::Bar &bar) {
+  const auto close = checkedPriceNanodollars(bar.close);
+  // Pre-run validation checks every close with the same conversion.
+  // GCOVR_EXCL_START
+  if (!close.ok()) {
+    return close.error();
+  }
+  // GCOVR_EXCL_STOP
+  result.finalPriceNanodollars = close.value();
+  result.marketValueMicrodollars = 0;
+  if (result.positionShares > 0) {
+    const auto marketValue =
+        moneyForWholeShares(close.value(), result.positionShares);
+    if (!marketValue.ok()) {
+      return marketValue.error();
+    }
+    result.marketValueMicrodollars = marketValue.value();
+  }
+  const auto equity =
+      checkedAdd(result.cashMicrodollars, result.marketValueMicrodollars);
+  if (!equity.ok()) {
+    return equity.error();
+  }
+  result.equityMicrodollars = equity.value();
+  result.pnlMicrodollars =
+      result.equityMicrodollars - result.initialCapitalMicrodollars;
+  appendRecord(result,
+               {.timestamp = bar.ts,
+                .symbol = request.symbol,
+                .family = results::RecordFamily::portfolio,
+                .side = results::OrderSide::none,
+                .quantityShares = {},
+                .priceNanodollars = {},
+                .amountMicrodollars = {},
+                .cashMicrodollars = result.cashMicrodollars,
+                .marketValueMicrodollars = result.marketValueMicrodollars,
+                .equityMicrodollars = result.equityMicrodollars,
+                .pnlMicrodollars = result.pnlMicrodollars,
+                .positionShares = result.positionShares,
+                .text = {}});
+  return {};
 }
 
 void recordFill(BacktestResult &result, const BacktestFill &fill) {
@@ -244,26 +444,6 @@ executePendingOrder(const BacktestOrderSide side, BacktestResult &result,
   return executeSellAtOpen(result, bar, open);
 }
 
-core::Result<bool> updateFinalPortfolio(BacktestResult &result) {
-  if (result.positionShares > 0) {
-    const auto marketValue = moneyForWholeShares(result.finalPriceNanodollars,
-                                                 result.positionShares);
-    if (!marketValue.ok()) {
-      return marketValue.error();
-    }
-    result.marketValueMicrodollars = marketValue.value();
-  }
-  const auto equity =
-      checkedAdd(result.cashMicrodollars, result.marketValueMicrodollars);
-  if (!equity.ok()) {
-    return equity.error();
-  }
-  result.equityMicrodollars = equity.value();
-  result.pnlMicrodollars =
-      result.equityMicrodollars - result.initialCapitalMicrodollars;
-  return true;
-}
-
 StarterOrderStatus selectableStatus(const BacktestResult &result,
                                     const bool rejectedOrder,
                                     const bool pendingOrder) noexcept {
@@ -290,114 +470,353 @@ nextOrderFor(const strategy::SelectableStrategySignal &signal,
                      : std::nullopt;
 }
 
-core::Result<BacktestResult>
-runSelectableBacktest(const BacktestRequest &request,
-                      const strategy::SelectableStrategyPlan &plan,
-                      const core::CancellationToken &cancellation) {
-  auto result = makeInitialResult(request);
-  auto strategy = strategy::SelectableStrategy::create(plan);
-  if (!strategy.ok()) {
-    return strategy.error();
+} // namespace
+
+struct BacktestExecution::Impl final {
+  struct SliceCheckpoint final {
+    StarterOrderStatus orderStatus = StarterOrderStatus::completedNoSignal;
+    std::optional<BacktestFill> firstFill;
+    std::size_t fillCount = 0;
+    std::int64_t cashMicrodollars = 0;
+    std::int64_t marketValueMicrodollars = 0;
+    std::int64_t equityMicrodollars = 0;
+    std::int64_t pnlMicrodollars = 0;
+    std::int64_t finalPriceNanodollars = 0;
+    std::int64_t positionShares = 0;
+    std::size_t recordCount = 0;
+    std::optional<BacktestOrderSide> pendingOrder;
+    bool rejectedOrder = false;
+  };
+
+  BacktestRequest request;
+  BacktestResult result;
+  std::unique_ptr<strategy::SelectableStrategy> strategy;
+  std::optional<BacktestOrderSide> pendingOrder = std::nullopt;
+  std::size_t nextBar = 0;
+  bool rejectedOrder = false;
+  bool recordsWritten = false;
+  bool finalized = false;
+
+  [[nodiscard]] SliceCheckpoint checkpoint() const {
+    return {
+        .orderStatus = result.orderStatus,
+        .firstFill = result.fill,
+        .fillCount = result.fills.size(),
+        .cashMicrodollars = result.cashMicrodollars,
+        .marketValueMicrodollars = result.marketValueMicrodollars,
+        .equityMicrodollars = result.equityMicrodollars,
+        .pnlMicrodollars = result.pnlMicrodollars,
+        .finalPriceNanodollars = result.finalPriceNanodollars,
+        .positionShares = result.positionShares,
+        .recordCount = result.canonicalRecords.size(),
+        .pendingOrder = pendingOrder,
+        .rejectedOrder = rejectedOrder,
+    };
   }
 
-  std::optional<BacktestOrderSide> pendingOrder;
-  auto rejectedOrder = false;
-  result.fills.reserve(request.bars.size());
-  for (const auto &bar : request.bars) {
-    if (cancellation.isCancellationRequested()) {
-      return cancelled();
-    }
-    if (pendingOrder.has_value()) {
-      const auto execution = executePendingOrder(*pendingOrder, result, bar,
-                                                 request.quantityShares);
+  void restore(const SliceCheckpoint &saved) {
+    result.orderStatus = saved.orderStatus;
+    result.fill = saved.firstFill;
+    result.fills.resize(saved.fillCount);
+    result.cashMicrodollars = saved.cashMicrodollars;
+    result.marketValueMicrodollars = saved.marketValueMicrodollars;
+    result.equityMicrodollars = saved.equityMicrodollars;
+    result.pnlMicrodollars = saved.pnlMicrodollars;
+    result.finalPriceNanodollars = saved.finalPriceNanodollars;
+    result.positionShares = saved.positionShares;
+    result.canonicalRecords.resize(saved.recordCount);
+    pendingOrder = saved.pendingOrder;
+    rejectedOrder = saved.rejectedOrder;
+  }
+
+  [[nodiscard]] core::Result<void> processStarter(const core::Bar &bar) {
+    if (nextBar == 0U) {
+      appendOrderRecord(result, request, bar, BacktestOrderSide::buy);
+    } else if (nextBar == 1U) {
+      const auto open = checkedPriceNanodollars(bar.open).value();
+      auto execution = executePendingOrder(BacktestOrderSide::buy, result, bar,
+                                           request.quantityShares);
       if (!execution.ok()) {
         return execution.error();
       }
-      const auto completedExecution = execution.value();
-      rejectedOrder =
-          rejectedOrder || completedExecution.rejectedInsufficientCash;
-      if (completedExecution.fill.has_value()) {
-        recordFill(result, completedExecution.fill.value());
+      const auto executionResult = std::move(execution).value();
+      if (executionResult.rejectedInsufficientCash) {
+        result.orderStatus = StarterOrderStatus::rejectedInsufficientCash;
+      } else if (executionResult.fill.has_value()) {
+        result.orderStatus = StarterOrderStatus::filled;
+        const auto &fill = executionResult.fill.value();
+        recordFill(result, fill);
+        appendFillRecord(result, request, fill);
+        auto cost = appendSlippageCostRecord(result, request, fill, open);
+        // appendSlippageCostRecord retains its defensive Result contract even
+        // though validated starter inputs cannot overflow. GCOVR_EXCL_START
+        if (!cost.ok()) {
+          return cost.error();
+        }
+        // GCOVR_EXCL_STOP
+      }
+    }
+    return appendPortfolioRecord(result, request, bar);
+  }
+
+  [[nodiscard]] core::Result<void> processSelectable(const core::Bar &bar) {
+    if (pendingOrder.has_value()) {
+      const auto open = checkedPriceNanodollars(bar.open).value();
+      auto execution = executePendingOrder(*pendingOrder, result, bar,
+                                           request.quantityShares);
+      if (!execution.ok()) {
+        return execution.error();
+      }
+      const auto executionResult = std::move(execution).value();
+      rejectedOrder = rejectedOrder || executionResult.rejectedInsufficientCash;
+      if (executionResult.fill.has_value()) {
+        const auto &fill = executionResult.fill.value();
+        recordFill(result, fill);
+        appendFillRecord(result, request, fill);
+        auto cost = appendSlippageCostRecord(result, request, fill, open);
+        // appendSlippageCostRecord retains its defensive Result contract even
+        // though validated strategy inputs cannot overflow. GCOVR_EXCL_START
+        if (!cost.ok()) {
+          return cost.error();
+        }
+        // GCOVR_EXCL_STOP
       }
       pendingOrder.reset();
     }
-    const auto signal = strategy.value()->onBar(bar);
+    auto signal = strategy->onBar(bar);
     if (!signal.ok()) {
       return signal.error();
     }
     pendingOrder = nextOrderFor(signal.value(), result.positionShares);
+    if (pendingOrder.has_value()) {
+      appendOrderRecord(result, request, bar, *pendingOrder);
+    }
+    return appendPortfolioRecord(result, request, bar);
   }
 
-  const auto finalPortfolio = updateFinalPortfolio(result);
-  if (!finalPortfolio.ok()) {
-    return finalPortfolio.error();
+  void fail(const core::Error &error, const core::Timestamp timestamp) {
+    result.status = error.code == core::ErrorCode::cancelled
+                        ? results::RunStatus::canceled
+                        : results::RunStatus::failed;
+    result.terminalError = error;
+    appendTerminalDiagnostic(result, request, timestamp, error.message);
   }
-  result.orderStatus =
-      selectableStatus(result, rejectedOrder, pendingOrder.has_value());
-  return result;
-}
 
-core::Result<BacktestResult>
-runStarterBacktest(const BacktestRequest &request) {
+  void finish() {
+    if (strategy != nullptr) {
+      result.orderStatus =
+          selectableStatus(result, rejectedOrder, pendingOrder.has_value());
+    }
+    if (request.requiredFinalMarkTimestamp.has_value() &&
+        request.bars.back().ts != *request.requiredFinalMarkTimestamp) {
+      const auto error =
+          core::makeError(core::ErrorCode::dataUnavailable, "StaleFinalMark");
+      result.status = results::RunStatus::incomplete;
+      result.terminalError = error;
+      appendTerminalDiagnostic(result, request, request.bars.back().ts,
+                               error.message);
+      return;
+    }
+    result.status = results::RunStatus::completed;
+  }
+};
+
+BacktestExecution::BacktestExecution(ConstructionKey,
+                                     std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl)) {}
+
+BacktestExecution::~BacktestExecution() = default;
+
+core::Result<std::unique_ptr<BacktestExecution>>
+BacktestExecution::start(BacktestRequest request) {
+  const auto validation = validateRequest(request, {});
+  if (!validation.ok()) {
+    return validation.error();
+  }
+  if (request.requiredFinalMarkTimestamp.has_value() &&
+      *request.requiredFinalMarkTimestamp < request.bars.back().ts) {
+    return invalidArgument(
+        "required final mark cannot precede the last actual bar");
+  }
+  std::unique_ptr<strategy::SelectableStrategy> strategy;
+  if (request.selectableStrategy.has_value()) {
+    auto created =
+        strategy::SelectableStrategy::create(*request.selectableStrategy);
+    if (!created.ok()) {
+      return created.error();
+    }
+    strategy = std::move(created).value();
+  }
   auto result = makeInitialResult(request);
-  if (request.bars.size() == 1U) {
-    return result;
-  }
-
-  const auto nextOpen = checkedPriceNanodollars(request.bars[1].open).value();
-  const auto fillPrice = buyPriceWithDefaultSlippage(nextOpen);
-  if (!fillPrice.ok()) {
-    return fillPrice.error();
-  }
-  const auto fillAmount =
-      moneyForWholeShares(fillPrice.value(), request.quantityShares);
-  if (!fillAmount.ok()) {
-    return fillAmount.error();
-  }
-  if (fillAmount.value() > request.initialCapitalMicrodollars) {
-    result.orderStatus = StarterOrderStatus::rejectedInsufficientCash;
-    return result;
-  }
-
-  const auto marketValue =
-      moneyForWholeShares(result.finalPriceNanodollars, request.quantityShares);
-  if (!marketValue.ok()) {
-    return marketValue.error();
-  }
-  const auto fill = BacktestFill{
-      .timestamp = request.bars[1].ts,
-      .side = BacktestOrderSide::buy,
-      .quantityShares = request.quantityShares,
-      .priceNanodollars = fillPrice.value(),
-      .amountMicrodollars = fillAmount.value(),
-  };
-  result.orderStatus = StarterOrderStatus::filled;
-  recordFill(result, fill);
-  result.cashMicrodollars =
-      request.initialCapitalMicrodollars - fillAmount.value();
-  result.marketValueMicrodollars = marketValue.value();
-  result.positionShares = request.quantityShares;
-  const auto finalPortfolio = updateFinalPortfolio(result);
-  if (!finalPortfolio.ok()) {
-    return finalPortfolio.error();
-  }
-  return result;
+  result.fills.reserve(request.bars.size());
+  appendDividendWarning(result, request);
+  auto implementation = std::make_unique<Impl>(Impl{
+      .request = std::move(request),
+      .result = std::move(result),
+      .strategy = std::move(strategy),
+  });
+  return std::make_unique<BacktestExecution>(ConstructionKey{},
+                                             std::move(implementation));
 }
 
-} // namespace
+core::Result<void>
+BacktestExecution::advance(const core::CancellationToken &cancellation) {
+  if (impl_->result.status != results::RunStatus::running) {
+    return invalidArgument("backtest execution is already terminal");
+  }
+  const auto timestamp = impl_->request.bars[impl_->nextBar].ts;
+  if (cancellation.isCancellationRequested()) {
+    const auto error = cancelled();
+    impl_->fail(error, timestamp);
+    return error;
+  }
+  const auto saved = impl_->checkpoint();
+  auto processed =
+      impl_->strategy == nullptr
+          ? impl_->processStarter(impl_->request.bars[impl_->nextBar])
+          : impl_->processSelectable(impl_->request.bars[impl_->nextBar]);
+  if (!processed.ok()) {
+    impl_->restore(saved);
+    impl_->fail(processed.error(), timestamp);
+    return processed.error();
+  }
+  ++impl_->nextBar;
+  impl_->result.barsProcessed = impl_->nextBar;
+  if (impl_->nextBar == impl_->request.bars.size()) {
+    impl_->finish();
+  }
+  return {};
+}
+
+core::Result<void> BacktestExecution::runToCompletion(
+    const core::CancellationToken &cancellation) {
+  while (impl_->result.status == results::RunStatus::running) {
+    auto advanced = advance(cancellation);
+    if (!advanced.ok()) {
+      return advanced.error();
+    }
+  }
+  return {};
+}
+
+results::RunStatus BacktestExecution::status() const noexcept {
+  return impl_->result.status;
+}
+
+const BacktestResult &BacktestExecution::result() const noexcept {
+  return impl_->result;
+}
+
+const std::optional<core::Error> &
+BacktestExecution::terminalError() const noexcept {
+  return impl_->result.terminalError;
+}
+
+core::Result<RecordedBacktestOutcome>
+BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
+  if (impl_->result.status == results::RunStatus::running || impl_->finalized) {
+    return invalidArgument("only one terminal backtest result can be recorded");
+  }
+  if (!impl_->recordsWritten) {
+    auto appended = writer.append(impl_->result.canonicalRecords);
+    if (!appended.ok()) {
+      return appended.error();
+    }
+    impl_->recordsWritten = true;
+  }
+  const auto completed = impl_->result.status == results::RunStatus::completed;
+  const auto summary =
+      completed ? results::FinalSummary{.finalEquityMicrodollars =
+                                            impl_->result.equityMicrodollars,
+                                        .pnlMicrodollars =
+                                            impl_->result.pnlMicrodollars}
+                : results::FinalSummary{};
+  std::string reason;
+  if (const auto &terminalError = impl_->result.terminalError;
+      terminalError.has_value()) {
+    reason = terminalError.value().message;
+  }
+  auto finalized =
+      writer.finalizeAndPromote(impl_->result.status, summary, reason);
+  if (!finalized.ok()) {
+    return finalized.error();
+  }
+  impl_->finalized = true;
+  return RecordedBacktestOutcome{
+      .backtest = impl_->result,
+      .persisted = std::move(finalized).value(),
+      .status = impl_->result.status,
+      .terminalError = impl_->result.terminalError,
+  };
+}
 
 core::Result<BacktestResult>
 runBacktest(const BacktestRequest &request,
             const core::CancellationToken &cancellation) {
-  const auto validation = validateRequest(request, cancellation);
-  if (!validation.ok()) {
-    return validation.error();
+  if (cancellation.isCancellationRequested()) {
+    return cancelled();
   }
-  if (request.selectableStrategy.has_value()) {
-    return runSelectableBacktest(request, *request.selectableStrategy,
-                                 cancellation);
+  auto execution = BacktestExecution::start(request);
+  if (!execution.ok()) {
+    return execution.error();
   }
-  return runStarterBacktest(request);
+  auto completed = execution.value()->runToCompletion(cancellation);
+  if (!completed.ok()) {
+    return completed.error();
+  }
+  return execution.value()->result();
+}
+
+core::Result<RecordedBacktestOutcome>
+runBacktestAndRecord(const BacktestRequest &request,
+                     results::ResultWriter &writer,
+                     const core::CancellationToken &cancellation) {
+  if (cancellation.isCancellationRequested()) {
+    return cancelled();
+  }
+  auto execution = BacktestExecution::start(request);
+  if (!execution.ok()) {
+    return execution.error();
+  }
+  const auto ignored = execution.value()->runToCompletion(cancellation);
+  return execution.value()->finalizeAndRecord(writer);
+}
+
+core::Result<RecordedBacktestOutcome>
+runBacktestAndRecord(const BacktestRequest &request,
+                     const results::ResultStore &store,
+                     const results::RunDescriptor &descriptor,
+                     const core::CancellationToken &cancellation) {
+  if (cancellation.isCancellationRequested()) {
+    return cancelled();
+  }
+  auto execution = BacktestExecution::start(request);
+  if (!execution.ok()) {
+    return execution.error();
+  }
+  if (descriptor.universe != std::vector<std::string>{request.symbol} ||
+      descriptor.initialCapitalMicrodollars !=
+          request.initialCapitalMicrodollars ||
+      request.bars.front().ts < descriptor.range.start ||
+      request.bars.back().ts >= descriptor.range.end) {
+    return invalidArgument(
+        "Result descriptor does not identify the validated Backtest request");
+  }
+  auto normalized = normalizeBars(request.bars);
+  if (!normalized.ok()) {
+    return normalized.error();
+  }
+  auto exact = store.validateSelectedBars(descriptor.dataSelection,
+                                          normalized.value(), cancellation);
+  if (!exact.ok()) {
+    return exact.error();
+  }
+  auto writer = store.begin(descriptor);
+  if (!writer.ok()) {
+    return writer.error();
+  }
+  const auto ignored = execution.value()->runToCompletion(cancellation);
+  return execution.value()->finalizeAndRecord(*writer.value());
 }
 
 } // namespace bte::engine

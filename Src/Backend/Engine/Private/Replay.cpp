@@ -1,25 +1,8 @@
 #include "Bte/Engine/Replay.h"
 
-#include <algorithm>
 #include <utility>
 
 namespace bte::engine {
-
-void ReplayClock::setSpeedMultiplier(const double multiplier) noexcept {
-  speedMultiplier_ = std::max(0.0, multiplier);
-}
-
-double ReplayClock::speedMultiplier() const noexcept {
-  return speedMultiplier_;
-}
-
-std::chrono::milliseconds ReplayClock::waitInterval() const noexcept {
-  if (speedMultiplier_ == 0.0) {
-    return std::chrono::milliseconds{0};
-  }
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-      intervalAtOneX_ / speedMultiplier_);
-}
 
 Replay::Replay(std::unique_ptr<data::BarStream> stream)
     : stream_(std::move(stream)) {}

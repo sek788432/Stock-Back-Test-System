@@ -17,7 +17,8 @@
 
 > **Scope note:** Block B (Valuation Matrix) is an **extended feature** not
 > accepted by Spec 11. Spec 11 §4 defines screening only. Promotion requires an
-> owning canonical spec or ADR rather than edits to this archive.
+> owning canonical spec and, when required, the living important-decisions
+> document rather than edits to this archive.
 
 ---
 

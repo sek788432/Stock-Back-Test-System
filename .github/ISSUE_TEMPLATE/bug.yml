@@ -1,7 +1,7 @@
 name: Bug report
 description: Something is wrong, broken, or behaves unexpectedly.
 title: "bug: <short title>"
-labels: ["bug", "triage"]
+labels: ["bug"]
 body:
   - type: markdown
     attributes:
@@ -13,8 +13,8 @@ body:
     id: version
     attributes:
       label: App version
-      description: From Help → About, or `git describe --tags --dirty` if running from source.
-      placeholder: e.g. 0.3.0 or 0.3.0-12-gabcdef-dirty
+      description: Use the release version when known; for a source build, provide `git describe --tags --always --dirty`.
+      placeholder: e.g. 0.3.0 or 0d56e15-dirty
     validations:
       required: true
 
@@ -59,12 +59,12 @@ body:
     id: repro
     attributes:
       label: Steps to reproduce
-      description: Minimal, deterministic. If possible, include a strategy file and a date range.
+      description: Minimal and deterministic. Include the page, inputs, and data symbol/date range when relevant.
       placeholder: |
         1. Open the app
-        2. Load strategy `sma-cross-aapl.rule.json`
-        3. Run backtest from 2020-01-01 to 2020-12-31 with default config
-        4. Observe equity panel
+        2. Open the affected page
+        3. Enter the exact inputs listed above
+        4. Perform the action that shows the problem
     validations:
       required: true
 
@@ -73,8 +73,8 @@ body:
     attributes:
       label: Logs / screenshots / repro data
       description: |
-        Attach `<userData>/logs/stockBacktester.log` if relevant.
-        Trim to the relevant lines. Don't paste DB or strategy files containing secrets.
+        Attach relevant terminal output or screenshots and identify the input fixture when possible.
+        Trim to the relevant lines. Do not paste API keys, private data, or proprietary datasets.
       render: text
 
   - type: dropdown
@@ -96,7 +96,7 @@ body:
       options:
         - label: I searched existing issues and didn't find a duplicate.
           required: true
-        - label: I'm running a supported OS version (per the table above).
+        - label: I included the exact operating-system version and source/release version.
           required: true
         - label: I am not pasting secrets, API keys, or private data.
           required: true

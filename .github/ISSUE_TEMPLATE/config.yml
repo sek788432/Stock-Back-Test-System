@@ -1,8 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Quick question (sync chat)
-    url: https://example.com/team-chat
-    about: For quick questions or anything urgent, ping the team chat first. Replace this URL with the team's actual chat link.
   - name: Read the specs
-    url: https://github.com/your-org/Stock-Back-Test-System/tree/main/Docs/Specs
-    about: Most "how does this work" questions are answered in the Docs/Specs/ folder. Replace this URL with the actual repo link.
+    url: https://github.com/sek788432/Stock-Back-Test-System/tree/main/Docs/Specs
+    about: Check the canonical implemented, planned, and blocked product contracts before opening an issue.

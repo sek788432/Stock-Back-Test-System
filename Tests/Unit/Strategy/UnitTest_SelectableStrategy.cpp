@@ -93,6 +93,34 @@ TEST(SelectableStrategyTest, allRequiresEveryWarmedConditionBeforeBuying) {
   EXPECT_TRUE(third.value().buy);
 }
 
+TEST(SelectableStrategyTest,
+     canonicalHashIsStableAndCoversEverySelectablePlanField) {
+  auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.logic = bte::strategy::ConditionLogic::all,
+              .conditions = {priceChangeCondition(
+                  bte::strategy::Comparison::greaterThan, 5.0)}},
+      .sell = {.logic = bte::strategy::ConditionLogic::any,
+               .conditions = {bte::strategy::Condition{
+                   .source = bte::strategy::ConditionSource::indicator,
+                   .comparison = bte::strategy::Comparison::lessThan,
+                   .threshold = 20.0,
+                   .thresholdDomain = bte::indicators::NumericDomain::percent,
+                   .indicator = {.kind = bte::indicators::IndicatorKind::rsi,
+                                 .period = 14}}}},
+  };
+  const auto original = bte::strategy::canonicalStrategyHash(plan);
+  EXPECT_EQ(original, bte::strategy::canonicalStrategyHash(plan));
+  EXPECT_EQ(original.size(), 64U);
+  EXPECT_NE(original, bte::strategy::canonicalStrategyHash(std::nullopt));
+
+  auto changedThreshold = plan;
+  changedThreshold.buy.conditions.front().threshold = 5.5;
+  EXPECT_NE(original, bte::strategy::canonicalStrategyHash(changedThreshold));
+  auto changedIndicator = plan;
+  changedIndicator.sell.conditions.front().indicator.period = 15;
+  EXPECT_NE(original, bte::strategy::canonicalStrategyHash(changedIndicator));
+}
+
 TEST(SelectableStrategyTest, anyUsesPriceChangeOrAnIndicatorAndSeparatesSell) {
   const auto plan = bte::strategy::SelectableStrategyPlan{
       .buy =

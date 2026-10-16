@@ -9,6 +9,7 @@
 #include <QGraphicsScene>
 #include <QMouseEvent>
 #include <QPoint>
+#include <QScatterSeries>
 #include <QTest>
 #include <QValueAxis>
 #include <QWheelEvent>
@@ -57,6 +58,7 @@ private slots:
   void setBarWindowReplacesCandles();
   void appendBarAddsOneCandle();
   void invalidBarIsIgnoredAndMarkersCanBeCleared();
+  void rendersSynchronizedVolumeAndTradeMarkers();
   void zoomControlsAreSafeToCall();
   void pointerInteractionPansAndTogglesCrosshair();
   void wheelInteractionZoomsInAndOut();
@@ -68,6 +70,7 @@ void QtChartsCandlestickViewTest::emptyWindowRendersSafely() {
   view.setBarWindow({});
 
   QCOMPARE(view.candleCount(), 0U);
+  QCOMPARE(view.volumePointCount(), 0U);
 }
 
 void QtChartsCandlestickViewTest::setBarWindowReplacesCandles() {
@@ -99,6 +102,7 @@ void QtChartsCandlestickViewTest::appendBarAddsOneCandle() {
   view.appendBar(makeBar(4, 101.0, 108.0));
 
   QCOMPARE(view.candleCount(), 3U);
+  QCOMPARE(view.volumePointCount(), 3U);
 }
 
 void QtChartsCandlestickViewTest::invalidBarIsIgnoredAndMarkersCanBeCleared() {
@@ -107,9 +111,44 @@ void QtChartsCandlestickViewTest::invalidBarIsIgnoredAndMarkersCanBeCleared() {
   invalid.high = invalid.low - 1.0;
 
   view.appendBar(invalid);
-  view.clearMarkers();
-
   QCOMPARE(view.candleCount(), 0U);
+  view.clearMarkers();
+  QCOMPARE(view.markerCount(), 0U);
+}
+
+void QtChartsCandlestickViewTest::rendersSynchronizedVolumeAndTradeMarkers() {
+  bte::frontend::QtChartsCandlestickView view;
+  const std::array bars{makeBar(2, 100.0, 104.0), makeBar(3, 104.0, 101.0)};
+  const std::array markers{
+      bte::frontend::ChartMarker{
+          .timestamp = makeTimestamp(2), .price = 101.0, .isBuy = true},
+      bte::frontend::ChartMarker{
+          .timestamp = makeTimestamp(3), .price = 103.0, .isBuy = false}};
+
+  view.setBarWindow(bars);
+  view.setMarkers(markers);
+  QCOMPARE(view.volumePointCount(), 2U);
+  QCOMPARE(view.markerCount(), 2U);
+  const auto *chartView = view.findChild<QChartView *>("replayChartView");
+  QVERIFY(chartView != nullptr);
+  const auto series = chartView->chart()->series();
+  const auto findMarkers = [&](const QString &name) {
+    const auto found =
+        std::ranges::find(series, name, &QAbstractSeries::objectName);
+    return found == series.end() ? nullptr
+                                 : qobject_cast<QScatterSeries *>(*found);
+  };
+  const auto *buy = findMarkers("replayBuyMarkers");
+  const auto *sell = findMarkers("replaySellMarkers");
+  QVERIFY(buy != nullptr);
+  QVERIFY(sell != nullptr);
+  QCOMPARE(buy->markerShape(), QScatterSeries::MarkerShapeTriangle);
+  QCOMPARE(sell->markerShape(), QScatterSeries::MarkerShapeRectangle);
+  QCOMPARE(buy->color(), QColor(52, 211, 153));
+  QCOMPARE(sell->color(), QColor(251, 113, 133));
+
+  view.clearMarkers();
+  QCOMPARE(view.markerCount(), 0U);
 }
 
 void QtChartsCandlestickViewTest::zoomControlsAreSafeToCall() {

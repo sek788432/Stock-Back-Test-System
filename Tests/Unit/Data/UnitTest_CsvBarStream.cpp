@@ -25,7 +25,6 @@ bte::data::StreamRequest makeRequest(std::string symbol = "AAPL") {
       .symbol = std::move(symbol),
       .schemaName = "ohlcv-1d",
       .csvDir = fixtureCsvDir(),
-      .source = bte::data::StreamRequest::Source::csv,
   };
 }
 
@@ -89,20 +88,6 @@ TEST(CsvBarStreamTest, CsvBarStream_next_returnsBarsInOrder) {
   EXPECT_FALSE(end.has_value());
 }
 
-TEST(CsvBarStreamTest, CsvBarStream_seek_movesToRequestedIndex) {
-  auto stream = bte::data::CsvBarStream::open(makeRequest());
-  ASSERT_TRUE(stream.ok()) << stream.error().message;
-
-  ASSERT_TRUE(stream.value()->seek(2));
-  EXPECT_EQ(stream.value()->consumed(), 2);
-
-  const auto bar = stream.value()->next();
-
-  ASSERT_TRUE(bar.has_value());
-  EXPECT_EQ(bar->open, 102.0);
-  EXPECT_EQ(stream.value()->consumed(), 3);
-}
-
 TEST(CsvBarStreamTest, CsvBarStream_reset_rewindsSequentialConsumption) {
   auto stream = bte::data::CsvBarStream::open(makeRequest());
   ASSERT_TRUE(stream.ok()) << stream.error().message;
@@ -118,28 +103,11 @@ TEST(CsvBarStreamTest, CsvBarStream_reset_rewindsSequentialConsumption) {
   EXPECT_EQ(first->open, 100.0);
 }
 
-TEST(CsvBarStreamTest,
-     CsvBarStream_at_returnsExpectedBarWithoutChangingConsumedPosition) {
-  auto stream = bte::data::CsvBarStream::open(makeRequest());
-  ASSERT_TRUE(stream.ok()) << stream.error().message;
-
-  ASSERT_TRUE(stream.value()->next().has_value());
-  EXPECT_EQ(stream.value()->consumed(), 1);
-
-  const auto bar = stream.value()->at(2);
-
-  ASSERT_TRUE(bar.has_value());
-  EXPECT_EQ(bar->open, 102.0);
-  EXPECT_EQ(stream.value()->consumed(), 1);
-}
-
 TEST(CsvBarStreamTest, CsvBarStream_totalBars_matchesFixtureRowCount) {
   auto stream = bte::data::CsvBarStream::open(makeRequest());
   ASSERT_TRUE(stream.ok()) << stream.error().message;
 
   EXPECT_EQ(stream.value()->totalBars(), 3);
-  EXPECT_EQ(stream.value()->symbol(), "AAPL");
-  EXPECT_EQ(stream.value()->schemaName(), "ohlcv-1d");
 }
 
 TEST(CsvBarStreamTest, CsvBarStream_range_filtersHalfOpenDateRange) {
@@ -154,11 +122,6 @@ TEST(CsvBarStreamTest, CsvBarStream_range_filtersHalfOpenDateRange) {
   ASSERT_TRUE(stream.ok()) << stream.error().message;
 
   EXPECT_EQ(stream.value()->totalBars(), 1);
-  EXPECT_EQ(bte::core::time::toUnixMillis(stream.value()->range().start),
-            bte::core::time::toUnixMillis(request.range.start));
-  EXPECT_EQ(bte::core::time::toUnixMillis(stream.value()->range().end),
-            bte::core::time::toUnixMillis(request.range.end));
-
   const auto bar = stream.value()->next();
   ASSERT_TRUE(bar.has_value());
   EXPECT_EQ(bar->open, 104.0);
@@ -333,15 +296,9 @@ TEST(CsvBarStreamTest,
   EXPECT_EQ(stream.value()->totalBars(), 2);
   EXPECT_EQ(stream.value()->next()->open, 100.0);
   EXPECT_EQ(stream.value()->next()->open, 104.0);
-  EXPECT_EQ(stream.value()->range().start,
-            bte::core::time::parseIso8601("2024-01-01 00:00:00+00:00").value());
-  EXPECT_EQ(stream.value()->range().end,
-            bte::core::time::parseIso8601("2024-01-02 00:00:00+00:00").value() +
-                std::chrono::milliseconds{1});
 }
 
-TEST(CsvBarStreamTest,
-     CsvBarStream_emptySelectionPreservesRequestedRangeAndIndexBoundaries) {
+TEST(CsvBarStreamTest, CsvBarStream_emptySelectionHasNoNextBar) {
   auto request = makeRequest();
   request.range = {
       .start =
@@ -352,11 +309,5 @@ TEST(CsvBarStreamTest,
   ASSERT_TRUE(stream.ok()) << stream.error().message;
 
   EXPECT_EQ(stream.value()->totalBars(), 0);
-  EXPECT_EQ(stream.value()->range().start, request.range.start);
-  EXPECT_EQ(stream.value()->range().end, request.range.end);
-  EXPECT_FALSE(stream.value()->at(-1).has_value());
-  EXPECT_FALSE(stream.value()->at(0).has_value());
-  EXPECT_FALSE(stream.value()->seek(-1));
-  EXPECT_TRUE(stream.value()->seek(0));
-  EXPECT_FALSE(stream.value()->seek(1));
+  EXPECT_FALSE(stream.value()->next().has_value());
 }

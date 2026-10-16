@@ -1,5 +1,6 @@
 interface:
   display_name: "Implement"
-  short_description: "Build work from a spec or tickets"
+  short_description: "Execute plans in CI-green slices"
+  default_prompt: "Use $implement to execute this approved plan one CI-green vertical slice at a time."
 policy:
   allow_implicit_invocation: false
