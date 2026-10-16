@@ -1,5 +1,18 @@
 # Backtest Result K-Line Replay Implementation Plan
 
+> **Latest local gate checkpoint (2026-10-16):** Task 30 implementation is
+> committed locally through `90c6682`. Exact-head `./RunTest.sh` passed 248/248
+> (87.71 seconds). The complete local analyzer stack passed clang-format,
+> clang-tidy, cppcheck, IWYU, and scan-build (`No bugs found`). Coverage tests
+> passed 248/248 (90.64 seconds), diff coverage was 98%, and changed-branch
+> coverage was 93.9%. The first `RunQuality.sh` invocation stopped when
+> FetchContent could not resolve GitHub; coverage was then configured against
+> the already-present local GoogleTest source and all remaining coverage gates
+> passed. ASan/UBSan/LSan passed 205/205 (53.62 seconds) and TSan passed
+> 205/205 (79.99 seconds). These are local macOS results only. The commits have
+> not yet been published, and exact-head remote CI, independent review, and the
+> remaining semantic/native acceptance items are still open.
+
 > **Latest follow-up (2026-10-15): Needs changes.** Published #76 `d50dabb`
 > passed exact full tests (245/245, 84.28 seconds) and non-fast Quality
 > (coverage tests 245/245, 87.06 seconds; lines 2,010/2,049; branches 225/240).
@@ -2616,8 +2629,8 @@ worktrees as an implied cleanup operation.
 
 ### Task 30 — Read the exact Result snapshot once when opening Replay
 
-**Status:** Approved implementation and focused checks passed; exact-head
-gates, review, and remote CI pending.
+**Status:** Implementation and exact-head local gates passed on `90c6682`;
+publication, independent review, and remote CI pending.
 The current PR CI coverage run failed the existing five-second
 `longRangeSeekPresentsEveryReachedCandleAndFill` load assertion: the 23,777-bar,
 6,793-fill Replay load took 5,002 ms. Inspection found that `openResult()`
@@ -2650,10 +2663,19 @@ aggregation; it must not broaden the saved selection used for playback.
   The unchanged long-range test reported 563 ms load and 2,481 ms terminal
   seek on macOS 14.6 arm64, Apple LLVM 16, Qt 6.9.1, `Output/qt-dev`. These
   local samples are not Linux CI acceptance and make no latency guarantee.
-- [ ] Run `./RunTest.sh` after the final refactor and again on the exact
-  committed submission SHA; run complete non-fast
-  `./RunQuality.sh --base origin/main --head HEAD`, applicable sanitizers,
-  exact-head remote CI, and review before accepting the task.
+- [x] Run `./RunTest.sh` on the exact committed local SHA: 248/248 passed in
+  87.71 seconds.
+- [x] Run the complete local quality stack: project standards/clang-format,
+  clang-tidy, cppcheck, IWYU, scan-build (`No bugs found`), coverage tests
+  248/248, 98% diff coverage, and 93.9% changed-branch coverage. The standard
+  `RunQuality.sh` invocation could not fetch GoogleTest because GitHub DNS was
+  unavailable; the coverage configure/build/test/report/check steps were
+  completed with the existing local GoogleTest source instead.
+- [x] Run applicable sanitizer presets: ASan/UBSan/LSan 205/205 and TSan
+  205/205.
+- [ ] Publish the exact tested head, pass required remote CI, and complete
+  independent review before accepting Task 30. Do not treat this scoped CI
+  repair as completion of the broader Issue 10 plan.
 - [x] Update `Docs/Plans/Issue10RemainingWork.md` with exact evidence and keep
   other open plan items listed; this task does not close long-range data
   completeness (R8), persistence safety (R1–R3), or whole-plan acceptance.

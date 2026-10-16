@@ -102,6 +102,22 @@ from main or that any broader source checkpoint is fully accepted.
   not the Linux coverage runner. Exact-commit full tests/Quality, sanitizer,
   review and remote CI remain pending; this does not close the CI failure yet.
 
+- Local follow-up on `codex/issue10-consolidated` is now committed through
+  `90c6682` (`9c37029` avoids the duplicate snapshot open/read; `90c6682`
+  fixes clang-tidy's const-move finding). Exact-head `./RunTest.sh` passed
+  248/248 (87.71 seconds). Project standards/clang-format, full clang-tidy,
+  cppcheck, IWYU, and scan-build passed (`No bugs found`). Coverage tests passed
+  248/248 (90.64 seconds), diff coverage was 98%, and changed-branch coverage
+  was 93.9%. `RunQuality.sh` itself stopped at coverage configuration because
+  sandbox DNS could not resolve GitHub for GoogleTest FetchContent; the same
+  coverage configure/build/test/report/check steps passed using the existing
+  local GoogleTest source. ASan/UBSan/LSan passed 205/205 (53.62 seconds), and
+  TSan passed 205/205 (79.99 seconds). These are macOS local results, not
+  remote acceptance. The commits still need publication, independent review,
+  and required remote CI. All R1–R3, R8, daily-gap, CSV provenance, historical
+  predicate, capability, and native/real-data acceptance entries below remain
+  open.
+
 ## Required before the broad implementation can land
 
 Latest follow-up evidence (2026-10-15):
