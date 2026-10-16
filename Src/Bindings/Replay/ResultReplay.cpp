@@ -273,7 +273,8 @@ ResultReplay::open(const std::filesystem::path &resultStore,
   if (!opened.ok()) {
     return opened.error();
   }
-  const auto &result = opened.value().result;
+  auto resultAndData = std::move(opened).value();
+  const auto &result = resultAndData.result;
   if (result.descriptor.universe.size() != 1) {
     return core::makeError(core::ErrorCode::schemaMismatch,
                            "Multi-symbol Result Replay is unsupported");
@@ -283,7 +284,7 @@ ResultReplay::open(const std::filesystem::path &resultStore,
   if (!validRecords.ok()) {
     return validRecords.error();
   }
-  auto bars = std::move(opened.value().selection.bars);
+  auto bars = std::move(resultAndData.selection.bars);
   std::vector<data::SnapshotBar> fullDailySourceBars;
   if (timeframe == ResultReplayTimeframe::dailyUtc && !bars.empty()) {
     using namespace std::chrono;
