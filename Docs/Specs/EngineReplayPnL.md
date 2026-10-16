@@ -30,6 +30,10 @@ another process opened the store. The detailed lease lifetime, transaction
 boundary and compatibility design must be reviewed before implementation; the
 current checkpoint does not satisfy these requirements.
 
+The [detailed safety design](ResultPersistenceSafetyDesign.md) is a written
+proposal awaiting maintainer review; its proposed seams and lease layout are
+not implemented and do not supersede schema-2 canonical framing.
+
 | Status | Scope |
 | --- | --- |
 | **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar. |

@@ -25,6 +25,13 @@ protected, non-canonical proposal area. It is excluded from this cleanup phase,
 does not override a canonical specification, and requires a separate maintainer
 review before issue #53 can reach final acceptance.
 
+## Proposed designs awaiting review
+
+Focused detailed design:
+[`ResultPersistenceSafetyDesign.md`](ResultPersistenceSafetyDesign.md) expands
+the approved Issue 10 R1–R3 direction. Its proposed interface and protocol
+details are not accepted implementation or current behavior.
+
 ## Accepted foundations
 
 - The project-owned C++ engine is the only execution and accounting authority.

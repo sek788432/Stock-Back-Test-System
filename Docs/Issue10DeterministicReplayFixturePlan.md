@@ -2578,17 +2578,19 @@ documentation commit. No PR, CI submission or merge has occurred.
 
 **Next design stage:** R1–R3 depend on a safe live-writer ownership and
 pin-before-visibility protocol before execution-time durability can be accepted.
-Proposed direction: use the existing SQLite dependency for a cross-process
-writer lease, retain source segments before visibility, atomically persist each
-completed bar, stop on persistence failure, and recover only the committed
-prefix into an Interrupted draft; explicit Save remains required. Platform
-file locks need separate implementations, and PID-based liveness is not reliable
-ownership proof. The maintainer approved this combined architectural direction
-on 2026-10-13, including retaining and warning about legacy staging without a
-lease rather than automatically clearing it. The accepted constraints are now
-recorded in the owning specification and decision. Detailed cross-module design
-and implementation-plan review remain required before changing module interfaces;
-no lease or per-bar durability implementation is claimed.
+The maintainer approved the combined direction on 2026-10-13: use SQLite for a
+cross-process writer lease, retain source segments before visibility,
+atomically persist each completed bar, stop on persistence failure, and recover
+only the committed prefix into an Interrupted draft; explicit Save remains
+required. Legacy staging without a lease is preserved and reported, not
+automatically cleared. The detailed proposal is now recorded in
+[`Docs/Specs/ResultPersistenceSafetyDesign.md`](Specs/ResultPersistenceSafetyDesign.md)
+and linked from the Data and Engine specifications. SQLite's VFS owns
+platform-specific file locking; macOS and Linux process tests must validate the
+supported local filesystems. The written spec still needs maintainer review,
+then a task-by-task implementation plan and selected execution method, before
+changing module interfaces. No lease or per-bar durability implementation is
+claimed.
 
 ### Task 29 — Merge verified work, then clean up the named branches
 
