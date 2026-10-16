@@ -124,6 +124,11 @@ struct OpenedResult {
   ResultCapabilities capabilities;
 };
 
+struct OpenedResultWithData {
+  OpenedResult result;
+  data::SnapshotSelection selection;
+};
+
 class ResultWriter final {
 private:
   struct ConstructionKey final {};
@@ -199,6 +204,9 @@ public:
   [[nodiscard]] core::Result<OpenedResult>
   openResult(const std::string &resultId,
              const core::CancellationToken &cancellation = {}) const;
+  [[nodiscard]] core::Result<OpenedResultWithData>
+  openResultWithData(const std::string &resultId,
+                     const core::CancellationToken &cancellation = {}) const;
   [[nodiscard]] core::Result<FinalizedResult>
   importResult(const std::filesystem::path &source) const;
   [[nodiscard]] core::Result<void>

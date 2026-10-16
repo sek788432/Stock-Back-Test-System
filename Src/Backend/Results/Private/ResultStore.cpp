@@ -40,6 +40,9 @@ constexpr auto schemaVersion = 2;
 constexpr std::string_view numericPolicy = "fixed-point-v1";
 constexpr std::string_view aggregationPolicy = "utcCalendarDayV1";
 
+enum class DataValidationPolicy : std::uint8_t { deferToCaller, validateExact };
+enum class ResultStatusPolicy : std::uint8_t { terminalOnly, allowRunning };
+
 struct ActiveWriterRegistry final {
   // A begin/recovery scan holds mutex across staging I/O so a newly created
   // file cannot be mistaken for an interrupted writer in this process.
@@ -300,6 +303,20 @@ bool validResultId(const std::string_view value) {
            return (character >= '0' && character <= '9') ||
                   (character >= 'a' && character <= 'f');
          });
+}
+
+core::Result<std::filesystem::path>
+existingResultPath(const std::filesystem::path &root,
+                   const std::string &resultId) {
+  if (!validResultId(resultId)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result ID is invalid");
+  }
+  const auto path = root / "Results" / (resultId + ".bteresult");
+  if (!std::filesystem::exists(path)) {
+    return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
+  }
+  return path;
 }
 
 std::size_t utf8SequenceLength(const unsigned char lead) {
@@ -825,7 +842,8 @@ core::Result<void> createResultSchema(Database &database,
 core::Result<OpenedResult> readResultFile(
     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): store paths
     const std::filesystem::path &path, const std::filesystem::path &dataRoot,
-    const bool validateData, const bool allowRunning = false,
+    const DataValidationPolicy dataValidation,
+    const ResultStatusPolicy resultStatus = ResultStatusPolicy::terminalOnly,
     const core::CancellationToken &cancellation = {}) {
   // clang-format on
   if (cancellation.isCancellationRequested()) {
@@ -874,7 +892,8 @@ core::Result<OpenedResult> readResultFile(
   result.terminalReason = textColumn(meta.handle(), 4);
   result.savedUtcMillis = sqlite3_column_int64(meta.handle(), 7);
   if (!validResultId(result.resultId) || !validRunStatus(result.status) ||
-      (result.status == RunStatus::running && !allowRunning) ||
+      (result.status == RunStatus::running &&
+       resultStatus != ResultStatusPolicy::allowRunning) ||
       (result.status != RunStatus::running &&
        !validHash(result.canonicalResultHash))) {
     return core::makeError(core::ErrorCode::schemaMismatch,
@@ -1116,7 +1135,7 @@ core::Result<OpenedResult> readResultFile(
     return core::makeError(core::ErrorCode::schemaMismatch,
                            "Canonical Result hash is invalid");
   }
-  if (validateData) {
+  if (dataValidation == DataValidationPolicy::validateExact) {
     auto exact = validateDataSelection(dataRoot, identity, cancellation);
     if (!exact.ok()) {
       return exact.error();
@@ -1216,7 +1235,8 @@ recoverInterruptedRemovals(const RemovalRecoveryLocations &locations,
     }
     const auto resultId =
         filename.substr(0, filename.size() - policy.suffix.size());
-    auto opened = readResultFile(entry.path(), locations.dataStore, false);
+    auto opened = readResultFile(entry.path(), locations.dataStore,
+                                 DataValidationPolicy::deferToCaller);
     // readResultFile's corrupt/incompatible artifact failures have exhaustive
     // contract coverage; this seam only preserves the structured error.
     // GCOVR_EXCL_START
@@ -1290,8 +1310,9 @@ core::Result<void> recoverStaging(
     if (activeWriters().paths.contains(entry.path().lexically_normal())) {
       continue;
     }
-    auto staged =
-        readResultFile(entry.path(), dataStore, true, true, cancellation);
+    auto staged = readResultFile(
+        entry.path(), dataStore, DataValidationPolicy::validateExact,
+        ResultStatusPolicy::allowRunning, cancellation);
     if (!staged.ok() && staged.error().code == core::ErrorCode::cancelled) {
       return staged.error();
     }
@@ -1361,8 +1382,9 @@ core::Result<void> recoverStaging(
       databaseOwner.reset();
     }
 
-    auto validated =
-        readResultFile(entry.path(), dataStore, true, false, cancellation);
+    auto validated = readResultFile(
+        entry.path(), dataStore, DataValidationPolicy::validateExact,
+        ResultStatusPolicy::terminalOnly, cancellation);
     if (!validated.ok()) {
       return validated.error();
     }
@@ -1615,7 +1637,8 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
     return injectedFailure("close");
   }
 
-  auto reopened = readResultFile(impl_->stagingPath, impl_->dataStore, true);
+  auto reopened = readResultFile(impl_->stagingPath, impl_->dataStore,
+                                 DataValidationPolicy::validateExact);
   if (!reopened.ok()) {
     return reopened.error();
   }
@@ -1851,8 +1874,9 @@ listArtifacts(const ArtifactLocations &locations,
       continue;
     }
     const auto resultId = entry.path().stem().string();
-    auto opened = readResultFile(entry.path(), locations.dataStore, true, false,
-                                 cancellation);
+    auto opened = readResultFile(
+        entry.path(), locations.dataStore, DataValidationPolicy::validateExact,
+        ResultStatusPolicy::terminalOnly, cancellation);
     if (!opened.ok()) {
       if (cancellation.isCancellationRequested()) {
         return core::makeError(core::ErrorCode::cancelled,
@@ -1911,15 +1935,43 @@ ResultStore::listTrash(const core::CancellationToken &cancellation) const {
 core::Result<OpenedResult>
 ResultStore::openResult(const std::string &resultId,
                         const core::CancellationToken &cancellation) const {
-  if (!validResultId(resultId)) {
-    return core::makeError(core::ErrorCode::invalidArgument,
-                           "Result ID is invalid");
+  auto path = existingResultPath(root_, resultId);
+  if (!path.ok()) {
+    return path.error();
   }
-  const auto path = root_ / "Results" / (resultId + ".bteresult");
-  if (!std::filesystem::exists(path)) {
-    return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
+  return readResultFile(path.value(), dataStore_,
+                        DataValidationPolicy::validateExact,
+                        ResultStatusPolicy::terminalOnly, cancellation);
+}
+
+core::Result<OpenedResultWithData> ResultStore::openResultWithData(
+    const std::string &resultId,
+    const core::CancellationToken &cancellation) const {
+  auto path = existingResultPath(root_, resultId);
+  if (!path.ok()) {
+    return path.error();
   }
-  return readResultFile(path, dataStore_, true, false, cancellation);
+  // The exact snapshot is read immediately below; defer its validation here
+  // to avoid opening and decoding the same immutable segments twice.
+  auto result = readResultFile(path.value(), dataStore_,
+                               DataValidationPolicy::deferToCaller,
+                               ResultStatusPolicy::terminalOnly, cancellation);
+  if (!result.ok()) {
+    return result.error();
+  }
+  auto reader = data::ReleaseSnapshotReader::open(
+      dataStore_, result.value().descriptor.dataSelection.snapshotId,
+      cancellation);
+  if (!reader.ok()) {
+    return reader.error();
+  }
+  auto selection = reader.value()->readExact(
+      result.value().descriptor.dataSelection, cancellation);
+  if (!selection.ok()) {
+    return selection.error();
+  }
+  return OpenedResultWithData{.result = std::move(result).value(),
+                              .selection = std::move(selection).value()};
 }
 
 core::Result<FinalizedResult>
@@ -1937,7 +1989,8 @@ ResultStore::publishDraft(const std::string &resultId,
   const auto filename = resultId + ".bteresult";
   const auto resultPath = root_ / "Results" / filename;
   if (std::filesystem::exists(resultPath)) {
-    auto opened = readResultFile(resultPath, dataStore_, true);
+    auto opened = readResultFile(resultPath, dataStore_,
+                                 DataValidationPolicy::validateExact);
     if (!opened.ok()) {
       return opened.error();
     }
@@ -1952,7 +2005,8 @@ ResultStore::publishDraft(const std::string &resultId,
     return core::makeError(core::ErrorCode::notFound,
                            "Result draft is unavailable");
   }
-  auto opened = readResultFile(draftPath, dataStore_, true);
+  auto opened = readResultFile(draftPath, dataStore_,
+                               DataValidationPolicy::validateExact);
   if (!opened.ok()) {
     return opened.error();
   }
@@ -2012,7 +2066,8 @@ ResultStore::renameResult(const std::string &resultId,
   if (!std::filesystem::exists(path)) {
     return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
   }
-  auto opened = readResultFile(path, dataStore_, true);
+  auto opened =
+      readResultFile(path, dataStore_, DataValidationPolicy::validateExact);
   if (!opened.ok()) {
     return opened.error();
   }
@@ -2030,7 +2085,8 @@ ResultStore::discardDraft(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::notFound,
                            "Result draft is unavailable");
   }
-  auto opened = readResultFile(draftPath, dataStore_, false);
+  auto opened = readResultFile(draftPath, dataStore_,
+                               DataValidationPolicy::deferToCaller);
   if (!opened.ok()) {
     return opened.error();
   }
@@ -2105,7 +2161,8 @@ core::Result<void> ResultStore::restore(const std::string &resultId) const {
                            "Result ID is invalid");
   }
   const auto source = root_ / "Trash" / (resultId + ".bteresult");
-  auto opened = readResultFile(source, dataStore_, true);
+  auto opened =
+      readResultFile(source, dataStore_, DataValidationPolicy::validateExact);
   if (!opened.ok()) {
     return opened.error();
   }
@@ -2137,7 +2194,8 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
   if (!std::filesystem::is_regular_file(path)) {
     return storageError("Unable to purge Result: artifact is not a file");
   }
-  auto opened = readResultFile(path, dataStore_, false);
+  auto opened =
+      readResultFile(path, dataStore_, DataValidationPolicy::deferToCaller);
   // Corrupt Result read failures are covered by open/import contract tests;
   // purge deliberately forwards the same structured error. GCOVR_EXCL_START
   if (!opened.ok()) {
@@ -2219,7 +2277,8 @@ ResultStore::importResult(const std::filesystem::path &source) const {
     return core::makeError(core::ErrorCode::notFound,
                            "Imported Result source is unavailable");
   }
-  auto sourceResult = readResultFile(source, dataStore_, true);
+  auto sourceResult =
+      readResultFile(source, dataStore_, DataValidationPolicy::validateExact);
   if (!sourceResult.ok()) {
     return sourceResult.error();
   }
@@ -2279,7 +2338,8 @@ ResultStore::importResult(const std::filesystem::path &source) const {
   }
   databaseOwner.reset();
 
-  auto validated = readResultFile(stagingPath, dataStore_, true);
+  auto validated = readResultFile(stagingPath, dataStore_,
+                                  DataValidationPolicy::validateExact);
   if (!validated.ok()) {
     return validated.error();
   }

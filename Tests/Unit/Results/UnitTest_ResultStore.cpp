@@ -166,11 +166,13 @@ TEST_F(ResultStoreFixture, rejectsInvalidStoreDescriptorAndLifecycleInputs) {
 
   for (const auto &invalidId : {std::string{}, std::string(32, 'z')}) {
     EXPECT_FALSE(store.value()->openResult(invalidId).ok());
+    EXPECT_FALSE(store.value()->openResultWithData(invalidId).ok());
     EXPECT_FALSE(store.value()->moveToTrash(invalidId).ok());
     EXPECT_FALSE(store.value()->restore(invalidId).ok());
     EXPECT_FALSE(store.value()->purge(invalidId).ok());
   }
   EXPECT_FALSE(store.value()->openResult(std::string(32, '0')).ok());
+  EXPECT_FALSE(store.value()->openResultWithData(std::string(32, '0')).ok());
   EXPECT_FALSE(store.value()->purge(std::string(32, '0')).ok());
   EXPECT_FALSE(store.value()->importResult({}).ok());
   EXPECT_FALSE(store.value()->importResult(root_ / "missing.bteresult").ok());
@@ -276,6 +278,71 @@ TEST_F(ResultStoreFixture,
   EXPECT_EQ(opened.value().displayName, maxLengthName);
   EXPECT_EQ(opened.value().canonicalResultHash,
             finalized.value().canonicalResultHash);
+}
+
+TEST_F(ResultStoreFixture,
+       openResultWithDataReturnsThePersistedExactBarsAndIdentity) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  const auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+
+  const auto opened =
+      store.value()->openResultWithData(finalized.value().resultId);
+  ASSERT_TRUE(opened.ok()) << opened.error().message;
+  EXPECT_EQ(opened.value().result.resultId, finalized.value().resultId);
+  EXPECT_EQ(opened.value().result.canonicalResultHash,
+            finalized.value().canonicalResultHash);
+  EXPECT_EQ(opened.value().selection.identity, selection_);
+  ASSERT_EQ(opened.value().selection.bars.size(), 2U);
+  EXPECT_EQ(opened.value().selection.bars[0],
+            (bte::data::SnapshotBar{.timestamp =
+                                        timestamp("2024-01-01 23:00:00+00:00"),
+                                    .openNanodollars = 100'000'000'000,
+                                    .highNanodollars = 102'000'000'000,
+                                    .lowNanodollars = 99'000'000'000,
+                                    .closeNanodollars = 101'000'000'000,
+                                    .volumeMicroshares = 1'200'000'000}));
+  EXPECT_EQ(opened.value().selection.bars[1],
+            (bte::data::SnapshotBar{.timestamp =
+                                        timestamp("2024-01-02 00:00:00+00:00"),
+                                    .openNanodollars = 101'000'000'000,
+                                    .highNanodollars = 103'000'000'000,
+                                    .lowNanodollars = 100'000'000'000,
+                                    .closeNanodollars = 102'000'000'000,
+                                    .volumeMicroshares = 2'300'000'000}));
+}
+
+TEST_F(ResultStoreFixture,
+       openResultWithDataRejectsMissingSegmentWithoutMutatingTheResult) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  const auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+  const auto segmentPath = root_ / "Data" / "Segments" /
+                           (selection_.spans.front().segmentId + ".btedata");
+  ASSERT_TRUE(std::filesystem::exists(segmentPath));
+  std::filesystem::remove(segmentPath);
+
+  const auto opened =
+      store.value()->openResultWithData(finalized.value().resultId);
+  ASSERT_FALSE(opened.ok());
+  EXPECT_EQ(opened.error().code, bte::core::ErrorCode::dataSnapshotUnavailable);
+  EXPECT_TRUE(
+      std::filesystem::exists(root_ / "ResultsStore" / "Results" /
+                              (finalized.value().resultId + ".bteresult")));
 }
 
 TEST_F(ResultStoreFixture,
@@ -442,6 +509,11 @@ TEST_F(ResultStoreFixture,
       finalized.value().resultId, cancellation.token());
   ASSERT_FALSE(cancelledResult.ok());
   EXPECT_EQ(cancelledResult.error().code, bte::core::ErrorCode::cancelled);
+  const auto cancelledResultWithData = store.value()->openResultWithData(
+      finalized.value().resultId, cancellation.token());
+  ASSERT_FALSE(cancelledResultWithData.ok());
+  EXPECT_EQ(cancelledResultWithData.error().code,
+            bte::core::ErrorCode::cancelled);
   EXPECT_TRUE(std::filesystem::exists(artifact));
 }
 

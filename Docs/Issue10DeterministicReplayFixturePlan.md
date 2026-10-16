@@ -2613,3 +2613,47 @@ worktrees as an implied cleanup operation.
   their expected identities; preserve main and do not touch unrelated repos.
 - [ ] Report the merged PR/main revision, deleted local/remote branch names,
   recovery information and any remaining unpublished code or protected files.
+
+### Task 30 — Read the exact Result snapshot once when opening Replay
+
+**Status:** Approved implementation and focused checks passed; exact-head
+gates, review, and remote CI pending.
+The current PR CI coverage run failed the existing five-second
+`longRangeSeekPresentsEveryReachedCandleAndFill` load assertion: the 23,777-bar,
+6,793-fill Replay load took 5,002 ms. Inspection found that `openResult()`
+validates the canonical Result and exact Data Selection by opening, hashing,
+decoding and reading the snapshot, after which `ResultReplay::open()` opens the
+same snapshot again and repeats `readExact()` to keep the bars. This repeats
+expensive immutable-data work on the Replay open path.
+
+**Approved seam:** Add `ResultStore::openResultWithData()` returning the
+validated `OpenedResult` together with its exact `SnapshotSelection`. It must
+validate the Result schema/canonical hash and read the Result's persisted exact
+selection from one snapshot reader. `ResultReplay::open()` consumes those exact
+bars instead of reopening the snapshot and repeating `readExact()`. Keep the
+existing `openResult()` behavior and error contract unchanged. Daily UTC Replay
+may separately request the wider complete UTC-day source range required for
+aggregation; it must not broaden the saved selection used for playback.
+
+- [x] RED: a ResultStore contract test fails before the new API exists and, once
+  implemented, checks the exact selected row values, order, identity, and
+  first/last persisted rows returned alongside the validated Result.
+- [x] Preserve negative/cancellation behavior: invalid or unavailable IDs,
+  pre-requested cancellation, and a missing referenced segment fail with the
+  owning error contract and no Result mutation. Existing `openResult()` corrupt
+  Result tests continue to prove the unchanged compatibility contract.
+- [x] Wire Replay to consume the returned exact bars. Keep the existing
+  23,777-bar/6,793-fill load test and its five-second wait unchanged; it must
+  load the complete progressive timeline and preserve all fills/rows.
+- [x] After the final code refactor, focused ResultStore (57/57), Bindings
+  Replay (21/21), and Replay frontend (20/20) tests pass on the working tree.
+  The unchanged long-range test reported 563 ms load and 2,481 ms terminal
+  seek on macOS 14.6 arm64, Apple LLVM 16, Qt 6.9.1, `Output/qt-dev`. These
+  local samples are not Linux CI acceptance and make no latency guarantee.
+- [ ] Run `./RunTest.sh` after the final refactor and again on the exact
+  committed submission SHA; run complete non-fast
+  `./RunQuality.sh --base origin/main --head HEAD`, applicable sanitizers,
+  exact-head remote CI, and review before accepting the task.
+- [x] Update `Docs/Plans/Issue10RemainingWork.md` with exact evidence and keep
+  other open plan items listed; this task does not close long-range data
+  completeness (R8), persistence safety (R1–R3), or whole-plan acceptance.

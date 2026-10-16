@@ -1,6 +1,6 @@
 # Issue 10 Remaining Work
 
-**As of 2026-10-15: Needs changes.** This is a current delivery/acceptance
+**As of 2026-10-16: Needs changes.** This is a current delivery/acceptance
 summary, not a replacement for the full dated
 [implementation plan](../Issue10DeterministicReplayFixturePlan.md) or the
 [source inventory](Issue10IncrementalDeliveryInventory.md).
@@ -87,6 +87,20 @@ from main or that any broader source checkpoint is fully accepted.
   Incremental coverage counters from the changed test TU were stale and moved
   out of the build; these focused runs are not aggregate coverage acceptance.
   Fresh complete exact-head gates and remote confirmation are still required.
+- The remaining five-second coverage failure was traced to Replay reading and
+  validating the same exact snapshot selection twice: first in `openResult()`
+  and then again in `ResultReplay::open()`. The maintainer approved a bounded
+  `openResultWithData()` seam that preserves `openResult()` while returning the
+  validated result and exact retained bars together. The implementation is
+  currently uncommitted on the issue10 worktree. Exact-row, missing-segment,
+  invalid-ID and cancellation cases pass; after the final internal policy
+  refactor, the Bindings Replay suite passed 21/21, the ResultStore suite
+  57/57, and the Replay frontend suite 20/20. The unchanged long-range test
+  locally measured 563 ms load / 2,481 ms seek on macOS 14.6 arm64, Apple LLVM
+  16, Qt 6.9.1, `Output/qt-dev`. `./RunTest.sh` passed 248/248 in 87.97 seconds
+  before that last internal refactor and must be rerun. This is local evidence,
+  not the Linux coverage runner. Exact-commit full tests/Quality, sanitizer,
+  review and remote CI remain pending; this does not close the CI failure yet.
 
 ## Required before the broad implementation can land
 
