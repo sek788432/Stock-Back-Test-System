@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Bte/Core/Cancellation.h"
+
 #include <cstdint>
 #include <string>
 
@@ -27,5 +29,7 @@ void failAfter(FailurePoint point, std::uint32_t occurrencesToSkip) noexcept;
 void clearFailure();
 [[nodiscard]] bool failurePending() noexcept;
 void forceNextResultId(std::string resultId);
+void cancelNextOpenResultWithDataAfterReaderOpen(
+    core::CancellationSource *source) noexcept;
 
 } // namespace bte::results::testing

@@ -7,6 +7,7 @@
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
 
+#include "BacktestTestHooks.h"
 #include "ResultReplayRequestsTestHooks.h"
 #include "ResultStoreTestHooks.h"
 
@@ -192,6 +193,21 @@ TEST_F(ResultReplayTest,
   EXPECT_FALSE(replay.value()->seek(3));
 }
 
+TEST_F(ResultReplayTest, openingAndSeekingPersistedResultDoesNotStartBacktest) {
+  const auto backtestStartsBeforeOpen =
+      bte::engine::testing::backtestStartCount();
+  ASSERT_GT(backtestStartsBeforeOpen, 0U);
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_TRUE(replay.value()->seek(2));
+  ASSERT_EQ(replay.value()->visibleWindow().size(), 3U);
+
+  EXPECT_EQ(bte::engine::testing::backtestStartCount(),
+            backtestStartsBeforeOpen);
+}
+
 TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   auto reader =
       bte::data::ReleaseSnapshotReader::open(root_ / "Data", snapshotId_);
@@ -245,7 +261,15 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
       root_ / "ExactStore", root_ / "Data", finalized.value().resultId,
       bte::bindings::ResultReplayTimeframe::dailyUtc);
   ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_EQ(daily.value()->totalFrames(), 1U);
   ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_EQ(daily.value()->current()->candle.ts,
+            timestamp("2024-01-02 00:00:00+00:00"));
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.open, 103);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.high, 105);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.low, 102);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.close, 104);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.volume, 3400);
   EXPECT_TRUE(daily.value()->current()->partialUtcDay);
 }
 

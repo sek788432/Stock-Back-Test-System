@@ -280,6 +280,7 @@ if(BTE_BUILD_QT_APP)
     bte_result_replay_tests
     PRIVATE
       "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private"
+      "${PROJECT_SOURCE_DIR}/Src/Backend/Engine/Private"
       "${PROJECT_SOURCE_DIR}/Src/Bindings/Replay")
 
   gtest_discover_tests(bte_result_replay_tests DISCOVERY_TIMEOUT 30)
