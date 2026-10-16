@@ -289,6 +289,20 @@ bool validResultId(const std::string_view value) {
          });
 }
 
+core::Result<std::filesystem::path>
+existingResultPath(const std::filesystem::path &root,
+                   const std::string &resultId) {
+  if (!validResultId(resultId)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result ID is invalid");
+  }
+  const auto path = root / "Results" / (resultId + ".bteresult");
+  if (!std::filesystem::exists(path)) {
+    return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
+  }
+  return path;
+}
+
 bool validRunStatus(const RunStatus status) {
   return status >= RunStatus::running && status <= RunStatus::incomplete;
 }
@@ -1685,15 +1699,40 @@ ResultStore::list(const core::CancellationToken &cancellation) const {
 core::Result<OpenedResult>
 ResultStore::openResult(const std::string &resultId,
                         const core::CancellationToken &cancellation) const {
-  if (!validResultId(resultId)) {
-    return core::makeError(core::ErrorCode::invalidArgument,
-                           "Result ID is invalid");
+  auto path = existingResultPath(root_, resultId);
+  if (!path.ok()) {
+    return path.error();
   }
-  const auto path = root_ / "Results" / (resultId + ".bteresult");
-  if (!std::filesystem::exists(path)) {
-    return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
+  return readResultFile(path.value(), dataStore_, true, false, cancellation);
+}
+
+core::Result<OpenedResultWithData> ResultStore::openResultWithData(
+    const std::string &resultId,
+    const core::CancellationToken &cancellation) const {
+  auto path = existingResultPath(root_, resultId);
+  if (!path.ok()) {
+    return path.error();
   }
-  return readResultFile(path, dataStore_, true, false, cancellation);
+  // The exact snapshot is read immediately below; defer its validation here
+  // to avoid opening and decoding the same immutable segments twice.
+  auto result =
+      readResultFile(path.value(), dataStore_, false, false, cancellation);
+  if (!result.ok()) {
+    return result.error();
+  }
+  auto reader = data::ReleaseSnapshotReader::open(
+      dataStore_, result.value().descriptor.dataSelection.snapshotId,
+      cancellation);
+  if (!reader.ok()) {
+    return reader.error();
+  }
+  auto selection = reader.value()->readExact(
+      result.value().descriptor.dataSelection, cancellation);
+  if (!selection.ok()) {
+    return selection.error();
+  }
+  return OpenedResultWithData{.result = std::move(result).value(),
+                              .selection = std::move(selection).value()};
 }
 
 core::Result<void> ResultStore::moveToTrash(const std::string &resultId) const {
