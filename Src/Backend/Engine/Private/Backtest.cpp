@@ -736,8 +736,7 @@ BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
       terminalError.has_value()) {
     reason = terminalError.value().message;
   }
-  auto finalized =
-      writer.finalizeAndPromote(impl_->result.status, summary, reason);
+  auto finalized = writer.finalizeDraft(impl_->result.status, summary, reason);
   if (!finalized.ok()) {
     return finalized.error();
   }

@@ -119,6 +119,20 @@ set_tests_properties(
 
 if(BTE_BUILD_QT_APP)
   add_executable(
+    bte_frontend_viewport_tests
+    Unit/Frontend/UnitTest_ReplayBarViewport.cpp)
+
+  set_target_properties(bte_frontend_viewport_tests PROPERTIES AUTOMOC ON)
+
+  target_link_libraries(
+    bte_frontend_viewport_tests
+    PRIVATE bte::frontend Qt6::Test Qt6::Widgets)
+
+  add_test(
+    NAME bte_frontend_viewport_tests
+    COMMAND bte_frontend_viewport_tests -platform offscreen)
+
+  add_executable(
     bte_frontend_tests
     Unit/Frontend/UnitTest_ReplayTab.cpp)
 
@@ -214,6 +228,38 @@ if(BTE_BUILD_QT_APP)
     bte_app_shell_tests
     PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+  add_executable(
+    bte_result_library_requests_tests
+    Unit/Frontend/UnitTest_ResultLibraryRequests.cpp)
+  set_target_properties(bte_result_library_requests_tests PROPERTIES AUTOMOC ON)
+  target_link_libraries(
+    bte_result_library_requests_tests
+    PRIVATE
+      bte::bindings
+      Qt6::Test
+      Qt6::Widgets)
+  target_include_directories(
+    bte_result_library_requests_tests
+    PRIVATE
+      "${PROJECT_SOURCE_DIR}/Src/Bindings/Replay")
+  add_test(
+    NAME bte_result_library_requests_tests
+    COMMAND bte_result_library_requests_tests -platform offscreen)
+
+  add_executable(
+    bte_results_frontend_tests
+    Unit/Frontend/UnitTest_ResultsTab.cpp)
+  set_target_properties(bte_results_frontend_tests PROPERTIES AUTOMOC ON)
+  target_link_libraries(
+    bte_results_frontend_tests
+    PRIVATE
+      bte::frontend
+      Qt6::Test
+      Qt6::Widgets)
+  add_test(
+    NAME bte_results_frontend_tests
+    COMMAND bte_results_frontend_tests -platform offscreen)
 
   add_test(
     NAME bte_app_startup_smoke
@@ -354,6 +400,11 @@ if(BTE_BUILD_QT_APP)
     PRIVATE
       bte::bindings
       Qt6::Test)
+
+  target_include_directories(
+    bte_backtest_vm_tests
+    PRIVATE
+      "${CMAKE_SOURCE_DIR}/Src/Bindings/Backtest")
 
   add_test(
     NAME bte_backtest_vm_tests

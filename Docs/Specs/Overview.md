@@ -67,7 +67,12 @@ Neither blocker may be softened into a warning for a public release.
 3. Selectable Conditions become a typed C++ plan. A Python Script Strategy runs
    in a fresh worker and receives chronology-safe slices/history.
 4. The C++ engine alone evaluates orders, applies fills, updates accounting and margin, and produces canonical events.
-5. The result writer stages a `.bteresult` file, commits typed records, validates its canonical hash, and atomically promotes it.
+5. The result writer stages a `.bteresult` file, commits typed records, and
+   validates its canonical hash into a recoverable terminal draft. Explicit
+   **Save Result** or **Save & Replay** publishes that same Result ID to the
+   active library through no-clobber promotion; completing execution alone
+   does not publish it. Full live-writer ownership, pin-before-visibility and
+   per-slice durability acceptance remain open in the integration checkpoint.
 6. K-line Replay reads the result and its retained content-addressed Data Segments; it does not rerun a second engine.
 
 ## 4. Authority and constraints

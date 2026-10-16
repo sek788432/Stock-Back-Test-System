@@ -11,6 +11,7 @@
 #include <QString>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -96,7 +97,7 @@ protected:
     if (!store.ok()) {
       return store.error();
     }
-    return bte::engine::runBacktestAndRecord(
+    auto recorded = bte::engine::runBacktestAndRecord(
         {.bars = std::move(bars),
          .symbol = "SYN",
          .initialCapitalMicrodollars = 10'000'000'000,
@@ -111,6 +112,15 @@ protected:
          .strategyId = "selectable-conditions",
          .strategyHash = bte::strategy::canonicalStrategyHash(plan),
          .dataSelection = selection.identity});
+    if (!recorded.ok()) {
+      return recorded.error();
+    }
+    auto published =
+        store.value()->publishDraft(recorded.value().persisted.resultId);
+    if (!published.ok()) {
+      return published.error();
+    }
+    return recorded;
   }
 
   QTemporaryDir directory_{QString::fromStdString(
@@ -154,6 +164,28 @@ TEST_F(ReplayBacktestDeterminism,
       bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
   ASSERT_TRUE(first.ok()) << first.error().message;
   ASSERT_TRUE(second.ok()) << second.error().message;
+  const auto drafts = bte::bindings::listBacktestDrafts(storage);
+  ASSERT_TRUE(drafts.ok()) << drafts.error().message;
+  ASSERT_EQ(drafts.value().size(), 2U);
+  EXPECT_NE(std::ranges::find(drafts.value(), first.value().resultId),
+            drafts.value().end());
+  EXPECT_NE(std::ranges::find(drafts.value(), second.value().resultId),
+            drafts.value().end());
+  const auto discardedRun =
+      bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
+  ASSERT_TRUE(discardedRun.ok()) << discardedRun.error().message;
+  ASSERT_TRUE(bte::bindings::discardBacktestDraft(storage,
+                                                  discardedRun.value().resultId)
+                  .ok());
+  const auto afterDiscard = bte::bindings::listBacktestDrafts(storage);
+  ASSERT_TRUE(afterDiscard.ok());
+  EXPECT_EQ(afterDiscard.value().size(), 2U);
+  ASSERT_TRUE(
+      bte::bindings::publishBacktestDraft(storage, first.value().resultId)
+          .ok());
+  ASSERT_TRUE(
+      bte::bindings::publishBacktestDraft(storage, second.value().resultId)
+          .ok());
   EXPECT_NE(first.value().resultId, second.value().resultId);
   EXPECT_EQ(first.value().canonicalResultHash,
             second.value().canonicalResultHash);

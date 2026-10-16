@@ -10,6 +10,8 @@
 #include <QDateEdit>
 #include <QDoubleSpinBox>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMetaObject>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -17,9 +19,11 @@
 #include <QTest>
 #include <QThread>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -111,7 +115,13 @@ class BacktestTabTest final : public QObject {
 
 private slots:
   void exposesAccessibleRunConfiguration();
-  void promotedResultEnablesOpenInReplayAndEmitsExactId();
+  void completedDraftEnablesSaveActionsAndReplayUsesPublishedId();
+  void savingOneOfMultipleDraftsKeepsReplayOnThatResult();
+  void saveFailureKeepsDraftAvailableAndNeverNavigates();
+  void draftWorkerExceptionsRemainVisibleAndRetryable();
+  void nonPersistedTestConstructorsRejectSaveAndDiscard();
+  void draftActionsIgnoreUnavailableAndReentrantSignals();
+  void unsavedRunsLoadSurviveNewRunsAndCanBeDiscarded();
   void calendarYearsAreDirectlySelectable();
   void runExecutesOffTheUiThreadAndDisplaysFill();
   void failedRunClearsPriorResultAndPreservesError();
@@ -130,30 +140,410 @@ private slots:
   void selectableControlsPresentNoSignalAndSellFill();
 };
 
-void BacktestTabTest::promotedResultEnablesOpenInReplayAndEmitsExactId() {
+void BacktestTabTest::
+    completedDraftEnablesSaveActionsAndReplayUsesPublishedId() {
   auto snapshot = filledSnapshot();
   snapshot.resultId = "0123456789abcdef0123456789abcdef";
+  std::atomic_int publishCount = 0;
+  std::atomic_bool namesCorrect = true;
   bte::frontend::BacktestTab tab{
       [snapshot](bte::bindings::BacktestConfiguration,
                  bte::core::CancellationToken) {
         return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      },
+      [&publishCount, &namesCorrect](const std::string &resultId,
+                                     const std::string &displayName,
+                                     bte::core::CancellationToken) {
+        ++publishCount;
+        if (displayName != "AAPL May 2018") {
+          namesCorrect = false;
+        }
+        return bte::core::Result<std::string>{resultId};
       }};
   auto *run = tab.findChild<QPushButton *>("backtestRunButton");
-  auto *open = tab.findChild<QPushButton *>("backtestOpenInReplayButton");
+  auto *save = tab.findChild<QPushButton *>("backtestSaveResultButton");
+  auto *saveAndReplay =
+      tab.findChild<QPushButton *>("backtestSaveAndReplayButton");
+  auto *resultName = tab.findChild<QLineEdit *>("backtestResultNameEdit");
   QVERIFY(run != nullptr);
-  QVERIFY(open != nullptr);
-  QVERIFY(!open->isEnabled());
-  QCOMPARE(open->text(), QString{"Open in Replay"});
-  QVERIFY(!open->accessibleName().isEmpty());
+  QVERIFY(save != nullptr);
+  QVERIFY(saveAndReplay != nullptr);
+  QVERIFY(resultName != nullptr);
+  QVERIFY(!save->isEnabled());
+  QVERIFY(!saveAndReplay->isEnabled());
+  QCOMPARE(save->text(), QString{"Save Result"});
+  QCOMPARE(saveAndReplay->text(), QString{"Save && Replay"});
+  QVERIFY(!save->accessibleName().isEmpty());
+  QVERIFY(!saveAndReplay->accessibleName().isEmpty());
   QSignalSpy opened{&tab, &bte::frontend::BacktestTab::openResultInReplay};
 
   QTest::mouseClick(run, Qt::LeftButton);
-  QVERIFY(bte::test::waitUntil([open] { return open->isEnabled(); }));
-  QTest::mouseClick(open, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([save, saveAndReplay] {
+    return save->isEnabled() && saveAndReplay->isEnabled();
+  }));
+  resultName->setText("  AAPL May 2018  ");
+  QTest::mouseClick(save, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&publishCount, save] {
+    return publishCount.load() == 1 && save->isEnabled();
+  }));
+  QCOMPARE(opened.count(), 0);
+
+  auto *symbol = tab.findChild<QComboBox *>("backtestSymbolCombo");
+  QVERIFY(symbol != nullptr);
+  const auto originalSymbol = symbol->currentText();
+  symbol->setCurrentIndex((symbol->currentIndex() + 1) % symbol->count());
+  QVERIFY(symbol->currentText() != originalSymbol);
+  QTest::mouseClick(saveAndReplay, Qt::LeftButton);
+  QTest::mouseClick(saveAndReplay, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&publishCount, &opened] {
+    return publishCount.load() == 2 && opened.count() == 1;
+  }));
 
   QCOMPARE(opened.count(), 1);
   QCOMPARE(opened.first().first().toString(),
            QString{"0123456789abcdef0123456789abcdef"});
+  QCOMPARE(publishCount.load(), 2);
+  QVERIFY(namesCorrect.load());
+}
+
+void BacktestTabTest::saveFailureKeepsDraftAvailableAndNeverNavigates() {
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = "0123456789abcdef0123456789abcdef";
+  std::atomic_int runCount = 0;
+  std::atomic_int publishCount = 0;
+  bte::frontend::BacktestTab tab{
+      [&runCount, snapshot](bte::bindings::BacktestConfiguration,
+                            bte::core::CancellationToken) {
+        ++runCount;
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      },
+      [&publishCount](const std::string &, const std::string &,
+                      bte::core::CancellationToken) {
+        ++publishCount;
+        return bte::core::Result<std::string>{bte::core::makeError(
+            bte::core::ErrorCode::internal, "publication failed")};
+      }};
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *save = tab.findChild<QPushButton *>("backtestSaveResultButton");
+  auto *saveAndReplay =
+      tab.findChild<QPushButton *>("backtestSaveAndReplayButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(run != nullptr);
+  QVERIFY(save != nullptr);
+  QVERIFY(saveAndReplay != nullptr);
+  QVERIFY(status != nullptr);
+  QSignalSpy opened{&tab, &bte::frontend::BacktestTab::openResultInReplay};
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [saveAndReplay] { return saveAndReplay->isEnabled(); }));
+  QTest::mouseClick(saveAndReplay, Qt::LeftButton);
+  QTest::mouseClick(saveAndReplay, Qt::LeftButton);
+
+  QVERIFY(bte::test::waitUntil([status, save, saveAndReplay] {
+    return status->text().contains("Cannot save") && save->isEnabled() &&
+           saveAndReplay->isEnabled();
+  }));
+  QCOMPARE(runCount.load(), 1);
+  QCOMPARE(publishCount.load(), 1);
+  QCOMPARE(opened.count(), 0);
+}
+
+void BacktestTabTest::draftWorkerExceptionsRemainVisibleAndRetryable() {
+  const auto resultId = std::string{"0123456789abcdef0123456789abcdef"};
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = resultId;
+  std::atomic_int listCount = 0;
+  std::atomic_int publishCount = 0;
+  std::atomic_int discardCount = 0;
+  bte::frontend::BacktestTab tab{
+      [snapshot](bte::bindings::BacktestConfiguration,
+                 bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      },
+      [&publishCount](
+          const std::string &, const std::string &,
+          bte::core::CancellationToken) -> bte::core::Result<std::string> {
+        if (++publishCount == 1) {
+          throw std::runtime_error{"publish exception"};
+        }
+        throw 42;
+      },
+      [&listCount, resultId](bte::core::CancellationToken)
+          -> bte::core::Result<std::vector<std::string>> {
+        if (++listCount == 1) {
+          throw std::runtime_error{"list exception"};
+        }
+        if (listCount == 2) {
+          throw 42;
+        }
+        return std::vector<std::string>{resultId};
+      },
+      [&discardCount](const std::string &,
+                      bte::core::CancellationToken) -> bte::core::Result<void> {
+        if (++discardCount == 1) {
+          throw std::runtime_error{"discard exception"};
+        }
+        throw 42;
+      }};
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  auto *refresh =
+      tab.findChild<QPushButton *>("backtestRefreshUnsavedRunsButton");
+  auto *drafts = tab.findChild<QComboBox *>("backtestUnsavedRunsCombo");
+  auto *discard = tab.findChild<QPushButton *>("backtestDiscardDraftButton");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *save = tab.findChild<QPushButton *>("backtestSaveResultButton");
+  QVERIFY(status != nullptr);
+  QVERIFY(refresh != nullptr);
+  QVERIFY(drafts != nullptr);
+  QVERIFY(discard != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(save != nullptr);
+
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text().contains("Cannot load unsaved runs") &&
+           status->text().contains("list exception");
+  }));
+  QTest::mouseClick(refresh, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([status, refresh] {
+    return status->text().contains("draft list worker failed") &&
+           refresh->isEnabled();
+  }));
+  QTest::mouseClick(refresh, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([drafts] { return drafts->count() == 1; }));
+  QTest::mouseClick(refresh, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&listCount, refresh] {
+    return listCount.load() == 4 && refresh->isEnabled();
+  }));
+  QTest::mouseClick(discard, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([status, discard] {
+    return status->text().contains("Cannot discard draft") &&
+           status->text().contains("discard exception") && discard->isEnabled();
+  }));
+  QTest::mouseClick(discard, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([status, discard] {
+    return status->text().contains("draft discard worker failed") &&
+           discard->isEnabled();
+  }));
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([save] { return save->isEnabled(); }));
+  QTest::mouseClick(save, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([status, save] {
+    return status->text().contains("Cannot save") &&
+           status->text().contains("publish exception") && save->isEnabled();
+  }));
+  QTest::mouseClick(save, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([status, save] {
+    return status->text().contains("save worker failed") && save->isEnabled();
+  }));
+}
+
+void BacktestTabTest::nonPersistedTestConstructorsRejectSaveAndDiscard() {
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = "0123456789abcdef0123456789abcdef";
+  const auto runner = [snapshot](bte::bindings::BacktestConfiguration,
+                                 bte::core::CancellationToken) {
+    return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+  };
+  bte::frontend::BacktestTab unsaved{runner};
+  auto *run = unsaved.findChild<QPushButton *>("backtestRunButton");
+  auto *save = unsaved.findChild<QPushButton *>("backtestSaveResultButton");
+  auto *status = unsaved.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(run != nullptr);
+  QVERIFY(save != nullptr);
+  QVERIFY(status != nullptr);
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([save] { return save->isEnabled(); }));
+  QTest::mouseClick(save, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text().contains(
+        "Result saving requires persisted Backtest storage");
+  }));
+
+  bte::frontend::BacktestTab noDraftStorage{
+      runner, [](const std::string &resultId, const std::string &,
+                 bte::core::CancellationToken) {
+        return bte::core::Result<std::string>{resultId};
+      }};
+  auto *drafts =
+      noDraftStorage.findChild<QComboBox *>("backtestUnsavedRunsCombo");
+  auto *discard =
+      noDraftStorage.findChild<QPushButton *>("backtestDiscardDraftButton");
+  auto *discardStatus =
+      noDraftStorage.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(drafts != nullptr);
+  QVERIFY(discard != nullptr);
+  QVERIFY(discardStatus != nullptr);
+  const auto draftId = QString::fromStdString(snapshot.resultId);
+  drafts->addItem(draftId, draftId);
+  QVERIFY(bte::test::waitUntil([discard] { return discard->isEnabled(); }));
+  QTest::mouseClick(discard, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([discardStatus] {
+    return discardStatus->text().contains(
+        "Draft discard requires persisted Backtest storage");
+  }));
+}
+
+void BacktestTabTest::draftActionsIgnoreUnavailableAndReentrantSignals() {
+  std::promise<void> allowList;
+  auto listGate = allowList.get_future().share();
+  std::atomic_int listCalls = 0;
+  std::atomic_int publishCalls = 0;
+  std::atomic_int discardCalls = 0;
+  bte::frontend::BacktestTab tab{
+      [](bte::bindings::BacktestConfiguration, bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      },
+      [&publishCalls](const std::string &resultId, const std::string &,
+                      bte::core::CancellationToken) {
+        ++publishCalls;
+        return bte::core::Result<std::string>{resultId};
+      },
+      [&listCalls, listGate](bte::core::CancellationToken) {
+        ++listCalls;
+        listGate.wait();
+        return bte::core::Result<std::vector<std::string>>{
+            std::vector<std::string>{}};
+      },
+      [&discardCalls](const std::string &, bte::core::CancellationToken) {
+        ++discardCalls;
+        return bte::core::Result<void>{};
+      }};
+  auto *refresh =
+      tab.findChild<QPushButton *>("backtestRefreshUnsavedRunsButton");
+  auto *save = tab.findChild<QPushButton *>("backtestSaveResultButton");
+  auto *discard = tab.findChild<QPushButton *>("backtestDiscardDraftButton");
+  QVERIFY(refresh != nullptr);
+  QVERIFY(save != nullptr);
+  QVERIFY(discard != nullptr);
+  const auto started =
+      bte::test::waitUntil([&listCalls] { return listCalls.load() == 1; });
+  const auto refreshSignal = QMetaObject::invokeMethod(refresh, "clicked");
+  const auto saveSignal = QMetaObject::invokeMethod(save, "clicked");
+  const auto discardSignal = QMetaObject::invokeMethod(discard, "clicked");
+  allowList.set_value();
+  QVERIFY(started);
+  QVERIFY(refreshSignal);
+  QVERIFY(saveSignal);
+  QVERIFY(discardSignal);
+  QVERIFY(bte::test::waitUntil([refresh] { return refresh->isEnabled(); }));
+  QCOMPARE(listCalls.load(), 1);
+  QCOMPARE(publishCalls.load(), 0);
+  QCOMPARE(discardCalls.load(), 0);
+}
+
+void BacktestTabTest::savingOneOfMultipleDraftsKeepsReplayOnThatResult() {
+  const auto firstId = std::string{"11111111111111111111111111111111"};
+  const auto secondId = std::string{"22222222222222222222222222222222"};
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = firstId;
+  std::mutex draftsMutex;
+  auto storedDrafts = std::vector<std::string>{firstId, secondId};
+  auto publishedIds = std::vector<std::string>{};
+  bte::frontend::BacktestTab tab{
+      [snapshot](bte::bindings::BacktestConfiguration,
+                 bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      },
+      [&draftsMutex, &storedDrafts,
+       &publishedIds](const std::string &resultId, const std::string &,
+                      bte::core::CancellationToken) {
+        const std::scoped_lock lock{draftsMutex};
+        publishedIds.push_back(resultId);
+        std::erase(storedDrafts, resultId);
+        return bte::core::Result<std::string>{resultId};
+      },
+      [&draftsMutex, &storedDrafts](bte::core::CancellationToken) {
+        const std::scoped_lock lock{draftsMutex};
+        return bte::core::Result<std::vector<std::string>>{storedDrafts};
+      },
+      [](const std::string &, bte::core::CancellationToken) {
+        return bte::core::Result<void>{};
+      }};
+  auto *drafts = tab.findChild<QComboBox *>("backtestUnsavedRunsCombo");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *save = tab.findChild<QPushButton *>("backtestSaveResultButton");
+  auto *saveAndReplay =
+      tab.findChild<QPushButton *>("backtestSaveAndReplayButton");
+  QVERIFY(drafts != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(save != nullptr);
+  QVERIFY(saveAndReplay != nullptr);
+  QVERIFY(bte::test::waitUntil([drafts] { return drafts->count() == 2; }));
+  QSignalSpy opened{&tab, &bte::frontend::BacktestTab::openResultInReplay};
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([save] { return save->isEnabled(); }));
+  QTest::mouseClick(save, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([drafts, &secondId] {
+    return drafts->count() == 1 &&
+           drafts->itemData(0).toString() == QString::fromStdString(secondId);
+  }));
+  QVERIFY(bte::test::waitUntil(
+      [saveAndReplay] { return saveAndReplay->isEnabled(); }));
+  QCOMPARE(save->property("resultId").toString(),
+           QString::fromStdString(firstId));
+  QTest::mouseClick(saveAndReplay, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&opened] { return opened.count() == 1; }));
+  QCOMPARE(opened.first().first().toString(), QString::fromStdString(firstId));
+  const auto expected = std::vector<std::string>{firstId, firstId};
+  {
+    const std::scoped_lock lock{draftsMutex};
+    QCOMPARE(publishedIds, expected);
+  }
+}
+
+void BacktestTabTest::unsavedRunsLoadSurviveNewRunsAndCanBeDiscarded() {
+  const auto firstId = std::string{"11111111111111111111111111111111"};
+  const auto secondId = std::string{"22222222222222222222222222222222"};
+  const auto newId = std::string{"33333333333333333333333333333333"};
+  std::mutex draftsMutex;
+  auto storedDrafts = std::vector<std::string>{firstId, secondId};
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = newId;
+  bte::frontend::BacktestTab tab{
+      [snapshot](bte::bindings::BacktestConfiguration,
+                 bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      },
+      [](const std::string &resultId, const std::string &,
+         bte::core::CancellationToken) {
+        return bte::core::Result<std::string>{resultId};
+      },
+      [&draftsMutex, &storedDrafts](bte::core::CancellationToken) {
+        const std::scoped_lock lock{draftsMutex};
+        return bte::core::Result<std::vector<std::string>>{storedDrafts};
+      },
+      [&draftsMutex, &storedDrafts](const std::string &resultId,
+                                    bte::core::CancellationToken) {
+        const std::scoped_lock lock{draftsMutex};
+        std::erase(storedDrafts, resultId);
+        return bte::core::Result<void>{};
+      }};
+  auto *drafts = tab.findChild<QComboBox *>("backtestUnsavedRunsCombo");
+  auto *discard = tab.findChild<QPushButton *>("backtestDiscardDraftButton");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  QVERIFY(drafts != nullptr);
+  QVERIFY(discard != nullptr);
+  QVERIFY(run != nullptr);
+
+  QVERIFY(bte::test::waitUntil([drafts] { return drafts->count() == 2; }));
+  QCOMPARE(drafts->itemData(0).toString(), QString::fromStdString(firstId));
+  QCOMPARE(drafts->itemData(1).toString(), QString::fromStdString(secondId));
+  QTest::mouseClick(discard, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([drafts, &secondId] {
+    return drafts->count() == 1 &&
+           drafts->itemData(0).toString() == QString::fromStdString(secondId);
+  }));
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([drafts, &newId] {
+    return drafts->findData(QString::fromStdString(newId)) >= 0;
+  }));
+  QCOMPARE(drafts->count(), 2);
+  QVERIFY(drafts->findData(QString::fromStdString(secondId)) >= 0);
 }
 
 void BacktestTabTest::exposesAccessibleRunConfiguration() {

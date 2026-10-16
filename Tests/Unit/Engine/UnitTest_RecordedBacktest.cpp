@@ -93,12 +93,22 @@ protected:
     };
   }
 
+  [[nodiscard]] static bte::core::Result<bte::results::OpenedResult>
+  publishAndOpen(bte::results::ResultStore &store,
+                 const std::string &resultId) {
+    auto published = store.publishDraft(resultId);
+    if (!published.ok()) {
+      return published.error();
+    }
+    return store.openResult(resultId);
+  }
+
   std::filesystem::path root_;
   bte::data::DataSelectionIdentity selection_;
 };
 
 TEST_F(RecordedBacktestTest,
-       completedRunPromotesTheExactAuthoritativeEngineTimeline) {
+       completedRunFinalizesDraftBeforeExplicitPublication) {
   auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
   ASSERT_TRUE(store.ok()) << store.error().message;
   auto writer = store.value()->begin(descriptor());
@@ -109,7 +119,14 @@ TEST_F(RecordedBacktestTest,
   ASSERT_TRUE(recorded.ok()) << recorded.error().message;
   ASSERT_TRUE(recorded.value().backtest.has_value());
   EXPECT_EQ(recorded.value().status, bte::results::RunStatus::completed);
-  auto opened = store.value()->openResult(recorded.value().persisted.resultId);
+  const auto beforePublish = store.value()->list();
+  ASSERT_TRUE(beforePublish.ok());
+  EXPECT_TRUE(beforePublish.value().empty());
+  const auto published =
+      store.value()->publishDraft(recorded.value().persisted.resultId);
+  ASSERT_TRUE(published.ok()) << published.error().message;
+  auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   EXPECT_EQ(opened.value().records,
             recorded.value().backtest->canonicalRecords);
@@ -142,9 +159,9 @@ TEST_F(RecordedBacktestTest,
   ASSERT_TRUE(paced.ok()) << paced.error().message;
 
   const auto batchOpened =
-      batchStore.value()->openResult(batch.value().persisted.resultId);
+      publishAndOpen(*batchStore.value(), batch.value().persisted.resultId);
   const auto pacedOpened =
-      pacedStore.value()->openResult(paced.value().persisted.resultId);
+      publishAndOpen(*pacedStore.value(), paced.value().persisted.resultId);
   ASSERT_TRUE(batchOpened.ok()) << batchOpened.error().message;
   ASSERT_TRUE(pacedOpened.ok()) << pacedOpened.error().message;
   EXPECT_EQ(batchOpened.value().records, pacedOpened.value().records);
@@ -170,7 +187,8 @@ TEST_F(RecordedBacktestTest,
   auto recorded = execution.value()->finalizeAndRecord(*writer.value());
   ASSERT_TRUE(recorded.ok()) << recorded.error().message;
   EXPECT_EQ(recorded.value().status, bte::results::RunStatus::canceled);
-  auto opened = store.value()->openResult(recorded.value().persisted.resultId);
+  auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   ASSERT_EQ(opened.value().records.size(), 4U);
   EXPECT_EQ(opened.value().records[0].family,
@@ -202,7 +220,8 @@ TEST_F(RecordedBacktestTest,
 
   ASSERT_TRUE(recorded.ok()) << recorded.error().message;
   EXPECT_EQ(recorded.value().status, bte::results::RunStatus::failed);
-  auto opened = store.value()->openResult(recorded.value().persisted.resultId);
+  auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   ASSERT_EQ(opened.value().records.size(), 4U);
   EXPECT_EQ(opened.value().records[0].family,
@@ -232,7 +251,8 @@ TEST_F(RecordedBacktestTest,
   EXPECT_EQ(recorded.value().status, bte::results::RunStatus::incomplete);
   ASSERT_TRUE(recorded.value().backtest.has_value());
   EXPECT_EQ(recorded.value().backtest->barsProcessed, 2U);
-  auto opened = store.value()->openResult(recorded.value().persisted.resultId);
+  auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   EXPECT_EQ(opened.value().terminalReason, "StaleFinalMark");
   EXPECT_EQ(opened.value().records.back().family,
@@ -249,7 +269,8 @@ TEST_F(RecordedBacktestTest,
   auto recorded = bte::engine::runBacktestAndRecord(request(), *writer.value());
   ASSERT_TRUE(recorded.ok()) << recorded.error().message;
 
-  auto opened = store.value()->openResult(recorded.value().persisted.resultId);
+  auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   EXPECT_TRUE(opened.value().capabilities.orders);
   EXPECT_TRUE(opened.value().capabilities.fills);
@@ -284,7 +305,8 @@ TEST_F(RecordedBacktestTest,
   auto recorded = bte::engine::runBacktestAndRecord(noSignal, *writer.value());
 
   ASSERT_TRUE(recorded.ok()) << recorded.error().message;
-  auto opened = store.value()->openResult(recorded.value().persisted.resultId);
+  auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   ASSERT_EQ(opened.value().records.size(), 3U);
   EXPECT_EQ(opened.value().records[0].family,
@@ -314,7 +336,8 @@ TEST_F(RecordedBacktestTest,
   EXPECT_EQ(recorded.value().backtest->barsProcessed, 1U);
   EXPECT_EQ(recorded.value().backtest->orderStatus,
             bte::engine::StarterOrderStatus::cancelledNoFutureMarketData);
-  auto opened = store.value()->openResult(recorded.value().persisted.resultId);
+  auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   ASSERT_EQ(opened.value().records.size(), 3U);
   EXPECT_EQ(opened.value().records[0].family,
@@ -404,7 +427,7 @@ TEST_F(
   const auto retried = execution.value()->finalizeAndRecord(*writer.value());
   ASSERT_TRUE(retried.ok()) << retried.error().message;
   const auto opened =
-      store.value()->openResult(retried.value().persisted.resultId);
+      publishAndOpen(*store.value(), retried.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   EXPECT_EQ(opened.value().records,
             execution.value()->result().canonicalRecords);
@@ -496,7 +519,7 @@ TEST_F(RecordedBacktestTest,
             "only one terminal backtest result can be recorded");
   auto listed = store.value()->list();
   ASSERT_TRUE(listed.ok()) << listed.error().message;
-  EXPECT_EQ(listed.value().size(), 1U);
+  EXPECT_TRUE(listed.value().empty());
 }
 
 TEST_F(RecordedBacktestTest,
@@ -517,7 +540,7 @@ TEST_F(RecordedBacktestTest,
       bte::engine::runBacktestAndRecord(request(), *writer.value());
   ASSERT_TRUE(recorded.ok()) << recorded.error().message;
   const auto opened =
-      store.value()->openResult(recorded.value().persisted.resultId);
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   EXPECT_EQ(opened.value().records,
             recorded.value().backtest->canonicalRecords);
@@ -541,7 +564,7 @@ TEST_F(RecordedBacktestTest,
       bte::engine::runBacktestAndRecord(request(), *writer.value());
   ASSERT_TRUE(recorded.ok()) << recorded.error().message;
   const auto opened =
-      store.value()->openResult(recorded.value().persisted.resultId);
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
   ASSERT_TRUE(opened.ok()) << opened.error().message;
   EXPECT_EQ(opened.value().records,
             recorded.value().backtest->canonicalRecords);

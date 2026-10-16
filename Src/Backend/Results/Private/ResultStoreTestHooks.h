@@ -12,6 +12,8 @@ enum class FailurePoint : std::uint8_t {
   hashFinalization,
   close,
   promotion,
+  draftPromotionMove,
+  draftDiscardRemoval,
   catalogVisibility,
   databaseOpen,
   sqlExecution,

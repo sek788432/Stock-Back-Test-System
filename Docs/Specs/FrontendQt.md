@@ -7,7 +7,9 @@
 > strategies, complete backtest workflows, the complete Results library, and
 > release-quality UX remain planned unless their owning spec says otherwise.
 > The current shell exposes Strategies, Backtest, Results, and Replay;
-> Strategies and Results are placeholders for their accepted future pages.
+> Strategies is a placeholder; Results has a limited management page with
+> catalog, details, Open Replay, Move to Trash and Restore. The complete
+> Results library remains planned.
 > Completed runs can nevertheless be persisted and handed directly to Replay.
 
 This spec owns the Qt presentation interface: every screen the user sees, chart
@@ -43,13 +45,22 @@ animation or point-count performance contract.
 Qt Charts remains an implemented development baseline but cannot ship in the
 Apache-2.0 distribution under its GPL/commercial terms. The accepted release
 direction is a project-owned `QPainter` implementation behind `IChartView`.
-It uses a 70/30 candlestick-to-volume split, initially presents 120 bars, and
-caps the visible window at exactly 1,000 bars. The replacement must land with
+The current development view uses separate synchronized price and volume panes,
+with one OHLC candle and one colored volume bar per selected UTC Hourly bar or
+Daily bucket. Replay progressively presents every selected bar without a fixed
+frame cap; the release replacement must preserve this behavior and land with
 functional, accessibility, and performance tests before distribution.
 
 ---
 
 ## 2. Window structure
+
+The current **Help → Build Information** dialog displays launcher-provided
+checkout path, branch, commit, dirty state, built executable SHA-256 and
+selected immutable snapshot ID. Direct execution without launcher provenance
+shows `unavailable` for missing fields. This is a diagnostic identity display,
+not a verification of market-data quality or a substitute for testing the
+actual launched workflow.
 
 ```
 ┌───────────────────────────────── stockBacktester ─────────────────────┐
@@ -136,18 +147,27 @@ a preview load failure still becomes an empty collection.
 The implemented limited **Result Replay** mode asynchronously lists and opens
 validated `.bteresult` artifacts and retained Data Segments. It supports Hourly
 and UTC Daily presentation, immediate first-frame display, cancellation and
-stale-request rejection, step/back/seek/playback, a 500-frame visible window,
-volume, persisted fill markers/rows, post-slice portfolio values, partial-day
-labelling, and terminal reasons. It does not invoke Strategy, Python, indicator
-scheduling, order evaluation, or Engine execution. Complete warning/log/metric
-presentation, marker detail interaction, and the Results-management page remain
-planned.
+stale-request rejection, step/back/seek/playback, an untruncated progressive
+candle prefix, volume, synchronized persisted fill markers/rows, post-slice
+portfolio values, partial-day labelling, and terminal reasons. Hourly can replay
+every saved hourly candle and UTC Daily every aggregate daily candle over the
+same saved range. Changing timeframe preserves the current UTC date when
+that date exists in the destination timeline. Replay setup is collapsed by
+default behind a keyboard-focusable **Show replay setup** toggle. The chart has
+a 500-pixel minimum height, occupies at least 55% of the Replay viewport at the
+tested 1024×768, 1200×800, and 1440×900 sizes, and shares a vertical splitter
+with the portfolio/trade details so users can adjust their relative height.
+The 1024×768 collapsed state does not require horizontal scrolling. It does not
+invoke Strategy, Python, indicator scheduling, order evaluation, or Engine
+execution. Complete warning/log/metric presentation and marker detail
+interaction remain planned. A limited Results-management page is implemented.
 
 The headline UX. Layout:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Symbol [AAPL ▼]   Speed [1× 5× 10× max]   ◀◀ ⏸ ▶ ▶▶   ███████░░░  │
+│  ▸ Show replay setup                                                │
+│  ◀ Back  ▶ Play  Step   Speed [1× 5× 10× max]  ███████░░░  Out In  │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │        ▲                                                            │
@@ -164,28 +184,62 @@ The headline UX. Layout:
 │  Mkt:   $3,744   │   Realized P/L:  +$214.30                        │
 │  Total: $13,574  │   Unrealized:    -$ 12.10                        │
 └──────────────────┴──────────────────────────────────────────────────┘
+             ↕ draggable chart/details splitter
 ```
 
 Interactions:
 - **Speed control** — 1× presents one persisted slice per second; max presents
   records without intentional delay. It does not pace engine execution.
 - **Pause / Step** — `Space` pauses/resumes presentation; `→` presents the next
-  persisted slice.
+  persisted slice. Presentation starts with one candle; playback, step, speed,
+  seek, and back grow or shrink the visible `0..cursor` candle prefix together
+  with its portfolio state. Reached candles are not discarded after 500 frames.
 - **Scrub bar** — seek within validated persisted checkpoints/records and
   referenced bars; seeking never reconstructs fills by rerunning the engine.
-- **Trade markers** — persisted buys and sells currently use color plus distinct
-  shapes; click-to-open fill details remains planned.
+  Fill markers and synchronized trade rows appear with the persisted fill bar;
+  rewinding hides both future candles and their fills.
+- **Trade markers** — persisted buys use green upward triangles and sells use
+  red downward triangles. A Buy glyph is placed below the containing candle's
+  low; a Sell glyph is placed above its high. Both share that candle's x-position,
+  so the visual mark remains adjacent to the correct K bar. The 16-pixel glyph
+  bounding box leaves eight logical pixels of clearance from the wick; its
+  triangle tip is slightly farther away. A fixed 25-pixel display reserve on
+  each price edge prevents clipping at supported Replay sizes. The pixel-derived
+  padding is capped at half the visible price span for very short plots; the
+  existing one-USD display-padding floor still applies to flat/near-flat prices.
+  Plots under 100 logical pixels may not fit the full reserve. Height-only resize recalculates this
+  reserve. Price ticks may extend below zero as visual whitespace for a positive
+  low near zero; the stored OHLC and financial values are never changed.
+  Buy fills sharing a displayed candle use one triangle without a leader. Its
+  tooltip retains the first reached fill's details and, for multiple Buys,
+  states the reached fill count and points to the complete trade log. Group by
+  displayed candle, not identical fill time: Hourly uses its source bar and
+  Daily uses its UTC-date candle. Coincident Sell fills remain deterministically
+  separated with leader lines; a single Sell has no leader. Every fill's exact
+  timestamp and price remain unchanged in persisted results and synchronized
+  per-fill trade rows. The chart retains one price point per fill at its
+  containing candle's x slot, not an exact-time x coordinate. Rewind/replacement resets groups and their counts; future
+  fills cannot contribute to a displayed tooltip. Daily glyphs anchor to their containing UTC candle
+  while retaining the actual fill time. Click-to-open fill details remains
+  planned.
 - **Cursor inspector** — the current Qt Charts adapter has a crosshair; an
   OHLCV/indicator side popup remains planned.
-- **Volume** — the current adapter draws a synchronized volume line against a
-  secondary axis. The separate 70/30 histogram pane belongs to the planned
-  project-owned release chart.
+- **Volume** — the current adapter draws one direction-colored histogram bar
+  per selected K bar in a separate lower pane. Its UTC time axis shares the
+  upper price pane's range and horizontal plot geometry; its y axis shows
+  whole shares independently of quote-price ticks. The planned project-owned
+  release chart may replace the adapter without changing the saved OHLCV.
 
 ### 2.4 Results tab
 
-The current Results tab is a placeholder that accurately directs users to open
-stored results in Replay. The accepted complete page is separate from
-Strategies. Its proxy-model table shows the
+The current Results tab has a limited asynchronous saved/Trash catalog,
+read-only details, same-ID Open Replay, Rename, confirmed Move to Trash and
+Restore. A saved Result's optional display name is shown first in the catalog
+and Replay selector; the immutable ID remains visible and is still used for
+all navigation and storage operations. The Backtest save actions offer an
+optional name field, and legacy unnamed artifacts display their ID.
+It does not yet implement the accepted complete page. That page is separate
+from Strategies. Its proxy-model table shows the
 stored result's Strategy, universe, timeframe, range, status, completion time,
 valid total return, result-schema version, canonical-hash state, and data
 availability. Actions are Show Details, Open Replay, Compare, Export, Import,
@@ -208,7 +262,9 @@ result or referenced data is invalid or unavailable.
 - **Implemented result adapter:**
   [`ResultReplay`](../../Src/Bindings/Include/Bte/Bindings/ResultReplay.h)
   validates persisted results/data and exposes indexed immutable presentation
-  frames. `ReplayTab` owns independent catalog and open
+  frames. Its complete immutable timeline is the chart context; its bounded
+  cursor history is not a chart-window contract. `ReplayTab` owns independent
+  catalog and open
   [`ResultReplayRequests`](../../Src/Bindings/Include/Bte/Bindings/ResultReplayRequests.h)
   channels; those Bindings objects own concurrency, cancellation,
   per-channel stale-generation rejection, and queued immutable completion.
@@ -228,8 +284,23 @@ result or referenced data is invalid or unavailable.
 The implemented development
 [`IChartView`](../../Src/Frontend/Include/Bte/Frontend/IChartView.h) seam can
 replace or append bars and set or clear persisted fill markers.
-`QtChartsCandlestickView` renders candles, synchronized volume, markers,
-crosshair, pan, and zoom. The accepted release adapter is project-owned
+`QtChartsCandlestickView` renders price candles over aligned per-bar volume,
+persisted Buy/Sell markers, crosshair, pan, and zoom. Its Hourly time labels
+include date and hour, Daily labels include date, and the time axis declares
+UTC. Price and volume use separate y axes, so shares cannot rescale quote
+prices. The default sliding viewport targets roughly 24 pixels per selected
+bar slot and a 16–20-pixel candle body; zoom adjusts density and body width.
+Price and volume use automatic plot layout with shared left insets so rendered
+grids and series agree. Geometry updates are queued to avoid reentering Qt's
+axis-range notifications. Insets retain their largest intrinsic label width,
+not the already compensated plot position, so changing labels cannot accumulate
+rounded blank margins during playback. This reservation is retained within a
+timeline to avoid visible-boundary feedback, and reset on timeline replacement
+or timeframe change. Volume batches replace hidden-series points once; newly
+reached trade rows emit one insertion and one bounded cell-update notification.
+When zoom temporarily hides the newest reached candle, Follow latest can
+recenter immediately even before another replay frame arrives. The accepted
+release adapter is project-owned
 `QPainter`; it must not leak rendering types into the backend or alter
 persisted ordering.
 
@@ -244,13 +315,13 @@ persisted result values rather than asking the chart to execute engine logic.
 | What | Location contract | Format/status |
 |---|---|---|
 | Strategies | `QStandardPaths::AppLocalDataLocation/Strategies/{Active,Trash}` | UUIDv7 `.btestrategy` typed plan or Python source plus versioned metadata |
-| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Staging,Results,Trash}` | Implemented limited schema-2 `.bteresult` artifacts named by opaque 32-digit lowercase hexadecimal Result IDs; complete management UI remains planned |
+| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Staging,Drafts,Results,Trash,Quarantine}` | Implemented limited schema-2 `.bteresult` artifacts named by opaque 32-digit lowercase hexadecimal Result IDs; limited management UI exists, complete management remains planned |
 | Data and runtimes | `QStandardPaths::AppLocalDataLocation/{DataSegments,RuntimeProfiles}` | Limited immutable referenced segments are implemented; complete release profiles remain planned |
 | Settings and layout | OS-appropriate application data directory | Planned UI-only state; never a mutable market-data path |
 
 One future Core path resolver owns these locations and is redirectable in tests.
-Writers stage, validate, flush, and atomically rename artifacts on the same
-filesystem.
+Writers stage, validate, flush, and promote artifacts without clobbering on
+the same filesystem.
 
 ---
 

@@ -191,6 +191,11 @@ makeDailyFrames(const results::OpenedResult &result,
       return core::makeError(core::ErrorCode::cancelled,
                              "Result Replay open was cancelled");
     }
+    // Match Hourly's trust boundary before computing any Daily OHLCV.
+    if (!records.portfolioAt(bars[begin].timestamp).has_value()) {
+      ++begin;
+      continue;
+    }
     const auto day = floor<days>(bars[begin].timestamp);
     auto end = begin + 1;
     auto high = bars[begin].highNanodollars;
@@ -230,7 +235,9 @@ makeDailyFrames(const results::OpenedResult &result,
                      .close = price(bars[end - 1].closeNanodollars),
                      .volume =
                          static_cast<double>(volume) / microsharesPerShare},
-          .fills = records.fillsAt(core::Timestamp{day}, bucketEnd),
+          .fills = records.fillsAt(bars[begin].timestamp,
+                                   bars[end - 1].timestamp +
+                                       std::chrono::milliseconds{1}),
           .portfolio = *portfolio,
           .partialUtcDay = !completeSourceDay || rangeCutsUtcDay,
       });
@@ -262,58 +269,54 @@ ResultReplay::open(const std::filesystem::path &resultStore,
   if (!store.ok()) {
     return store.error();
   }
-  auto result = store.value()->openResult(resultId, cancellation);
-  if (!result.ok()) {
-    return result.error();
+  auto opened = store.value()->openResultWithData(resultId, cancellation);
+  if (!opened.ok()) {
+    return opened.error();
   }
-  if (result.value().descriptor.universe.size() != 1) {
+  auto resultAndData = std::move(opened).value();
+  const auto &result = resultAndData.result;
+  if (result.descriptor.universe.size() != 1) {
     return core::makeError(core::ErrorCode::schemaMismatch,
                            "Multi-symbol Result Replay is unsupported");
   }
-  auto validRecords = validateReplayRecords(
-      result.value().records, result.value().descriptor.universe.front());
+  auto validRecords =
+      validateReplayRecords(result.records, result.descriptor.universe.front());
   if (!validRecords.ok()) {
     return validRecords.error();
   }
-  auto reader = data::ReleaseSnapshotReader::open(
-      dataStore, result.value().descriptor.dataSelection.snapshotId,
-      cancellation);
-  if (!reader.ok()) {
-    return reader.error();
-  }
-  auto selected = reader.value()->readExact(
-      result.value().descriptor.dataSelection, cancellation);
-  if (!selected.ok()) {
-    return selected.error();
-  }
-  auto bars = std::move(selected).value().bars;
+  auto bars = std::move(resultAndData.selection.bars);
   std::vector<data::SnapshotBar> fullDailySourceBars;
   if (timeframe == ResultReplayTimeframe::dailyUtc && !bars.empty()) {
     using namespace std::chrono;
     const auto firstDay = floor<days>(bars.front().timestamp);
     const auto afterLastDay = floor<days>(bars.back().timestamp) + days{1};
+    auto reader = data::ReleaseSnapshotReader::open(
+        dataStore, result.descriptor.dataSelection.snapshotId, cancellation);
+    if (!reader.ok()) {
+      return reader.error();
+    }
     auto fullSource = reader.value()->select(
-        {.symbols = {result.value().descriptor.universe.front()},
+        {.symbols = {result.descriptor.universe.front()},
          .range = {.start = core::Timestamp{firstDay},
                    .end = core::Timestamp{afterLastDay}},
-         .timeframe = result.value().descriptor.dataSelection.timeframe},
+         .timeframe = result.descriptor.dataSelection.timeframe},
         cancellation);
-    // The same validated reader and timeframe already produced the exact
-    // selected bars above; only an external snapshot mutation can fail this
-    // wider source-coverage lookup. GCOVR_EXCL_START
+    // The exact saved rows above remain authoritative. This wider read only
+    // supplies complete UTC-day source coverage for Daily aggregation.
+    // GCOVR_EXCL_START
     if (!fullSource.ok()) {
       return fullSource.error();
     }
     // GCOVR_EXCL_STOP
     fullDailySourceBars = std::move(fullSource).value().bars;
   }
-  if (result.value().status != results::RunStatus::completed) {
+  if (result.status != results::RunStatus::completed) {
     const auto checkpoint = std::ranges::find_if(
-        result.value().records.rbegin(), result.value().records.rend(),
+        result.records.rbegin(), result.records.rend(),
         [](const results::CanonicalRecord &record) {
           return record.family == results::RecordFamily::portfolio;
         });
-    if (checkpoint == result.value().records.rend()) {
+    if (checkpoint == result.records.rend()) {
       bars.clear();
     } else {
       const auto firstFuture = std::ranges::upper_bound(
@@ -326,11 +329,11 @@ ResultReplay::open(const std::filesystem::path &resultStore,
                       "Result Replay timeframe is unsupported");
   switch (timeframe) {
   case ResultReplayTimeframe::hourly:
-    frames = makeHourlyFrames(result.value(), bars, cancellation);
+    frames = makeHourlyFrames(result, bars, cancellation);
     break;
   case ResultReplayTimeframe::dailyUtc:
     frames = makeDailyFrames(
-        result.value(), {.selected = bars, .fullSource = fullDailySourceBars},
+        result, {.selected = bars, .fullSource = fullDailySourceBars},
         cancellation);
     break;
   }
@@ -339,7 +342,7 @@ ResultReplay::open(const std::filesystem::path &resultStore,
   }
   return std::make_unique<ResultReplay>(ConstructionKey{}, resultId,
                                         std::move(frames).value(),
-                                        result.value().terminalReason);
+                                        result.terminalReason);
 }
 
 core::Result<std::vector<results::ResultSummary>>
@@ -400,6 +403,10 @@ int ResultReplay::progressPercent() const noexcept {
     return 0;
   }
   return static_cast<int>(((currentIndex_ + 1) * 100) / frames_.size());
+}
+
+std::span<const ResultReplayFrame> ResultReplay::timeline() const noexcept {
+  return frames_;
 }
 
 std::vector<ResultReplayFrame> ResultReplay::visibleWindow() const {

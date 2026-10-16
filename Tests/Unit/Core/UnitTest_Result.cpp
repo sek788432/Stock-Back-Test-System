@@ -113,3 +113,17 @@ TEST(DigestTest, sha256MatchesPublishedMillionAVector) {
   EXPECT_EQ(bte::core::sha256(std::string(1'000'000, 'a')),
             "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
 }
+TEST(DigestTest, sha256HonorsBorrowedSubspansWithoutHashingSurroundingBytes) {
+  std::vector<std::byte> storage(67, std::byte{0xff});
+  for (std::size_t index = 1; index <= 65; ++index) {
+    storage[index] = static_cast<std::byte>(index - 1);
+  }
+  const auto view = std::span<const std::byte>{storage};
+  EXPECT_EQ(bte::core::sha256(view.subspan(1, 65)),
+            "4bfd2c8b6f1eec7a2afeb48b934ee4b2694182027e6d0fc075074f2fabb31781");
+  EXPECT_EQ(bte::core::sha256(view.subspan(1, 0)),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  const std::string text{"xabcx"};
+  EXPECT_EQ(bte::core::sha256(std::string_view{text}.substr(1, 3)),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+}
