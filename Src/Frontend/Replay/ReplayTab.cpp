@@ -71,6 +71,11 @@ namespace {
 
 constexpr std::size_t maximumPlaybackBatchSize = 32;
 
+void setLabelText(QLabel *label, const QString &text) {
+  label->setText(text);
+  label->setAccessibleName(text);
+}
+
 int timerIntervalForSpeed(const QString &speed) {
   if (speed == "5x") {
     return 200;
@@ -251,22 +256,24 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
 
   const auto updateLegacyPortfolio = [=]() {
     const auto snapshot = replaySession->portfolioSnapshot();
-    portfolio.cashLabel->setText(
-        tr("Cash: %1").arg(formatMoney(snapshot.cash)));
-    portfolio.positionLabel->setText(
-        tr("Position: %1").arg(snapshot.position, 0, 'f', 0));
-    portfolio.marketValueLabel->setText(
-        tr("Market: %1").arg(formatMoney(snapshot.marketValue)));
-    portfolio.equityLabel->setText(
-        tr("Equity: %1").arg(formatMoney(snapshot.equity)));
-    portfolio.pnlLabel->setText(tr("PnL: %1").arg(formatMoney(snapshot.pnl)));
-    portfolio.lastPriceLabel->setText(
-        snapshot.hasLastPrice
-            ? tr("Last: %1").arg(formatPrice(snapshot.lastPrice))
-            : tr("Last: --"));
-    portfolio.barIndexLabel->setText(tr("Bar: %1/%2")
-                                         .arg(replaySession->currentIndex())
-                                         .arg(replaySession->totalBars()));
+    setLabelText(portfolio.cashLabel,
+                 tr("Cash: %1").arg(formatMoney(snapshot.cash)));
+    setLabelText(portfolio.positionLabel,
+                 tr("Position: %1").arg(snapshot.position, 0, 'f', 0));
+    setLabelText(portfolio.marketValueLabel,
+                 tr("Market: %1").arg(formatMoney(snapshot.marketValue)));
+    setLabelText(portfolio.equityLabel,
+                 tr("Equity: %1").arg(formatMoney(snapshot.equity)));
+    setLabelText(portfolio.pnlLabel,
+                 tr("PnL: %1").arg(formatMoney(snapshot.pnl)));
+    setLabelText(portfolio.lastPriceLabel,
+                 snapshot.hasLastPrice
+                     ? tr("Last: %1").arg(formatPrice(snapshot.lastPrice))
+                     : tr("Last: --"));
+    setLabelText(portfolio.barIndexLabel,
+                 tr("Bar: %1/%2")
+                     .arg(replaySession->currentIndex())
+                     .arg(replaySession->totalBars()));
   };
 
   const auto updateLegacyProgress = [=]() {
@@ -304,13 +311,13 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
       playback.progress->setValue(0);
       playback.seekSlider->setRange(0, 0);
       tradeLog.table->setRowCount(0);
-      portfolio.cashLabel->setText(tr("Cash: --"));
-      portfolio.positionLabel->setText(tr("Position: --"));
-      portfolio.marketValueLabel->setText(tr("Market: --"));
-      portfolio.equityLabel->setText(tr("Equity: --"));
-      portfolio.pnlLabel->setText(tr("PnL: --"));
-      portfolio.lastPriceLabel->setText(tr("Last: --"));
-      portfolio.barIndexLabel->setText(tr("Bar: 0/0"));
+      setLabelText(portfolio.cashLabel, tr("Cash: --"));
+      setLabelText(portfolio.positionLabel, tr("Position: --"));
+      setLabelText(portfolio.marketValueLabel, tr("Market: --"));
+      setLabelText(portfolio.equityLabel, tr("Equity: --"));
+      setLabelText(portfolio.pnlLabel, tr("PnL: --"));
+      setLabelText(portfolio.lastPriceLabel, tr("Last: --"));
+      setLabelText(portfolio.barIndexLabel, tr("Bar: 0/0"));
       setup.partialLabel->setVisible(false);
       return;
     }
@@ -348,7 +355,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     const auto *frame = state_->resultReplay->current();
     if (frame == nullptr) {
       playback.seekSlider->setRange(0, 0);
-      setup.resultStatusLabel->setText(tr("Result is valid but empty"));
+      setLabelText(setup.resultStatusLabel, tr("Result is valid but empty"));
       tradeLog.table->setRowCount(0);
       return;
     }
@@ -356,22 +363,23 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
         0, static_cast<int>(state_->resultReplay->totalFrames() - 1));
     playback.seekSlider->setValue(
         static_cast<int>(state_->resultReplay->currentIndex()));
-    portfolio.cashLabel->setText(
-        tr("Cash: %1").arg(formatMoney(frame->portfolio.cash)));
-    portfolio.positionLabel->setText(
-        tr("Position: %1").arg(frame->portfolio.positionShares));
-    portfolio.marketValueLabel->setText(
+    setLabelText(portfolio.cashLabel,
+                 tr("Cash: %1").arg(formatMoney(frame->portfolio.cash)));
+    setLabelText(portfolio.positionLabel,
+                 tr("Position: %1").arg(frame->portfolio.positionShares));
+    setLabelText(
+        portfolio.marketValueLabel,
         tr("Market: %1").arg(formatMoney(frame->portfolio.marketValue)));
-    portfolio.equityLabel->setText(
-        tr("Equity: %1").arg(formatMoney(frame->portfolio.equity)));
-    portfolio.pnlLabel->setText(
-        tr("PnL: %1").arg(formatMoney(frame->portfolio.pnl)));
-    portfolio.lastPriceLabel->setText(
-        tr("Last: %1").arg(formatPrice(frame->candle.close)));
-    portfolio.barIndexLabel->setText(
-        tr("Bar: %1/%2")
-            .arg(state_->resultReplay->currentIndex() + 1)
-            .arg(state_->resultReplay->totalFrames()));
+    setLabelText(portfolio.equityLabel,
+                 tr("Equity: %1").arg(formatMoney(frame->portfolio.equity)));
+    setLabelText(portfolio.pnlLabel,
+                 tr("PnL: %1").arg(formatMoney(frame->portfolio.pnl)));
+    setLabelText(portfolio.lastPriceLabel,
+                 tr("Last: %1").arg(formatPrice(frame->candle.close)));
+    setLabelText(portfolio.barIndexLabel,
+                 tr("Bar: %1/%2")
+                     .arg(state_->resultReplay->currentIndex() + 1)
+                     .arg(state_->resultReplay->totalFrames()));
     setup.partialLabel->setVisible(frame->partialUtcDay);
 
     if (mustReplaceChartTimeline) {
@@ -457,7 +465,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     state_->requestedResultId.clear();
     state_->resultReplay.reset();
     setup.partialLabel->setVisible(false);
-    setup.resultStatusLabel->setText(tr("Bar-only preview"));
+    setLabelText(setup.resultStatusLabel, tr("Bar-only preview"));
     tradeLog.table->setRowCount(0);
     replaySession->setInitialCapital(setup.initialCapital->value());
     replaySession->reset(loadReplayBars(
@@ -627,14 +635,15 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     state_->requestedResultId = resultId;
     renderResult();
     if (resultId.isEmpty()) {
-      setup.resultStatusLabel->setText(tr("Select a saved result"));
+      setLabelText(setup.resultStatusLabel, tr("Select a saved result"));
       return;
     }
     const auto catalogIndex =
         setup.resultCombo->findData(resultId, Qt::UserRole);
     if (catalogIndex >= 0 &&
         !setup.resultCombo->itemData(catalogIndex, Qt::UserRole + 1).toBool()) {
-      setup.resultStatusLabel->setText(
+      setLabelText(
+          setup.resultStatusLabel,
           tr("Result unavailable — %1")
               .arg(setup.resultCombo->itemData(catalogIndex, Qt::ToolTipRole)
                        .toString()));
@@ -646,7 +655,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     } else {
       setup.resultCombo->setCurrentText(resultId);
     }
-    setup.resultStatusLabel->setText(tr("Loading result %1…").arg(resultId));
+    setLabelText(setup.resultStatusLabel,
+                 tr("Loading result %1…").arg(resultId));
     setup.partialLabel->setVisible(false);
     const auto timeframe = setup.resultTimeframeCombo->currentIndex() == 0
                                ? bindings::ResultReplayTimeframe::hourly
@@ -656,7 +666,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
         [this, setup, resultId, renderResult, cursorAnchor](
             const bindings::ResultReplayRequests::OpenResult &opened) {
           if (!opened.ok()) {
-            setup.resultStatusLabel->setText(
+            setLabelText(
+                setup.resultStatusLabel,
                 tr("Cannot open result — %1")
                     .arg(QString::fromStdString(opened.error().message)));
             return;
@@ -674,7 +685,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
               (void)state_->resultReplay->seek(index);
             }
           }
-          setup.resultStatusLabel->setText(
+          setLabelText(
+              setup.resultStatusLabel,
               state_->resultReplay->terminalReason().empty()
                   ? tr("Result %1").arg(resultId)
                   : tr("Result %1 — %2")
@@ -739,7 +751,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
          setup](const bindings::ResultReplayRequests::CatalogResult &catalog) {
           if (!catalog.ok()) {
             if (!state_->resultRequestMade) {
-              setup.resultStatusLabel->setText(
+              setLabelText(
+                  setup.resultStatusLabel,
                   tr("Cannot load saved results — %1")
                       .arg(QString::fromStdString(catalog.error().message)));
             }
@@ -772,9 +785,10 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
             }
           }
           if (!state_->resultRequestMade) {
-            setup.resultStatusLabel->setText(
-                catalog.value().empty() ? tr("No saved Backtest results")
-                                        : tr("Select a saved Backtest result"));
+            setLabelText(setup.resultStatusLabel,
+                         catalog.value().empty()
+                             ? tr("No saved Backtest results")
+                             : tr("Select a saved Backtest result"));
           } else {
             const auto index =
                 setup.resultCombo->findData(activeResultId, Qt::UserRole);

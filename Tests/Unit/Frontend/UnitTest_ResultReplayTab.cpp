@@ -10,6 +10,7 @@
 #include "ResultReplayRequestsTestHooks.h"
 #include "WaitUntil.h"
 
+#include <QAccessible>
 #include <QByteArray>
 #include <QChart>
 #include <QChartView>
@@ -453,22 +454,57 @@ void ResultReplayTabTest::resultControlsAndPersistedFillDetailsAreAccessible() {
     }
   }
 
+  const auto verifyAccessibleLabels = [&tab]() {
+    for (const auto *name :
+         {"replayResultStatusLabel", "replayCashLabel", "replayPositionLabel",
+          "replayMarketValueLabel", "replayEquityLabel", "replayPnlLabel",
+          "replayLastPriceLabel", "replayBarIndexLabel"}) {
+      auto *label = tab.findChild<QLabel *>(name);
+      QVERIFY(label != nullptr);
+      auto *accessible = QAccessible::queryAccessibleInterface(label);
+      QVERIFY(accessible != nullptr);
+      QCOMPARE(accessible->text(QAccessible::Name), label->text());
+      QCOMPARE(label->accessibleName(), label->text());
+    }
+  };
+  verifyAccessibleLabels();
+
   auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
   auto *step = tab.findChild<QToolButton *>("replayStepForwardButton");
+  auto *seek = tab.findChild<QSlider *>("replaySeekSlider");
   auto *trades = tab.findChild<QTableWidget *>("replayTradeLogTable");
   QVERIFY(status != nullptr);
   QVERIFY(step != nullptr);
   QVERIFY(trades != nullptr);
-  tab.openResult(QString::fromStdString(secondResultId_));
+  QVERIFY(seek != nullptr);
+  const auto resultId = QString::fromStdString(secondResultId_);
+  tab.openResult(resultId);
+  verifyAccessibleLabels();
   QVERIFY(bte::test::waitUntil(
       [&] { return status->text().startsWith("Result "); }));
+  verifyAccessibleLabels();
   QTest::mouseClick(step, Qt::LeftButton);
+  verifyAccessibleLabels();
   QCOMPARE(trades->rowCount(), 1);
   const auto fillDescription =
       trades->item(0, 0)->data(Qt::AccessibleDescriptionRole).toString();
   QVERIFY(fillDescription.contains("Buy fill"));
   QVERIFY(fillDescription.contains("5 shares"));
   QVERIFY(fillDescription.contains(trades->item(0, 2)->text()));
+  seek->setValue(seek->maximum());
+  verifyAccessibleLabels();
+  seek->setValue(seek->minimum());
+  verifyAccessibleLabels();
+  tab.closeResultIfId(resultId);
+  QCOMPARE(status->text(), QString{"Select a saved result"});
+  QCOMPARE(tab.findChild<QLabel *>("replayCashLabel")->text(),
+           QString{"Cash: --"});
+  verifyAccessibleLabels();
+  tab.openResult("missing-accessibility-result");
+  verifyAccessibleLabels();
+  QVERIFY(bte::test::waitUntil(
+      [&] { return status->text().startsWith("Cannot open result"); }));
+  verifyAccessibleLabels();
 }
 
 void ResultReplayTabTest::

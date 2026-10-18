@@ -25,7 +25,7 @@ namespace {
 QLabel *makeValueLabel(const QString &text, const char *objectName) {
   auto label = std::make_unique<QLabel>(text);
   label->setObjectName(QString::fromLatin1(objectName));
-  label->setAccessibleName(label->objectName());
+  label->setAccessibleName(label->text());
   label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   label->setMinimumWidth(150);
   return label.release();
