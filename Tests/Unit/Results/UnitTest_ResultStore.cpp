@@ -12,8 +12,10 @@
 #include <sqlite3.h>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <ranges>
 #include <string>
@@ -147,6 +149,56 @@ protected:
   std::filesystem::path root_;
   bte::data::DataSelectionIdentity selection_;
 };
+
+TEST_F(ResultStoreFixture, schemaTwoHashMatchesIndependentLiteralOracle) {
+  // Python struct.pack/hashlib independently encode the normative frames;
+  // the complete worked input is recorded in Issue10CanonicalHashEvidence.md.
+  ASSERT_EQ(selection_.snapshotId,
+            "bf5e2533584d2e65312e8d15c03c11c10a4118bfca341ef806a04b38e9596ec6");
+  auto canonical = records();
+  canonical.push_back({
+      .sequence = 3,
+      .timestamp = timestamp("2024-01-02 00:00:00+00:00"),
+      .symbol = "SYN",
+      .family = bte::results::RecordFamily::portfolio,
+      .cashMicrodollars = std::numeric_limits<std::int64_t>::min(),
+      .marketValueMicrodollars = std::numeric_limits<std::int64_t>::max(),
+      .equityMicrodollars = -1,
+      .pnlMicrodollars = -256,
+      .positionShares = 0,
+      .text = "boundary cafe\u0301",
+  });
+  auto store =
+      bte::results::ResultStore::open(root_ / "Oracle", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  for (const auto status : {bte::results::RunStatus::completed,
+                            bte::results::RunStatus::interrupted}) {
+    auto writer = store.value()->begin(descriptor());
+    ASSERT_TRUE(writer.ok()) << writer.error().message;
+    ASSERT_TRUE(writer.value()->append(canonical).ok());
+    const auto summary =
+        status == bte::results::RunStatus::completed
+            ? bte::results::FinalSummary{.finalEquityMicrodollars =
+                                             100'009'900'000,
+                                         .pnlMicrodollars = -256}
+            : bte::results::FinalSummary{};
+    const auto expected =
+        status == bte::results::RunStatus::completed
+            ? "b8b436a6dd7fc99a86e40fa2ea04ebe0a3633bf303927147d8cd98f6f0b1e3d7"
+            : "5d16a7ba640f51cf7b6dbcc22a1e9299ca230ce66b0c83cf4ced1d101419297"
+              "8";
+    const auto finalized =
+        writer.value()->finalizeDraft(status, summary, "oracle");
+    ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+    EXPECT_EQ(finalized.value().canonicalResultHash, expected);
+    ASSERT_TRUE(store.value()->publishDraft(finalized.value().resultId).ok());
+    const auto reopened = store.value()->openResult(finalized.value().resultId);
+    ASSERT_TRUE(reopened.ok()) << reopened.error().message;
+    EXPECT_EQ(reopened.value().canonicalResultHash, expected);
+    EXPECT_EQ(reopened.value().records, canonical);
+    EXPECT_EQ(reopened.value().summary, summary);
+  }
+}
 
 TEST_F(ResultStoreFixture, rejectsInvalidStoreDescriptorAndLifecycleInputs) {
   const auto emptyRoot = bte::results::ResultStore::open({}, root_ / "Data");

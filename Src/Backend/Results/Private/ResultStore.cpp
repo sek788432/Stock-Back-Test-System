@@ -599,10 +599,11 @@ void appendFrame(std::string &bytes, const char tag,
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): typed canonical frame
 void appendInteger(std::string &bytes, const char tag,
                    const std::int64_t value) {
-  std::string encoded;
-  encoded.reserve(8);
-  appendUnsigned(encoded, static_cast<std::uint64_t>(value));
-  appendFrame(bytes, tag, encoded);
+  // Integer frames always carry eight bytes. Write directly into the canonical
+  // stream instead of constructing a temporary string for every record field.
+  bytes.push_back(tag);
+  appendUnsigned(bytes, 8);
+  appendUnsigned(bytes, static_cast<std::uint64_t>(value));
 }
 
 void appendOptionalInteger(std::string &bytes, const char tag,
