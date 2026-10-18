@@ -9,7 +9,7 @@ on the consolidated branch from work accepted into main.
 
 | Delivery | Evidence and scope |
 | --- | --- |
-| Incremental implementation workflow | PR #69; the workflow files on the older local branch are byte-identical to main |
+| Incremental implementation workflow | PR #69 plus local main hardening; older branch copies differ in invocation metadata and validation examples |
 | Full-money half-even rounding | PR #71; scoped R4 arithmetic repair |
 | Delivery inventory | PR #72; preserves unfinished work without accepting it |
 | Manifest-pin regression | PR #73; exact SQLite dependency regression |

@@ -30,7 +30,7 @@ each extracted submission requires fresh applicable checks on its exact SHA.
 | L | CSV-derived development snapshot `d21cfc1`/`c28ddec`, launcher/build provenance `3245574` | Seven-column input extraction is preserved in a named local stash: its old-main regression failed with unsupported columns, then 39 Data tests passed. Code review found daily exports can share that layout and be mislabeled hourly; explicit source-timeframe API/CLI design confirmation is pending, so this slice is Needs changes, not accepted or published. Existing explicit-form trailing-column compatibility was retained; the source's stricter rejection hunk remains pending. Launcher preparation/provenance and final delivered-checkout Launch.sh remain separate; no public data release |
 | S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Local implementation, not fully accepted. Split Save, Results and naming PRs; do not merge with known live-writer/retention/mid-run durability gaps or incomplete UI acceptance |
 | U | Metric units/period explanations `236d97b`/`cf65e2a`, threshold coverage `d8b3c76` | Display-only [PR #74](https://github.com/sek788432/Stock-Back-Test-System/pull/74) merged as `8ab5ea4b8db7f01d5591a748805b0ae0eb544dfe`; exact submitted head `569bbe3` passed local full tests/quality, both backend-only sanitizer presets and all CI/CodeQL checks. Period editability and typed identity are unchanged. Excluded source period-disable/normalization work and whole Task 16 Engine-record/hash acceptance remain open |
-| P | SQLite manifest-pin regression, `9bb2a9e` | Submitted as [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73). Main alignment uses a normal merge, not rewritten history. Consult that PR's latest head/base, fresh verification and CI before treating it as merged; prior-head gates are historical evidence only. The assertion matches the actual manifest, not the stale root draft |
+| P | SQLite manifest-pin regression, `9bb2a9e` | Delivered in [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73); the committed manifest regression is present in current local main. Main alignment used a normal merge, not rewritten history. The assertion matches the actual manifest, not the stale root draft |
 | H | Approved CSV/UTC historical-condition semantics, `89d7704` | Requirements only. Previous-data-day, N-day gain, prior-21-day extrema/breakouts and immutable pre-range warm-up are not implemented |
 | D | Plan ledger and workspace reconciliation, through `6ac45ea` | Focused inventory [PR #72](https://github.com/sek788432/Stock-Back-Test-System/pull/72) merged as `d1722bd448d097d40153bde1fb4a8b5cd1ce6fcf`. The original full dated ledger remains local. Preserve evidence and open findings; never label remaining tasks complete merely because a code checkpoint passed |
 
@@ -126,8 +126,10 @@ the other hunks in that file.
 - Older feature/planning branches and the backup branch remain preserved.
   Previous merged PRs are not a reason to push their rewritten/duplicated
   histories as new product changes. Recheck unique content before cleanup.
-- Local root `main` and the root checkout have not been updated by PR #71.
-  The verified merge is on remote main; final checkout reconciliation is pending.
+- Local `main` is checked out in `.worktrees/main-integration` and includes
+  PR #71 plus the other deliveries listed in [the current status](Issue10RemainingWork.md).
+  The root checkout remains on a preserved branch; do not infer missing delivery
+  from its older tree or rewrite it over current main.
 - No recurring/background PR or merge automation was enabled.
 
 ## Per-PR publication protocol
