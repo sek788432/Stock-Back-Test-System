@@ -686,6 +686,7 @@ BacktestExecution::start(BacktestRequest request) {
       .request = std::move(request),
       .result = std::move(result),
       .strategy = std::move(strategy),
+      .persistenceError = std::nullopt,
   });
   return std::make_unique<BacktestExecution>(ConstructionKey{},
                                              std::move(implementation));
@@ -806,8 +807,9 @@ BacktestExecution::terminalError() const noexcept {
 
 core::Result<RecordedBacktestOutcome>
 BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
-  if (impl_->persistenceError.has_value()) {
-    return impl_->persistenceError.value();
+  if (const auto persistenceError = impl_->persistenceError;
+      persistenceError.has_value()) {
+    return persistenceError.value();
   }
   if (impl_->result.status == results::RunStatus::running || impl_->finalized) {
     return invalidArgument("only one terminal backtest result can be recorded");
@@ -845,8 +847,9 @@ BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
 }
 
 core::Result<RecordedBacktestOutcome> BacktestExecution::finalizeRecorded() {
-  if (impl_->persistenceError.has_value()) {
-    return impl_->persistenceError.value();
+  if (const auto persistenceError = impl_->persistenceError;
+      persistenceError.has_value()) {
+    return persistenceError.value();
   }
   if (impl_->recordingWriter == nullptr) {
     return invalidArgument("Backtest execution is not recorded");

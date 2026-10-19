@@ -741,15 +741,15 @@ public:
   enum class Creation : std::uint8_t { existing, fresh, terminal };
 
   [[nodiscard]] static core::Result<std::unique_ptr<ResultLease>>
-  acquire(const std::filesystem::path &root, const std::string &id,
+  acquire(const std::filesystem::path &root, const std::string &resultId,
           const Creation creation) {
-    if (!validResultId(id)) {
+    if (!validResultId(resultId)) {
       return core::makeError(core::ErrorCode::invalidArgument,
                              "Result lease ID is invalid");
     }
-    const auto path = root / "Leases" / (id + ".sqlite3");
+    const auto path = root / "Leases" / (resultId + ".sqlite3");
     if (creation != Creation::existing && !std::filesystem::exists(path)) {
-      auto installed = install(root, id, path);
+      auto installed = install(root, resultId, path);
       if (!installed.ok()) {
         return installed.error();
       }
@@ -780,7 +780,7 @@ public:
     if (!identity.ok()) {
       return identity.error();
     }
-    if (identity.value().first != id || identity.value().second != 1) {
+    if (identity.value().first != resultId || identity.value().second != 1) {
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "Result lease identity or protocol is invalid");
     }
@@ -789,6 +789,14 @@ public:
 
 private:
   struct SeedDirectory final {
+    explicit SeedDirectory(std::filesystem::path directoryPath)
+        : path(std::move(directoryPath)) {}
+
+    SeedDirectory(const SeedDirectory &) = delete;
+    SeedDirectory &operator=(const SeedDirectory &) = delete;
+    SeedDirectory(SeedDirectory &&) = delete;
+    SeedDirectory &operator=(SeedDirectory &&) = delete;
+
     std::filesystem::path path;
     ~SeedDirectory() {
       std::error_code ignored;
@@ -797,7 +805,7 @@ private:
   };
 
   [[nodiscard]] static core::Result<void>
-  install(const std::filesystem::path &root, const std::string &id,
+  install(const std::filesystem::path &root, const std::string &resultId,
           const std::filesystem::path &destination) {
     // The directory is allocated exclusively. Publish a fully initialized,
     // closed database using a no-clobber hard link; never replace a lease
@@ -821,7 +829,7 @@ private:
             std::string{"PRAGMA synchronous=EXTRA"},
             std::string{"CREATE TABLE lease_identity(result_id TEXT PRIMARY "
                         "KEY,protocol_version INTEGER NOT NULL)"},
-            "INSERT INTO lease_identity VALUES('" + id + "',1)"}) {
+            "INSERT INTO lease_identity VALUES('" + resultId + "',1)"}) {
         auto executed = seed.execute(sql);
         if (!executed.ok()) {
           return executed.error();
@@ -1414,10 +1422,16 @@ core::Result<void> deleteCatalog(const std::filesystem::path &root,
   return statement.done();
 }
 
+struct ResultStoreLocations final {
+  std::filesystem::path root;
+  std::filesystem::path dataStore;
+};
+
 core::Result<std::unique_ptr<ResultLease>>
-mutationLease(const std::filesystem::path &root,
-              const std::filesystem::path &dataStore,
+mutationLease(const ResultStoreLocations &locations,
               const std::string &resultId) {
+  const auto &root = locations.root;
+  const auto &dataStore = locations.dataStore;
   const auto path = root / "Leases" / (resultId + ".sqlite3");
   if (std::filesystem::exists(path)) {
     return ResultLease::acquire(root, resultId,
@@ -1531,199 +1545,308 @@ core::Result<void> interruptArtifact(const std::filesystem::path &path,
 
 using RecoveryOutcome = core::Result<std::optional<ResultRecoveryNotice>>;
 
-RecoveryOutcome recoverArtifact(const std::filesystem::path &path,
-                                const std::filesystem::path &root,
-                                const std::filesystem::path &dataStore,
-                                const core::CancellationToken &cancellation) {
+RecoveryOutcome recoveryNotice(const std::string &resultId,
+                               const ResultRecoveryReason reason,
+                               const std::string &diagnostic) {
+  return std::optional<ResultRecoveryNotice>{{resultId, reason, diagnostic}};
+}
+
+RecoveryOutcome noRecoveryNotice() {
+  return std::optional<ResultRecoveryNotice>{};
+}
+
+struct RecoveryArtifactIdentity final {
+  std::string resultId;
+  bool removal = false;
+  bool purging = false;
+};
+
+RecoveryArtifactIdentity
+recoveryArtifactIdentity(const std::filesystem::path &path) {
   const auto filename = path.filename().string();
-  const auto removal = filename.ends_with(".purging.bteresult") ||
-                       filename.ends_with(".discarding.bteresult");
-  const auto suffix =
-      filename.ends_with(".purging.bteresult")      ? ".purging.bteresult"
-      : filename.ends_with(".discarding.bteresult") ? ".discarding.bteresult"
-                                                    : ".bteresult";
-  const auto id =
-      filename.substr(0, filename.size() - std::string_view{suffix}.size());
-  const auto notice = [&id](const ResultRecoveryReason reason,
-                            const std::string &diagnostic) -> RecoveryOutcome {
-    return std::optional<ResultRecoveryNotice>{{id, reason, diagnostic}};
-  };
-  if (!std::filesystem::exists(root / "Leases" / (id + ".sqlite3"))) {
-    return notice(ResultRecoveryReason::legacyUnleased,
-                  "Preserved legacy Result staging without an ownership lease");
+  std::string_view suffix{".bteresult"};
+  bool removal = false;
+  bool purging = false;
+  if (filename.ends_with(".purging.bteresult")) {
+    suffix = ".purging.bteresult";
+    removal = true;
+    purging = true;
+  } else if (filename.ends_with(".discarding.bteresult")) {
+    suffix = ".discarding.bteresult";
+    removal = true;
   }
-  auto lease = ResultLease::acquire(root, id, ResultLease::Creation::existing);
-  if (!lease.ok()) {
-    if (lease.error().code == core::ErrorCode::resourceBusy) {
-      return std::optional<ResultRecoveryNotice>{};
-    }
-    return notice(ResultRecoveryReason::invalidLease, lease.error().message);
+  return {.resultId = filename.substr(0, filename.size() - suffix.size()),
+          .removal = removal,
+          .purging = purging};
+}
+
+RecoveryOutcome validateRecoveryReferences(
+    const std::filesystem::path &path, const ResultStoreLocations &locations,
+    const RecoveryArtifactIdentity &artifact, const OpenedResult &staged,
+    const core::CancellationToken &cancellation) {
+  if (hasSiblingResultArtifact(locations.root, artifact.resultId, path)) {
+    return recoveryNotice(
+        artifact.resultId, ResultRecoveryReason::invalidPrefix,
+        "Preserved Result staging because another artifact with the same "
+        "identity already exists");
   }
-  auto staged =
-      readResultFile(path, dataStore, DataValidationPolicy::deferToCaller,
-                     ResultStatusPolicy::allowRunning, cancellation);
-  if (!staged.ok()) {
-    if (staged.error().code == core::ErrorCode::cancelled) {
-      return staged.error();
-    }
-    return notice(ResultRecoveryReason::invalidPrefix, staged.error().message);
-  }
-  if (staged.value().resultId != id) {
-    return notice(ResultRecoveryReason::invalidPrefix,
-                  "Result identity does not match its staging filename");
-  }
-  if (hasSiblingResultArtifact(root, id, path)) {
-    return notice(ResultRecoveryReason::invalidPrefix,
-                  "Preserved Result staging because another artifact with the "
-                  "same identity already exists");
-  }
-  auto retention = data::SegmentRetentionStore::open(dataStore);
+  auto retention = data::SegmentRetentionStore::open(locations.dataStore);
   if (!retention.ok()) {
-    return notice(ResultRecoveryReason::missingReferences,
-                  retention.error().message);
+    return recoveryNotice(artifact.resultId,
+                          ResultRecoveryReason::missingReferences,
+                          retention.error().message);
   }
-  const auto expected = distinctSegments(staged.value().descriptor);
-  auto references = retention.value()->references(id);
+  const auto expected = distinctSegments(staged.descriptor);
+  auto references = retention.value()->references(artifact.resultId);
   if (!references.ok()) {
-    return notice(ResultRecoveryReason::missingReferences,
-                  references.error().message);
+    return recoveryNotice(artifact.resultId,
+                          ResultRecoveryReason::missingReferences,
+                          references.error().message);
   }
-  if ((!removal && references.value() != expected) ||
-      (removal && !references.value().empty() &&
-       references.value() != expected)) {
-    return notice(ResultRecoveryReason::missingReferences,
-                  "Preserved Result staging with missing or inconsistent data "
-                  "references");
+  const auto referencesMatch = references.value() == expected;
+  if ((!artifact.removal && !referencesMatch) ||
+      (artifact.removal && !references.value().empty() && !referencesMatch)) {
+    return recoveryNotice(
+        artifact.resultId, ResultRecoveryReason::missingReferences,
+        "Preserved Result staging with missing or inconsistent data "
+        "references");
   }
-  auto pinned = retention.value()->acquire(id, expected);
+  auto pinned = retention.value()->acquire(artifact.resultId, expected);
   if (!pinned.ok()) {
-    return notice(ResultRecoveryReason::missingReferences,
-                  pinned.error().message);
+    return recoveryNotice(artifact.resultId,
+                          ResultRecoveryReason::missingReferences,
+                          pinned.error().message);
   }
   auto exact = validateDataSelection(
-      dataStore, staged.value().descriptor.dataSelection, cancellation);
+      locations.dataStore, staged.descriptor.dataSelection, cancellation);
   if (!exact.ok()) {
     if (exact.error().code == core::ErrorCode::cancelled) {
       return exact.error();
     }
-    return notice(ResultRecoveryReason::missingReferences,
-                  exact.error().message);
+    return recoveryNotice(artifact.resultId,
+                          ResultRecoveryReason::missingReferences,
+                          exact.error().message);
   }
-  if (!removal && staged.value().status == RunStatus::running) {
-    auto prefix =
-        validateCommittedPrefix(staged.value(), dataStore, cancellation);
-    if (!prefix.ok()) {
-      if (prefix.error().code == core::ErrorCode::cancelled) {
-        return prefix.error();
-      }
-      return notice(ResultRecoveryReason::invalidPrefix,
-                    prefix.error().message);
-    }
-    auto interrupted = interruptArtifact(path, staged.value());
-    if (!interrupted.ok()) {
-      return notice(ResultRecoveryReason::invalidPrefix,
-                    interrupted.error().message);
-    }
+  return noRecoveryNotice();
+}
+
+RecoveryOutcome interruptRunningArtifact(
+    const std::filesystem::path &path, const ResultStoreLocations &locations,
+    const RecoveryArtifactIdentity &artifact, const OpenedResult &staged,
+    const core::CancellationToken &cancellation) {
+  if (artifact.removal || staged.status != RunStatus::running) {
+    return noRecoveryNotice();
   }
-  auto validated =
-      readResultFile(path, dataStore, DataValidationPolicy::validateExact,
-                     ResultStatusPolicy::terminalOnly, cancellation);
+  auto prefix =
+      validateCommittedPrefix(staged, locations.dataStore, cancellation);
+  if (!prefix.ok()) {
+    if (prefix.error().code == core::ErrorCode::cancelled) {
+      return prefix.error();
+    }
+    return recoveryNotice(artifact.resultId,
+                          ResultRecoveryReason::invalidPrefix,
+                          prefix.error().message);
+  }
+  auto interrupted = interruptArtifact(path, staged);
+  if (!interrupted.ok()) {
+    return recoveryNotice(artifact.resultId,
+                          ResultRecoveryReason::invalidPrefix,
+                          interrupted.error().message);
+  }
+  return noRecoveryNotice();
+}
+
+RecoveryOutcome
+publishRecoveredArtifact(const std::filesystem::path &path,
+                         const ResultStoreLocations &locations,
+                         const RecoveryArtifactIdentity &artifact,
+                         const core::CancellationToken &cancellation) {
+  auto validated = readResultFile(
+      path, locations.dataStore, DataValidationPolicy::validateExact,
+      ResultStatusPolicy::terminalOnly, cancellation);
   if (!validated.ok()) {
     if (validated.error().code == core::ErrorCode::cancelled) {
       return validated.error();
     }
-    return notice(ResultRecoveryReason::invalidPrefix,
-                  validated.error().message);
+    return recoveryNotice(artifact.resultId,
+                          ResultRecoveryReason::invalidPrefix,
+                          validated.error().message);
   }
-  const auto destinationDirectory =
-      filename.ends_with(".purging.bteresult") ? "Trash" : "Drafts";
-  auto moved =
-      moveNoClobber(path, root / destinationDirectory / (id + ".bteresult"),
-                    "Unable to recover owned Result artifact");
+  const char *const destinationDirectory =
+      artifact.purging ? "Trash" : "Drafts";
+  auto moved = moveNoClobber(path,
+                             locations.root / destinationDirectory /
+                                 (artifact.resultId + ".bteresult"),
+                             "Unable to recover owned Result artifact");
   if (!moved.ok()) {
-    return notice(ResultRecoveryReason::invalidPrefix, moved.error().message);
+    return recoveryNotice(artifact.resultId,
+                          ResultRecoveryReason::invalidPrefix,
+                          moved.error().message);
   }
-  return std::optional<ResultRecoveryNotice>{};
+  return noRecoveryNotice();
+}
+
+RecoveryOutcome recoverArtifact(const std::filesystem::path &path,
+                                const ResultStoreLocations &locations,
+                                const core::CancellationToken &cancellation) {
+  const auto artifact = recoveryArtifactIdentity(path);
+  const auto &resultId = artifact.resultId;
+  const auto leasePath = locations.root / "Leases" / (resultId + ".sqlite3");
+  if (!std::filesystem::exists(leasePath)) {
+    return recoveryNotice(
+        resultId, ResultRecoveryReason::legacyUnleased,
+        "Preserved legacy Result staging without an ownership lease");
+  }
+  auto lease = ResultLease::acquire(locations.root, resultId,
+                                    ResultLease::Creation::existing);
+  if (!lease.ok()) {
+    if (lease.error().code == core::ErrorCode::resourceBusy) {
+      return noRecoveryNotice();
+    }
+    return recoveryNotice(resultId, ResultRecoveryReason::invalidLease,
+                          lease.error().message);
+  }
+  auto staged = readResultFile(path, locations.dataStore,
+                               DataValidationPolicy::deferToCaller,
+                               ResultStatusPolicy::allowRunning, cancellation);
+  if (!staged.ok()) {
+    if (staged.error().code == core::ErrorCode::cancelled) {
+      return staged.error();
+    }
+    return recoveryNotice(resultId, ResultRecoveryReason::invalidPrefix,
+                          staged.error().message);
+  }
+  if (staged.value().resultId != resultId) {
+    return recoveryNotice(
+        resultId, ResultRecoveryReason::invalidPrefix,
+        "Result identity does not match its staging filename");
+  }
+  auto references = validateRecoveryReferences(path, locations, artifact,
+                                               staged.value(), cancellation);
+  if (!references.ok() || references.value().has_value()) {
+    return references;
+  }
+  auto interrupted = interruptRunningArtifact(path, locations, artifact,
+                                              staged.value(), cancellation);
+  if (!interrupted.ok() || interrupted.value().has_value()) {
+    return interrupted;
+  }
+  return publishRecoveredArtifact(path, locations, artifact, cancellation);
 }
 
 RecoveryOutcome inspectOrphan(const std::filesystem::path &path,
-                              const std::filesystem::path &root,
-                              const std::filesystem::path &dataStore) {
-  const auto id = path.stem().string();
-  for (const auto *directory : {"Staging", "Drafts", "Results", "Trash"}) {
-    for (const auto *suffix :
+                              const ResultStoreLocations &locations) {
+  const auto resultId = path.stem().string();
+  for (const auto *const directory :
+       {"Staging", "Drafts", "Results", "Trash"}) {
+    for (const auto *const suffix :
          {".bteresult", ".purging.bteresult", ".discarding.bteresult"}) {
-      if (std::filesystem::exists(root / directory / (id + suffix))) {
-        return std::optional<ResultRecoveryNotice>{};
+      if (std::filesystem::exists(locations.root / directory /
+                                  (resultId + suffix))) {
+        return noRecoveryNotice();
       }
     }
   }
-  auto lease = ResultLease::acquire(root, id, ResultLease::Creation::existing);
+  auto lease = ResultLease::acquire(locations.root, resultId,
+                                    ResultLease::Creation::existing);
   if (!lease.ok()) {
     if (lease.error().code == core::ErrorCode::resourceBusy) {
-      return std::optional<ResultRecoveryNotice>{};
+      return noRecoveryNotice();
     }
-    return std::optional<ResultRecoveryNotice>{
-        {id, ResultRecoveryReason::invalidLease, lease.error().message}};
+    return recoveryNotice(resultId, ResultRecoveryReason::invalidLease,
+                          lease.error().message);
   }
-  auto retention = data::SegmentRetentionStore::open(dataStore);
+  auto retention = data::SegmentRetentionStore::open(locations.dataStore);
   if (!retention.ok()) {
-    return std::optional<ResultRecoveryNotice>{
-        {id, ResultRecoveryReason::missingReferences,
-         retention.error().message}};
+    return recoveryNotice(resultId, ResultRecoveryReason::missingReferences,
+                          retention.error().message);
   }
-  auto references = retention.value()->references(id);
+  auto references = retention.value()->references(resultId);
   if (!references.ok()) {
-    return std::optional<ResultRecoveryNotice>{
-        {id, ResultRecoveryReason::missingReferences,
-         references.error().message}};
+    return recoveryNotice(resultId, ResultRecoveryReason::missingReferences,
+                          references.error().message);
   }
   if (!references.value().empty()) {
-    return std::optional<ResultRecoveryNotice>{
-        {id, ResultRecoveryReason::orphanedInitialization,
-         "Preserved Result initialization references without a recoverable "
-         "artifact"}};
+    return recoveryNotice(
+        resultId, ResultRecoveryReason::orphanedInitialization,
+        "Preserved Result initialization references without a recoverable "
+        "artifact");
   }
-  return std::optional<ResultRecoveryNotice>{};
+  return noRecoveryNotice();
+}
+
+enum class RecoveryDirectory : std::uint8_t { staging, leases };
+
+RecoveryOutcome
+inspectRecoveryEntry(const std::filesystem::path &path,
+                     const RecoveryDirectory directory,
+                     const ResultStoreLocations &locations,
+                     const core::CancellationToken &cancellation) {
+  const std::string_view extension =
+      directory == RecoveryDirectory::staging ? ".bteresult" : ".sqlite3";
+  if (path.extension() != extension) {
+    return noRecoveryNotice();
+  }
+  if (directory == RecoveryDirectory::staging) {
+    return recoverArtifact(path, locations, cancellation);
+  }
+  return inspectOrphan(path, locations);
 }
 
 core::Result<std::vector<ResultRecoveryNotice>>
-recoverStaging(const std::filesystem::path &root,
-               const std::filesystem::path &dataStore,
-               const core::CancellationToken &cancellation) {
+scanRecoveryDirectory(const std::filesystem::path &directory,
+                      const RecoveryDirectory recoveryDirectory,
+                      const ResultStoreLocations &locations,
+                      const core::CancellationToken &cancellation) {
   std::vector<ResultRecoveryNotice> notices;
-  for (const auto *directory : {"Staging", "Leases"}) {
-    std::error_code errorCode;
-    auto iterator =
-        std::filesystem::directory_iterator{root / directory, errorCode};
-    const auto end = std::filesystem::directory_iterator{};
-    while (!errorCode && iterator != end) {
-      if (cancellation.isCancellationRequested()) {
-        return core::makeError(core::ErrorCode::cancelled,
-                               "Result recovery was cancelled");
-      }
-      const auto path = iterator->path();
-      if (iterator->is_regular_file(errorCode) &&
-          path.extension() == (std::string_view{directory} == "Staging"
-                                   ? ".bteresult"
-                                   : ".sqlite3")) {
-        auto outcome =
-            std::string_view{directory} == "Staging"
-                ? recoverArtifact(path, root, dataStore, cancellation)
-                : inspectOrphan(path, root, dataStore);
-        if (!outcome.ok()) {
-          return outcome.error();
-        }
-        if (outcome.value().has_value()) {
-          notices.push_back(*outcome.value());
-        }
-      }
-      iterator.increment(errorCode);
+  std::error_code errorCode;
+  auto iterator = std::filesystem::directory_iterator{directory, errorCode};
+  const auto end = std::filesystem::directory_iterator{};
+  while (!errorCode && iterator != end) {
+    if (cancellation.isCancellationRequested()) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "Result recovery was cancelled");
     }
-    if (errorCode) {
-      return storageError("Unable to inspect Result recovery directory: " +
-                          errorCode.message());
+    const auto path = iterator->path();
+    if (iterator->is_regular_file(errorCode)) {
+      auto outcome = inspectRecoveryEntry(path, recoveryDirectory, locations,
+                                          cancellation);
+      if (!outcome.ok()) {
+        return outcome.error();
+      }
+      auto notice = std::move(outcome).value();
+      if (notice.has_value()) {
+        notices.push_back(std::move(notice).value());
+      }
     }
+    iterator.increment(errorCode);
+  }
+  if (errorCode) {
+    return storageError("Unable to inspect Result recovery directory: " +
+                        errorCode.message());
+  }
+  return notices;
+}
+
+core::Result<std::vector<ResultRecoveryNotice>>
+recoverStaging(const ResultStoreLocations &locations,
+               const core::CancellationToken &cancellation) {
+  auto staged = scanRecoveryDirectory(locations.root / "Staging",
+                                      RecoveryDirectory::staging, locations,
+                                      cancellation);
+  if (!staged.ok()) {
+    return staged.error();
+  }
+  auto orphaned =
+      scanRecoveryDirectory(locations.root / "Leases",
+                            RecoveryDirectory::leases, locations, cancellation);
+  if (!orphaned.ok()) {
+    return orphaned.error();
+  }
+  auto notices = std::move(staged).value();
+  auto orphanNotices = std::move(orphaned).value();
+  for (auto &notice : orphanNotices) {
+    notices.push_back(std::move(notice));
   }
   return notices;
 }
@@ -2118,7 +2241,8 @@ ResultStore::open(const std::filesystem::path &root,
   if (!initialized.ok()) {
     return initialized.error();
   }
-  auto recovered = recoverStaging(root, dataStore, cancellation);
+  const ResultStoreLocations locations{root, dataStore};
+  auto recovered = recoverStaging(locations, cancellation);
   if (!recovered.ok()) {
     return recovered.error();
   }
@@ -2363,7 +2487,7 @@ ResultStore::publishDraft(const std::string &resultId,
                            "Result name must be 1–160 bytes without leading, "
                            "trailing, or control characters");
   }
-  auto lease = mutationLease(root_, dataStore_, resultId);
+  auto lease = mutationLease({root_, dataStore_}, resultId);
   if (!lease.ok()) {
     return lease.error();
   }
@@ -2444,7 +2568,7 @@ ResultStore::renameResult(const std::string &resultId,
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID or name is invalid");
   }
-  auto lease = mutationLease(root_, dataStore_, resultId);
+  auto lease = mutationLease({root_, dataStore_}, resultId);
   if (!lease.ok()) {
     return lease.error();
   }
@@ -2467,7 +2591,7 @@ ResultStore::discardDraft(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
-  auto lease = mutationLease(root_, dataStore_, resultId);
+  auto lease = mutationLease({root_, dataStore_}, resultId);
   if (!lease.ok()) {
     return lease.error();
   }
@@ -2538,7 +2662,7 @@ core::Result<void> ResultStore::moveToTrash(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
-  auto lease = mutationLease(root_, dataStore_, resultId);
+  auto lease = mutationLease({root_, dataStore_}, resultId);
   if (!lease.ok()) {
     return lease.error();
   }
@@ -2557,7 +2681,7 @@ core::Result<void> ResultStore::restore(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
-  auto lease = mutationLease(root_, dataStore_, resultId);
+  auto lease = mutationLease({root_, dataStore_}, resultId);
   if (!lease.ok()) {
     return lease.error();
   }
@@ -2588,7 +2712,7 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
-  auto lease = mutationLease(root_, dataStore_, resultId);
+  auto lease = mutationLease({root_, dataStore_}, resultId);
   if (!lease.ok()) {
     return lease.error();
   }
