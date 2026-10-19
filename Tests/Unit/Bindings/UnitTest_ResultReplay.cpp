@@ -281,8 +281,7 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   EXPECT_FALSE(daily.value()->stepForward());
 }
 
-TEST_F(ResultReplayTest,
-       openUsesExactPersistedSpansAtTheExclusiveEndBoundary) {
+TEST_F(ResultReplayTest, openUsesExactPersistedSpansAtTheExclusiveEndBoundary) {
   auto reader =
       bte::data::ReleaseSnapshotReader::open(root_ / "Data", snapshotId_);
   ASSERT_TRUE(reader.ok()) << reader.error().message;
@@ -294,8 +293,8 @@ TEST_F(ResultReplayTest,
   });
   ASSERT_TRUE(narrow.ok()) << narrow.error().message;
   ASSERT_EQ(narrow.value().bars.size(), 1U);
-  auto store =
-      bte::results::ResultStore::open(root_ / "EndBoundaryStore", root_ / "Data");
+  auto store = bte::results::ResultStore::open(root_ / "EndBoundaryStore",
+                                               root_ / "Data");
   ASSERT_TRUE(store.ok()) << store.error().message;
   auto writer = store.value()->begin({
       .universe = {"SYN"},

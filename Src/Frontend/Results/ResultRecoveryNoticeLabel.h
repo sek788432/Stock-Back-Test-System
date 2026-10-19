@@ -32,10 +32,9 @@ public:
                            QString::fromStdString(notice.diagnostic)));
     }
     const auto message =
-        lines.isEmpty()
-            ? QString{}
-            : tr("Recovery notices — artifacts were preserved:\n%1")
-                  .arg(lines.join('\n'));
+        lines.isEmpty() ? QString{}
+                        : tr("Recovery notices — artifacts were preserved:\n%1")
+                              .arg(lines.join('\n'));
     setText(message);
     setAccessibleName(message);
     setVisible(!lines.isEmpty());

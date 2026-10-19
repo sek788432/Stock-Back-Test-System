@@ -98,12 +98,10 @@ bte::core::Result<void> run(const std::string &mode,
   }
   if (mode == "publish") {
     auto published = store.value()->publishDraft(argument);
-    std::cout << (published.ok()
-                      ? "published"
-                      : published.error().code ==
-                                bte::core::ErrorCode::resourceBusy
-                            ? "busy"
-                            : "error")
+    std::cout << (published.ok() ? "published"
+                  : published.error().code == bte::core::ErrorCode::resourceBusy
+                      ? "busy"
+                      : "error")
               << std::endl;
     return {};
   }

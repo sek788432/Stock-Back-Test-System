@@ -53,7 +53,8 @@ std::atomic<std::uint32_t> &configuredFailureSkips() {
   return value;
 }
 
-std::atomic<core::CancellationSource *> &openResultWithDataCancellationSource() {
+std::atomic<core::CancellationSource *> &
+openResultWithDataCancellationSource() {
   static std::atomic<core::CancellationSource *> value{nullptr};
   return value;
 }
@@ -120,10 +121,10 @@ core::Result<void> moveNoClobber(const std::filesystem::path &source,
 
 bool hasResultArtifact(const std::filesystem::path &root,
                        const std::string_view resultId) {
-  for (const auto *directory : {"Staging", "Drafts", "Results", "Trash",
-                                "Quarantine"}) {
-    for (const auto *suffix : {".bteresult", ".purging.bteresult",
-                               ".discarding.bteresult"}) {
+  for (const auto *directory :
+       {"Staging", "Drafts", "Results", "Trash", "Quarantine"}) {
+    for (const auto *suffix :
+         {".bteresult", ".purging.bteresult", ".discarding.bteresult"}) {
       if (std::filesystem::exists(root / directory /
                                   (std::string{resultId} + suffix))) {
         return true;
@@ -138,8 +139,8 @@ bool hasSiblingResultArtifact(const std::filesystem::path &root,
                               const std::filesystem::path &currentPath) {
   const auto current = currentPath.lexically_normal();
   for (const auto *directory : {"Staging", "Drafts", "Results", "Trash"}) {
-    for (const auto *suffix : {".bteresult", ".purging.bteresult",
-                               ".discarding.bteresult"}) {
+    for (const auto *suffix :
+         {".bteresult", ".purging.bteresult", ".discarding.bteresult"}) {
       const auto candidate =
           (root / directory / (std::string{resultId} + suffix))
               .lexically_normal();
@@ -316,10 +317,9 @@ core::Result<std::unique_ptr<Database>>
 openDatabase(const std::filesystem::path &path, const bool readOnly = false,
              const bool createIfMissing = true) {
   auto database = std::make_unique<Database>();
-  const auto flags =
-      readOnly ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
-               : SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX |
-                     (createIfMissing ? SQLITE_OPEN_CREATE : 0);
+  const auto flags = readOnly ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+                              : SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX |
+                                    (createIfMissing ? SQLITE_OPEN_CREATE : 0);
   auto opened = database->open(path, flags);
   if (!opened.ok()) {
     return opened.error();
@@ -1963,9 +1963,8 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
     }
     Statement meta;
     prepared = meta.prepare(
-        *impl_->database,
-        "UPDATE result_meta SET status=?1,canonical_hash=?2,"
-        "terminal_reason=?3,saved_utc_ms=?4");
+        *impl_->database, "UPDATE result_meta SET status=?1,canonical_hash=?2,"
+                          "terminal_reason=?3,saved_utc_ms=?4");
     if (!prepared.ok() ||
         !meta.integer(1, static_cast<std::int64_t>(status)).ok() ||
         !meta.text(2, hash).ok() || !meta.text(3, terminalReason).ok() ||
@@ -2685,9 +2684,9 @@ ResultStore::importResult(const std::filesystem::path &source) const {
     return core::makeError(core::ErrorCode::notFound,
                            "Imported Result source is unavailable");
   }
-  auto sourceResult = readResultFile(source, dataStore_,
-                                     DataValidationPolicy::validateExact,
-                                     ResultStatusPolicy::terminalOnly, {}, true);
+  auto sourceResult =
+      readResultFile(source, dataStore_, DataValidationPolicy::validateExact,
+                     ResultStatusPolicy::terminalOnly, {}, true);
   if (!sourceResult.ok()) {
     return sourceResult.error();
   }

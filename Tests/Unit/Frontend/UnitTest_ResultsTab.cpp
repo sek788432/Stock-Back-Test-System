@@ -116,8 +116,7 @@ void ResultsTabTest::recoveryNoticeTracksAccessibleTextAndClearsAfterRefresh() {
   QVERIFY(directory.isValid());
   const auto root = std::filesystem::path{directory.path().toStdString()};
   const auto resultId = std::string(32, 'f');
-  const auto staging = root / "Results" / "Staging" /
-                       (resultId + ".bteresult");
+  const auto staging = root / "Results" / "Staging" / (resultId + ".bteresult");
   std::filesystem::create_directories(staging.parent_path());
   {
     std::ofstream legacy{staging};
@@ -128,8 +127,9 @@ void ResultsTabTest::recoveryNoticeTracksAccessibleTextAndClearsAfterRefresh() {
   bte::frontend::ResultsTab tab{root / "Results", root / "Data"};
   auto *notice = tab.findChild<QLabel *>("resultsRecoveryNoticesLabel");
   QVERIFY(notice != nullptr);
-  QVERIFY(bte::test::waitUntil(
-      [&] { return notice->text().contains(QString::fromStdString(resultId)); }));
+  QVERIFY(bte::test::waitUntil([&] {
+    return notice->text().contains(QString::fromStdString(resultId));
+  }));
   QCOMPARE(notice->accessibleName(), notice->text());
 
   QVERIFY(std::filesystem::remove(staging));
@@ -438,18 +438,18 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   QCOMPARE(reopened.value().canonicalResultHash,
            published.value().canonicalResultHash);
 
-  const auto resultPath = root / "Store" / "Results" /
-                          (run.value().resultId + ".bteresult");
-  const auto trashPath = root / "Store" / "Trash" /
-                         (run.value().resultId + ".bteresult");
+  const auto resultPath =
+      root / "Store" / "Results" / (run.value().resultId + ".bteresult");
+  const auto trashPath =
+      root / "Store" / "Trash" / (run.value().resultId + ".bteresult");
   QVERIFY(std::filesystem::exists(resultPath));
   QVERIFY(!std::filesystem::exists(trashPath));
   table->selectRow(0);
   const auto movedToTrashAgain =
       store.value()->moveToTrash(run.value().resultId);
-  QVERIFY2(movedToTrashAgain.ok(), movedToTrashAgain.ok()
-                                        ? ""
-                                        : movedToTrashAgain.error().message.c_str());
+  QVERIFY2(movedToTrashAgain.ok(),
+           movedToTrashAgain.ok() ? ""
+                                  : movedToTrashAgain.error().message.c_str());
   view->click();
   QVERIFY(bte::test::waitUntil(
       [&] { return (details->text().startsWith("Cannot view result")); }));
