@@ -64,7 +64,8 @@ bte::bindings::ResultCatalogSnapshot
 draftCatalog(const std::vector<std::string> &ids) {
   bte::bindings::ResultCatalogSnapshot snapshot;
   for (const auto &id : ids) {
-    snapshot.entries.push_back({.resultId = id});
+    snapshot.entries.emplace_back();
+    snapshot.entries.back().resultId = id;
   }
   return snapshot;
 }
