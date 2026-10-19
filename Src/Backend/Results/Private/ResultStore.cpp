@@ -53,6 +53,11 @@ std::atomic<std::uint32_t> &configuredFailureSkips() {
   return value;
 }
 
+std::atomic<core::CancellationSource *> &openResultWithDataCancellationSource() {
+  static std::atomic<core::CancellationSource *> value{nullptr};
+  return value;
+}
+
 std::mutex &forcedResultIdMutex() {
   static std::mutex value;
   return value;
@@ -1739,6 +1744,7 @@ void failAfter(const FailurePoint point,
 void clearFailure() {
   configuredFailurePoint().store(FailurePoint::none);
   configuredFailureSkips().store(0);
+  openResultWithDataCancellationSource().store(nullptr);
   const std::scoped_lock lock{forcedResultIdMutex()};
   forcedResultId().reset();
 }
@@ -1750,6 +1756,11 @@ bool failurePending() noexcept {
 void forceNextResultId(std::string resultId) {
   const std::scoped_lock lock{forcedResultIdMutex()};
   forcedResultId() = std::move(resultId);
+}
+
+void cancelNextOpenResultWithDataAfterReaderOpen(
+    core::CancellationSource *source) noexcept {
+  openResultWithDataCancellationSource().store(source);
 }
 
 } // namespace testing
@@ -2325,6 +2336,13 @@ core::Result<OpenedResultWithData> ResultStore::openResultWithData(
   if (!reader.ok()) {
     return reader.error();
   }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto source =
+          openResultWithDataCancellationSource().exchange(nullptr);
+      source != nullptr) {
+    source->requestCancellation();
+  }
+#endif
   auto selection = reader.value()->readExact(
       result.value().descriptor.dataSelection, cancellation);
   if (!selection.ok()) {

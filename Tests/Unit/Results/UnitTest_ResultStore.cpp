@@ -573,6 +573,32 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
+       cancellationAfterSnapshotReaderOpenStopsExactReadWithoutMutation) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  const auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+  const auto artifact = root_ / "ResultsStore" / "Results" /
+                        (finalized.value().resultId + ".bteresult");
+
+  bte::core::CancellationSource cancellation;
+  bte::results::testing::cancelNextOpenResultWithDataAfterReaderOpen(
+      &cancellation);
+  const auto cancelled = store.value()->openResultWithData(
+      finalized.value().resultId, cancellation.token());
+
+  ASSERT_FALSE(cancelled.ok());
+  EXPECT_EQ(cancelled.error().code, bte::core::ErrorCode::cancelled);
+  EXPECT_TRUE(std::filesystem::exists(artifact));
+}
+
+TEST_F(ResultStoreFixture,
        defaultLogRecordRoundTripsItsCanonicalSequenceFamilyAndSide) {
   auto store =
       bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");

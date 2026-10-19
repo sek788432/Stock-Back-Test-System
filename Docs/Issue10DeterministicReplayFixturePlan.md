@@ -1,5 +1,15 @@
 # Backtest Result K-Line Replay Implementation Plan
 
+> **Current delivery status (2026-10-19):** PR #80's snapshot-reuse and bounded
+> hashing changes are merged into `main` as `dbcbd39`. R1–R3 persistence safety
+> is aligned with that `main` and passes `RunTest.sh` 270/270, including
+> child-process and exclusive-boundary regressions. Exact committed-head
+> Quality/sanitizer checks, remote PR checks, and native application/real-data
+> acceptance remain open. See
+> [Issue 10 remaining work](Plans/Issue10RemainingWork.md) for the current
+> acceptance list. The historical checkboxes below are not whole-plan
+> acceptance.
+
 > **Latest local gate checkpoint (2026-10-16):** Task 30 implementation is
 > committed locally through `90c6682`. Exact-head `./RunTest.sh` passed 248/248
 > (87.71 seconds). The complete local analyzer stack passed clang-format,

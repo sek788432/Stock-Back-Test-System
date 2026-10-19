@@ -6,6 +6,10 @@
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
+#if defined(BTE_ENABLE_TEST_HOOKS)
+#include "BacktestTestHooks.h"
+#include <atomic>
+#endif
 
 #include <algorithm> // IWYU pragma: keep
 #include <array>
@@ -20,6 +24,13 @@
 
 namespace bte::engine {
 namespace {
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+std::atomic<std::uint64_t> &backtestStartCountStorage() {
+  static std::atomic<std::uint64_t> value{0};
+  return value;
+}
+#endif
 
 constexpr auto nanodollarsPerDollar = 1'000'000'000.0;
 constexpr auto microsharesPerShare = 1'000'000.0;
@@ -473,6 +484,20 @@ nextOrderFor(const strategy::SelectableStrategySignal &signal,
 
 } // namespace
 
+#if defined(BTE_ENABLE_TEST_HOOKS)
+namespace testing {
+
+std::uint64_t backtestStartCount() noexcept {
+  return backtestStartCountStorage().load();
+}
+
+void recordBacktestStart() noexcept {
+  backtestStartCountStorage().fetch_add(1);
+}
+
+} // namespace testing
+#endif
+
 struct BacktestExecution::Impl final {
   struct SliceCheckpoint final {
     StarterOrderStatus orderStatus = StarterOrderStatus::completedNoSignal;
@@ -633,6 +658,9 @@ BacktestExecution::~BacktestExecution() = default;
 
 core::Result<std::unique_ptr<BacktestExecution>>
 BacktestExecution::start(BacktestRequest request) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  testing::recordBacktestStart();
+#endif
   const auto validation = validateRequest(request, {});
   if (!validation.ok()) {
     return validation.error();

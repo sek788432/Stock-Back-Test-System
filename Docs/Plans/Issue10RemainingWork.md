@@ -24,10 +24,11 @@ are different states. A passing build does not clear a known data-loss defect.
   atomic completed-bar persistence, committed-prefix recovery, and typed
   preservation notices. The exact Daily fill timestamp defect and the
   independent schema-2 hash oracle are also fixed in this local worktree.
-- After the latest fixes, all 268 registered `Output/qt-dev` tests passed,
-  including three real child-process scenarios. Exact submitted-commit
-  `RunTest.sh`, full `RunQuality.sh`, ASan/TSan, remote PR checks and the
-  actual native application flow are still pending.
+- After aligning R1–R3 with the latest `origin/main`, `RunTest.sh` passed
+  270/270, including real child-process recovery, cancellation after opening a
+  snapshot reader, and both exclusive-boundary Replay cases. Exact committed
+  HEAD `RunQuality.sh`, ASan/TSan, remote PR checks and the actual native
+  application flow remain pending.
 
 The remaining Issue #10 acceptance items are: Task 17/18 historical
 predicates and warm-up; explicit source timeframe/provenance and trailing
@@ -51,6 +52,8 @@ from main or that any broader source checkpoint is fully accepted.
 | Initial delivery inventory | PR #72; preserves unfinished work rather than declaring the plan complete |
 | Metric unit/meaning/example display and typed thresholds | PR #74; unused period identity/editability preserved. Historical predicates are not included |
 | Real selectable multi-fill fixture | PR #75; five Buys/five Sells through real Engine/Store/Replay with literal OHLCV, fills, costs and portfolio checkpoints. Repeated hash equality is not an independent hash oracle |
+| Tracked CSV refresh | PR #77; the local `0a17221` and `de9d128` data commits are patch-equivalent to the delivered tracked-data update |
+| Fixed SHA-256 rotations | PR #78; merged as `4750042`, with behavior-preserving digest coverage |
 | SQLite manifest-pin regression | PR #73 reopened and merged as `34b958d`; all exact-head required CI/CodeQL checks succeeded. No production dependency/version or runtime behavior changed |
 | Validated snapshot reuse and bounded hashing | PR #80; merged as `dbcbd39`; required remote checks passed. This is completed-work delivery, not whole Issue #10 acceptance |
 

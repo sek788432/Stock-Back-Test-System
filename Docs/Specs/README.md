@@ -25,12 +25,12 @@ protected, non-canonical proposal area. It is excluded from this cleanup phase,
 does not override a canonical specification, and requires a separate maintainer
 review before issue #53 can reach final acceptance.
 
-## Proposed designs awaiting review
+## Active implementation design
 
-Focused detailed design:
-[`ResultPersistenceSafetyDesign.md`](ResultPersistenceSafetyDesign.md) expands
-the approved Issue 10 R1–R3 direction. Its proposed interface and protocol
-details are not accepted implementation or current behavior.
+[`ResultPersistenceSafetyDesign.md`](ResultPersistenceSafetyDesign.md) records
+the approved Issue 10 R1–R3 design and the implementation now present in the
+consolidation branch. Final exact-head quality, remote CI, and native
+application acceptance remain open; see the status at the top of that spec.
 
 ## Accepted foundations
 

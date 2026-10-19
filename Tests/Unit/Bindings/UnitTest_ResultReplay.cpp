@@ -281,6 +281,74 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   EXPECT_FALSE(daily.value()->stepForward());
 }
 
+TEST_F(ResultReplayTest,
+       openUsesExactPersistedSpansAtTheExclusiveEndBoundary) {
+  auto reader =
+      bte::data::ReleaseSnapshotReader::open(root_ / "Data", snapshotId_);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  auto narrow = reader.value()->select({
+      .symbols = {"SYN"},
+      .range = {.start = timestamp("2024-01-02 01:00:00+00:00"),
+                .end = timestamp("2024-01-02 02:00:00+00:00")},
+      .timeframe = "ohlcv-1h",
+  });
+  ASSERT_TRUE(narrow.ok()) << narrow.error().message;
+  ASSERT_EQ(narrow.value().bars.size(), 1U);
+  auto store =
+      bte::results::ResultStore::open(root_ / "EndBoundaryStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin({
+      .universe = {"SYN"},
+      .range = {.start = timestamp("2024-01-01 23:00:00+00:00"),
+                .end = timestamp("2024-01-02 02:00:00+00:00")},
+      .initialCapitalMicrodollars = 2'000'000'000,
+      .strategyId = "exact-span-end-boundary",
+      .strategyHash = std::string(64, 'c'),
+      .dataSelection = narrow.value().identity,
+  });
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()
+                  ->append({{.sequence = 0,
+                             .timestamp = narrow.value().bars.front().timestamp,
+                             .symbol = "SYN",
+                             .family = bte::results::RecordFamily::portfolio,
+                             .cashMicrodollars = 2'000'000'000,
+                             .marketValueMicrodollars = 0,
+                             .equityMicrodollars = 2'000'000'000,
+                             .pnlMicrodollars = 123'000'000,
+                             .positionShares = 0}})
+                  .ok());
+  const auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 2'000'000'000,
+       .pnlMicrodollars = 123'000'000});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "EndBoundaryStore", root_ / "Data", finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_EQ(replay.value()->totalFrames(), 1U);
+  EXPECT_EQ(replay.value()->current()->candle.ts,
+            timestamp("2024-01-02 01:00:00+00:00"));
+  EXPECT_EQ(replay.value()->current()->portfolio.pnl, 123.0);
+
+  auto daily = bte::bindings::ResultReplay::open(
+      root_ / "EndBoundaryStore", root_ / "Data", finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_EQ(daily.value()->totalFrames(), 1U);
+  ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_EQ(daily.value()->current()->candle.ts,
+            timestamp("2024-01-02 00:00:00+00:00"));
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.open, 103);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.high, 105);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.low, 102);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.close, 104);
+  EXPECT_DOUBLE_EQ(daily.value()->current()->candle.volume, 3400);
+  EXPECT_TRUE(daily.value()->current()->partialUtcDay);
+}
+
 TEST_F(ResultReplayTest, resultStoreRejectsMalformedCanonicalReplayPayloads) {
   const auto at = timestamp("2024-01-01 23:00:00+00:00");
   auto missingPnl = persist({{.sequence = 0,

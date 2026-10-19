@@ -6,12 +6,13 @@
 
 PR #80 has since merged to `main` as `dbcbd39d0a23243cd8ff1b832a71b9ec62d02fe6`.
 The current Issue #10 consolidation worktree implements R1–R3, exact Daily
-fill selection, and the independent schema-2 hash oracle. Its full registered
-`qt-dev` suite passes 268/268, including child-process crash/recovery tests;
-`RunTest.sh` also passes 268/268. Final committed-head Quality/sanitizers,
-remote PR checks, workspace reconciliation, and native/real-data acceptance
-remain open. The dated checkpoints below record historical evidence and are
-not a current status report; see [remaining work](Issue10RemainingWork.md).
+fill selection, and the independent schema-2 hash oracle. After normal merge
+alignment with the latest `origin/main`, `RunTest.sh` passes 270/270, including
+child-process crash/recovery and cancellation boundaries. Exact committed-head
+Quality/sanitizers, remote PR checks, workspace reconciliation, and
+native/real-data acceptance remain open. The dated checkpoints below record
+historical evidence and are not a current status report; see
+[remaining work](Issue10RemainingWork.md).
 
 This inventory tracks extraction and publication, not whole-plan acceptance.
 The preserved source branch is `codex/issue10-replay-ux` at
