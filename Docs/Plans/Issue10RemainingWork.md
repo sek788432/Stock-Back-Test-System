@@ -1,6 +1,6 @@
 # Issue 10 Delivery and Remaining Work
 
-**Status as of 2026-10-16: Needs changes.** The historical plan checkboxes
+**Status as of 2026-10-17: Needs changes.** The historical plan checkboxes
 do not establish acceptance of the later Save/Results, chart, historical-condition,
 or persistence-safety requirements. This inventory distinguishes code preserved
 on the consolidated branch from work accepted into main.
@@ -9,7 +9,7 @@ on the consolidated branch from work accepted into main.
 
 | Delivery | Evidence and scope |
 | --- | --- |
-| Incremental implementation workflow | PR #69; the workflow files on the older local branch are byte-identical to main |
+| Incremental implementation workflow | PR #69 plus local main hardening; older branch copies differ in invocation metadata and validation examples |
 | Full-money half-even rounding | PR #71; scoped R4 arithmetic repair |
 | Delivery inventory | PR #72; preserves unfinished work without accepting it |
 | Manifest-pin regression | PR #73; exact SQLite dependency regression |
@@ -17,28 +17,26 @@ on the consolidated branch from work accepted into main.
 | Real selectable multi-fill fixture | PR #75; five buys/five sells with literal OHLCV and accounting expectations |
 | Tracked CSV refresh | PR #77; local commits `0a17221` and `de9d128` are patch-equivalent to the delivered data |
 | Fixed SHA-256 rotations | PR #78, main commit `4750042`; narrower than complete Replay load acceptance |
+| Replay exact snapshot read reuse | Local `main` commit `52621a1` includes `41ee2cc`; same-host 10,000-bar before/after evidence is in [ReplayPerformanceMeasurements.md](../ReplayPerformanceMeasurements.md) |
 
 ## Preserved implementation and local repairs
 
 Draft [PR #76](https://github.com/sek788432/Stock-Back-Test-System/pull/76)
 contains the broader Issue 10 implementation. It is not accepted for merge:
-known persistence-safety and data/Replay acceptance gaps remain. Remote head
-`693b8ef` passed platform tests, static analysis and sanitizers but failed the
-coverage job and aggregate merge gate. A green mechanical gate alone would
-not clear those semantic defects.
+known persistence-safety and data/Replay acceptance gaps remain. The latest
+locally inspected PR branch was `cc18ab8`; its local tests and individual
+analyzers passed, but remote required checks could not be inspected in this
+session. Do not treat local results as a remote PR pass or as acceptance of the
+remaining semantics.
 
-The local consolidated branch reached `cc18ab8`, including `9c37029` and
-`90c6682` for `openResultWithData()`, which returns validated result records and
-exact retained bars together. The prior exact source revision passed 248/248
-local tests, individual analyzers, coverage steps, ASan/UBSan/LSan and TSan.
-Its aggregate Quality run previously stopped at dependency-download DNS;
-the successful manually completed coverage steps are not an aggregate pass.
-Fresh publication checks and remote confirmation remain separate evidence.
-
-The focused main-based extraction is `41ee2cc`; its own local checks and remote
-acceptance must be recorded independently of the broader branch's results.
-It does not include #76's 23,777-bar frontend regression fixture or unfinished
-Save/Draft lifecycle changes.
+The local consolidated branch's `9c37029` and `90c6682` contain the same
+`openResultWithData()` idea: return validated result records and exact retained
+bars together. The focused main-based extraction is `41ee2cc`, now merged into
+local `main` as `52621a1`. Its measured 10,000-bar open median changed from
+220 ms at `4750042` to 185 ms at `52621a1` on the same host. This focused fix
+does not include #76's 23,777-bar frontend regression fixture or unfinished
+Save/Draft lifecycle changes. Local `main` remains ahead of `origin/main` and
+has not been published.
 
 The detailed [persistence safety proposal](../Specs/ResultPersistenceSafetyDesign.md)
 is committed documentation, not code. Its architectural direction was approved;
@@ -66,7 +64,7 @@ The original design stash remains preserved as well.
 | Viewport | Three window sizes, wheel/pan bounds, resize during playback, Follow latest, Max and long seek; readable candles must not disappear or compress into a cluster |
 | Real-data/native acceptance | Reconcile actual CSV/snapshot/result OHLCV and every fill/portfolio checkpoint; synthetic tests do not replace this |
 | Launch.sh, Tasks 19/20/27 | Build and launch the final delivered checkout, expose the correct Save/Replay actions and run the chosen long-range multi-fill configuration |
-| CI and review, Tasks 12/30 | Publish repairs, verify every required check on the actual submitted SHA, close P0–P2 findings and satisfy the applicable Definition of Done |
+| CI and review, Tasks 12/30 | Publish repairs, verify every required check on the actual submitted SHA, close remaining P0–P2 findings and satisfy the applicable Definition of Done |
 | Workspace, Tasks 27/29 | Reconcile preserved branches and stashes; remove branches only after unique intended changes are merged or explicitly retained |
 
 The accepted historical convention uses CSV-derived UTC dates with actual rows,

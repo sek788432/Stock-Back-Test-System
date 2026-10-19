@@ -116,7 +116,7 @@ If an agent finds a new shortcut, add the smallest explicit counter, update the 
 - [x] **Step 3: Validate the skill package and YAML**
 
 ```bash
-ruby -E UTF-8 -e 'require "yaml"; skill = File.read(".agents/skills/implement/SKILL.md", encoding: "UTF-8"); data = YAML.safe_load(skill.split(/^---\s*$/, 3)[1]); abort unless data == {"name" => "implement", "description" => "Execute an approved implementation plan or dependency-ordered ticket set in CI-green slices."}; puts "SKILL.md: valid"'
+ruby -E UTF-8 -e 'require "yaml"; skill = File.read(".agents/skills/implement/SKILL.md", encoding: "UTF-8"); data = YAML.safe_load(skill.split(/^---\s*$/, 3)[1]); abort unless data["name"] == "implement" && data["disable-model-invocation"] == true; puts "SKILL.md: valid"'
 ruby -E UTF-8 -e 'require "yaml"; data = YAML.load_file(".agents/skills/implement/agents/openai.yaml"); abort unless data.dig("policy", "allow_implicit_invocation") == false; puts "openai.yaml: valid"'
 ```
 

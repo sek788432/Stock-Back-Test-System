@@ -261,6 +261,12 @@ explained deterministic-fixture update. A reader must never reinterpret schema
 
 ## 9. Determinism
 
+Result Replay uses `ResultStore::openResultWithData()` to validate the stored
+result and read its exact immutable selection once, returning owned records
+and bars together. `openResult()` retains its existing validation contract.
+Daily Replay separately reads full UTC-day source coverage for Partial labels;
+this wider read never adds candles to the saved selection.
+
 The same engine version, immutable data/calendar/split snapshot, ordered universe, strategy artifact, runtime profile, seed, configuration, and numeric policy must produce identical canonical functional records and `canonicalResultHash`.
 
 Canonical records include orders, fills, trades, portfolio/equity, costs,

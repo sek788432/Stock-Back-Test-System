@@ -1,5 +1,6 @@
 #include "Bte/Core/Digest.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -8,12 +9,12 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace bte::core {
 namespace {
 
-constexpr std::array<std::uint32_t, 64> roundConstants{
+constexpr std::size_t roundCount = 64;
+constexpr std::array<std::uint32_t, roundCount> roundConstants{
     0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU,
     0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U, 0xd807aa98U, 0x12835b01U,
     0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U,
@@ -44,82 +45,101 @@ std::uint32_t readBigEndianWord(const std::span<const std::byte> bytes,
          std::to_integer<std::uint32_t>(bytes[offset + 3]);
 }
 
-void appendBigEndian(std::vector<std::byte> &bytes, const std::uint64_t value) {
-  for (int shift = 56; shift >= 0; shift -= 8) {
-    bytes.push_back(static_cast<std::byte>((value >> shift) & 0xffU));
-  }
-}
-
 } // namespace
 
 std::string sha256(const std::span<const std::byte> bytes) {
-  std::vector<std::byte> padded{bytes.begin(), bytes.end()};
-  padded.push_back(std::byte{0x80});
-  while ((padded.size() + sizeof(std::uint64_t)) % 64 != 0) {
-    padded.push_back(std::byte{0});
-  }
-  appendBigEndian(padded, static_cast<std::uint64_t>(bytes.size()) * 8U);
-
   std::array<std::uint32_t, 8> hash{0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U,
                                     0xa54ff53aU, 0x510e527fU, 0x9b05688cU,
                                     0x1f83d9abU, 0x5be0cd19U};
 
-  for (std::size_t chunk = 0; chunk < padded.size(); chunk += 64) {
-    std::array<std::uint32_t, 64> words{};
-    for (std::size_t index = 0; index < 16; ++index) {
-      words.at(index) = readBigEndianWord(padded, chunk + index * 4);
-    }
-    for (std::size_t index = 16; index < words.size(); ++index) {
-      const auto sigmaZero = rotateRight<7>(words.at(index - 15)) ^
-                             rotateRight<18>(words.at(index - 15)) ^
-                             (words.at(index - 15) >> 3U);
-      const auto sigmaOne = rotateRight<17>(words.at(index - 2)) ^
-                            rotateRight<19>(words.at(index - 2)) ^
-                            (words.at(index - 2) >> 10U);
-      words.at(index) =
-          words.at(index - 16) + sigmaZero + words.at(index - 7) + sigmaOne;
-    }
+  constexpr std::size_t blockSize = 64;
+  constexpr std::span<const std::uint32_t, roundCount> constants{
+      roundConstants};
+  const auto compressBlock =
+      [&hash, constants](const std::span<const std::byte, blockSize> block) {
+        // All indices below are fixed or bounded by this round count; no caller
+        // controls them. Tie the schedule to the constants to preserve that
+        // bound.
+        std::array<std::uint32_t, roundCount> words{};
+        const std::span<std::uint32_t, roundCount> schedule{words};
+        for (std::size_t index = 0; index < 16; ++index) {
+          schedule[index] = readBigEndianWord(block, index * 4);
+        }
+        for (std::size_t index = 16; index < schedule.size(); ++index) {
+          const auto sigmaZero = rotateRight<7>(schedule[index - 15]) ^
+                                 rotateRight<18>(schedule[index - 15]) ^
+                                 (schedule[index - 15] >> 3U);
+          const auto sigmaOne = rotateRight<17>(schedule[index - 2]) ^
+                                rotateRight<19>(schedule[index - 2]) ^
+                                (schedule[index - 2] >> 10U);
+          schedule[index] =
+              schedule[index - 16] + sigmaZero + schedule[index - 7] + sigmaOne;
+        }
+        auto workingA = hash[0];
+        auto workingB = hash[1];
+        auto workingC = hash[2];
+        auto workingD = hash[3];
+        auto workingE = hash[4];
+        auto workingF = hash[5];
+        auto workingG = hash[6];
+        auto workingH = hash[7];
 
-    auto workingA = hash.at(0);
-    auto workingB = hash.at(1);
-    auto workingC = hash.at(2);
-    auto workingD = hash.at(3);
-    auto workingE = hash.at(4);
-    auto workingF = hash.at(5);
-    auto workingG = hash.at(6);
-    auto workingH = hash.at(7);
+        for (std::size_t index = 0; index < schedule.size(); ++index) {
+          const auto sumOne = rotateRight<6>(workingE) ^
+                              rotateRight<11>(workingE) ^
+                              rotateRight<25>(workingE);
+          const auto choose = (workingE & workingF) ^ ((~workingE) & workingG);
+          const auto tempOne =
+              workingH + sumOne + choose + constants[index] + schedule[index];
+          const auto sumZero = rotateRight<2>(workingA) ^
+                               rotateRight<13>(workingA) ^
+                               rotateRight<22>(workingA);
+          const auto majority = (workingA & workingB) ^ (workingA & workingC) ^
+                                (workingB & workingC);
+          const auto tempTwo = sumZero + majority;
+          workingH = workingG;
+          workingG = workingF;
+          workingF = workingE;
+          workingE = workingD + tempOne;
+          workingD = workingC;
+          workingC = workingB;
+          workingB = workingA;
+          workingA = tempOne + tempTwo;
+        }
 
-    for (std::size_t index = 0; index < words.size(); ++index) {
-      const auto sumOne = rotateRight<6>(workingE) ^ rotateRight<11>(workingE) ^
-                          rotateRight<25>(workingE);
-      const auto choose = (workingE & workingF) ^ ((~workingE) & workingG);
-      const auto tempOne = workingH + sumOne + choose +
-                           roundConstants.at(index) + words.at(index);
-      const auto sumZero = rotateRight<2>(workingA) ^
-                           rotateRight<13>(workingA) ^
-                           rotateRight<22>(workingA);
-      const auto majority =
-          (workingA & workingB) ^ (workingA & workingC) ^ (workingB & workingC);
-      const auto tempTwo = sumZero + majority;
+        hash[0] += workingA;
+        hash[1] += workingB;
+        hash[2] += workingC;
+        hash[3] += workingD;
+        hash[4] += workingE;
+        hash[5] += workingF;
+        hash[6] += workingG;
+        hash[7] += workingH;
+      };
 
-      workingH = workingG;
-      workingG = workingF;
-      workingF = workingE;
-      workingE = workingD + tempOne;
-      workingD = workingC;
-      workingC = workingB;
-      workingB = workingA;
-      workingA = tempOne + tempTwo;
-    }
+  // Hash complete input blocks in place; only the final padding needs a copy.
+  // Subtracting the remainder avoids input-size-plus-padding overflow.
+  const auto remainder = bytes.size() % blockSize;
+  const auto completeSize = bytes.size() - remainder;
+  for (std::size_t offset = 0; offset < completeSize; offset += blockSize) {
+    compressBlock(std::span<const std::byte, blockSize>{
+        bytes.subspan(offset, blockSize)});
+  }
 
-    hash.at(0) += workingA;
-    hash.at(1) += workingB;
-    hash.at(2) += workingC;
-    hash.at(3) += workingD;
-    hash.at(4) += workingE;
-    hash.at(5) += workingF;
-    hash.at(6) += workingG;
-    hash.at(7) += workingH;
+  std::array<std::byte, blockSize * 2> tail{};
+  auto tailBytes = std::span{tail};
+  std::ranges::copy(bytes.subspan(completeSize), tailBytes.begin());
+  tailBytes[remainder] = std::byte{0x80};
+  const auto tailSize =
+      remainder < blockSize - sizeof(std::uint64_t) ? blockSize : blockSize * 2;
+  const auto bitLength = static_cast<std::uint64_t>(bytes.size()) * 8U;
+  for (std::size_t index = 0; index < sizeof(bitLength); ++index) {
+    tailBytes[tailSize - sizeof(bitLength) + index] =
+        static_cast<std::byte>((bitLength >> (56U - index * 8U)) & 0xffU);
+  }
+  for (std::size_t offset = 0; offset < tailSize; offset += blockSize) {
+    compressBlock(std::span<const std::byte, blockSize>{
+        tailBytes.subspan(offset, blockSize)});
   }
 
   std::ostringstream output;

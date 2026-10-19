@@ -50,6 +50,12 @@ std::atomic<std::uint32_t> &configuredFailureSkips() {
   return value;
 }
 
+std::atomic<core::CancellationSource *> &
+openResultWithDataCancellationSource() {
+  static std::atomic<core::CancellationSource *> value{nullptr};
+  return value;
+}
+
 std::mutex &forcedResultIdMutex() {
   static std::mutex value;
   return value;
@@ -287,6 +293,20 @@ bool validResultId(const std::string_view value) {
            return (character >= '0' && character <= '9') ||
                   (character >= 'a' && character <= 'f');
          });
+}
+
+core::Result<std::filesystem::path>
+existingResultPath(const std::filesystem::path &root,
+                   const std::string &resultId) {
+  if (!validResultId(resultId)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result ID is invalid");
+  }
+  const auto path = root / "Results" / (resultId + ".bteresult");
+  if (!std::filesystem::exists(path)) {
+    return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
+  }
+  return path;
 }
 
 bool validRunStatus(const RunStatus status) {
@@ -1259,6 +1279,7 @@ void failAfter(const FailurePoint point,
 void clearFailure() {
   configuredFailurePoint().store(FailurePoint::none);
   configuredFailureSkips().store(0);
+  openResultWithDataCancellationSource().store(nullptr);
   const std::scoped_lock lock{forcedResultIdMutex()};
   forcedResultId().reset();
 }
@@ -1270,6 +1291,11 @@ bool failurePending() noexcept {
 void forceNextResultId(std::string resultId) {
   const std::scoped_lock lock{forcedResultIdMutex()};
   forcedResultId() = std::move(resultId);
+}
+
+void cancelNextOpenResultWithDataAfterReaderOpen(
+    core::CancellationSource *source) noexcept {
+  openResultWithDataCancellationSource().store(source);
 }
 
 } // namespace testing
@@ -1685,15 +1711,47 @@ ResultStore::list(const core::CancellationToken &cancellation) const {
 core::Result<OpenedResult>
 ResultStore::openResult(const std::string &resultId,
                         const core::CancellationToken &cancellation) const {
-  if (!validResultId(resultId)) {
-    return core::makeError(core::ErrorCode::invalidArgument,
-                           "Result ID is invalid");
+  auto path = existingResultPath(root_, resultId);
+  if (!path.ok()) {
+    return path.error();
   }
-  const auto path = root_ / "Results" / (resultId + ".bteresult");
-  if (!std::filesystem::exists(path)) {
-    return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
+  return readResultFile(path.value(), dataStore_, true, false, cancellation);
+}
+
+core::Result<OpenedResultWithData> ResultStore::openResultWithData(
+    const std::string &resultId,
+    const core::CancellationToken &cancellation) const {
+  auto path = existingResultPath(root_, resultId);
+  if (!path.ok()) {
+    return path.error();
   }
-  return readResultFile(path, dataStore_, true, false, cancellation);
+  // The exact snapshot is read immediately below; defer its validation here
+  // to avoid opening and decoding the same immutable segments twice.
+  auto result =
+      readResultFile(path.value(), dataStore_, false, false, cancellation);
+  if (!result.ok()) {
+    return result.error();
+  }
+  auto reader = data::ReleaseSnapshotReader::open(
+      dataStore_, result.value().descriptor.dataSelection.snapshotId,
+      cancellation);
+  if (!reader.ok()) {
+    return reader.error();
+  }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto source =
+          openResultWithDataCancellationSource().exchange(nullptr);
+      source != nullptr) {
+    source->requestCancellation();
+  }
+#endif
+  auto selection = reader.value()->readExact(
+      result.value().descriptor.dataSelection, cancellation);
+  if (!selection.ok()) {
+    return selection.error();
+  }
+  return OpenedResultWithData{.result = std::move(result).value(),
+                              .selection = std::move(selection).value()};
 }
 
 core::Result<void> ResultStore::moveToTrash(const std::string &resultId) const {

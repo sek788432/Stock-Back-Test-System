@@ -51,7 +51,6 @@ rules from `cpp-modern-style`, `cpp-oop-design`, `cpp-performance`,
 `cpp-thread-safety`, and `cpp-static-analysis`. A concern that is not affected
 is recorded as not applicable with a concrete reason rather than silently
 skipped.
-
 ## Files and discovery
 
 - Expand `.agents/skills/implement/SKILL.md` with the incremental execution
