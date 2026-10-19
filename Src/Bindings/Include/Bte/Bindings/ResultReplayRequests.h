@@ -3,7 +3,6 @@
 #include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Bindings/ResultReplay.h"
 #include "Bte/Core/Result.h"
-#include "Bte/Results/ResultStore.h"
 
 #include <QObject>
 

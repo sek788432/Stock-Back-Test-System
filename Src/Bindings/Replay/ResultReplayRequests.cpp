@@ -1,6 +1,7 @@
 #include "Bte/Bindings/ResultReplayRequests.h"
 
 #include "Bte/Core/Cancellation.h"
+#include "Bte/Results/ResultStore.h"
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include "ResultReplayRequestsTestHooks.h"

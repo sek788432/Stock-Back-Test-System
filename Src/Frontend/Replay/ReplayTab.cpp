@@ -6,6 +6,7 @@
 
 #include "Bte/Bindings/ReplayDataLoader.h"
 #include "Bte/Bindings/ReplaySessionVm.h"
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Bindings/ResultReplay.h"
 #include "Bte/Bindings/ResultReplayRequests.h"
 #include "Bte/Core/Result.h"
