@@ -424,6 +424,51 @@ TEST_F(RecordedBacktestTest,
 }
 
 TEST_F(RecordedBacktestTest,
+       recordedFinalizationRejectsWriterSwitchAndUnrecordedFinalization) {
+  auto beginStore =
+      bte::results::ResultStore::open(root_ / "BeginFailure", root_ / "Data");
+  ASSERT_TRUE(beginStore.ok()) << beginStore.error().message;
+  bte::results::testing::failNext(
+      bte::results::testing::FailurePoint::databaseOpen);
+  const auto failedStart = bte::engine::BacktestExecution::startRecorded(
+      request(), *beginStore.value(), descriptor());
+  bte::results::testing::clearFailure();
+  ASSERT_FALSE(failedStart.ok());
+  EXPECT_EQ(failedStart.error().code, bte::core::ErrorCode::internal);
+
+  auto store =
+      bte::results::ResultStore::open(root_ / "Recorded", root_ / "Data");
+  auto otherStore =
+      bte::results::ResultStore::open(root_ / "Other", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  ASSERT_TRUE(otherStore.ok()) << otherStore.error().message;
+  auto execution = bte::engine::BacktestExecution::startRecorded(
+      request(), *store.value(), descriptor());
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+  auto otherWriter = otherStore.value()->begin(descriptor());
+  ASSERT_TRUE(otherWriter.ok()) << otherWriter.error().message;
+  while (execution.value()->status() == bte::results::RunStatus::running) {
+    ASSERT_TRUE(execution.value()->advance().ok());
+  }
+
+  const auto switched =
+      execution.value()->finalizeAndRecord(*otherWriter.value());
+  ASSERT_FALSE(switched.ok());
+  EXPECT_EQ(switched.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_TRUE(execution.value()->finalizeRecorded().ok());
+
+  auto unrecorded = bte::engine::BacktestExecution::start(request());
+  ASSERT_TRUE(unrecorded.ok()) << unrecorded.error().message;
+  while (unrecorded.value()->status() == bte::results::RunStatus::running) {
+    ASSERT_TRUE(unrecorded.value()->advance().ok());
+  }
+  const auto unrecordedFinalization = unrecorded.value()->finalizeRecorded();
+  ASSERT_FALSE(unrecordedFinalization.ok());
+  EXPECT_EQ(unrecordedFinalization.error().code,
+            bte::core::ErrorCode::invalidArgument);
+}
+
+TEST_F(RecordedBacktestTest,
        operationalFailureAfterAProcessedSliceRetainsEarlierRecords) {
   auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
   ASSERT_TRUE(store.ok()) << store.error().message;

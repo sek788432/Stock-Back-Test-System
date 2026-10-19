@@ -42,7 +42,7 @@ QString buildInformation() {
            launcherValue("BTE_LAUNCH_DIRTY"),
            launcherValue("BTE_LAUNCH_APP_SHA256"),
            launcherValue("BTE_DATA_SNAPSHOT_ID"));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 } // namespace
 

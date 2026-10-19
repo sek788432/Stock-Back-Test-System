@@ -189,6 +189,7 @@ void ResultsTabTest::emptyLibraryHasNoEnabledResultActions() {
   QVERIFY(!remove->isEnabled());
   QVERIFY(!rename->isEnabled());
   emit view->clicked();
+  emit rename->clicked();
   emit remove->clicked();
   auto *restore = tab.findChild<QPushButton *>("resultsRestoreButton");
   QVERIFY(restore != nullptr);

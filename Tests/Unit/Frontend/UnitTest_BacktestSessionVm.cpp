@@ -1,4 +1,5 @@
 #include "Bte/Bindings/BacktestSessionVm.h"
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 
 #include "Bte/Core/Bar.h"
 
@@ -386,6 +387,16 @@ void BacktestSessionVmTest::
       bte::bindings::listBacktestDraftCatalog(storage, cancellation.token());
   QVERIFY(!cancelled.ok());
   QCOMPARE(cancelled.error().code, bte::core::ErrorCode::cancelled);
+
+  std::filesystem::create_directories(storage.resultStore);
+  bte::core::CancellationSource cancelDuringList;
+  bte::bindings::testing::cancelAfterNextDraftStoreOpen(cancelDuringList);
+  const auto interruptedList = bte::bindings::listBacktestDraftCatalog(
+      storage, cancelDuringList.token());
+  bte::bindings::testing::clearDraftStoreOpenHook();
+  QVERIFY(!interruptedList.ok());
+  QCOMPARE(interruptedList.error().code, bte::core::ErrorCode::cancelled);
+
   std::filesystem::create_directories(storage.resultStore / "Staging");
   const auto resultId = std::string(32, 'a');
   const auto legacyPath =
@@ -534,6 +545,22 @@ void BacktestSessionVmTest::
     QCOMPARE(catalog.notices[index].reason, expectedReasons[index]);
     QCOMPARE(catalog.notices[index].diagnostic, notices[index].diagnostic);
   }
+
+  const auto invalidStatus = bte::bindings::toResultRunStatus(
+      static_cast<bte::results::RunStatus>(255));
+  QCOMPARE(invalidStatus, bte::bindings::ResultRunStatus::incomplete);
+  const std::array invalidNotice{
+      bte::results::ResultRecoveryNotice{
+          .resultId = "unknown",
+          .reason = static_cast<bte::results::ResultRecoveryReason>(255),
+          .diagnostic = "unknown recovery reason",
+      },
+  };
+  const auto fallback =
+      bte::bindings::makeResultCatalogSnapshot({}, invalidNotice);
+  QCOMPARE(fallback.notices.size(), 1U);
+  QCOMPARE(fallback.notices.front().reason,
+           bte::bindings::ResultRecoveryReason::invalidPrefix);
 }
 
 } // namespace

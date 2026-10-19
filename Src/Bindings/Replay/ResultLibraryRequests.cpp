@@ -36,6 +36,20 @@ namespace bte::bindings {
 namespace {
 std::atomic_bool blockNextDetails = false;
 std::atomic_bool detailsWorkerStarted = false;
+std::atomic_bool blockNextCancellationBoundary = false;
+std::atomic_bool cancellationBoundaryWorkerStarted = false;
+std::atomic_bool cancellationBoundaryWorkerFinished = false;
+
+void waitAtCancellationBoundary(const core::CancellationToken &token) noexcept {
+  if (!blockNextCancellationBoundary.exchange(false)) {
+    return;
+  }
+  cancellationBoundaryWorkerStarted.store(true);
+  while (!token.isCancellationRequested()) {
+    std::this_thread::yield();
+  }
+  cancellationBoundaryWorkerFinished.store(true);
+}
 } // namespace
 
 namespace testing {
@@ -49,9 +63,26 @@ bool libraryDetailsWorkerStarted() noexcept {
   return detailsWorkerStarted.load();
 }
 
+void blockNextLibraryCancellationBoundaryUntilCancelled() noexcept {
+  cancellationBoundaryWorkerStarted.store(false);
+  cancellationBoundaryWorkerFinished.store(false);
+  blockNextCancellationBoundary.store(true);
+}
+
+bool libraryCancellationBoundaryWorkerStarted() noexcept {
+  return cancellationBoundaryWorkerStarted.load();
+}
+
+bool libraryCancellationBoundaryWorkerFinished() noexcept {
+  return cancellationBoundaryWorkerFinished.load();
+}
+
 void clearResultLibraryRequestHooks() noexcept {
   blockNextDetails.store(false);
   detailsWorkerStarted.store(false);
+  blockNextCancellationBoundary.store(false);
+  cancellationBoundaryWorkerStarted.store(false);
+  cancellationBoundaryWorkerFinished.store(false);
 }
 
 } // namespace testing
@@ -120,6 +151,9 @@ std::uint64_t ResultLibraryRequests::requestCatalog(const bool trash,
         if (!store.ok()) {
           return store.error();
         }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+        waitAtCancellationBoundary(token);
+#endif
         auto entries = trash ? store.value()->listTrash(token)
                              : store.value()->list(token);
         if (!entries.ok()) {
@@ -129,7 +163,7 @@ std::uint64_t ResultLibraryRequests::requestCatalog(const bool trash,
                                          store.value()->recoveryNotices());
       },
       std::move(callback));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 std::uint64_t ResultLibraryRequests::requestDetails(std::string resultId,
                                                     DetailsCallback callback) {
@@ -153,7 +187,7 @@ std::uint64_t ResultLibraryRequests::requestDetails(std::string resultId,
         return store.value()->openResult(resultId, token);
       },
       std::move(callback));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 std::uint64_t
 ResultLibraryRequests::requestMoveToTrash(std::string resultId,
@@ -167,6 +201,9 @@ ResultLibraryRequests::requestMoveToTrash(std::string resultId,
         if (!store.ok()) {
           return store.error();
         }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+        waitAtCancellationBoundary(token);
+#endif
         if (token.isCancellationRequested()) {
           return core::makeError(core::ErrorCode::cancelled,
                                  "Result removal was cancelled");
@@ -174,7 +211,7 @@ ResultLibraryRequests::requestMoveToTrash(std::string resultId,
         return store.value()->moveToTrash(resultId);
       },
       std::move(callback));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 std::uint64_t ResultLibraryRequests::requestRestore(std::string resultId,
                                                     ActionCallback callback) {
@@ -187,6 +224,9 @@ std::uint64_t ResultLibraryRequests::requestRestore(std::string resultId,
         if (!store.ok()) {
           return store.error();
         }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+        waitAtCancellationBoundary(token);
+#endif
         if (token.isCancellationRequested()) {
           return core::makeError(core::ErrorCode::cancelled,
                                  "Result restore was cancelled");
@@ -194,7 +234,7 @@ std::uint64_t ResultLibraryRequests::requestRestore(std::string resultId,
         return store.value()->restore(resultId);
       },
       std::move(callback));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 std::uint64_t ResultLibraryRequests::requestRename(std::string resultId,
                                                    std::string displayName,
@@ -208,6 +248,9 @@ std::uint64_t ResultLibraryRequests::requestRename(std::string resultId,
         if (!store.ok()) {
           return store.error();
         }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+        waitAtCancellationBoundary(token);
+#endif
         if (token.isCancellationRequested()) {
           return core::makeError(core::ErrorCode::cancelled,
                                  "Result rename was cancelled");
@@ -215,7 +258,7 @@ std::uint64_t ResultLibraryRequests::requestRename(std::string resultId,
         return store.value()->renameResult(resultId, displayName);
       },
       std::move(callback));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 void ResultLibraryRequests::cancel() noexcept {
   impl_->cancellation.requestCancellation();

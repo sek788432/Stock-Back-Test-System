@@ -108,6 +108,7 @@ class QtChartsCandlestickViewTest final : public QObject {
 
 private slots:
   void emptyWindowRendersSafely();
+  void tinyLayoutHidesPreviouslyVisibleVolumeBarsSafely();
   void setBarWindowReplacesCandles();
   void literalBarsPreserveEveryOhlcvFieldAndTimestamp();
   void longRangeDoesNotTruncateCandles();
@@ -403,6 +404,38 @@ void QtChartsCandlestickViewTest::emptyWindowRendersSafely() {
 
   QCOMPARE(view.candleCount(), 0U);
   QCOMPARE(view.volumePointCount(), 0U);
+}
+
+void QtChartsCandlestickViewTest::
+    tinyLayoutHidesPreviouslyVisibleVolumeBarsSafely() {
+  bte::frontend::QtChartsCandlestickView view;
+  view.resize(900, 600);
+  view.setBarWindow(
+      std::array{makeBar(2, 100.0, 104.0), makeBar(3, 104.0, 101.0)});
+  view.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&view));
+  QCoreApplication::processEvents();
+
+  auto *volume = view.findChild<QChartView *>("replayVolumeChartView");
+  auto *price = view.findChild<QChartView *>("replayChartView");
+  QVERIFY(volume != nullptr);
+  QVERIFY(price != nullptr);
+  const auto visibleVolumeBarCount = [volume] {
+    return std::ranges::count_if(
+        volume->scene()->items(), [](const auto *item) {
+          return item->data(0).toString() == "replayVolumeBar" &&
+                 item->isVisible();
+        });
+  };
+  QVERIFY(visibleVolumeBarCount() > 0);
+
+  price->chart()->setPlotArea(QRectF{0.0, 0.0, 1.0, 1.0});
+  volume->chart()->setPlotArea(QRectF{0.0, 0.0, 1.0, 1.0});
+  QCoreApplication::processEvents();
+
+  QVERIFY(price->chart()->plotArea().width() < 16.0 ||
+          volume->chart()->plotArea().height() < 16.0);
+  QCOMPARE(visibleVolumeBarCount(), 0);
 }
 
 void QtChartsCandlestickViewTest::setBarWindowReplacesCandles() {

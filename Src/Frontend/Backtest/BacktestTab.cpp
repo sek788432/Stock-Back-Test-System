@@ -738,7 +738,8 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
             return core::Result<std::string>{core::makeError(
                 core::ErrorCode::invalidArgument,
                 "Result saving requires persisted Backtest storage")};
-          },
+          }, // GCOVR_EXCL_LINE: the compiler emits no executable instruction
+             // here.
           parent) {}
 
 BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
@@ -748,12 +749,14 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
           [](const core::CancellationToken &) {
             return core::Result<bindings::ResultCatalogSnapshot>{
                 bindings::ResultCatalogSnapshot{}};
-          },
+          }, // GCOVR_EXCL_LINE: the compiler emits no executable instruction
+             // here.
           [](const std::string &, const core::CancellationToken &) {
             return core::Result<void>{core::makeError(
                 core::ErrorCode::invalidArgument,
                 "Draft discard requires persisted Backtest storage")};
-          },
+          }, // GCOVR_EXCL_LINE: the compiler emits no executable instruction
+             // here.
           parent) {}
 
 BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,

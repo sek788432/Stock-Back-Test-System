@@ -101,6 +101,7 @@ void ReplayBarViewportTest::
 void ReplayBarViewportTest::
     fitRejectsUnreadablePrefixWithoutChangingNavigation() {
   bte::frontend::ReplayBarViewport viewport;
+  viewport.pan(std::numeric_limits<double>::infinity());
   viewport.setPlotWidth(140.0);
   QVERIFY(!viewport.canFitReachedBars());
   QVERIFY(!viewport.fitReachedBars());

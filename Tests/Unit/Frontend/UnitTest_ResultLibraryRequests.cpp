@@ -6,6 +6,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -24,6 +25,7 @@ private slots:
   void invalidDetailsAndTrashActionReturnStructuredErrors();
   void newerDetailsRequestSuppressesStaleCompletion();
   void inaccessibleStoreReturnsErrorsForEveryOperation();
+  void cancellationAfterOpenStopsCatalogAndActionWorkers();
 };
 
 void ResultLibraryRequestsTest::
@@ -154,6 +156,50 @@ void ResultLibraryRequestsTest::newerDetailsRequestSuppressesStaleCompletion() {
   QCOMPARE(newest->error().code, bte::core::ErrorCode::invalidArgument);
   QVERIFY(!staleCalled);
   bte::bindings::testing::clearResultLibraryRequestHooks();
+}
+
+void ResultLibraryRequestsTest::
+    cancellationAfterOpenStopsCatalogAndActionWorkers() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  bte::bindings::ResultLibraryRequests requests{root / "Results",
+                                                root / "Data"};
+
+  const auto cancelAtBoundary = [&](auto submitRequest) {
+    std::atomic_bool callbackCalled = false;
+    bte::bindings::testing::
+        blockNextLibraryCancellationBoundaryUntilCancelled();
+    submitRequest([&callbackCalled](auto) { callbackCalled.store(true); });
+    const auto started = bte::test::waitUntil([] {
+      return bte::bindings::testing::libraryCancellationBoundaryWorkerStarted();
+    });
+    if (!started) {
+      bte::bindings::testing::clearResultLibraryRequestHooks();
+      return false;
+    }
+    requests.cancel();
+    const auto finished = bte::test::waitUntil([] {
+      return bte::bindings::testing::
+          libraryCancellationBoundaryWorkerFinished();
+    });
+    const auto callbackWasSuppressed = !callbackCalled.load();
+    bte::bindings::testing::clearResultLibraryRequestHooks();
+    return finished && callbackWasSuppressed;
+  };
+
+  QVERIFY(cancelAtBoundary([&](auto callback) {
+    requests.requestCatalog(false, std::move(callback));
+  }));
+  QVERIFY(cancelAtBoundary([&](auto callback) {
+    requests.requestMoveToTrash(std::string(32, 'a'), std::move(callback));
+  }));
+  QVERIFY(cancelAtBoundary([&](auto callback) {
+    requests.requestRestore(std::string(32, 'a'), std::move(callback));
+  }));
+  QVERIFY(cancelAtBoundary([&](auto callback) {
+    requests.requestRename(std::string(32, 'a'), "Name", std::move(callback));
+  }));
 }
 
 void ResultLibraryRequestsTest::

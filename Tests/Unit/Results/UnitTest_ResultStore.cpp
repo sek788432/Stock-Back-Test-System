@@ -2780,4 +2780,177 @@ TEST_F(ResultStoreFixture,
   EXPECT_TRUE(std::filesystem::is_empty(directory / "Trash"));
 }
 
+TEST_F(ResultStoreFixture,
+       legacyTerminalIdentityIsValidatedBeforeLeaseCreation) {
+  const auto directory = root_ / "LegacyTerminal";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  const auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+
+  const auto resultId = finalized.value().resultId;
+  const auto resultPath = directory / "Results" / (resultId + ".bteresult");
+  const auto leasePath = directory / "Leases" / (resultId + ".sqlite3");
+  ASSERT_TRUE(std::filesystem::remove(leasePath));
+  ASSERT_TRUE(store.value()->renameResult(resultId, "Legacy terminal").ok());
+  EXPECT_TRUE(std::filesystem::is_regular_file(leasePath));
+  const auto renamed = store.value()->openResult(resultId);
+  ASSERT_TRUE(renamed.ok()) << renamed.error().message;
+  EXPECT_EQ(renamed.value().displayName, "Legacy terminal");
+
+  const auto mismatchedId = std::string(32, 'e');
+  const auto mismatchedPath =
+      directory / "Results" / (mismatchedId + ".bteresult");
+  ASSERT_TRUE(std::filesystem::copy_file(resultPath, mismatchedPath));
+  const auto mismatch = store.value()->moveToTrash(mismatchedId);
+  ASSERT_FALSE(mismatch.ok());
+  EXPECT_EQ(mismatch.error().code, bte::core::ErrorCode::schemaMismatch);
+  EXPECT_TRUE(std::filesystem::is_regular_file(mismatchedPath));
+  EXPECT_FALSE(std::filesystem::exists(directory / "Leases" /
+                                       (mismatchedId + ".sqlite3")));
+}
+
+TEST_F(ResultStoreFixture,
+       invalidLeaseNamesAndUnreadableLeaseFilesRemainRecoveryNotices) {
+  const auto directory = root_ / "InvalidLeaseArtifacts";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+
+  const auto invalidId = std::string{"INVALID-ID"};
+  {
+    std::ofstream staging{directory / "Staging" / (invalidId + ".bteresult")};
+    staging << "legacy invalid identity";
+    ASSERT_TRUE(staging.good());
+    std::ofstream lease{directory / "Leases" / (invalidId + ".sqlite3")};
+    lease << "invalid lease";
+    ASSERT_TRUE(lease.good());
+  }
+
+  const auto unreadableId = std::string(32, 'f');
+  const auto unreadableLease =
+      directory / "Leases" / (unreadableId + ".sqlite3");
+  ASSERT_TRUE(std::filesystem::create_directory(unreadableLease));
+  {
+    std::ofstream staging{directory / "Staging" /
+                          (unreadableId + ".bteresult")};
+    staging << "staging with unreadable lease";
+    ASSERT_TRUE(staging.good());
+  }
+
+  const auto reopened =
+      bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(reopened.ok()) << reopened.error().message;
+  ASSERT_EQ(reopened.value()->recoveryNotices().size(), 2U);
+  for (const auto &notice : reopened.value()->recoveryNotices()) {
+    EXPECT_EQ(notice.reason, bte::results::ResultRecoveryReason::invalidLease);
+  }
+  EXPECT_TRUE(std::filesystem::is_regular_file(directory / "Staging" /
+                                               (invalidId + ".bteresult")));
+  EXPECT_TRUE(std::filesystem::is_regular_file(directory / "Staging" /
+                                               (unreadableId + ".bteresult")));
+}
+
+TEST_F(ResultStoreFixture, existingLeaseIdentityIsSkippedDuringBegin) {
+  const auto directory = root_ / "ExistingLease";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+
+  const auto occupiedId = std::string(32, 'a');
+  std::ofstream occupiedLease{directory / "Leases" / (occupiedId + ".sqlite3")};
+  ASSERT_TRUE(occupiedLease.good());
+  occupiedLease << "lease identity is already owned";
+  occupiedLease.close();
+
+  bte::results::testing::forceNextResultId(occupiedId);
+  const auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  EXPECT_NE(writer.value()->resultId(), occupiedId);
+}
+
+TEST_F(ResultStoreFixture, leaseInitializationFailureDoesNotPinOrStageResult) {
+  const auto directory = root_ / "BlockedLeaseInitialization";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  std::filesystem::remove_all(directory / "Leases");
+  std::ofstream blockedLeases{directory / "Leases"};
+  ASSERT_TRUE(blockedLeases.good());
+  blockedLeases << "not a directory";
+  blockedLeases.close();
+
+  const auto resultId = std::string(32, 'b');
+  bte::results::testing::forceNextResultId(resultId);
+  const auto writer = store.value()->begin(descriptor());
+  ASSERT_FALSE(writer.ok());
+  EXPECT_FALSE(std::filesystem::exists(directory / "Staging" /
+                                       (resultId + ".bteresult")));
+
+  auto retention = bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+  const auto references = retention.value()->references(resultId);
+  ASSERT_TRUE(references.ok()) << references.error().message;
+  EXPECT_TRUE(references.value().empty());
+}
+
+TEST_F(ResultStoreFixture,
+       metadataWriteFailuresLeavePublishedResultNameUnchanged) {
+  const auto directory = root_ / "MetadataWriteFailures";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  const auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+  const auto resultId = finalized.value().resultId;
+
+  const auto expectFailedRename =
+      [&](const bte::results::testing::FailurePoint point,
+          const std::uint32_t skipped, const std::string &name) {
+        bte::results::testing::failAfter(point, skipped);
+        const auto renamed = store.value()->renameResult(resultId, name);
+        const auto injected = !bte::results::testing::failurePending();
+        bte::results::testing::clearFailure();
+        EXPECT_TRUE(injected) << name;
+        EXPECT_FALSE(renamed.ok()) << name;
+        const auto opened = store.value()->openResult(resultId);
+        ASSERT_TRUE(opened.ok()) << opened.error().message;
+        EXPECT_NE(opened.value().displayName, name);
+      };
+
+  expectFailedRename(bte::results::testing::FailurePoint::databaseOpen, 1,
+                     "database open failure");
+  expectFailedRename(bte::results::testing::FailurePoint::sqlExecution, 0,
+                     "transaction begin failure");
+  expectFailedRename(bte::results::testing::FailurePoint::sqlExecution, 3,
+                     "transaction commit failure");
+  expectFailedRename(bte::results::testing::FailurePoint::textBinding, 0,
+                     "display name binding failure");
+  expectFailedRename(bte::results::testing::FailurePoint::statementExecution, 0,
+                     "display name insert failure");
+
+  auto preparationReachedEnd = false;
+  for (std::uint32_t skipped = 0; skipped < 32; ++skipped) {
+    bte::results::testing::failAfter(
+        bte::results::testing::FailurePoint::statementPreparation, skipped);
+    const auto renamed = store.value()->renameResult(
+        resultId, "preparation failure " + std::to_string(skipped));
+    const auto injected = !bte::results::testing::failurePending();
+    bte::results::testing::clearFailure();
+    if (!injected) {
+      ASSERT_TRUE(renamed.ok()) << renamed.error().message;
+      preparationReachedEnd = true;
+      break;
+    }
+    EXPECT_FALSE(renamed.ok()) << skipped;
+  }
+  EXPECT_TRUE(preparationReachedEnd);
+}
+
 } // namespace

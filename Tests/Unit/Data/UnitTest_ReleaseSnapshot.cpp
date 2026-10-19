@@ -803,6 +803,24 @@ TEST(SegmentRetentionTest,
 }
 
 TEST(SegmentRetentionTest,
+     referencesRejectInvalidIdentityAndReportDatabaseOpenFailure) {
+  ScopedSnapshotFixture fixture{"retention-reference-errors"};
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+
+  const auto invalid = retention.value()->references("Invalid");
+  ASSERT_FALSE(invalid.ok());
+  EXPECT_EQ(invalid.error().code, bte::core::ErrorCode::invalidArgument);
+
+  bte::data::testing::failRetentionAfter(
+      bte::data::testing::RetentionFailurePoint::databaseOpen);
+  const auto unavailable = retention.value()->references("valid-result-id");
+  bte::data::testing::clearRetentionFailure();
+  ASSERT_FALSE(unavailable.ok());
+  EXPECT_EQ(unavailable.error().code, bte::core::ErrorCode::internal);
+}
+
+TEST(SegmentRetentionTest,
      releaseReportsBlockedSegmentPurgeAndRetainsTheReferenceForRetry) {
   ScopedSnapshotFixture fixture{"retention-blocked-purge"};
   fixture.writeSymbol("SYN", threeHourlyRows);

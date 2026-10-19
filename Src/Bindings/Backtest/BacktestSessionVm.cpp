@@ -343,10 +343,13 @@ listBacktestDraftCatalog(const PersistedBacktestStorage &storage,
   if (!store.ok()) {
     return store.error();
   }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  triggerDraftOpenCancellation();
+#endif
   auto drafts = store.value()->listDrafts(cancellation);
   if (!drafts.ok()) {
     return drafts.error();
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
   return makeResultCatalogSnapshot(std::move(drafts).value(),
                                    store.value()->recoveryNotices());
 }

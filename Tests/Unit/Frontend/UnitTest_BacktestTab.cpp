@@ -125,6 +125,7 @@ class BacktestTabTest final : public QObject {
 private slots:
   void exposesAccessibleRunConfiguration();
   void completedDraftEnablesSaveActionsAndReplayUsesPublishedId();
+  void invalidDisplayNameDoesNotStartResultPublication();
   void savingOneOfMultipleDraftsKeepsReplayOnThatResult();
   void saveFailureKeepsDraftAvailableAndNeverNavigates();
   void draftWorkerExceptionsRemainVisibleAndRetryable();
@@ -271,6 +272,41 @@ void BacktestTabTest::
            QString{"0123456789abcdef0123456789abcdef"});
   QCOMPARE(publishCount.load(), 2);
   QVERIFY(namesCorrect.load());
+}
+
+void BacktestTabTest::invalidDisplayNameDoesNotStartResultPublication() {
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = "0123456789abcdef0123456789abcdef";
+  std::atomic_int publishCount = 0;
+  bte::frontend::BacktestTab tab{
+      [snapshot](bte::bindings::BacktestConfiguration,
+                 bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      },
+      [&publishCount](const std::string &, const std::string &,
+                      bte::core::CancellationToken) {
+        ++publishCount;
+        return bte::core::Result<std::string>{"unexpected"};
+      }};
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *save = tab.findChild<QPushButton *>("backtestSaveResultButton");
+  auto *name = tab.findChild<QLineEdit *>("backtestResultNameEdit");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(run != nullptr);
+  QVERIFY(save != nullptr);
+  QVERIFY(name != nullptr);
+  QVERIFY(status != nullptr);
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([save] { return save->isEnabled(); }));
+  // The editor limits Unicode characters, while persistence limits UTF-8
+  // bytes. Exercise the byte limit with multibyte characters under 160 chars.
+  name->setText(QString(54, QChar{0x4E2D}));
+  QTest::mouseClick(save, Qt::LeftButton);
+
+  QVERIFY(status->text().contains("Result name is too long"));
+  QVERIFY(save->isEnabled());
+  QCOMPARE(publishCount.load(), 0);
 }
 
 void BacktestTabTest::saveFailureKeepsDraftAvailableAndNeverNavigates() {
