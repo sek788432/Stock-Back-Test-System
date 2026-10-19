@@ -198,12 +198,13 @@ this digest is `calendarHash`; it is external to the hashed stream.
 A `.bteresult` stores snapshot/segment IDs and hashes, not duplicate OHLCV.
 
 - Referenced Data Segments are retained while any non-purged result needs them.
-- The approved Issue 10 safety repair also requires pins before recoverable
-  Staging visibility, kept through Drafts/Results/Trash. This initialization and
-  recovery guarantee is not yet implemented. The
-  [detailed proposal](ResultPersistenceSafetyDesign.md) awaits review; it must
-  reuse the retention transaction rather than release visible-prefix references
-  on execution or promotion failure.
+- The Issue 10 safety implementation acquires a per-Result SQLite lease and
+  pins distinct immutable segments before Staging or an imported artifact can
+  become visible. Pins remain through Drafts, Results, and Trash. Recovery takes
+  ownership before reading Staging and verifies references before exposing a
+  recovered draft. This is implemented and covered by store and child-process
+  tests; final exact-head and native application acceptance remain pending. See
+  the [safety design](ResultPersistenceSafetyDesign.md).
 - K-line Replay resolves those exact segments and validates their hashes.
 - Missing referenced data yields `DataSnapshotUnavailable`; it never silently substitutes newer data.
 - Imported results validate result schema, canonical hash, snapshot identity,

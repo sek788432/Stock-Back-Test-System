@@ -8,6 +8,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -19,10 +20,48 @@ class ResultLibraryRequestsTest final : public QObject {
 
 private slots:
   void emptyCatalogAndTrashAreDeliveredAsynchronously();
+  void legacyStagingNoticesAreQueuedWithoutHidingCatalogSuccess();
   void invalidDetailsAndTrashActionReturnStructuredErrors();
   void newerDetailsRequestSuppressesStaleCompletion();
   void inaccessibleStoreReturnsErrorsForEveryOperation();
 };
+
+void ResultLibraryRequestsTest::
+    legacyStagingNoticesAreQueuedWithoutHidingCatalogSuccess() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto id = std::string(32, 'a');
+  const auto staging = root / "Results" / "Staging" / (id + ".bteresult");
+  std::filesystem::create_directories(staging.parent_path());
+  const std::string bytes = "legacy result payload";
+  {
+    std::ofstream legacy{staging};
+    legacy << bytes;
+  }
+  bte::bindings::ResultLibraryRequests requests{root / "Results",
+                                                root / "Data"};
+  for (const auto trash : {false, true}) {
+    std::optional<bte::bindings::ResultLibraryRequests::CatalogResult>
+        completed;
+    requests.requestCatalog(trash, [&completed](auto result) {
+      completed.emplace(std::move(result));
+    });
+    QVERIFY(bte::test::waitUntil([&] { return completed.has_value(); }));
+    QVERIFY2(completed->ok(), completed->error().message.c_str());
+    QVERIFY(completed->value().entries.empty());
+    QCOMPARE(completed->value().notices.size(), std::size_t{1});
+    const auto &notice = completed->value().notices.front();
+    QCOMPARE(notice.resultId, id);
+    QCOMPARE(notice.reason, bte::results::ResultRecoveryReason::legacyUnleased);
+    QVERIFY(!notice.diagnostic.empty());
+    QVERIFY(std::filesystem::is_regular_file(staging));
+    std::ifstream preserved{staging};
+    const std::string actual{std::istreambuf_iterator<char>{preserved},
+                             std::istreambuf_iterator<char>{}};
+    QCOMPARE(actual, bytes);
+  }
+}
 
 void ResultLibraryRequestsTest::
     emptyCatalogAndTrashAreDeliveredAsynchronously() {
@@ -37,14 +76,16 @@ void ResultLibraryRequestsTest::
       false, [&active](auto result) { active.emplace(std::move(result)); });
   QVERIFY(bte::test::waitUntil([&] { return active.has_value(); }));
   QVERIFY(active->ok());
-  QVERIFY(active->value().empty());
+  QVERIFY(active->value().entries.empty());
+  QVERIFY(active->value().notices.empty());
 
   std::optional<bte::bindings::ResultLibraryRequests::CatalogResult> trash;
   requests.requestCatalog(
       true, [&trash](auto result) { trash.emplace(std::move(result)); });
   QVERIFY(bte::test::waitUntil([&] { return trash.has_value(); }));
   QVERIFY(trash->ok());
-  QVERIFY(trash->value().empty());
+  QVERIFY(trash->value().entries.empty());
+  QVERIFY(trash->value().notices.empty());
 }
 
 void ResultLibraryRequestsTest::

@@ -90,6 +90,11 @@ public:
 
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   start(BacktestRequest request);
+  /// Owns a durable writer; advance commits each complete bar before progress.
+  [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
+  startRecorded(BacktestRequest request, const results::ResultStore &store,
+                const results::RunDescriptor &descriptor,
+                const core::CancellationToken &cancellation = {});
   [[nodiscard]] core::Result<void>
   advance(const core::CancellationToken &cancellation = {});
   [[nodiscard]] core::Result<void>
@@ -100,8 +105,14 @@ public:
   terminalError() const noexcept;
   [[nodiscard]] core::Result<RecordedBacktestOutcome>
   finalizeAndRecord(results::ResultWriter &writer);
+  [[nodiscard]] core::Result<RecordedBacktestOutcome> finalizeRecorded();
 
 private:
+  // The borrowed writer is attached only inside this synchronous entry point.
+  friend core::Result<RecordedBacktestOutcome>
+  runBacktestAndRecord(const BacktestRequest &request,
+                       results::ResultWriter &writer,
+                       const core::CancellationToken &cancellation);
   std::unique_ptr<Impl> impl_;
 };
 

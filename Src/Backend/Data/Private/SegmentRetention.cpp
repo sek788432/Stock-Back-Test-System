@@ -18,7 +18,6 @@
 #include <initializer_list>
 #include <iterator>
 #include <memory>
-#include <mutex>
 #include <ranges> // IWYU pragma: keep
 #include <string>
 #include <system_error>
@@ -232,14 +231,6 @@ openDatabase(const std::filesystem::path &storeDirectory) {
   return database;
 }
 
-std::mutex &retentionDatabaseMutex() {
-  // SQLite's WAL shared-memory locking is safe across processes but invisible
-  // to ThreadSanitizer. Serialize this process's short retention transactions;
-  // SQLite remains the authority for coordination with another process.
-  static std::mutex mutex;
-  return mutex;
-}
-
 struct SegmentMove final {
   std::filesystem::path source;
   std::filesystem::path destination;
@@ -309,7 +300,6 @@ SegmentRetentionStore::open(const std::filesystem::path &storeDirectory) {
                            "Unable to create retention store: " +
                                std::string{error.what()});
   }
-  const std::scoped_lock lock{retentionDatabaseMutex()};
   auto database = openDatabase(storeDirectory);
   if (!database.ok()) {
     return database.error();
@@ -345,7 +335,6 @@ core::Result<std::size_t> SegmentRetentionStore::acquire(
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Data Segment identities must be unique");
   }
-  const std::scoped_lock lock{retentionDatabaseMutex()};
   auto database = openDatabase(storeDirectory_);
   if (!database.ok()) {
     return database.error();
@@ -356,8 +345,8 @@ core::Result<std::size_t> SegmentRetentionStore::acquire(
   }
   std::vector<SegmentMove> restored;
   const auto rollback = [&] {
-    (void)database.value()->execute("ROLLBACK");
     restoreMoves(restored);
+    (void)database.value()->execute("ROLLBACK");
   };
   for (const auto &segmentId : uniqueIds) {
     if (!validSegmentId(segmentId)) {
@@ -416,12 +405,26 @@ core::Result<std::size_t> SegmentRetentionStore::acquire(
 }
 
 core::Result<std::vector<std::string>>
+SegmentRetentionStore::references(const std::string &resultId) const {
+  if (!validIdentity(resultId)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result ID is invalid");
+  }
+  auto database = openDatabase(storeDirectory_);
+  if (!database.ok()) {
+    return database.error();
+  }
+  return database.value()->strings("SELECT segment_id FROM segment_references "
+                                   "WHERE result_id = ?1 ORDER BY segment_id",
+                                   resultId);
+}
+
+core::Result<std::vector<std::string>>
 SegmentRetentionStore::release(const std::string &resultId) const {
   if (!validIdentity(resultId)) {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
-  const std::scoped_lock lock{retentionDatabaseMutex()};
   auto database = openDatabase(storeDirectory_);
   if (!database.ok()) {
     return database.error();
@@ -448,8 +451,8 @@ SegmentRetentionStore::release(const std::string &resultId) const {
   std::vector<std::string> purged;
   std::vector<SegmentMove> movedToTrash;
   const auto rollback = [&] {
-    (void)database.value()->execute("ROLLBACK");
     restoreMoves(movedToTrash);
+    (void)database.value()->execute("ROLLBACK");
   };
   for (const auto &segmentId : segmentIds.value()) {
     auto count = database.value()->countReferences(segmentId);

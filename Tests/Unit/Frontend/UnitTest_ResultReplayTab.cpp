@@ -40,6 +40,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -99,6 +100,7 @@ private slots:
   void trashedActiveResultStopsReplayAndClearsSelection();
   void renamedResultRefreshesSelectorWithoutChangingOpenId();
   void thirtyTwoCharacterNamedOptionOpensItsStoredResultId();
+  void preservedLegacyArtifactsWarnBesideUsableSavedResults();
 
 private:
   std::filesystem::path root_;
@@ -110,6 +112,44 @@ private:
   std::string multiDayMultiFillResultId_;
   std::string unavailableResultId_ = std::string(32, 'd');
 };
+
+void ResultReplayTabTest::
+    preservedLegacyArtifactsWarnBesideUsableSavedResults() {
+  const auto legacyId = std::string(32, 'b');
+  const auto legacyPath =
+      root_ / "Store" / "Staging" / (legacyId + ".bteresult");
+  const std::string legacyBytes =
+      "legacy staging must not be removed by Replay";
+  {
+    std::ofstream legacy{legacyPath};
+    legacy << legacyBytes;
+  }
+  bte::frontend::ReplayTab tab{root_ / "Store", root_ / "Data"};
+  auto *notices = tab.findChild<QLabel *>("replayRecoveryNoticesLabel");
+  auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  auto *toggle = tab.findChild<QToolButton *>("replaySetupToggleButton");
+  QVERIFY(notices != nullptr);
+  QVERIFY(selector != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(toggle != nullptr);
+  QVERIFY(!toggle->isChecked());
+  QVERIFY(bte::test::waitUntil([&] {
+    return notices->text().contains(QString::fromStdString(legacyId)) &&
+           selector->findData(QString::fromStdString(firstResultId_)) >= 0;
+  }));
+  QVERIFY(!notices->isHidden());
+  QVERIFY(notices->text().contains("preserved", Qt::CaseInsensitive));
+  tab.openResult(QString::fromStdString(firstResultId_));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return status->text().startsWith("Result "); }));
+  QVERIFY(!notices->isHidden());
+  QVERIFY(std::filesystem::is_regular_file(legacyPath));
+  std::ifstream preserved{legacyPath};
+  const std::string preservedBytes{std::istreambuf_iterator<char>{preserved},
+                                   std::istreambuf_iterator<char>{}};
+  QCOMPARE(preservedBytes, legacyBytes);
+}
 
 void ResultReplayTabTest::initTestCase() {
   root_ = std::filesystem::temp_directory_path() / "bte-result-replay-tab";

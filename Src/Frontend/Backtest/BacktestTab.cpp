@@ -1,5 +1,7 @@
 #include "Bte/Frontend/BacktestTab.h"
 
+#include "ResultRecoveryNoticeLabel.h"
+
 #include "Bte/Bindings/BacktestSessionVm.h"
 #include "Bte/Indicators/StreamingIndicator.h"
 #include "Bte/Strategy/SelectableStrategy.h"
@@ -409,7 +411,7 @@ void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
 struct BacktestTab::RunState final {
   using BacktestResult = core::Result<bindings::BacktestSnapshot>;
   using PublishResult = core::Result<std::string>;
-  using DraftListResult = core::Result<std::vector<std::string>>;
+  using DraftListResult = core::Result<bindings::ResultCatalogSnapshot>;
   using DiscardResult = core::Result<void>;
 
   ~RunState() {
@@ -438,7 +440,7 @@ struct BacktestTab::RunState final {
 namespace {
 
 using BacktestResult = core::Result<bindings::BacktestSnapshot>;
-using DraftListResult = core::Result<std::vector<std::string>>;
+using DraftListResult = core::Result<bindings::ResultCatalogSnapshot>;
 using PublishResult = core::Result<std::string>;
 using DiscardResult = core::Result<void>;
 
@@ -460,6 +462,7 @@ struct DraftActionWidgets final {
   QPushButton *refreshDrafts = nullptr;
   QPushButton *discardDraft = nullptr;
   QComboBox *drafts = nullptr;
+  ResultRecoveryNoticeLabel *recoveryNotices = nullptr;
   QLabel *status = nullptr;
   QFutureWatcher<BacktestResult> *runWatcher = nullptr;
   QFutureWatcher<DraftListResult> *draftListWatcher = nullptr;
@@ -497,11 +500,12 @@ connectDraftListing(const DraftActionWidgets &controls,
                   .arg(QString::fromStdString(listed.error().message)));
           return;
         }
+        controls.recoveryNotices->present(listed.value().notices);
         {
           const QSignalBlocker blockSelection{controls.drafts};
           controls.drafts->clear();
-          for (const auto &resultId : listed.value()) {
-            const auto draftId = QString::fromStdString(resultId);
+          for (const auto &entry : listed.value().entries) {
+            const auto draftId = QString::fromStdString(entry.resultId);
             controls.drafts->addItem(draftId, draftId);
           }
           const auto previousIndex = controls.drafts->findData(previous);
@@ -721,7 +725,7 @@ BacktestTab::createApplicationConfigured(QWidget *parent) {
   return std::make_unique<BacktestTab>(
       std::bind_front(runConfigured, storage),
       std::bind_front(bindings::publishBacktestDraft, storage),
-      std::bind_front(bindings::listBacktestDrafts, storage),
+      std::bind_front(bindings::listBacktestDraftCatalog, storage),
       std::bind_front(bindings::discardBacktestDraft, storage), parent);
 }
 
@@ -741,8 +745,8 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
     : BacktestTab(
           std::move(runner), std::move(publisher),
           [](const core::CancellationToken &) {
-            return core::Result<std::vector<std::string>>{
-                std::vector<std::string>{}};
+            return core::Result<bindings::ResultCatalogSnapshot>{
+                bindings::ResultCatalogSnapshot{}};
           },
           [](const std::string &, const core::CancellationToken &) {
             return core::Result<void>{core::makeError(
@@ -1104,6 +1108,10 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   unsavedLayout->addWidget(refreshDrafts);
   unsavedLayout->addWidget(discardDraft);
   root->addWidget(unsavedRuns);
+  auto *recoveryNotices = std::make_unique<ResultRecoveryNoticeLabel>(
+                              "backtestRecoveryNoticesLabel", this)
+                              .release();
+  root->addWidget(recoveryNotices);
 
   auto *summary =
       std::make_unique<QGroupBox>(tr("Result summary"), this).release();
@@ -1151,6 +1159,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
       .refreshDrafts = refreshDrafts,
       .discardDraft = discardDraft,
       .drafts = drafts,
+      .recoveryNotices = recoveryNotices,
       .status = status,
       .runWatcher = watcher,
       .draftListWatcher = draftListWatcher,

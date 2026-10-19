@@ -60,6 +60,15 @@ private:
   std::optional<QByteArray> previous_;
 };
 
+bte::bindings::ResultCatalogSnapshot
+draftCatalog(const std::vector<std::string> &ids) {
+  bte::bindings::ResultCatalogSnapshot snapshot;
+  for (const auto &id : ids) {
+    snapshot.entries.push_back({.resultId = id});
+  }
+  return snapshot;
+}
+
 bte::bindings::BacktestSnapshot filledSnapshot() {
   return bte::bindings::BacktestSnapshot{
       .outcome = bte::bindings::BacktestOutcome::filled,
@@ -122,6 +131,7 @@ private slots:
   void nonPersistedTestConstructorsRejectSaveAndDiscard();
   void draftActionsIgnoreUnavailableAndReentrantSignals();
   void unsavedRunsLoadSurviveNewRunsAndCanBeDiscarded();
+  void draftNoticesRemainSeparateFromValidRunActionsAndClearOnRefresh();
   void calendarYearsAreDirectlySelectable();
   void runExecutesOffTheUiThreadAndDisplaysFill();
   void failedRunClearsPriorResultAndPreservesError();
@@ -139,6 +149,63 @@ private slots:
   void selectableConditionStatusNamesItsSelectedStrategy();
   void selectableControlsPresentNoSignalAndSellFill();
 };
+
+void BacktestTabTest::
+    draftNoticesRemainSeparateFromValidRunActionsAndClearOnRefresh() {
+  const auto resultId = std::string(32, 'a');
+  const auto preservedId = std::string(32, 'b');
+  const std::string diagnostic =
+      "Legacy unleased <staging> was preserved unchanged.";
+  std::atomic_int calls = 0;
+  bte::frontend::BacktestTab tab{
+      [](const bte::bindings::BacktestConfiguration &,
+         const bte::core::CancellationToken &) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      },
+      [](const std::string &id, const std::string &,
+         const bte::core::CancellationToken &) {
+        return bte::core::Result<std::string>{id};
+      },
+      [&calls, &resultId, &preservedId,
+       &diagnostic](const bte::core::CancellationToken &) {
+        auto snapshot = draftCatalog({resultId});
+        if (++calls == 1) {
+          snapshot.notices.push_back({
+              .resultId = preservedId,
+              .reason = bte::results::ResultRecoveryReason::legacyUnleased,
+              .diagnostic = diagnostic,
+          });
+        }
+        return bte::core::Result<bte::bindings::ResultCatalogSnapshot>{
+            std::move(snapshot)};
+      },
+      [](const std::string &, const bte::core::CancellationToken &) {
+        return bte::core::Result<void>{};
+      }};
+  auto *notices = tab.findChild<QLabel *>("backtestRecoveryNoticesLabel");
+  auto *drafts = tab.findChild<QComboBox *>("backtestUnsavedRunsCombo");
+  auto *save = tab.findChild<QPushButton *>("backtestSaveResultButton");
+  auto *refresh =
+      tab.findChild<QPushButton *>("backtestRefreshUnsavedRunsButton");
+  QVERIFY(notices != nullptr);
+  QVERIFY(drafts != nullptr);
+  QVERIFY(save != nullptr);
+  QVERIFY(refresh != nullptr);
+  QVERIFY(bte::test::waitUntil([&] {
+    return !notices->isHidden() && drafts->count() == 1 && save->isEnabled();
+  }));
+  QVERIFY(notices->text().contains(QString::fromStdString(preservedId)));
+  QVERIFY(notices->text().contains(QString::fromStdString(diagnostic)));
+  QCOMPARE(notices->textFormat(), Qt::PlainText);
+  QCOMPARE(drafts->currentData().toString(), QString::fromStdString(resultId));
+  refresh->click();
+  QVERIFY(
+      bte::test::waitUntil([&] { return calls == 2 && notices->isHidden(); }));
+  QVERIFY(notices->text().isEmpty());
+  QCOMPARE(drafts->count(), 1);
+  QVERIFY(save->isEnabled());
+}
 
 void BacktestTabTest::
     completedDraftEnablesSaveActionsAndReplayUsesPublishedId() {
@@ -270,14 +337,14 @@ void BacktestTabTest::draftWorkerExceptionsRemainVisibleAndRetryable() {
         throw 42;
       },
       [&listCount, resultId](bte::core::CancellationToken)
-          -> bte::core::Result<std::vector<std::string>> {
+          -> bte::core::Result<bte::bindings::ResultCatalogSnapshot> {
         if (++listCount == 1) {
           throw std::runtime_error{"list exception"};
         }
         if (listCount == 2) {
           throw 42;
         }
-        return std::vector<std::string>{resultId};
+        return draftCatalog({resultId});
       },
       [&discardCount](const std::string &,
                       bte::core::CancellationToken) -> bte::core::Result<void> {
@@ -404,8 +471,8 @@ void BacktestTabTest::draftActionsIgnoreUnavailableAndReentrantSignals() {
       [&listCalls, listGate](bte::core::CancellationToken) {
         ++listCalls;
         listGate.wait();
-        return bte::core::Result<std::vector<std::string>>{
-            std::vector<std::string>{}};
+        return bte::core::Result<bte::bindings::ResultCatalogSnapshot>{
+            draftCatalog({})};
       },
       [&discardCalls](const std::string &, bte::core::CancellationToken) {
         ++discardCalls;
@@ -457,7 +524,8 @@ void BacktestTabTest::savingOneOfMultipleDraftsKeepsReplayOnThatResult() {
       },
       [&draftsMutex, &storedDrafts](bte::core::CancellationToken) {
         const std::scoped_lock lock{draftsMutex};
-        return bte::core::Result<std::vector<std::string>>{storedDrafts};
+        return bte::core::Result<bte::bindings::ResultCatalogSnapshot>{
+            draftCatalog(storedDrafts)};
       },
       [](const std::string &, bte::core::CancellationToken) {
         return bte::core::Result<void>{};
@@ -514,7 +582,8 @@ void BacktestTabTest::unsavedRunsLoadSurviveNewRunsAndCanBeDiscarded() {
       },
       [&draftsMutex, &storedDrafts](bte::core::CancellationToken) {
         const std::scoped_lock lock{draftsMutex};
-        return bte::core::Result<std::vector<std::string>>{storedDrafts};
+        return bte::core::Result<bte::bindings::ResultCatalogSnapshot>{
+            draftCatalog(storedDrafts)};
       },
       [&draftsMutex, &storedDrafts](const std::string &resultId,
                                     bte::core::CancellationToken) {

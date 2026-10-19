@@ -1,5 +1,7 @@
 #include "Bte/Frontend/ResultsTab.h"
 
+#include "ResultRecoveryNoticeLabel.h"
+
 // IWYU pragma: no_include "Bte/Results/ResultStore.h"
 
 #include "Bte/Bindings/ResultLibraryRequests.h"
@@ -91,6 +93,7 @@ struct ResultsTab::State final {
   QComboBox *location{};
   QTableWidget *table{};
   QLabel *message{};
+  ResultRecoveryNoticeLabel *recoveryNotices{};
   QLabel *details{};
   QPushButton *refreshButton{};
   QPushButton *viewButton{};
@@ -197,6 +200,10 @@ ResultsTab::ResultsTab(std::filesystem::path resultStore,
       std::make_unique<QLabel>(tr("Loading saved results…"), this).release();
   state_->message->setObjectName("resultsStatusLabel");
   layout->addWidget(state_->message);
+  state_->recoveryNotices = std::make_unique<ResultRecoveryNoticeLabel>(
+                                "resultsRecoveryNoticesLabel", this)
+                                .release();
+  layout->addWidget(state_->recoveryNotices);
   state_->table = std::make_unique<QTableWidget>(0, 5, this).release();
   state_->table->setObjectName("resultsTable");
   state_->table->setHorizontalHeaderLabels({tr("Name"), tr("Saved (UTC)"),
@@ -379,7 +386,9 @@ void ResultsTab::refresh() {
                   .arg(QString::fromStdString(result.error().message)));
           return;
         }
-        state_->summaries = std::move(result).value();
+        auto snapshot = std::move(result).value();
+        state_->recoveryNotices->present(snapshot.notices);
+        state_->summaries = std::move(snapshot.entries);
         state_->table->setRowCount(static_cast<int>(state_->summaries.size()));
         for (auto row = 0; row < state_->table->rowCount(); ++row) {
           const auto &entry =

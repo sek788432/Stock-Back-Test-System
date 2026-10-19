@@ -327,15 +327,15 @@ publishBacktestDraft(const PersistedBacktestStorage &storage,
   return published.value().resultId;
 }
 
-core::Result<std::vector<std::string>>
-listBacktestDrafts(const PersistedBacktestStorage &storage,
-                   const core::CancellationToken &cancellation) {
+core::Result<ResultCatalogSnapshot>
+listBacktestDraftCatalog(const PersistedBacktestStorage &storage,
+                         const core::CancellationToken &cancellation) {
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
                            "Backtest draft list was cancelled");
   }
   if (!std::filesystem::exists(storage.resultStore)) {
-    return std::vector<std::string>{};
+    return ResultCatalogSnapshot{};
   }
   auto store = results::ResultStore::open(storage.resultStore,
                                           storage.dataStore, cancellation);
@@ -346,9 +346,20 @@ listBacktestDrafts(const PersistedBacktestStorage &storage,
   if (!drafts.ok()) {
     return drafts.error();
   }
+  return ResultCatalogSnapshot{.entries = std::move(drafts).value(),
+                               .notices = store.value()->recoveryNotices()};
+}
+
+core::Result<std::vector<std::string>>
+listBacktestDrafts(const PersistedBacktestStorage &storage,
+                   const core::CancellationToken &cancellation) {
+  auto catalog = listBacktestDraftCatalog(storage, cancellation);
+  if (!catalog.ok()) {
+    return catalog.error();
+  }
   std::vector<std::string> resultIds;
-  resultIds.reserve(drafts.value().size());
-  std::ranges::transform(drafts.value(), std::back_inserter(resultIds),
+  resultIds.reserve(catalog.value().entries.size());
+  std::ranges::transform(catalog.value().entries, std::back_inserter(resultIds),
                          &results::ResultSummary::resultId);
   return resultIds;
 }

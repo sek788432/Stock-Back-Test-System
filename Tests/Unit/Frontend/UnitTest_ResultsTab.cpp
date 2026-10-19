@@ -27,6 +27,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -67,6 +68,7 @@ class ResultsTabTest final : public QObject {
 private slots:
   void emptyLibraryHasNoEnabledResultActions();
   void inaccessibleCatalogDisablesActionsAndRefreshRecovers();
+  void recoveryNoticeTracksAccessibleTextAndClearsAfterRefresh();
   void configuredDefaultStoreUsesEnvironmentOverride();
   void corruptResultCannotOpenReplayAndKeepsReadableReason();
   void savedResultDetailsReplayTrashAndRestoreKeepExactId();
@@ -107,6 +109,34 @@ void ResultsTabTest::inaccessibleCatalogDisablesActionsAndRefreshRecovers() {
   QCOMPARE(table->rowCount(), 0);
   QCOMPARE(opened.count(), 0);
   QVERIFY(std::filesystem::is_directory(blockedStore));
+}
+
+void ResultsTabTest::recoveryNoticeTracksAccessibleTextAndClearsAfterRefresh() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto resultId = std::string(32, 'f');
+  const auto staging = root / "Results" / "Staging" /
+                       (resultId + ".bteresult");
+  std::filesystem::create_directories(staging.parent_path());
+  {
+    std::ofstream legacy{staging};
+    legacy << "preserved legacy artifact";
+    QVERIFY(legacy.good());
+  }
+
+  bte::frontend::ResultsTab tab{root / "Results", root / "Data"};
+  auto *notice = tab.findChild<QLabel *>("resultsRecoveryNoticesLabel");
+  QVERIFY(notice != nullptr);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return notice->text().contains(QString::fromStdString(resultId)); }));
+  QCOMPARE(notice->accessibleName(), notice->text());
+
+  QVERIFY(std::filesystem::remove(staging));
+  tab.refresh();
+  QVERIFY(bte::test::waitUntil([&] { return notice->isHidden(); }));
+  QVERIFY(notice->text().isEmpty());
+  QVERIFY(notice->accessibleName().isEmpty());
 }
 
 void ResultsTabTest::controlsRemainReachableAtThreeWindowSizes() {
@@ -252,7 +282,27 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   const auto published = store.value()->publishDraft(run.value().resultId);
   QVERIFY2(published.ok(), published.error().message.c_str());
 
+  const auto legacyId = std::string(32, 'a');
+  const auto legacyPath =
+      root / "Store" / "Staging" / (legacyId + ".bteresult");
+  const std::string legacyBytes = "unleased legacy staging must remain intact";
+  {
+    std::ofstream legacy{legacyPath};
+    legacy << legacyBytes;
+  }
   bte::frontend::ResultsTab tab{root / "Store", root / "Data"};
+  auto *notices = tab.findChild<QLabel *>("resultsRecoveryNoticesLabel");
+  QVERIFY(notices != nullptr);
+  QVERIFY(bte::test::waitUntil([&] {
+    return notices->text().contains(QString::fromStdString(legacyId));
+  }));
+  QVERIFY(!notices->isHidden());
+  QVERIFY(notices->text().contains("preserved", Qt::CaseInsensitive));
+  QVERIFY(std::filesystem::is_regular_file(legacyPath));
+  std::ifstream preserved{legacyPath};
+  const std::string preservedBytes{std::istreambuf_iterator<char>{preserved},
+                                   std::istreambuf_iterator<char>{}};
+  QCOMPARE(preservedBytes, legacyBytes);
   auto *table = tab.findChild<QTableWidget *>("resultsTable");
   auto *view = tab.findChild<QPushButton *>("resultsViewDetailsButton");
   auto *open = tab.findChild<QPushButton *>("resultsOpenReplayButton");
@@ -388,8 +438,18 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   QCOMPARE(reopened.value().canonicalResultHash,
            published.value().canonicalResultHash);
 
+  const auto resultPath = root / "Store" / "Results" /
+                          (run.value().resultId + ".bteresult");
+  const auto trashPath = root / "Store" / "Trash" /
+                         (run.value().resultId + ".bteresult");
+  QVERIFY(std::filesystem::exists(resultPath));
+  QVERIFY(!std::filesystem::exists(trashPath));
   table->selectRow(0);
-  QVERIFY(store.value()->moveToTrash(run.value().resultId).ok());
+  const auto movedToTrashAgain =
+      store.value()->moveToTrash(run.value().resultId);
+  QVERIFY2(movedToTrashAgain.ok(), movedToTrashAgain.ok()
+                                        ? ""
+                                        : movedToTrashAgain.error().message.c_str());
   view->click();
   QVERIFY(bte::test::waitUntil(
       [&] { return (details->text().startsWith("Cannot view result")); }));
@@ -411,9 +471,13 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   QCOMPARE(table->rowCount(), 1);
   table->selectRow(0);
   QVERIFY(store.value()->restore(run.value().resultId).ok());
+  QVERIFY(std::filesystem::exists(resultPath));
+  QVERIFY(!std::filesystem::exists(trashPath));
   restore->click();
   QVERIFY(bte::test::waitUntil(
       [&] { return (status->text().startsWith("Cannot restore result")); }));
+  QVERIFY(std::filesystem::exists(resultPath));
+  QVERIFY(!std::filesystem::exists(trashPath));
 
   const auto descriptor = reopened.value().descriptor;
   for (const auto terminalStatus : {
@@ -489,7 +553,11 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   QCOMPARE(replayRequested.last().first().toString(),
            QString::fromStdString(run.value().resultId));
 
-  QVERIFY(store.value()->moveToTrash(run.value().resultId).ok());
+  QVERIFY(std::filesystem::exists(resultPath));
+  QVERIFY(!std::filesystem::exists(trashPath));
+  const auto movedToTrash = store.value()->moveToTrash(run.value().resultId);
+  QVERIFY2(movedToTrash.ok(),
+           movedToTrash.ok() ? "" : movedToTrash.error().message.c_str());
   QTimer::singleShot(0, []() {
     for (auto *widget : QApplication::topLevelWidgets()) {
       if (auto *dialog = qobject_cast<QInputDialog *>(widget);

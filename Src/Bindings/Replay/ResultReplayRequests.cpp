@@ -91,21 +91,34 @@ std::uint64_t ResultReplayRequests::requestCatalog(CatalogCallback callback) {
   const auto token = impl_->cancellation.token();
   const auto generation = ++impl_->generation;
   auto *const owner = this;
-  impl_->futures.push_back(QtConcurrent::run(
-      [owner, generation, token, callback = std::move(callback),
-       resultStore = impl_->resultStore,
-       dataStore = impl_->dataStore]() mutable {
-        auto result = std::make_shared<CatalogResult>(
-            ResultReplay::list(resultStore, dataStore, token));
-        QTimer::singleShot(0, owner,
-                           [owner, generation, callback = std::move(callback),
-                            result]() mutable {
-                             if (generation ==
-                                 owner->impl_->generation.load()) {
-                               callback(std::move(*result));
-                             }
-                           });
-      }));
+  impl_->futures.push_back(QtConcurrent::run([owner, generation, token,
+                                              callback = std::move(callback),
+                                              resultStore = impl_->resultStore,
+                                              dataStore =
+                                                  impl_->dataStore]() mutable {
+    const auto loadCatalog = [&]() -> CatalogResult {
+      auto store = results::ResultStore::open(resultStore, dataStore, token);
+      if (!store.ok()) {
+        return store.error();
+      }
+      auto entries = store.value()->list(token);
+      if (!entries.ok()) {
+        return entries.error();
+      }
+      return ResultCatalogSnapshot{
+          .entries = std::move(entries).value(),
+          .notices = store.value()->recoveryNotices(),
+      };
+    };
+    auto result = std::make_shared<CatalogResult>(loadCatalog());
+    QTimer::singleShot(
+        0, owner,
+        [owner, generation, callback = std::move(callback), result]() mutable {
+          if (generation == owner->impl_->generation.load()) {
+            callback(std::move(*result));
+          }
+        });
+  }));
   return generation;
 }
 

@@ -8,31 +8,17 @@ that reads a Backtest Result and never executes a Strategy or engine event.
 
 ## 1. Delivery status
 
-**Implemented limited lifecycle:** retain recoverable execution
-drafts outside the active saved catalog and publish only through **Save Result**
-or **Save & Replay**. Both save the same recorded run idempotently; only the
-latter navigates. Saving never reruns Engine. Execution-time durability remains
-required before publication. Terminal runs finalize into `Drafts/`; trustworthy
-interrupted staging recovers as a diagnostic draft. Explicit discard releases
-its retained segment references. The broader persistence and retention review
-findings remain open despite this limited lifecycle implementation.
-
-**Accepted R1–R3 repair direction (2026-10-13; not implemented):** Results
-must establish cross-process writer ownership using the existing SQLite
-dependency. Immutable source references must be pinned before the run becomes
-visible to another reader. Each completed Engine bar must atomically persist
-its complete canonical record batch; persistence failure stops further execution.
-Crash recovery may expose only the committed prefix as an **Interrupted Draft**,
-never synthesize uncommitted events or a Completed result. Explicit Save remains
-the publication gate. Legacy staging without a lease is preserved and reported
-to the user, not automatically cleared or treated as abandoned solely because
-another process opened the store. The detailed lease lifetime, transaction
-boundary and compatibility design must be reviewed before implementation; the
-current checkpoint does not satisfy these requirements.
-
-The [detailed safety design](ResultPersistenceSafetyDesign.md) is a written
-proposal awaiting maintainer review; its proposed seams and lease layout are
-not implemented and do not supersede schema-2 canonical framing.
+**Implemented lifecycle and R1–R3 durability:** Results retain recoverable
+execution drafts outside the saved catalog and publish only through **Save
+Result** or **Save & Replay**. Both publish the same recorded run idempotently;
+only the latter navigates, and neither reruns Engine. Per-Result SQLite leases
+coordinate supported processes. Immutable source references are pinned before
+Staging/import visibility. The recorded Engine commits each completed bar's
+canonical batch before advancing progress; a storage failure stops execution.
+Recovery preserves legacy unleased staging with a warning and exposes only a
+validated committed prefix as an **Interrupted Draft**. Final exact-head CI,
+remote checks, and native application acceptance are still pending; see the
+[safety design](ResultPersistenceSafetyDesign.md).
 
 | Status | Scope |
 | --- | --- |
@@ -75,12 +61,9 @@ provenance and versioned Strategy contracts are specified in
   bars before the first trusted portfolio checkpoint. Diagnostic results also
   exclude bars after the last processed checkpoint. Daily OHLCV uses only those
   trusted selected bars; broader source-day coverage is used solely to label
-  Partial, never to add candles. Hourly fills match selected timestamps. The
-  current Daily fill filter uses the first-to-last selected timestamp within
-  each UTC date and can still include a fill in an interior missing-bar gap;
-  exact selected-timestamp filtering remains an open acceptance defect, not an
-  implemented guarantee. The saved records and canonical hash are unchanged
-  by presentation.
+  Partial, never to add candles. Hourly and UTC Daily fills match the exact
+  selected bar timestamps, including dates with interior missing-bar gaps. The
+  saved records and canonical hash are unchanged by presentation.
 - Result Replay loads and indexes the entire trusted candle timeline, while the
   presented chart starts with the first candle and exposes the untruncated
   `0..cursor` prefix. Playback, pause, step, speed, seek, and back advance or

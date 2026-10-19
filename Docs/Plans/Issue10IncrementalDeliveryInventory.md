@@ -2,6 +2,17 @@
 
 ## Scope and evidence
 
+## Continuation status — 2026-10-19
+
+PR #80 has since merged to `main` as `dbcbd39d0a23243cd8ff1b832a71b9ec62d02fe6`.
+The current Issue #10 consolidation worktree implements R1–R3, exact Daily
+fill selection, and the independent schema-2 hash oracle. Its full registered
+`qt-dev` suite passes 268/268, including child-process crash/recovery tests;
+`RunTest.sh` also passes 268/268. Final committed-head Quality/sanitizers,
+remote PR checks, workspace reconciliation, and native/real-data acceptance
+remain open. The dated checkpoints below record historical evidence and are
+not a current status report; see [remaining work](Issue10RemainingWork.md).
+
 This inventory tracks extraction and publication, not whole-plan acceptance.
 The preserved source branch is `codex/issue10-replay-ux` at
 `6ac45eaeecfdf1f840a994b951957340bf78fafd`. Relative to fixed base
@@ -156,12 +167,12 @@ each extracted submission requires fresh applicable checks on its exact SHA.
 | ID | Concern and source checkpoints | Publication status / remaining gate |
 | --- | --- | --- |
 | R | Full-money half-even rounding, `b5be0c8` | [PR #71](https://github.com/sek788432/Stock-Back-Test-System/pull/71) merged as `a0c69c5c6bf2aa8565f1c82887a56e5351f42465`; source `Backtest.cpp` also contains an unmerged S-group lifecycle change |
-| T | Trusted Hourly/Daily Replay boundaries, `a098577` | Extracted locally; not submitted. New review found same-day interior-gap fills can appear in Daily without a selected candle. Repair direction is awaiting confirmation; no scoped acceptance claimed |
-| F | Real selectable five-Buy/five-Sell offline fixture, `6b9b3e7` | Test-only [PR #75](https://github.com/sek788432/Stock-Back-Test-System/pull/75) merged as `999c1b90a2748fe09fbe6d1003f64633f124c285`; submitted `ba780948ca5b788c411791d5f5cfd934af2e239b` passed full RunTest 219/219, complete Quality, independent review and all CI/CodeQL. Additional Qt-enabled focused ASan/TSan each passed seven tests. Save lifecycle documentation was excluded from #75; its literal fixture/tests and public-link closure are retained in consolidation. The independent hash oracle and whole-plan acceptance remain open |
-| M | Directional glyphs `f94fc7a` through `e43c7fb`, candle anchoring `2d5c034` through its `6f6fc86` audit, wick clearance `8879169`/`9ae0f5e`, Buy-only grouping `d209d21` | Local source only; separate rendering, anchoring and grouping concerns. Include ReplayTab's containing-candle adapter wiring and tests. Raw fills and financial records must remain ungrouped; Sell grouping is not approved |
-| V | Progressive playback `05c23eb`/`711626d`, wheel zoom `cf4d85b`, axes/volume `6994ae7`, readable sliding viewport `ca3323c`/`e37057a`, stable geometry `01620b9` | Local source only; extract in dependency order. Full three-size/playing-resize, exact-data comparison and long-seek responsiveness acceptance remains open |
+| T | Trusted Hourly/Daily Replay boundaries, `a098577` | Exact selected-timestamp filtering fixes the same-day interior-gap defect locally, with a regression test. Real-data and native visual acceptance remain open |
+| F | Real selectable five-Buy/five-Sell offline fixture, `6b9b3e7` | Test-only [PR #75](https://github.com/sek788432/Stock-Back-Test-System/pull/75) merged as `999c1b90a2748fe09fbe6d1003f64633f124c285`; submitted `ba780948ca5b788c411791d5f5cfd934af2e239b` passed full RunTest 219/219, complete Quality, independent review and all CI/CodeQL. Additional Qt-enabled focused ASan/TSan each passed seven tests. Save lifecycle documentation was excluded from #75; its literal fixture/tests and public-link closure are retained in consolidation. The independent hash oracle is now implemented locally; whole-plan acceptance remains open |
+| M | Directional glyphs `f94fc7a` through `e43c7fb`, candle anchoring `2d5c034` through its `6f6fc86` audit, wick clearance `8879169`/`9ae0f5e`, Buy-only grouping `d209d21` | Current source and automated tests are in consolidation. Raw fills and financial records remain ungrouped; Sell grouping is not approved. Native visual acceptance remains open |
+| V | Progressive playback `05c23eb`/`711626d`, wheel zoom `cf4d85b`, axes/volume `6994ae7`, readable sliding viewport `ca3323c`/`e37057a`, stable geometry `01620b9` | Current source and viewport tests are in consolidation. Full three-size/playing-resize, real-data comparison and native long-seek responsiveness acceptance remain open |
 | L | CSV-derived development snapshot `d21cfc1`/`c28ddec`, launcher/build provenance `3245574` | Narrow seven-column extraction is preserved in a named local stash: its old-main regression failed with unsupported columns, then 39 Data tests passed. Review found daily exports can share that layout and be mislabeled hourly; explicit source-timeframe API/CLI confirmation remains pending, so the narrow slice is not accepted or published. Its explicit-form trailing-column compatibility is retained in the stash; the broad checkpoint's stricter source rejection remains unaccepted. Launcher preparation/provenance and final delivered-checkout Launch.sh remain separate; no public data release |
-| S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Included in the current consolidated checkpoint per the latest maintainer request, not fully accepted. The earlier split-PR preference is superseded; known live-writer/retention/mid-run durability gaps and incomplete UI acceptance still prohibit merging main |
+| S | Explicit recoverable Save `a5a43cf`, asynchronous Results library `95a03c9` through `12958ea`, naming `b95b344` through `12fe8eb` | Included in the current consolidation. R1–R3 ownership, retention and per-bar durability are implemented with local process tests; exact-head Quality/sanitizers, remote CI and native acceptance remain before merge to main |
 | U | Metric units/period explanations `236d97b`/`cf65e2a`, threshold coverage `d8b3c76` | Display-only [PR #74](https://github.com/sek788432/Stock-Back-Test-System/pull/74) merged as `8ab5ea4b8db7f01d5591a748805b0ae0eb544dfe`; exact submitted head `569bbe3` passed local full tests/quality, both backend-only sanitizer presets and all CI/CodeQL checks. Period editability and typed identity are unchanged. Excluded source period-disable/normalization work and whole Task 16 Engine-record/hash acceptance remain open |
 | P | SQLite manifest-pin regression, `9bb2a9e` | [PR #73](https://github.com/sek788432/Stock-Back-Test-System/pull/73) reopened on 2026-10-14, then merged as `34b958d8283a5d142e190a40bce0b9fb868654d7` after every exact-head CI/CodeQL gate succeeded; two-file diff at `9b1c492`, exact local full tests/Quality and fresh focused test passed. The same assertion remains in Draft #76; no source ref was discarded |
 | H | Approved CSV/UTC historical-condition semantics, `89d7704` | Requirements only. Previous-data-day, N-day gain, prior-21-day extrema/breakouts and immutable pre-range warm-up are not implemented |

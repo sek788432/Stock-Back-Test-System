@@ -254,6 +254,17 @@ result or referenced data is invalid or unavailable.
 
 ## 3. View-model seam
 
+Catalog requests carry value-owned entries and typed recovery notices from
+one opened Results store. Results, Replay, and Backtest's Unsaved Runs show
+English preservation warnings beside usable entries; Replay keeps these
+warnings outside its collapsed setup. The warning text is plain, selectable
+text and does not offer deletion, quarantine, or automatic repair. A subsequent
+successful catalog refresh replaces the notices, including hiding an empty
+notice set. Catalog initialization failures remain distinct from a successful
+catalog containing preserved-artifact notices. The notice label exposes the
+same current English text through its accessible name and is hidden when a
+successful refresh returns no notices.
+
 - **Implemented baseline:**
   [`ReplaySessionVm`](../../Src/Bindings/Include/Bte/Bindings/ReplaySessionVm.h)
   is a synchronous, dependency-light adapter over the current bar-only Replay.

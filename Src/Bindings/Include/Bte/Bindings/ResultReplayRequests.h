@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Bindings/ResultReplay.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Results/ResultStore.h"
@@ -11,7 +12,6 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace bte::bindings {
 
@@ -19,7 +19,7 @@ namespace bte::bindings {
 /// generation as an immutable queued value on this object's thread.
 class ResultReplayRequests final : public QObject {
 public:
-  using CatalogResult = core::Result<std::vector<results::ResultSummary>>;
+  using CatalogResult = core::Result<ResultCatalogSnapshot>;
   using OpenResult = core::Result<std::shared_ptr<ResultReplay>>;
   using CatalogCallback = std::function<void(CatalogResult)>;
   using OpenCallback = std::function<void(OpenResult)>;

@@ -50,6 +50,7 @@ private slots:
   void invalidSelectablePlanPreservesCompileError();
   void configuredRunComposesTrackedDataAndEngine();
   void draftLifecycleBoundariesReturnStructuredResults();
+  void draftCatalogKeepsRecoveryNoticesWithoutMutatingLegacyFiles();
 };
 
 void BacktestSessionVmTest::runPresentsFilledStarterBacktest() {
@@ -360,6 +361,52 @@ void BacktestSessionVmTest::draftLifecycleBoundariesReturnStructuredResults() {
   bte::bindings::testing::clearDraftStoreOpenHook();
   QVERIFY(!interruptedDiscard.ok());
   QCOMPARE(interruptedDiscard.error().code, bte::core::ErrorCode::cancelled);
+}
+
+void BacktestSessionVmTest::
+    draftCatalogKeepsRecoveryNoticesWithoutMutatingLegacyFiles() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto storage =
+      bte::bindings::PersistedBacktestStorage{.resultStore = root / "Results",
+                                              .dataStore = root / "Data",
+                                              .snapshotId = {},
+                                              .strategyHash = {}};
+  const auto missing = bte::bindings::listBacktestDraftCatalog(storage);
+  QVERIFY(missing.ok());
+  QVERIFY(missing.value().entries.empty());
+  QVERIFY(missing.value().notices.empty());
+  QVERIFY(!std::filesystem::exists(storage.resultStore));
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+  const auto cancelled =
+      bte::bindings::listBacktestDraftCatalog(storage, cancellation.token());
+  QVERIFY(!cancelled.ok());
+  QCOMPARE(cancelled.error().code, bte::core::ErrorCode::cancelled);
+  std::filesystem::create_directories(storage.resultStore / "Staging");
+  const auto resultId = std::string(32, 'a');
+  const auto legacyPath =
+      storage.resultStore / "Staging" / (resultId + ".bteresult");
+  {
+    std::ofstream legacy{legacyPath};
+    legacy << "unleased legacy staging";
+  }
+  const auto catalog = bte::bindings::listBacktestDraftCatalog(storage);
+  QVERIFY2(catalog.ok(), catalog.error().message.c_str());
+  QVERIFY(catalog.value().entries.empty());
+  QCOMPARE(catalog.value().notices.size(), 1U);
+  QCOMPARE(catalog.value().notices.front().resultId, resultId);
+  QCOMPARE(catalog.value().notices.front().reason,
+           bte::results::ResultRecoveryReason::legacyUnleased);
+  QVERIFY(!catalog.value().notices.front().diagnostic.empty());
+  std::ifstream legacy{legacyPath};
+  std::string contents;
+  std::getline(legacy, contents);
+  QCOMPARE(contents, std::string{"unleased legacy staging"});
+  const auto compatibility = bte::bindings::listBacktestDrafts(storage);
+  QVERIFY(compatibility.ok());
+  QVERIFY(compatibility.value().empty());
 }
 
 } // namespace

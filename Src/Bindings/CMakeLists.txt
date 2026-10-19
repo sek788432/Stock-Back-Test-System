@@ -1,6 +1,7 @@
 add_library(
   bte_result_replay_bindings
   STATIC
+    Include/Bte/Bindings/ResultCatalogSnapshot.h
     Include/Bte/Bindings/ResultReplay.h
     Include/Bte/Bindings/ResultLibraryRequests.h
     Include/Bte/Bindings/ResultReplayRequests.h

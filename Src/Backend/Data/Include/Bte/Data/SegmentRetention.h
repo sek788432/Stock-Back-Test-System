@@ -31,6 +31,9 @@ public:
           const std::vector<std::string> &segmentIds) const;
 
   [[nodiscard]] core::Result<std::vector<std::string>>
+  references(const std::string &resultId) const;
+
+  [[nodiscard]] core::Result<std::vector<std::string>>
   release(const std::string &resultId) const;
 
 private:

@@ -1,11 +1,11 @@
 # Result Persistence Safety Design
 
-**Status:** Proposed detailed design / not implemented. The maintainer approved
-the SQLite lease, pin-before-visibility, completed-bar atomic persistence and
-committed-prefix recovery direction on 2026-10-13. This written design requires
-maintainer review before its implementation plan or module-interface changes.
-It addresses Issue 10 findings R1–R3, not the remaining historical predicates,
-CSV timeframe contract, Daily interior-gap or chart acceptance work.
+**Status:** Implemented in the local Issue 10 consolidation; final exact-head
+quality gates, remote PR checks, and native-application acceptance remain
+pending. The maintainer approved the detailed design and R1–R3 implementation
+on 2026-10-18. This spec records the implemented boundaries and the evidence
+still required. It does not close the remaining historical predicates, CSV
+timeframe contract, real-data completeness, or chart acceptance work.
 
 **Owners:** [Engine/Results](EngineReplayPnL.md), [Data](DataLayer.md),
 [Frontend](FrontendQt.md), and the
@@ -18,18 +18,13 @@ opens Results or because execution crashes before Save. Save Result and Save &
 Replay still publish the same completed or diagnostic draft, without rerunning
 Engine. A recovered interrupted run is never presented as Completed.
 
-At checkpoint `b7e27a9`, Results tracks active writers only in process memory.
-`ResultStore::begin` makes Staging visible before acquiring data references;
-ordinary finalization does acquire references before promotion, but recovery
-currently promotes before acquiring them. `BacktestExecution::finalizeAndRecord`
-appends the timeline after execution, rather than at each completed bar. These
-are separate gaps despite passing local tests and the explicit Save flow.
-
-The current consolidated worktree still has these gaps: `recoverStaging()` can
-quarantine a live empty writer, recovery promotes before acquiring references,
-and `importResult()` promotes into Results before pinning its referenced data.
-This design is intended to close those ordering and ownership defects without
-changing canonical result identity.
+At checkpoint `b7e27a9`, Results tracked writers only in process memory,
+published Staging before pinning source data, and recorded the Engine timeline
+after execution. The current implementation replaces those paths with a
+per-Result SQLite lease, retention before visibility, an atomic write for each
+completed bar, and recovery limited to the committed prefix. These operational
+fields do not change schema-2 canonical identity. The remaining acceptance
+gate is exact-head CI and native application validation, not design approval.
 
 ## 2. Scope and unchanged contracts
 
@@ -318,11 +313,14 @@ Use isolated temporary stores and explicitly owned child processes for crash
 tests. No user result, market-data directory, existing stash or application is
 deleted or terminated as a test fixture.
 
-## 9. Review gate
+## 9. Implementation and acceptance status
 
-The direction is approved; the precise lease layout, additive Engine/Results
-seams, typed catalog notices and conservative orphan policy above are proposed
-details. Obtain review of this written spec before writing its task-by-task
-implementation plan. Do not implement module interfaces while that stage is
-incomplete. Track R1–R3 as open until their code, failure/process tests and
-actual application acceptance are verified.
+The lease layout, additive Engine/Results seams, typed catalog notices and
+conservative orphan policy above were approved before implementation. The
+local implementation includes real child-process tests for live-writer
+isolation, zero/one/multiple committed bars, alias paths, and recovery after
+process death, plus Results/Engine/Bindings/UI fault and lifecycle tests.
+R1–R3 code and local automated-test coverage are implemented. Keep final
+acceptance open until the exact submitted commit passes the repository's full
+test, Quality, ASan/TSan, and required remote checks, and the actual application
+flow is exercised against real saved data.

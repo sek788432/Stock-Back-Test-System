@@ -11,9 +11,9 @@
 #include <sqlite3.h>
 
 #include <algorithm>
-#include <mutex>
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include <atomic>
+#include <mutex>
 #endif
 #include <chrono>
 #include <compare>
@@ -26,7 +26,6 @@
 #include <optional>
 #include <random>
 #include <ranges> // IWYU pragma: keep
-#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -42,18 +41,6 @@ constexpr std::string_view aggregationPolicy = "utcCalendarDayV1";
 
 enum class DataValidationPolicy : std::uint8_t { deferToCaller, validateExact };
 enum class ResultStatusPolicy : std::uint8_t { terminalOnly, allowRunning };
-
-struct ActiveWriterRegistry final {
-  // A begin/recovery scan holds mutex across staging I/O so a newly created
-  // file cannot be mistaken for an interrupted writer in this process.
-  std::mutex mutex;
-  std::set<std::filesystem::path> paths;
-};
-
-ActiveWriterRegistry &activeWriters() {
-  static ActiveWriterRegistry registry;
-  return registry;
-}
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
 std::atomic<testing::FailurePoint> &configuredFailurePoint() {
@@ -126,12 +113,45 @@ core::Result<void> moveNoClobber(const std::filesystem::path &source,
   return {};
 }
 
+bool hasResultArtifact(const std::filesystem::path &root,
+                       const std::string_view resultId) {
+  for (const auto *directory : {"Staging", "Drafts", "Results", "Trash",
+                                "Quarantine"}) {
+    for (const auto *suffix : {".bteresult", ".purging.bteresult",
+                               ".discarding.bteresult"}) {
+      if (std::filesystem::exists(root / directory /
+                                  (std::string{resultId} + suffix))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool hasSiblingResultArtifact(const std::filesystem::path &root,
+                              const std::string_view resultId,
+                              const std::filesystem::path &currentPath) {
+  const auto current = currentPath.lexically_normal();
+  for (const auto *directory : {"Staging", "Drafts", "Results", "Trash"}) {
+    for (const auto *suffix : {".bteresult", ".purging.bteresult",
+                               ".discarding.bteresult"}) {
+      const auto candidate =
+          (root / directory / (std::string{resultId} + suffix))
+              .lexically_normal();
+      if (candidate != current && std::filesystem::exists(candidate)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 class Database final {
 public:
   Database() = default;
   ~Database() {
     if (handle_ != nullptr) {
-      sqlite3_close(handle_);
+      sqlite3_close_v2(handle_);
     }
   }
   Database(const Database &) = delete;
@@ -176,6 +196,17 @@ public:
   }
 
   [[nodiscard]] sqlite3 *handle() const noexcept { return handle_; }
+
+  [[nodiscard]] core::Result<void> close() {
+    if (handle_ == nullptr) {
+      return {};
+    }
+    if (sqlite3_close(handle_) != SQLITE_OK) {
+      return error("Unable to close Result database");
+    }
+    handle_ = nullptr;
+    return {};
+  }
 
   void observeCancellation(const core::CancellationToken &cancellation) {
     cancellation_ = cancellation;
@@ -277,11 +308,13 @@ private:
 };
 
 core::Result<std::unique_ptr<Database>>
-openDatabase(const std::filesystem::path &path, const bool readOnly = false) {
+openDatabase(const std::filesystem::path &path, const bool readOnly = false,
+             const bool createIfMissing = true) {
   auto database = std::make_unique<Database>();
-  const auto flags = readOnly ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
-                              : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
-                                    SQLITE_OPEN_FULLMUTEX;
+  const auto flags =
+      readOnly ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+               : SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX |
+                     (createIfMissing ? SQLITE_OPEN_CREATE : 0);
   auto opened = database->open(path, flags);
   if (!opened.ok()) {
     return opened.error();
@@ -384,7 +417,7 @@ bool validDisplayName(const std::string_view value) {
 
 core::Result<void> writeDisplayName(const std::filesystem::path &path,
                                     const std::string_view displayName) {
-  auto database = openDatabase(path);
+  auto database = openDatabase(path, false, false);
   if (!database.ok()) {
     return database.error();
   }
@@ -615,11 +648,12 @@ void appendOptionalInteger(std::string &bytes, const char tag,
   appendInteger(bytes, tag, *value);
 }
 
-std::string canonicalHash(const RunDescriptor &descriptor,
-                          const std::vector<CanonicalRecord> &records,
-                          const RunStatus status,
-                          const std::string_view terminalReason,
-                          const FinalSummary &summary) {
+std::string
+canonicalHash(const RunDescriptor &descriptor,
+              const std::vector<CanonicalRecord> &records,
+              const RunStatus status, const std::string_view terminalReason,
+              const FinalSummary &summary,
+              const std::span<const CanonicalRecord> terminalTail = {}) {
   std::string bytes{"BTE-CANONICAL-RESULT"};
   bytes.push_back('\0');
   appendInteger(bytes, 'v', schemaVersion);
@@ -648,21 +682,24 @@ std::string canonicalHash(const RunDescriptor &descriptor,
     appendInteger(bytes, 't', core::time::toUnixMillis(span.firstTimestamp));
     appendInteger(bytes, 't', core::time::toUnixMillis(span.lastTimestamp));
   }
-  for (const auto &record : records) {
-    appendInteger(bytes, 'q', static_cast<std::int64_t>(record.sequence));
-    appendInteger(bytes, 't', core::time::toUnixMillis(record.timestamp));
-    appendFrame(bytes, 'y', record.symbol);
-    appendInteger(bytes, 'f', static_cast<std::int64_t>(record.family));
-    appendInteger(bytes, 'x', static_cast<std::int64_t>(record.side));
-    appendOptionalInteger(bytes, '1', record.quantityShares);
-    appendOptionalInteger(bytes, '2', record.priceNanodollars);
-    appendOptionalInteger(bytes, '3', record.amountMicrodollars);
-    appendOptionalInteger(bytes, '4', record.cashMicrodollars);
-    appendOptionalInteger(bytes, '5', record.marketValueMicrodollars);
-    appendOptionalInteger(bytes, '6', record.equityMicrodollars);
-    appendOptionalInteger(bytes, 'p', record.pnlMicrodollars);
-    appendOptionalInteger(bytes, '7', record.positionShares);
-    appendFrame(bytes, 'm', record.text);
+  for (const auto part :
+       {std::span<const CanonicalRecord>{records}, terminalTail}) {
+    for (const auto &record : part) {
+      appendInteger(bytes, 'q', static_cast<std::int64_t>(record.sequence));
+      appendInteger(bytes, 't', core::time::toUnixMillis(record.timestamp));
+      appendFrame(bytes, 'y', record.symbol);
+      appendInteger(bytes, 'f', static_cast<std::int64_t>(record.family));
+      appendInteger(bytes, 'x', static_cast<std::int64_t>(record.side));
+      appendOptionalInteger(bytes, '1', record.quantityShares);
+      appendOptionalInteger(bytes, '2', record.priceNanodollars);
+      appendOptionalInteger(bytes, '3', record.amountMicrodollars);
+      appendOptionalInteger(bytes, '4', record.cashMicrodollars);
+      appendOptionalInteger(bytes, '5', record.marketValueMicrodollars);
+      appendOptionalInteger(bytes, '6', record.equityMicrodollars);
+      appendOptionalInteger(bytes, 'p', record.pnlMicrodollars);
+      appendOptionalInteger(bytes, '7', record.positionShares);
+      appendFrame(bytes, 'm', record.text);
+    }
   }
   appendInteger(bytes, 'z', static_cast<std::int64_t>(status));
   appendFrame(bytes, 'm', terminalReason);
@@ -690,6 +727,179 @@ std::int64_t nowUtcMillis() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
+}
+
+// SQLite is the cross-process authority, including for aliased store paths.
+// Each raw pointer below is an external C ABI output immediately owned by RAII.
+class ResultLease final {
+public:
+  enum class Creation : std::uint8_t { existing, fresh, terminal };
+
+  [[nodiscard]] static core::Result<std::unique_ptr<ResultLease>>
+  acquire(const std::filesystem::path &root, const std::string &id,
+          const Creation creation) {
+    if (!validResultId(id)) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Result lease ID is invalid");
+    }
+    const auto path = root / "Leases" / (id + ".sqlite3");
+    if (creation != Creation::existing && !std::filesystem::exists(path)) {
+      auto installed = install(root, id, path);
+      if (!installed.ok()) {
+        return installed.error();
+      }
+    } else if (creation == Creation::fresh) {
+      return core::makeError(core::ErrorCode::resourceBusy,
+                             "Result lease identity already exists");
+    }
+    auto lease = std::make_unique<ResultLease>();
+    auto opened = lease->open(path);
+    if (!opened.ok()) {
+      return opened.error();
+    }
+    auto locked = lease->execute("BEGIN EXCLUSIVE");
+    if (!locked.ok()) {
+      return locked.error();
+    }
+    // Inspection never changes an existing database's journal configuration.
+    auto mode = lease->query("PRAGMA journal_mode");
+    if (!mode.ok()) {
+      return mode.error();
+    }
+    if (mode.value().first != "delete") {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Result lease requires DELETE journal mode");
+    }
+    auto identity =
+        lease->query("SELECT result_id,protocol_version FROM lease_identity");
+    if (!identity.ok()) {
+      return identity.error();
+    }
+    if (identity.value().first != id || identity.value().second != 1) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Result lease identity or protocol is invalid");
+    }
+    return lease;
+  }
+
+private:
+  struct SeedDirectory final {
+    std::filesystem::path path;
+    ~SeedDirectory() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path, ignored);
+    }
+  };
+
+  [[nodiscard]] static core::Result<void>
+  install(const std::filesystem::path &root, const std::string &id,
+          const std::filesystem::path &destination) {
+    // The directory is allocated exclusively. Publish a fully initialized,
+    // closed database using a no-clobber hard link; never replace a lease
+    // inode.
+    const auto directory = root / "Leases" / ("Seed-" + allocateResultId());
+    std::error_code errorCode;
+    if (!std::filesystem::create_directory(directory, errorCode)) {
+      return storageError("Unable to allocate Result lease initialization: " +
+                          errorCode.message());
+    }
+    const SeedDirectory owner{directory};
+    const auto source = directory / "Lease.sqlite3";
+    {
+      ResultLease seed;
+      auto opened = seed.open(source, true);
+      if (!opened.ok()) {
+        return opened.error();
+      }
+      for (const auto &sql :
+           {std::string{"PRAGMA journal_mode=DELETE"},
+            std::string{"PRAGMA synchronous=EXTRA"},
+            std::string{"CREATE TABLE lease_identity(result_id TEXT PRIMARY "
+                        "KEY,protocol_version INTEGER NOT NULL)"},
+            "INSERT INTO lease_identity VALUES('" + id + "',1)"}) {
+        auto executed = seed.execute(sql);
+        if (!executed.ok()) {
+          return executed.error();
+        }
+      }
+    }
+    std::filesystem::create_hard_link(source, destination, errorCode);
+    if (errorCode) {
+      return core::makeError(
+          errorCode == std::errc::file_exists ? core::ErrorCode::resourceBusy
+                                              : core::ErrorCode::internal,
+          "Unable to install Result lease: " + errorCode.message());
+    }
+    return {};
+  }
+
+  [[nodiscard]] core::Error error(const std::string &operation) const {
+    const auto code = sqlite3_errcode(database_.get());
+    return core::makeError(code == SQLITE_BUSY || code == SQLITE_LOCKED
+                               ? core::ErrorCode::resourceBusy
+                               : core::ErrorCode::schemaMismatch,
+                           operation + ": " + sqlite3_errmsg(database_.get()));
+  }
+
+  [[nodiscard]] core::Result<void> open(const std::filesystem::path &path,
+                                        const bool create = false) {
+    sqlite3 *raw = nullptr;
+    const auto flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX |
+                       (create ? SQLITE_OPEN_CREATE : 0);
+    const auto status =
+        sqlite3_open_v2(path.string().c_str(), &raw, flags, nullptr);
+    database_.reset(raw);
+    if (status != SQLITE_OK) {
+      return error("Unable to open Result lease");
+    }
+    sqlite3_busy_timeout(database_.get(), 0);
+    return execute("PRAGMA synchronous=EXTRA");
+  }
+
+  [[nodiscard]] core::Result<void> execute(const std::string &sql) {
+    if (sqlite3_exec(database_.get(), sql.c_str(), nullptr, nullptr, nullptr) !=
+        SQLITE_OK) {
+      return error("Unable to acquire or initialize Result lease");
+    }
+    return {};
+  }
+
+  [[nodiscard]] core::Result<std::pair<std::string, int>>
+  query(const std::string &sql) {
+    sqlite3_stmt *raw = nullptr;
+    const auto prepared =
+        sqlite3_prepare_v2(database_.get(), sql.c_str(), -1, &raw, nullptr);
+    const auto statement =
+        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>{
+            raw, &sqlite3_finalize};
+    if (prepared != SQLITE_OK || sqlite3_step(statement.get()) != SQLITE_ROW) {
+      return error("Unable to validate Result lease");
+    }
+    auto value = std::pair{textColumn(statement.get(), 0),
+                           (sqlite3_column_count(statement.get()) > 1
+                                ? sqlite3_column_int(statement.get(), 1)
+                                : 0)};
+    if (sqlite3_step(statement.get()) != SQLITE_DONE) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Result lease metadata has duplicate identities");
+    }
+    return value;
+  }
+
+  std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database_{nullptr,
+                                                               &sqlite3_close};
+};
+
+std::vector<std::string> distinctSegments(const RunDescriptor &descriptor) {
+  std::vector<std::string> ids;
+  ids.reserve(descriptor.dataSelection.spans.size());
+  for (const auto &span : descriptor.dataSelection.spans) {
+    ids.push_back(span.segmentId);
+  }
+  std::ranges::sort(ids);
+  const auto duplicates = std::ranges::unique(ids);
+  ids.erase(duplicates.begin(), duplicates.end());
+  return ids;
 }
 
 core::Result<void> createResultSchema(Database &database,
@@ -845,13 +1055,14 @@ core::Result<OpenedResult> readResultFile(
     const std::filesystem::path &path, const std::filesystem::path &dataRoot,
     const DataValidationPolicy dataValidation,
     const ResultStatusPolicy resultStatus = ResultStatusPolicy::terminalOnly,
-    const core::CancellationToken &cancellation = {}) {
+    const core::CancellationToken &cancellation = {},
+    const bool readOnly = false) {
   // clang-format on
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
                            "Result read was cancelled");
   }
-  auto database = openDatabase(path, true);
+  auto database = openDatabase(path, readOnly, false);
   if (!database.ok()) {
     return core::makeError(core::ErrorCode::schemaMismatch,
                            "Result database cannot be opened");
@@ -1198,222 +1409,318 @@ core::Result<void> deleteCatalog(const std::filesystem::path &root,
   return statement.done();
 }
 
-struct RemovalRecoveryLocations final {
-  std::filesystem::path resultStore;
-  std::filesystem::path dataStore;
-};
-
-struct RemovalRecoveryPolicy final {
-  std::string_view suffix;
-  std::string_view destinationDirectory;
-  std::string_view operation;
-};
-
-core::Result<void>
-recoverInterruptedRemovals(const RemovalRecoveryLocations &locations,
-                           const RemovalRecoveryPolicy &policy,
-                           const core::CancellationToken &cancellation) {
-  std::error_code iterationError;
-  for (const auto &entry : std::filesystem::directory_iterator(
-           locations.resultStore / "Staging", iterationError)) {
-    if (cancellation.isCancellationRequested()) {
-      return core::makeError(core::ErrorCode::cancelled,
-                             "Result " + std::string{policy.operation} +
-                                 " recovery was cancelled");
-    }
-    // directory_iterator reports this only for a host filesystem race after
-    // construction; storage-root failures are covered before iteration.
-    // GCOVR_EXCL_START
-    if (iterationError) {
-      return storageError("Unable to inspect interrupted Result " +
-                          std::string{policy.operation} +
-                          " operations: " + iterationError.message());
-    }
-    // GCOVR_EXCL_STOP
-    const auto filename = entry.path().filename().string();
-    if (!entry.is_regular_file() || !filename.ends_with(policy.suffix)) {
+core::Result<std::unique_ptr<ResultLease>>
+mutationLease(const std::filesystem::path &root,
+              const std::filesystem::path &dataStore,
+              const std::string &resultId) {
+  const auto path = root / "Leases" / (resultId + ".sqlite3");
+  if (std::filesystem::exists(path)) {
+    return ResultLease::acquire(root, resultId,
+                                ResultLease::Creation::existing);
+  }
+  // Legacy terminal artifacts may acquire operational metadata only after
+  // validation. Legacy Staging never enters this compatibility path.
+  for (const auto *directory : {"Drafts", "Results", "Trash"}) {
+    const auto artifact = root / directory / (resultId + ".bteresult");
+    if (!std::filesystem::exists(artifact)) {
       continue;
     }
-    const auto resultId =
-        filename.substr(0, filename.size() - policy.suffix.size());
-    auto opened = readResultFile(entry.path(), locations.dataStore,
-                                 DataValidationPolicy::deferToCaller);
-    // readResultFile's corrupt/incompatible artifact failures have exhaustive
-    // contract coverage; this seam only preserves the structured error.
-    // GCOVR_EXCL_START
-    if (!opened.ok()) {
-      return opened.error();
+    if (!std::filesystem::is_regular_file(artifact)) {
+      return storageError("Result artifact is not a regular file");
     }
-    // GCOVR_EXCL_STOP
-    if (opened.value().resultId != resultId) {
+    auto valid = readResultFile(artifact, dataStore,
+                                DataValidationPolicy::deferToCaller);
+    if (!valid.ok()) {
+      return valid.error();
+    }
+    if (valid.value().resultId != resultId) {
       return core::makeError(core::ErrorCode::schemaMismatch,
-                             "Interrupted Result " +
-                                 std::string{policy.operation} +
-                                 " ID does not match its filename");
+                             "Result identity does not match its filename");
     }
-    std::vector<std::string> segmentIds;
-    for (const auto &span : opened.value().descriptor.dataSelection.spans) {
-      segmentIds.push_back(span.segmentId);
-    }
-    std::ranges::sort(segmentIds);
-    const auto duplicateSegmentIds = std::ranges::unique(segmentIds);
-    segmentIds.erase(duplicateSegmentIds.begin(), duplicateSegmentIds.end());
-    auto retention = data::SegmentRetentionStore::open(locations.dataStore);
-    // Retention open/acquire failures are fault-injected at their owning seam;
-    // recovery forwards them without translation. GCOVR_EXCL_START
-    if (!retention.ok()) {
-      return retention.error();
-    }
-    auto acquired = retention.value()->acquire(resultId, segmentIds);
-    if (!acquired.ok()) {
-      return acquired.error();
-    }
-    // GCOVR_EXCL_STOP
-    auto restored =
-        moveNoClobber(entry.path(),
-                      locations.resultStore / policy.destinationDirectory /
-                          (resultId + ".bteresult"),
-                      "Unable to roll back interrupted Result " +
-                          std::string{policy.operation});
-    // A collision here requires an external filesystem mutation after the
-    // recovery scan selected this unique staged artifact. GCOVR_EXCL_START
-    if (!restored.ok()) {
-      return restored.error();
-    }
-    // GCOVR_EXCL_STOP
+    return ResultLease::acquire(root, resultId,
+                                ResultLease::Creation::terminal);
   }
-  return {};
+  return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
 }
 
-// clang-format off
-// NOLINTNEXTLINE(readability-function-cognitive-complexity): recovery
-core::Result<void> recoverStaging(
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): store paths
-    const std::filesystem::path &root, const std::filesystem::path &dataStore,
-    const core::CancellationToken &cancellation) {
-  // clang-format on
-  std::error_code iterationError;
-  for (const auto &entry :
-       std::filesystem::directory_iterator(root / "Staging", iterationError)) {
+core::Result<void>
+validateCommittedPrefix(const OpenedResult &staged,
+                        const std::filesystem::path &dataStore,
+                        const core::CancellationToken &cancellation) {
+  auto reader = data::ReleaseSnapshotReader::open(
+      dataStore, staged.descriptor.dataSelection.snapshotId, cancellation);
+  if (!reader.ok()) {
+    return reader.error();
+  }
+  auto exact =
+      reader.value()->readExact(staged.descriptor.dataSelection, cancellation);
+  if (!exact.ok()) {
+    return exact.error();
+  }
+  std::size_t completedBars = 0;
+  for (const auto &record : staged.records) {
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
                              "Result recovery was cancelled");
     }
-    if (iterationError) {
-      return storageError("Unable to inspect staged Results: " +
-                          iterationError.message());
+    if (completedBars >= exact.value().bars.size() ||
+        record.timestamp != exact.value().bars[completedBars].timestamp ||
+        record.family == RecordFamily::terminalDiagnostic) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Running Result does not contain a chronological "
+                             "complete-bar prefix");
     }
-    if (!entry.is_regular_file() || entry.path().extension() != ".bteresult" ||
-        entry.path().filename().string().ends_with(".purging.bteresult") ||
-        entry.path().filename().string().ends_with(".discarding.bteresult")) {
-      continue;
-    }
-    if (activeWriters().paths.contains(entry.path().lexically_normal())) {
-      continue;
-    }
-    auto staged = readResultFile(
-        entry.path(), dataStore, DataValidationPolicy::validateExact,
-        ResultStatusPolicy::allowRunning, cancellation);
-    if (!staged.ok() && staged.error().code == core::ErrorCode::cancelled) {
-      return staged.error();
-    }
-    if (!staged.ok() || (staged.value().status == RunStatus::running &&
-                         staged.value().records.empty())) {
-      std::error_code quarantineError;
-      std::filesystem::rename(entry.path(),
-                              root / "Quarantine" / entry.path().filename(),
-                              quarantineError);
-      if (quarantineError) {
-        return storageError("Unable to quarantine staged Result: " +
-                            quarantineError.message());
-      }
-      continue;
-    }
-
-    if (staged.value().status == RunStatus::running) {
-      constexpr auto reason = "Run interrupted before terminal finalization";
-      const FinalSummary summary;
-      const auto hash =
-          canonicalHash(staged.value().descriptor, staged.value().records,
-                        RunStatus::interrupted, reason, summary);
-      auto database = openDatabase(entry.path());
-      if (!database.ok()) {
-        return database.error();
-      }
-      auto databaseOwner = std::move(database).value();
-      auto begun = databaseOwner->execute("BEGIN IMMEDIATE");
-      if (!begun.ok()) {
-        return begun.error();
-      }
-      const auto saved = nowUtcMillis();
-      Statement summaryStatement;
-      auto prepared = summaryStatement.prepare(
-          *databaseOwner, "INSERT INTO summary VALUES(NULL,NULL)");
-      if (!prepared.ok()) {
-        return prepared.error();
-      }
-      auto written = summaryStatement.done();
-      if (!written.ok()) {
-        return written.error();
-      }
-      Statement meta;
-      prepared = meta.prepare(
-          *databaseOwner, "UPDATE result_meta SET status=?1,canonical_hash=?2,"
-                          "terminal_reason=?3,saved_utc_ms=?4");
-      if (!prepared.ok() ||
-          !meta.integer(1, static_cast<std::int64_t>(RunStatus::interrupted))
-               .ok() ||
-          !meta.text(2, hash).ok() || !meta.text(3, reason).ok() ||
-          !meta.integer(4, saved).ok()) {
-        return databaseOwner->error("Unable to bind recovered Result");
-      }
-      written = meta.done();
-      if (!written.ok()) {
-        return written.error();
-      }
-      auto committed = databaseOwner->execute("COMMIT");
-      if (!committed.ok()) {
-        return committed.error();
-      }
-      auto checkpointed =
-          databaseOwner->execute("PRAGMA wal_checkpoint(TRUNCATE)");
-      if (!checkpointed.ok()) {
-        return checkpointed.error();
-      }
-      databaseOwner.reset();
-    }
-
-    auto validated = readResultFile(
-        entry.path(), dataStore, DataValidationPolicy::validateExact,
-        ResultStatusPolicy::terminalOnly, cancellation);
-    if (!validated.ok()) {
-      return validated.error();
-    }
-    const auto destination = root / "Drafts" / entry.path().filename();
-    auto promoted = moveNoClobber(entry.path(), destination,
-                                  "Unable to recover Result draft");
-    if (!promoted.ok()) {
-      return promoted.error();
-    }
-
-    std::vector<std::string> segmentIds;
-    for (const auto &span : validated.value().descriptor.dataSelection.spans) {
-      segmentIds.push_back(span.segmentId);
-    }
-    std::ranges::sort(segmentIds);
-    const auto uniqueEnd = std::ranges::unique(segmentIds).begin();
-    segmentIds.erase(uniqueEnd, segmentIds.end());
-    auto retention = data::SegmentRetentionStore::open(dataStore);
-    if (!retention.ok()) {
-      return retention.error();
-    }
-    auto acquired =
-        retention.value()->acquire(validated.value().resultId, segmentIds);
-    if (!acquired.ok()) {
-      return acquired.error();
+    if (record.family == RecordFamily::portfolio) {
+      ++completedBars;
     }
   }
+  if (!staged.records.empty() &&
+      staged.records.back().family != RecordFamily::portfolio) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Running Result has an incomplete trailing bar");
+  }
   return {};
+}
+
+core::Result<void> interruptArtifact(const std::filesystem::path &path,
+                                     const OpenedResult &staged) {
+  constexpr auto reason = "Run interrupted before terminal finalization";
+  const FinalSummary summary;
+  const auto hash = canonicalHash(staged.descriptor, staged.records,
+                                  RunStatus::interrupted, reason, summary);
+  auto database = openDatabase(path, false, false);
+  if (!database.ok()) {
+    return database.error();
+  }
+  auto begun = database.value()->execute("BEGIN IMMEDIATE");
+  if (!begun.ok()) {
+    return begun.error();
+  }
+  auto inserted =
+      database.value()->execute("INSERT INTO summary VALUES(NULL,NULL)");
+  if (!inserted.ok()) {
+    return inserted.error();
+  }
+  Statement meta;
+  auto prepared = meta.prepare(
+      *database.value(),
+      "UPDATE result_meta SET "
+      "status=?1,canonical_hash=?2,terminal_reason=?3,saved_utc_ms=?4");
+  if (!prepared.ok() ||
+      !meta.integer(1, static_cast<std::int64_t>(RunStatus::interrupted))
+           .ok() ||
+      !meta.text(2, hash).ok() || !meta.text(3, reason).ok() ||
+      !meta.integer(4, nowUtcMillis()).ok()) {
+    return database.value()->error("Unable to bind recovered Result");
+  }
+  auto updated = meta.done();
+  if (!updated.ok()) {
+    return updated.error();
+  }
+  auto committed = database.value()->execute("COMMIT");
+  if (!committed.ok()) {
+    return committed.error();
+  }
+  return database.value()->execute("PRAGMA wal_checkpoint(TRUNCATE)");
+}
+
+using RecoveryOutcome = core::Result<std::optional<ResultRecoveryNotice>>;
+
+RecoveryOutcome recoverArtifact(const std::filesystem::path &path,
+                                const std::filesystem::path &root,
+                                const std::filesystem::path &dataStore,
+                                const core::CancellationToken &cancellation) {
+  const auto filename = path.filename().string();
+  const auto removal = filename.ends_with(".purging.bteresult") ||
+                       filename.ends_with(".discarding.bteresult");
+  const auto suffix =
+      filename.ends_with(".purging.bteresult")      ? ".purging.bteresult"
+      : filename.ends_with(".discarding.bteresult") ? ".discarding.bteresult"
+                                                    : ".bteresult";
+  const auto id =
+      filename.substr(0, filename.size() - std::string_view{suffix}.size());
+  const auto notice = [&id](const ResultRecoveryReason reason,
+                            const std::string &diagnostic) -> RecoveryOutcome {
+    return std::optional<ResultRecoveryNotice>{{id, reason, diagnostic}};
+  };
+  if (!std::filesystem::exists(root / "Leases" / (id + ".sqlite3"))) {
+    return notice(ResultRecoveryReason::legacyUnleased,
+                  "Preserved legacy Result staging without an ownership lease");
+  }
+  auto lease = ResultLease::acquire(root, id, ResultLease::Creation::existing);
+  if (!lease.ok()) {
+    if (lease.error().code == core::ErrorCode::resourceBusy) {
+      return std::optional<ResultRecoveryNotice>{};
+    }
+    return notice(ResultRecoveryReason::invalidLease, lease.error().message);
+  }
+  auto staged =
+      readResultFile(path, dataStore, DataValidationPolicy::deferToCaller,
+                     ResultStatusPolicy::allowRunning, cancellation);
+  if (!staged.ok()) {
+    if (staged.error().code == core::ErrorCode::cancelled) {
+      return staged.error();
+    }
+    return notice(ResultRecoveryReason::invalidPrefix, staged.error().message);
+  }
+  if (staged.value().resultId != id) {
+    return notice(ResultRecoveryReason::invalidPrefix,
+                  "Result identity does not match its staging filename");
+  }
+  if (hasSiblingResultArtifact(root, id, path)) {
+    return notice(ResultRecoveryReason::invalidPrefix,
+                  "Preserved Result staging because another artifact with the "
+                  "same identity already exists");
+  }
+  auto retention = data::SegmentRetentionStore::open(dataStore);
+  if (!retention.ok()) {
+    return notice(ResultRecoveryReason::missingReferences,
+                  retention.error().message);
+  }
+  const auto expected = distinctSegments(staged.value().descriptor);
+  auto references = retention.value()->references(id);
+  if (!references.ok()) {
+    return notice(ResultRecoveryReason::missingReferences,
+                  references.error().message);
+  }
+  if ((!removal && references.value() != expected) ||
+      (removal && !references.value().empty() &&
+       references.value() != expected)) {
+    return notice(ResultRecoveryReason::missingReferences,
+                  "Preserved Result staging with missing or inconsistent data "
+                  "references");
+  }
+  auto pinned = retention.value()->acquire(id, expected);
+  if (!pinned.ok()) {
+    return notice(ResultRecoveryReason::missingReferences,
+                  pinned.error().message);
+  }
+  auto exact = validateDataSelection(
+      dataStore, staged.value().descriptor.dataSelection, cancellation);
+  if (!exact.ok()) {
+    if (exact.error().code == core::ErrorCode::cancelled) {
+      return exact.error();
+    }
+    return notice(ResultRecoveryReason::missingReferences,
+                  exact.error().message);
+  }
+  if (!removal && staged.value().status == RunStatus::running) {
+    auto prefix =
+        validateCommittedPrefix(staged.value(), dataStore, cancellation);
+    if (!prefix.ok()) {
+      if (prefix.error().code == core::ErrorCode::cancelled) {
+        return prefix.error();
+      }
+      return notice(ResultRecoveryReason::invalidPrefix,
+                    prefix.error().message);
+    }
+    auto interrupted = interruptArtifact(path, staged.value());
+    if (!interrupted.ok()) {
+      return notice(ResultRecoveryReason::invalidPrefix,
+                    interrupted.error().message);
+    }
+  }
+  auto validated =
+      readResultFile(path, dataStore, DataValidationPolicy::validateExact,
+                     ResultStatusPolicy::terminalOnly, cancellation);
+  if (!validated.ok()) {
+    if (validated.error().code == core::ErrorCode::cancelled) {
+      return validated.error();
+    }
+    return notice(ResultRecoveryReason::invalidPrefix,
+                  validated.error().message);
+  }
+  const auto destinationDirectory =
+      filename.ends_with(".purging.bteresult") ? "Trash" : "Drafts";
+  auto moved =
+      moveNoClobber(path, root / destinationDirectory / (id + ".bteresult"),
+                    "Unable to recover owned Result artifact");
+  if (!moved.ok()) {
+    return notice(ResultRecoveryReason::invalidPrefix, moved.error().message);
+  }
+  return std::optional<ResultRecoveryNotice>{};
+}
+
+RecoveryOutcome inspectOrphan(const std::filesystem::path &path,
+                              const std::filesystem::path &root,
+                              const std::filesystem::path &dataStore) {
+  const auto id = path.stem().string();
+  for (const auto *directory : {"Staging", "Drafts", "Results", "Trash"}) {
+    for (const auto *suffix :
+         {".bteresult", ".purging.bteresult", ".discarding.bteresult"}) {
+      if (std::filesystem::exists(root / directory / (id + suffix))) {
+        return std::optional<ResultRecoveryNotice>{};
+      }
+    }
+  }
+  auto lease = ResultLease::acquire(root, id, ResultLease::Creation::existing);
+  if (!lease.ok()) {
+    if (lease.error().code == core::ErrorCode::resourceBusy) {
+      return std::optional<ResultRecoveryNotice>{};
+    }
+    return std::optional<ResultRecoveryNotice>{
+        {id, ResultRecoveryReason::invalidLease, lease.error().message}};
+  }
+  auto retention = data::SegmentRetentionStore::open(dataStore);
+  if (!retention.ok()) {
+    return std::optional<ResultRecoveryNotice>{
+        {id, ResultRecoveryReason::missingReferences,
+         retention.error().message}};
+  }
+  auto references = retention.value()->references(id);
+  if (!references.ok()) {
+    return std::optional<ResultRecoveryNotice>{
+        {id, ResultRecoveryReason::missingReferences,
+         references.error().message}};
+  }
+  if (!references.value().empty()) {
+    return std::optional<ResultRecoveryNotice>{
+        {id, ResultRecoveryReason::orphanedInitialization,
+         "Preserved Result initialization references without a recoverable "
+         "artifact"}};
+  }
+  return std::optional<ResultRecoveryNotice>{};
+}
+
+core::Result<std::vector<ResultRecoveryNotice>>
+recoverStaging(const std::filesystem::path &root,
+               const std::filesystem::path &dataStore,
+               const core::CancellationToken &cancellation) {
+  std::vector<ResultRecoveryNotice> notices;
+  for (const auto *directory : {"Staging", "Leases"}) {
+    std::error_code errorCode;
+    auto iterator =
+        std::filesystem::directory_iterator{root / directory, errorCode};
+    const auto end = std::filesystem::directory_iterator{};
+    while (!errorCode && iterator != end) {
+      if (cancellation.isCancellationRequested()) {
+        return core::makeError(core::ErrorCode::cancelled,
+                               "Result recovery was cancelled");
+      }
+      const auto path = iterator->path();
+      if (iterator->is_regular_file(errorCode) &&
+          path.extension() == (std::string_view{directory} == "Staging"
+                                   ? ".bteresult"
+                                   : ".sqlite3")) {
+        auto outcome =
+            std::string_view{directory} == "Staging"
+                ? recoverArtifact(path, root, dataStore, cancellation)
+                : inspectOrphan(path, root, dataStore);
+        if (!outcome.ok()) {
+          return outcome.error();
+        }
+        if (outcome.value().has_value()) {
+          notices.push_back(*outcome.value());
+        }
+      }
+      iterator.increment(errorCode);
+    }
+    if (errorCode) {
+      return storageError("Unable to inspect Result recovery directory: " +
+                          errorCode.message());
+    }
+  }
+  return notices;
 }
 
 } // namespace
@@ -1448,38 +1755,15 @@ void forceNextResultId(std::string resultId) {
 } // namespace testing
 #endif
 
-struct ResultWriter::Impl {
-  std::filesystem::path root;
-  std::filesystem::path dataStore;
-  std::filesystem::path stagingPath;
-  std::string id;
-  RunDescriptor descriptor;
-  std::vector<CanonicalRecord> records;
-  std::unique_ptr<Database> database;
-  bool finalized = false;
-};
-
-ResultWriter::ResultWriter(ConstructionKey, std::unique_ptr<Impl> impl)
-    : impl_(std::move(impl)) {}
-
-ResultWriter::~ResultWriter() {
-  impl_->database.reset();
-  const std::scoped_lock lock{activeWriters().mutex};
-  activeWriters().paths.erase(impl_->stagingPath.lexically_normal());
-}
-
-const std::string &ResultWriter::resultId() const noexcept { return impl_->id; }
+namespace {
 
 core::Result<void>
-ResultWriter::append(const std::vector<CanonicalRecord> &records) {
-  if (impl_->finalized || impl_->database == nullptr || records.empty()) {
-    return core::makeError(core::ErrorCode::invalidArgument,
-                           "Result record batch is invalid");
-  }
-  auto expected = impl_->records.size();
-  auto previousTimestamp = impl_->records.empty()
-                               ? std::optional<core::Timestamp>{}
-                               : impl_->records.back().timestamp;
+validateRecordBatch(const RunDescriptor &descriptor,
+                    const std::vector<CanonicalRecord> &previous,
+                    const std::span<const CanonicalRecord> records) {
+  auto expected = previous.size();
+  auto previousTimestamp = previous.empty() ? std::optional<core::Timestamp>{}
+                                            : previous.back().timestamp;
   for (const auto &record : records) {
     if (record.sequence != expected || record.symbol.empty() ||
         (previousTimestamp.has_value() &&
@@ -1488,27 +1772,24 @@ ResultWriter::append(const std::vector<CanonicalRecord> &records) {
                              "Canonical Result records are out of order");
     }
     auto recordValidation = validateCanonicalRecord(
-        record, impl_->descriptor, core::ErrorCode::invalidArgument);
+        record, descriptor, core::ErrorCode::invalidArgument);
     if (!recordValidation.ok()) {
       return recordValidation.error();
     }
     ++expected;
     previousTimestamp = record.timestamp;
   }
-  auto begun = impl_->database->execute("BEGIN IMMEDIATE");
-  if (!begun.ok()) {
-    return begun.error();
-  }
-  if (consumeFailure(testing::FailurePoint::recordTransaction)) {
-    const auto rolledBack = impl_->database->execute("ROLLBACK");
-    static_cast<void>(rolledBack);
-    return injectedFailure("record transaction");
-  }
+  return {};
+}
+
+core::Result<void>
+insertRecordBatch(Database &database,
+                  const std::span<const CanonicalRecord> records) {
   for (const auto &record : records) {
     Statement statement;
     auto prepared = statement.prepare(
-        *impl_->database, "INSERT INTO canonical_records VALUES("
-                          "?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)");
+        database, "INSERT INTO canonical_records VALUES("
+                  "?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)");
     if (!prepared.ok() ||
         !statement.integer(1, static_cast<std::int64_t>(record.sequence))
              .ok() ||
@@ -1526,16 +1807,61 @@ ResultWriter::append(const std::vector<CanonicalRecord> &records) {
         !statement.optionalInteger(12, record.pnlMicrodollars).ok() ||
         !statement.optionalInteger(13, record.positionShares).ok() ||
         !statement.text(14, record.text).ok()) {
-      const auto ignored = impl_->database->execute("ROLLBACK");
-      static_cast<void>(ignored);
-      return impl_->database->error("Unable to bind canonical record");
+      return database.error("Unable to bind canonical record");
     }
     auto inserted = statement.done();
     if (!inserted.ok()) {
-      const auto ignored = impl_->database->execute("ROLLBACK");
-      static_cast<void>(ignored);
       return inserted.error();
     }
+  }
+  return {};
+}
+
+} // namespace
+
+struct ResultWriter::Impl {
+  std::filesystem::path root;
+  std::filesystem::path dataStore;
+  std::filesystem::path stagingPath;
+  std::string id;
+  RunDescriptor descriptor;
+  std::vector<CanonicalRecord> records;
+  std::unique_ptr<ResultLease> lease;
+  std::unique_ptr<Database> database;
+  bool finalized = false;
+};
+
+ResultWriter::ResultWriter(ConstructionKey, std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl)) {}
+
+ResultWriter::~ResultWriter() { impl_->database.reset(); }
+
+const std::string &ResultWriter::resultId() const noexcept { return impl_->id; }
+
+core::Result<void>
+ResultWriter::append(const std::vector<CanonicalRecord> &records) {
+  if (impl_->finalized || impl_->database == nullptr || records.empty()) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result record batch is invalid");
+  }
+  auto validated =
+      validateRecordBatch(impl_->descriptor, impl_->records, records);
+  if (!validated.ok()) {
+    return validated.error();
+  }
+  auto begun = impl_->database->execute("BEGIN IMMEDIATE");
+  if (!begun.ok()) {
+    return begun.error();
+  }
+  if (consumeFailure(testing::FailurePoint::recordTransaction)) {
+    const auto rolledBack = impl_->database->execute("ROLLBACK");
+    static_cast<void>(rolledBack);
+    return injectedFailure("record transaction");
+  }
+  auto inserted = insertRecordBatch(*impl_->database, records);
+  if (!inserted.ok()) {
+    (void)impl_->database->execute("ROLLBACK");
+    return inserted.error();
   }
   auto committed = impl_->database->execute("COMMIT");
   if (!committed.ok()) {
@@ -1553,6 +1879,14 @@ ResultWriter::finalizeDraft(const RunStatus status, const FinalSummary &summary,
   return finalize(status, summary, terminalReason, FinalizationTarget::draft);
 }
 
+core::Result<FinalizedResult> ResultWriter::finalizeDraft(
+    const RunStatus status, const FinalSummary &summary,
+    const std::string &terminalReason,
+    const std::span<const CanonicalRecord> terminalTail) {
+  return finalize(status, summary, terminalReason, FinalizationTarget::draft,
+                  terminalTail);
+}
+
 core::Result<FinalizedResult>
 ResultWriter::finalizeAndPromote(const RunStatus status,
                                  const FinalSummary &summary,
@@ -1565,7 +1899,8 @@ core::Result<FinalizedResult>
 // NOLINTNEXTLINE(readability-function-cognitive-complexity): transaction
 ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
                        const std::string &terminalReason,
-                       const FinalizationTarget target) {
+                       const FinalizationTarget target,
+                       const std::span<const CanonicalRecord> terminalTail) {
   if (impl_->finalized || impl_->database == nullptr ||
       !validRunStatus(status) || status == RunStatus::running ||
       (status == RunStatus::completed &&
@@ -1577,8 +1912,13 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result terminal status or summary is invalid");
   }
+  auto tailValidation =
+      validateRecordBatch(impl_->descriptor, impl_->records, terminalTail);
+  if (!tailValidation.ok()) {
+    return tailValidation.error();
+  }
   const auto hash = canonicalHash(impl_->descriptor, impl_->records, status,
-                                  terminalReason, summary);
+                                  terminalReason, summary, terminalTail);
   if (consumeFailure(testing::FailurePoint::hashFinalization)) {
     return injectedFailure("hash finalization");
   }
@@ -1586,41 +1926,49 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
   if (!begun.ok()) {
     return begun.error();
   }
-  Statement summaryStatement;
-  auto prepared = summaryStatement.prepare(*impl_->database,
-                                           "INSERT INTO summary VALUES(?1,?2)");
-  if (!prepared.ok() ||
-      !summaryStatement.optionalInteger(1, summary.finalEquityMicrodollars)
-           .ok() ||
-      !summaryStatement.optionalInteger(2, summary.pnlMicrodollars).ok()) {
-    const auto ignored = impl_->database->execute("ROLLBACK");
-    static_cast<void>(ignored);
-    return impl_->database->error("Unable to bind Result summary");
+  auto tailInserted = insertRecordBatch(*impl_->database, terminalTail);
+  if (!tailInserted.ok()) {
+    (void)impl_->database->execute("ROLLBACK");
+    return tailInserted.error();
   }
-  auto written = summaryStatement.done();
-  if (!written.ok()) {
-    const auto ignored = impl_->database->execute("ROLLBACK");
-    static_cast<void>(ignored);
-    return written.error();
-  }
-  Statement meta;
-  prepared = meta.prepare(*impl_->database,
-                          "UPDATE result_meta SET status=?1,canonical_hash=?2,"
-                          "terminal_reason=?3,saved_utc_ms=?4");
   const auto saved = nowUtcMillis();
-  if (!prepared.ok() ||
-      !meta.integer(1, static_cast<std::int64_t>(status)).ok() ||
-      !meta.text(2, hash).ok() || !meta.text(3, terminalReason).ok() ||
-      !meta.integer(4, saved).ok()) {
-    const auto ignored = impl_->database->execute("ROLLBACK");
-    static_cast<void>(ignored);
-    return impl_->database->error("Unable to bind Result finalization");
-  }
-  written = meta.done();
-  if (!written.ok()) {
-    const auto ignored = impl_->database->execute("ROLLBACK");
-    static_cast<void>(ignored);
-    return written.error();
+  {
+    Statement summaryStatement;
+    auto prepared = summaryStatement.prepare(
+        *impl_->database, "INSERT INTO summary VALUES(?1,?2)");
+    if (!prepared.ok() ||
+        !summaryStatement.optionalInteger(1, summary.finalEquityMicrodollars)
+             .ok() ||
+        !summaryStatement.optionalInteger(2, summary.pnlMicrodollars).ok()) {
+      const auto ignored = impl_->database->execute("ROLLBACK");
+      static_cast<void>(ignored);
+      return impl_->database->error("Unable to bind Result summary");
+    }
+    auto written = summaryStatement.done();
+    if (!written.ok()) {
+      const auto ignored = impl_->database->execute("ROLLBACK");
+      static_cast<void>(ignored);
+      return written.error();
+    }
+    Statement meta;
+    prepared = meta.prepare(
+        *impl_->database,
+        "UPDATE result_meta SET status=?1,canonical_hash=?2,"
+        "terminal_reason=?3,saved_utc_ms=?4");
+    if (!prepared.ok() ||
+        !meta.integer(1, static_cast<std::int64_t>(status)).ok() ||
+        !meta.text(2, hash).ok() || !meta.text(3, terminalReason).ok() ||
+        !meta.integer(4, saved).ok()) {
+      const auto ignored = impl_->database->execute("ROLLBACK");
+      static_cast<void>(ignored);
+      return impl_->database->error("Unable to bind Result finalization");
+    }
+    written = meta.done();
+    if (!written.ok()) {
+      const auto ignored = impl_->database->execute("ROLLBACK");
+      static_cast<void>(ignored);
+      return written.error();
+    }
   }
   auto committed = impl_->database->execute("COMMIT");
   if (!committed.ok()) {
@@ -1628,10 +1976,16 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
     static_cast<void>(ignored);
     return committed.error();
   }
+  impl_->records.insert(impl_->records.end(), terminalTail.begin(),
+                        terminalTail.end());
   auto checkpointed =
       impl_->database->execute("PRAGMA wal_checkpoint(TRUNCATE)");
   if (!checkpointed.ok()) {
     return checkpointed.error();
+  }
+  auto closed = impl_->database->close();
+  if (!closed.ok()) {
+    return closed.error();
   }
   impl_->database.reset();
   if (consumeFailure(testing::FailurePoint::close)) {
@@ -1713,12 +2067,20 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
   }
   // GCOVR_EXCL_STOP
   impl_->finalized = true;
+  impl_->lease.reset();
   return FinalizedResult{.resultId = impl_->id, .canonicalResultHash = hash};
 }
 
 ResultStore::ResultStore(ConstructionKey, std::filesystem::path root,
-                         std::filesystem::path dataStore)
-    : root_(std::move(root)), dataStore_(std::move(dataStore)) {}
+                         std::filesystem::path dataStore,
+                         std::vector<ResultRecoveryNotice> notices)
+    : root_(std::move(root)), dataStore_(std::move(dataStore)),
+      recoveryNotices_(std::move(notices)) {}
+
+const std::vector<ResultRecoveryNotice> &
+ResultStore::recoveryNotices() const noexcept {
+  return recoveryNotices_;
+}
 
 core::Result<std::unique_ptr<ResultStore>>
 ResultStore::open(const std::filesystem::path &root,
@@ -1734,7 +2096,7 @@ ResultStore::open(const std::filesystem::path &root,
   }
   try {
     for (const auto *const name :
-         {"Staging", "Drafts", "Results", "Trash", "Quarantine"}) {
+         {"Staging", "Drafts", "Results", "Trash", "Quarantine", "Leases"}) {
       std::filesystem::create_directories(root / name);
     }
   } catch (const std::filesystem::filesystem_error &error) {
@@ -1746,32 +2108,12 @@ ResultStore::open(const std::filesystem::path &root,
   if (!initialized.ok()) {
     return initialized.error();
   }
-  const auto locations =
-      RemovalRecoveryLocations{.resultStore = root, .dataStore = dataStore};
-  auto recoveredPurges =
-      recoverInterruptedRemovals(locations,
-                                 {.suffix = ".purging.bteresult",
-                                  .destinationDirectory = "Trash",
-                                  .operation = "purge"},
-                                 cancellation);
-  if (!recoveredPurges.ok()) {
-    return recoveredPurges.error();
-  }
-  auto recoveredDiscards =
-      recoverInterruptedRemovals(locations,
-                                 {.suffix = ".discarding.bteresult",
-                                  .destinationDirectory = "Drafts",
-                                  .operation = "draft discard"},
-                                 cancellation);
-  if (!recoveredDiscards.ok()) {
-    return recoveredDiscards.error();
-  }
-  const std::scoped_lock lock{activeWriters().mutex};
   auto recovered = recoverStaging(root, dataStore, cancellation);
   if (!recovered.ok()) {
     return recovered.error();
   }
-  return std::make_unique<ResultStore>(ConstructionKey{}, root, dataStore);
+  return std::make_unique<ResultStore>(ConstructionKey{}, root, dataStore,
+                                       std::move(recovered).value());
 }
 
 core::Result<std::unique_ptr<ResultWriter>>
@@ -1784,16 +2126,33 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
   if (!exact.ok()) {
     return exact.error();
   }
-  const std::scoped_lock lock{activeWriters().mutex};
   for (int attempt = 0; attempt < 8; ++attempt) {
     const auto resultId = allocateResultId();
     const auto stagingPath = root_ / "Staging" / (resultId + ".bteresult");
-    if (std::filesystem::exists(stagingPath) ||
-        std::filesystem::exists(root_ / "Drafts" / (resultId + ".bteresult")) ||
-        std::filesystem::exists(root_ / "Results" /
-                                (resultId + ".bteresult")) ||
-        std::filesystem::exists(root_ / "Trash" / (resultId + ".bteresult"))) {
+    if (hasResultArtifact(root_, resultId)) {
       continue;
+    }
+    auto lease =
+        ResultLease::acquire(root_, resultId, ResultLease::Creation::fresh);
+    if (!lease.ok()) {
+      if (lease.error().code == core::ErrorCode::resourceBusy) {
+        continue;
+      }
+      return lease.error();
+    }
+    auto retention = data::SegmentRetentionStore::open(dataStore_);
+    if (!retention.ok()) {
+      return retention.error();
+    }
+    auto pinned =
+        retention.value()->acquire(resultId, distinctSegments(descriptor));
+    if (!pinned.ok()) {
+      return pinned.error();
+    }
+    auto revalidated =
+        validateDataSelection(dataStore_, descriptor.dataSelection);
+    if (!revalidated.ok()) {
+      return revalidated.error();
     }
     auto database = openDatabase(stagingPath);
     if (!database.ok()) {
@@ -1812,8 +2171,8 @@ ResultStore::begin(const RunDescriptor &descriptor) const {
     impl->stagingPath = stagingPath;
     impl->id = resultId;
     impl->descriptor = descriptor;
+    impl->lease = std::move(lease).value();
     impl->database = std::move(database).value();
-    activeWriters().paths.insert(stagingPath.lexically_normal());
     return std::make_unique<ResultWriter>(ResultWriter::ConstructionKey{},
                                           std::move(impl));
   }
@@ -1987,6 +2346,11 @@ ResultStore::publishDraft(const std::string &resultId,
                            "Result name must be 1–160 bytes without leading, "
                            "trailing, or control characters");
   }
+  auto lease = mutationLease(root_, dataStore_, resultId);
+  if (!lease.ok()) {
+    return lease.error();
+  }
+
   const auto filename = resultId + ".bteresult";
   const auto resultPath = root_ / "Results" / filename;
   if (std::filesystem::exists(resultPath)) {
@@ -2063,6 +2427,11 @@ ResultStore::renameResult(const std::string &resultId,
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID or name is invalid");
   }
+  auto lease = mutationLease(root_, dataStore_, resultId);
+  if (!lease.ok()) {
+    return lease.error();
+  }
+
   const auto path = root_ / "Results" / (resultId + ".bteresult");
   if (!std::filesystem::exists(path)) {
     return core::makeError(core::ErrorCode::notFound, "Result is unavailable");
@@ -2081,6 +2450,11 @@ ResultStore::discardDraft(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
+  auto lease = mutationLease(root_, dataStore_, resultId);
+  if (!lease.ok()) {
+    return lease.error();
+  }
+
   const auto draftPath = root_ / "Drafts" / (resultId + ".bteresult");
   if (!std::filesystem::exists(draftPath)) {
     return core::makeError(core::ErrorCode::notFound,
@@ -2147,6 +2521,11 @@ core::Result<void> ResultStore::moveToTrash(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
+  auto lease = mutationLease(root_, dataStore_, resultId);
+  if (!lease.ok()) {
+    return lease.error();
+  }
+
   auto moved = moveNoClobber(root_ / "Results" / (resultId + ".bteresult"),
                              root_ / "Trash" / (resultId + ".bteresult"),
                              "Unable to move Result to Trash");
@@ -2161,6 +2540,11 @@ core::Result<void> ResultStore::restore(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
+  auto lease = mutationLease(root_, dataStore_, resultId);
+  if (!lease.ok()) {
+    return lease.error();
+  }
+
   const auto source = root_ / "Trash" / (resultId + ".bteresult");
   auto opened =
       readResultFile(source, dataStore_, DataValidationPolicy::validateExact);
@@ -2187,6 +2571,11 @@ core::Result<void> ResultStore::purge(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
+  auto lease = mutationLease(root_, dataStore_, resultId);
+  if (!lease.ok()) {
+    return lease.error();
+  }
+
   const auto path = root_ / "Trash" / (resultId + ".bteresult");
   if (!std::filesystem::exists(path)) {
     return core::makeError(core::ErrorCode::notFound,
@@ -2278,44 +2667,60 @@ ResultStore::importResult(const std::filesystem::path &source) const {
     return core::makeError(core::ErrorCode::notFound,
                            "Imported Result source is unavailable");
   }
-  auto sourceResult =
-      readResultFile(source, dataStore_, DataValidationPolicy::validateExact);
+  auto sourceResult = readResultFile(source, dataStore_,
+                                     DataValidationPolicy::validateExact,
+                                     ResultStatusPolicy::terminalOnly, {}, true);
   if (!sourceResult.ok()) {
     return sourceResult.error();
   }
 
   std::string importedId;
   std::filesystem::path stagingPath;
+  std::unique_ptr<ResultLease> lease;
   for (int attempt = 0; attempt < 8; ++attempt) {
     const auto candidate = allocateResultId();
-    const auto candidateStaging =
-        root_ / "Staging" / (candidate + ".bteresult");
-    const auto candidateResult = root_ / "Results" / (candidate + ".bteresult");
-    const auto candidateTrash = root_ / "Trash" / (candidate + ".bteresult");
-    std::error_code copyError;
-    if (std::filesystem::exists(candidateResult) ||
-        std::filesystem::exists(candidateTrash) ||
-        !std::filesystem::copy_file(source, candidateStaging,
-                                    std::filesystem::copy_options::none,
-                                    copyError)) {
-      if (copyError == std::errc::file_exists) {
-        continue;
-      }
-      if (copyError) {
-        return storageError("Unable to stage imported Result: " +
-                            copyError.message());
-      }
+    if (hasResultArtifact(root_, candidate)) {
       continue;
     }
+    auto acquiredLease =
+        ResultLease::acquire(root_, candidate, ResultLease::Creation::fresh);
+    if (!acquiredLease.ok()) {
+      if (acquiredLease.error().code == core::ErrorCode::resourceBusy) {
+        continue;
+      }
+      return acquiredLease.error();
+    }
+    lease = std::move(acquiredLease).value();
     importedId = candidate;
-    stagingPath = candidateStaging;
+    stagingPath = root_ / "Staging" / (candidate + ".bteresult");
     break;
   }
   if (importedId.empty()) {
     return storageError("Unable to allocate a unique imported Result ID");
   }
+  auto retention = data::SegmentRetentionStore::open(dataStore_);
+  if (!retention.ok()) {
+    return retention.error();
+  }
+  auto pinned = retention.value()->acquire(
+      importedId, distinctSegments(sourceResult.value().descriptor));
+  if (!pinned.ok()) {
+    return pinned.error();
+  }
+  auto exact = validateDataSelection(
+      dataStore_, sourceResult.value().descriptor.dataSelection);
+  if (!exact.ok()) {
+    return exact.error();
+  }
+  std::error_code copyError;
+  if (!std::filesystem::copy_file(source, stagingPath,
+                                  std::filesystem::copy_options::none,
+                                  copyError)) {
+    return storageError("Unable to stage imported Result: " +
+                        copyError.message());
+  }
 
-  auto database = openDatabase(stagingPath);
+  auto database = openDatabase(stagingPath, false, false);
   if (!database.ok()) {
     return database.error();
   }
@@ -2358,21 +2763,6 @@ ResultStore::importResult(const std::filesystem::path &source) const {
                         promotionError.message());
   }
 
-  std::vector<std::string> segmentIds;
-  for (const auto &span : validated.value().descriptor.dataSelection.spans) {
-    segmentIds.push_back(span.segmentId);
-  }
-  std::ranges::sort(segmentIds);
-  const auto uniqueEnd = std::ranges::unique(segmentIds).begin();
-  segmentIds.erase(uniqueEnd, segmentIds.end());
-  auto retention = data::SegmentRetentionStore::open(dataStore_);
-  if (!retention.ok()) {
-    return retention.error();
-  }
-  auto acquired = retention.value()->acquire(importedId, segmentIds);
-  if (!acquired.ok()) {
-    return acquired.error();
-  }
   auto cataloged = upsertCatalog(
       root_, {.resultId = importedId,
               .displayName = validated.value().displayName,

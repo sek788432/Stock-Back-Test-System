@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Bte/Bindings/BacktestSessionVm.h"
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
 
@@ -11,7 +12,6 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace bte::frontend {
 
@@ -25,8 +25,9 @@ public:
   using ResultPublisher = std::function<core::Result<std::string>(
       const std::string &, const std::string &,
       const core::CancellationToken &)>;
-  using DraftLister = std::function<core::Result<std::vector<std::string>>(
-      const core::CancellationToken &)>;
+  using DraftLister =
+      std::function<core::Result<bindings::ResultCatalogSnapshot>(
+          const core::CancellationToken &)>;
   using DraftDiscarder = std::function<core::Result<void>(
       const std::string &, const core::CancellationToken &)>;
 

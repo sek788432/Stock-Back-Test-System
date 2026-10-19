@@ -430,3 +430,11 @@ if(BTE_BUILD_QT_APP)
     NAME bte_frontend_data_loader_tests
     COMMAND bte_frontend_data_loader_tests)
 endif()
+
+add_executable(bte_result_process_helper Unit/Results/ResultProcessHelper.cpp)
+target_link_libraries(bte_result_process_helper PRIVATE bte::results)
+add_test(
+  NAME bte_result_process_tests
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/Tools/TestResultProcesses.py"
+          "$<TARGET_FILE:bte_result_process_helper>")
+set_tests_properties(bte_result_process_tests PROPERTIES TIMEOUT 60)

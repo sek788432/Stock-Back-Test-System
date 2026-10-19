@@ -1,13 +1,43 @@
 # Issue 10 Remaining Work
 
-**As of 2026-10-16: Needs changes.** This is a current delivery/acceptance
+**As of 2026-10-19: Needs changes.** This is a current delivery/acceptance
 summary, not a replacement for the full dated
 [implementation plan](../Issue10DeterministicReplayFixturePlan.md) or the
 [source inventory](Issue10IncrementalDeliveryInventory.md).
 
+GitHub Issue #10 itself is narrowly scoped to the offline deterministic Replay
+fixture. Its committed fixture and both named snapshot-determinism tests are
+present; this report tracks the broader Issue 10 delivery plan. The issue is
+left open for the maintainer to close.
+
 The maintainer requests merging independently completed work while repairing
 the broad checkpoint. Existing code, local verification, publication and merge
 are different states. A passing build does not clear a known data-loss defect.
+
+## Latest local continuation
+
+- PR #80, the completed snapshot-reuse and bounded-hash delivery, is merged to
+  `main` as `dbcbd39d0a23243cd8ff1b832a71b9ec62d02fe6`; all required remote
+  checks passed before merge.
+- The Issue #10 consolidation worktree now implements R1–R3: per-Result
+  cross-process SQLite leases, retention pins before artifact visibility,
+  atomic completed-bar persistence, committed-prefix recovery, and typed
+  preservation notices. The exact Daily fill timestamp defect and the
+  independent schema-2 hash oracle are also fixed in this local worktree.
+- After the latest fixes, all 268 registered `Output/qt-dev` tests passed,
+  including three real child-process scenarios. Exact submitted-commit
+  `RunTest.sh`, full `RunQuality.sh`, ASan/TSan, remote PR checks and the
+  actual native application flow are still pending.
+
+The remaining Issue #10 acceptance items are: Task 17/18 historical
+predicates and warm-up; explicit source timeframe/provenance and trailing
+column compatibility for seven-column CSV; truthful unsupported capability
+display; a real-data source-to-snapshot-to-saved-result-to-visible-candle and
+fill comparison; visual Replay checks across window sizes, resize, playback,
+zoom, pan and long-range data; final full-branch review and exact-head local
+and remote gates; and delivered-checkout `Launch.sh` acceptance. The native
+application check has not run because the computer-use action was rejected by
+automatic review for a usage limit; no workaround was attempted.
 
 ## Already merged to main
 
@@ -22,6 +52,7 @@ from main or that any broader source checkpoint is fully accepted.
 | Metric unit/meaning/example display and typed thresholds | PR #74; unused period identity/editability preserved. Historical predicates are not included |
 | Real selectable multi-fill fixture | PR #75; five Buys/five Sells through real Engine/Store/Replay with literal OHLCV, fills, costs and portfolio checkpoints. Repeated hash equality is not an independent hash oracle |
 | SQLite manifest-pin regression | PR #73 reopened and merged as `34b958d`; all exact-head required CI/CodeQL checks succeeded. No production dependency/version or runtime behavior changed |
+| Validated snapshot reuse and bounded hashing | PR #80; merged as `dbcbd39`; required remote checks passed. This is completed-work delivery, not whole Issue #10 acceptance |
 
 ## Current publications and local repairs
 
@@ -161,17 +192,17 @@ Latest follow-up evidence (2026-10-15):
 
 | Priority / plan area | What remains | Current state |
 | --- | --- | --- |
-| R1: live writer ownership | A second process must not recover, move or quarantine a live writer's Staging. Add real concurrent-process tests and safe writer lifetime | SQLite lease direction approved; detailed written-design proposal preserved locally, not approved/implemented |
-| R2: retention before visibility | Pin exact immutable segments before Staging/recovered drafts become visible; keep pins through failure, Drafts, Results and Trash | Current initialization/recovery gaps remain; part of the approved safety direction |
-| R3: execution-time durability | Atomically persist every completed bar and its full canonical batch; stop on storage failure; recover only a committed prefix as Interrupted Draft | Current execution still records at terminal time; implementation and crash/commit-boundary tests missing |
-| Legacy staging compatibility | Preserve and warn about old unleased Staging rather than guessing that its process is dead | Explicitly approved policy; code and English warning delivery not implemented |
-| CI / Results rename acceptance | Clear all GCC wait-macro, IWYU and macOS crash failures on the actual submitted SHA | Remote `e45ac7b` standards/static/platform tests and sanitizers passed; this closes those scoped mechanical failures, not native or lifecycle acceptance |
-| Exact-head CI readiness | Verify every required remote job on the repair head | `e45ac7b` passed full local gates but remote coverage failed the long-load wait. Local fixed-rotation repair needs complete exact-head gates and remote confirmation |
-| CI long-load responsiveness | Fix the Linux coverage load beyond five seconds; verify long seek, Max and resizing without stalls | Profiled SHA-256 fixed-rotation repair has three faster local load samples and preserved digest vectors; remote confirmation and broader acceptance pending. Timeout unchanged. This is not R8 data-completeness acceptance |
+| R1: live writer ownership | Final exact-head, remote and native acceptance | Implemented with per-Result SQLite leases; local child-process tests cover live empty writers, process death, committed prefixes and aliased paths |
+| R2: retention before visibility | Final exact-head, remote and native acceptance | Implemented with pin-before-visibility and conservative reference preservation; local Results/fault/process tests pass |
+| R3: execution-time durability | Final exact-head, remote and native acceptance | Implemented with per-bar atomic commits, atomic terminal tail, and committed-prefix recovery; local Engine/Store/process tests pass |
+| Legacy staging compatibility | Final review and native workflow acceptance | Unleased Staging and sidecars stay byte-identical and produce typed English preservation notices; accessibility/refresh test passes |
+| CI / Results rename acceptance | Verify current exact head | Prior GCC wait/IWYU/rename fixes are present; current Results workflow test and full local CTest pass |
+| Exact-head CI readiness | Run exact submitted commit and obtain required PR checks | The current working tree passes 268/268 CTest tests; `RunTest.sh`, full Quality, sanitizers and remote checks for the final commit remain pending |
+| CI long-load responsiveness | Verify on current remote coverage runner | Snapshot reuse and bounded SHA work are present; previous local samples do not replace current exact-head remote coverage |
 | R8: long-range saved-data completeness | Compare selected range, exact saved spans, actual source rows and visible Hourly/Daily candles to explain the reported sparse chart | Final real-data correctness comparison remains open; a faster load or longer wait cannot close this finding |
-| T: exact Daily fill selection | Do not show fills from an unselected interior-gap timestamp merely because it lies between the day's first/last selected bars | Defect corroborated; narrow extraction retained in a stash, repair/acceptance open |
+| T: exact Daily fill selection | Verify exact behavior against real saved data | Fixed locally by requiring exact selected timestamps; regression test covers an interior gap |
 | L: seven-column source provenance | Distinguish actual hourly CSV from a seven-column daily export; preserve or explicitly decide trailing-column compatibility | Explicit source-timeframe contract unresolved; compatibility-aware extraction retained in a stash |
-| R6: independent hash oracle | Pin schema-2 framing with an independent literal/worked expected hash, not equality between two executions of the same implementation | Not implemented |
+| R6: independent hash oracle | Re-run on final exact submitted commit | Independent literal schema-2 hash oracle is implemented and passes locally |
 | R7: truthful capabilities | Exercise warnings and display unsupported financial families as unavailable, not fabricated zeros or a claim of a complete engine | Scope/UX/test acceptance still open |
 
 ## Requested features and final acceptance still unfinished
@@ -180,13 +211,13 @@ Latest follow-up evidence (2026-10-15):
 | --- | --- |
 | Previous data-day close change, Task 17 | Implement up/down percent from the previous available UTC date's final CSV close; this is not the existing previous-hour predicate |
 | Historical conditions, Task 18 | Implement 30 available UTC data-date close-to-close gain; prior 21 complete data-date highs/lows excluding the current date; persistent strict breakouts and chronology-safe pre-range warm-up |
-| Save Result / Save & Replay, Task 14 | Source implementation exists in #76, but its lifecycle cannot be accepted before R1–R3 and complete restart/failure/real-app checks |
-| Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Source implementation and earlier isolated checks exist; complete the current-head worker/error/refresh tests and actual native workflow without the known safety gaps |
-| Progressive Hourly/Daily replay, Tasks 21/24 | Verify exact saved-range bars, no truncation, frame/date continuity, actual fill timing and raw ungrouped accounting through both display timeframes |
+| Save Result / Save & Replay, Task 14 | R1–R3 and current local workflow tests are implemented; exact-head/remote checks and native restart/failure acceptance remain |
+| Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Current worker/error/refresh/restore tests pass; exercise the full native workflow and real saved data |
+| Progressive Hourly/Daily replay, Tasks 21/24 | Automated deterministic behavior passes; verify exact real saved-range bars, date continuity, fill timing and raw ungrouped accounting through both display timeframes |
 | Trade glyphs, Tasks 22/26/28 | Source Buy/Sell direction, candle anchoring, eight-pixel wick clearance and Buy-only grouping have scoped evidence; final current-head exact-data and visual checks remain. Sell grouping is not approved |
-| Viewport / zoom / Follow latest / Max | Source fixes have scoped evidence; complete three window sizes, wheel/pan bounds, resize during playback, full reached range and stable readable tail without disappearing/compressed candles |
+| Viewport / zoom / Follow latest / Max | Automated viewport coverage passes; complete native three-size, wheel/pan, resize-during-playback, full-range and readable-tail checks |
 | Exact real-data comparison / Tasks 10/11B/13 | Reconcile the actual CSV/snapshot/result/visible OHLCV and every raw fill/portfolio value; synthetic fixture coverage does not replace final real-data acceptance |
-| Delivered Launch.sh path / Tasks 19/20/27 | Verify the final merged checkout actually builds/launches that code, exposes Save/Replay, and runs the selected long-range multi-fill configuration |
+| Delivered Launch.sh path / Tasks 19/20/27 | Verify the final merged checkout builds/launches the exact code, exposes Save/Replay, and runs the selected long-range multi-fill configuration |
 | Whole-branch review / Task 12 | Close remaining P0–P2, run every applicable exact-head gate and native acceptance; no universal “bug-free” claim from partial tests |
 | Workspace and branches / Tasks 27/29 | Reconcile every intended hunk, preserved root draft and stash; only remove confirmed non-main branches after all unique intended code is merged or explicitly retained |
 
@@ -195,9 +226,9 @@ Latest follow-up evidence (2026-10-15):
 - Original source `codex/issue10-replay-ux` remains pinned at `6ac45ea` with
   its 82 commits and 64 changed paths. Consolidation used normal commits,
   not a force-push or public-history rewrite.
-- The detailed persistence design and its owning-document edits are in a named
-  recoverable stash while completed-only delivery proceeds. This is not an
-  implementation or an approved written-spec stage.
+- The detailed persistence design and owning-document edits are now present in
+  the Issue #10 consolidation worktree; code is implemented, while exact-head
+  gates and native acceptance remain open.
 - Separate CSV and trusted-Replay extraction stashes remain intact. Other
   pre-existing strategy/CI stashes and private root documents were not staged,
   deleted or published.

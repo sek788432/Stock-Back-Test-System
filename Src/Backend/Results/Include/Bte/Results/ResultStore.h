@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -129,6 +130,22 @@ struct OpenedResultWithData {
   data::SnapshotSelection selection;
 };
 
+enum class ResultRecoveryReason : std::uint8_t {
+  legacyUnleased,
+  invalidLease,
+  invalidPrefix,
+  missingReferences,
+  orphanedInitialization,
+};
+
+struct ResultRecoveryNotice {
+  std::string resultId;
+  ResultRecoveryReason reason = ResultRecoveryReason::invalidPrefix;
+  std::string diagnostic;
+
+  bool operator==(const ResultRecoveryNotice &) const = default;
+};
+
 class ResultWriter final {
 private:
   struct ConstructionKey final {};
@@ -149,6 +166,10 @@ public:
   finalizeDraft(RunStatus status, const FinalSummary &summary,
                 const std::string &terminalReason = {});
   [[nodiscard]] core::Result<FinalizedResult>
+  finalizeDraft(RunStatus status, const FinalSummary &summary,
+                const std::string &terminalReason,
+                std::span<const CanonicalRecord> terminalTail);
+  [[nodiscard]] core::Result<FinalizedResult>
   finalizeAndPromote(RunStatus status, const FinalSummary &summary,
                      const std::string &terminalReason = {});
 
@@ -157,7 +178,8 @@ private:
 
   [[nodiscard]] core::Result<FinalizedResult>
   finalize(RunStatus status, const FinalSummary &summary,
-           const std::string &terminalReason, FinalizationTarget target);
+           const std::string &terminalReason, FinalizationTarget target,
+           std::span<const CanonicalRecord> terminalTail = {});
 
   friend class ResultStore;
   std::unique_ptr<Impl> impl_;
@@ -169,7 +191,8 @@ private:
 
 public:
   explicit ResultStore(ConstructionKey, std::filesystem::path root,
-                       std::filesystem::path dataStore);
+                       std::filesystem::path dataStore,
+                       std::vector<ResultRecoveryNotice> notices = {});
   ~ResultStore() = default;
   ResultStore(const ResultStore &) = delete;
   ResultStore &operator=(const ResultStore &) = delete;
@@ -180,6 +203,9 @@ public:
   open(const std::filesystem::path &root,
        const std::filesystem::path &dataStore,
        const core::CancellationToken &cancellation = {});
+
+  [[nodiscard]] const std::vector<ResultRecoveryNotice> &
+  recoveryNotices() const noexcept;
 
   [[nodiscard]] core::Result<std::unique_ptr<ResultWriter>>
   begin(const RunDescriptor &descriptor) const;
@@ -217,6 +243,7 @@ public:
 private:
   std::filesystem::path root_;
   std::filesystem::path dataStore_;
+  std::vector<ResultRecoveryNotice> recoveryNotices_;
 };
 
 } // namespace bte::results

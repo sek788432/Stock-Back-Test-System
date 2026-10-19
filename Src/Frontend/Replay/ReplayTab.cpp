@@ -1,5 +1,7 @@
 #include "Bte/Frontend/ReplayTab.h"
 
+#include "ResultRecoveryNoticeLabel.h"
+
 // IWYU pragma: no_include "Bte/Results/ResultStore.h"
 
 #include "Bte/Bindings/ReplayDataLoader.h"
@@ -195,6 +197,11 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   headerRow->addLayout(headerTextOwner.release());
   headerRow->addStretch(1);
   root->addLayout(headerRowOwner.release());
+
+  auto *recoveryNotices = std::make_unique<ResultRecoveryNoticeLabel>(
+                              "replayRecoveryNoticesLabel", content)
+                              .release();
+  root->addWidget(recoveryNotices);
 
   const auto setup = makeReplaySetupControls(this);
   auto *setupToggle = std::make_unique<QToolButton>(this).release();
@@ -745,10 +752,10 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
 
   reloadBars();
 
-  state_->reloadCatalog = [this, setup] {
+  state_->reloadCatalog = [this, setup, recoveryNotices] {
     state_->catalogRequests->requestCatalog(
-        [this,
-         setup](const bindings::ResultReplayRequests::CatalogResult &catalog) {
+        [this, setup, recoveryNotices](
+            const bindings::ResultReplayRequests::CatalogResult &catalog) {
           if (!catalog.ok()) {
             if (!state_->resultRequestMade) {
               setLabelText(
@@ -758,12 +765,13 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
             }
             return;
           }
+          recoveryNotices->present(catalog.value().notices);
           const auto activeResultId =
               state_->requestedResultId.isEmpty()
                   ? setup.resultCombo->currentData(Qt::UserRole).toString()
                   : state_->requestedResultId;
           setup.resultCombo->clear();
-          for (const auto &summary : catalog.value()) {
+          for (const auto &summary : catalog.value().entries) {
             const auto resultId = QString::fromStdString(summary.resultId);
             const auto displayName =
                 QString::fromStdString(summary.displayName);
@@ -786,7 +794,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
           }
           if (!state_->resultRequestMade) {
             setLabelText(setup.resultStatusLabel,
-                         catalog.value().empty()
+                         catalog.value().entries.empty()
                              ? tr("No saved Backtest results")
                              : tr("Select a saved Backtest result"));
           } else {

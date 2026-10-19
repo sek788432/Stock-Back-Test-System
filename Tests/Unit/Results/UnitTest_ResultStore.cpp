@@ -15,6 +15,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <iterator>
+#include <span>
 #include <limits>
 #include <memory>
 #include <ranges>
@@ -1188,6 +1191,50 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
+       allocatorSkipsQuarantinedIdentityForBeginAndImport) {
+  constexpr auto forcedId =
+      std::string_view{"22222222222222222222222222222222"};
+  auto sourceStore =
+      bte::results::ResultStore::open(root_ / "SourceStore", root_ / "Data");
+  ASSERT_TRUE(sourceStore.ok());
+  auto sourceWriter = sourceStore.value()->begin(descriptor());
+  ASSERT_TRUE(sourceWriter.ok());
+  ASSERT_TRUE(sourceWriter.value()->append(records()).ok());
+  auto source = sourceWriter.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(source.ok());
+  const auto sourcePath = root_ / "SourceStore" / "Results" /
+                          (source.value().resultId + ".bteresult");
+
+  const auto destinationRoot = root_ / "DestinationStore";
+  const auto quarantinedPath = destinationRoot / "Quarantine" /
+                               (std::string{forcedId} + ".bteresult");
+  std::filesystem::create_directories(quarantinedPath.parent_path());
+  {
+    std::ofstream quarantined{quarantinedPath};
+    quarantined << "quarantined artifact";
+  }
+
+  auto destination =
+      bte::results::ResultStore::open(destinationRoot, root_ / "Data");
+  ASSERT_TRUE(destination.ok());
+  bte::results::testing::forceNextResultId(std::string{forcedId});
+  auto writer = destination.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  EXPECT_NE(writer.value()->resultId(), forcedId);
+
+  bte::results::testing::forceNextResultId(std::string{forcedId});
+  auto imported = destination.value()->importResult(sourcePath);
+  ASSERT_TRUE(imported.ok()) << imported.error().message;
+  EXPECT_NE(imported.value().resultId, forcedId);
+  std::ifstream quarantined{quarantinedPath};
+  std::string content;
+  std::getline(quarantined, content);
+  EXPECT_EQ(content, "quarantined artifact");
+}
+
+TEST_F(ResultStoreFixture,
        multiSymbolAndDiagnosticResultsRoundTripNullSummaryAndTerminalReason) {
   auto store =
       bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
@@ -1263,6 +1310,27 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
+       restoringMissingTrashArtifactDoesNotCreateAnEmptyDatabase) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
+  ASSERT_TRUE(store.ok());
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok());
+  const auto trashPath = root_ / "ResultsStore" / "Trash" /
+                         (finalized.value().resultId + ".bteresult");
+
+  const auto restored = store.value()->restore(finalized.value().resultId);
+  EXPECT_FALSE(restored.ok());
+  EXPECT_FALSE(std::filesystem::exists(trashPath));
+  EXPECT_TRUE(store.value()->openResult(finalized.value().resultId).ok());
+}
+
+TEST_F(ResultStoreFixture,
        corruptPromotedResultIsListedUnavailableAndCannotOpen) {
   auto store =
       bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
@@ -1290,7 +1358,7 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
-       restartRecoversTrustworthyRecordsAsInterruptedAndQuarantinesEmptyRuns) {
+       restartRecoversCompleteAndZeroBarPrefixesAsInterruptedDrafts) {
   std::string recoverableId;
   std::string emptyId;
   {
@@ -1320,8 +1388,14 @@ TEST_F(ResultStoreFixture,
   EXPECT_EQ(opened.value().status, bte::results::RunStatus::interrupted);
   EXPECT_EQ(opened.value().records, records());
   EXPECT_FALSE(opened.value().summary.finalEquityMicrodollars.has_value());
-  EXPECT_TRUE(std::filesystem::exists(root_ / "ResultsStore" / "Quarantine" /
+  EXPECT_TRUE(std::filesystem::exists(root_ / "ResultsStore" / "Drafts" /
                                       (emptyId + ".bteresult")));
+  ASSERT_TRUE(recovered.value()->publishDraft(emptyId).ok());
+  auto empty = recovered.value()->openResult(emptyId);
+  ASSERT_TRUE(empty.ok());
+  EXPECT_EQ(empty.value().status, bte::results::RunStatus::interrupted);
+  EXPECT_TRUE(empty.value().records.empty());
+  EXPECT_FALSE(empty.value().summary.finalEquityMicrodollars.has_value());
 }
 
 TEST_F(ResultStoreFixture,
@@ -1608,7 +1682,8 @@ TEST_F(ResultStoreFixture,
   }
 }
 
-TEST_F(ResultStoreFixture, injectedSchemaCreationIsQuarantinedOnRestart) {
+TEST_F(ResultStoreFixture,
+       injectedSchemaCreationIsPreservedWithRecoveryNotice) {
   bte::results::testing::failNext(
       bte::results::testing::FailurePoint::schemaCreation);
   auto store =
@@ -1620,9 +1695,11 @@ TEST_F(ResultStoreFixture, injectedSchemaCreationIsQuarantinedOnRestart) {
   store =
       bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
   ASSERT_TRUE(store.ok()) << store.error().message;
-  EXPECT_TRUE(std::filesystem::is_empty(root_ / "ResultsStore" / "Staging"));
-  EXPECT_FALSE(
-      std::filesystem::is_empty(root_ / "ResultsStore" / "Quarantine"));
+  EXPECT_FALSE(std::filesystem::is_empty(root_ / "ResultsStore" / "Staging"));
+  EXPECT_TRUE(std::filesystem::is_empty(root_ / "ResultsStore" / "Quarantine"));
+  ASSERT_EQ(store.value()->recoveryNotices().size(), 1U);
+  EXPECT_EQ(store.value()->recoveryNotices().front().reason,
+            bte::results::ResultRecoveryReason::invalidPrefix);
 }
 
 TEST_F(ResultStoreFixture,
@@ -1734,7 +1811,7 @@ TEST_F(ResultStoreFixture,
       {FailurePoint::statementPreparation, 17},
       {FailurePoint::textBinding, 2},
       {FailurePoint::integerBinding, 2},
-      {FailurePoint::statementExecution, 2},
+      {FailurePoint::statementExecution, 1},
   };
   for (const auto &[point, count] : faultCounts) {
     for (std::uint32_t occurrence = 0; occurrence < count; ++occurrence) {
@@ -1759,6 +1836,12 @@ TEST_F(ResultStoreFixture,
             << suffix;
         recovered = bte::results::ResultStore::open(storeRoot, root_ / "Data");
         ASSERT_TRUE(recovered.ok()) << suffix;
+      }
+      if (!recovered.value()->recoveryNotices().empty()) {
+        EXPECT_TRUE(std::filesystem::exists(storeRoot / "Staging"));
+        recovered = bte::results::ResultStore::open(storeRoot, root_ / "Data");
+        ASSERT_TRUE(recovered.ok()) << suffix;
+        EXPECT_TRUE(recovered.value()->recoveryNotices().empty()) << suffix;
       }
       const auto resultArtifactCount = [](const std::filesystem::path &path) {
         return std::ranges::count_if(
@@ -1816,7 +1899,7 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
-       recoverySurfacesQuarantinePromotionAndRetentionFaults) {
+       recoveryPreservesArtifactsAndReportsRetentionFaults) {
   const auto prepareInterrupted = [&](const std::filesystem::path &storeRoot,
                                       const bool withRecords) {
     std::string resultId;
@@ -1841,8 +1924,12 @@ TEST_F(ResultStoreFixture,
   std::ofstream child{collision / "child"};
   child << "blocks rename";
   child.close();
-  EXPECT_FALSE(
-      bte::results::ResultStore::open(quarantineRoot, root_ / "Data").ok());
+  auto zeroRecovered =
+      bte::results::ResultStore::open(quarantineRoot, root_ / "Data");
+  ASSERT_TRUE(zeroRecovered.ok());
+  EXPECT_TRUE(std::filesystem::exists(quarantineRoot / "Drafts" /
+                                      (emptyId + ".bteresult")));
+  EXPECT_TRUE(std::filesystem::exists(collision / "child"));
 
   const auto promotionRoot = root_ / "RecoveryPromotionFault";
   const auto promotionId = prepareInterrupted(promotionRoot, true);
@@ -1863,11 +1950,16 @@ TEST_F(ResultStoreFixture,
                                     std::to_string(static_cast<int>(point)));
     const auto resultId = prepareInterrupted(storeRoot, true);
     bte::data::testing::failRetentionAfter(point);
-    EXPECT_FALSE(
-        bte::results::ResultStore::open(storeRoot, root_ / "Data").ok());
+    auto preserved = bte::results::ResultStore::open(storeRoot, root_ / "Data");
+    ASSERT_TRUE(preserved.ok());
     bte::data::testing::clearRetentionFailure();
-    EXPECT_TRUE(std::filesystem::exists(storeRoot / "Drafts" /
+    ASSERT_EQ(preserved.value()->recoveryNotices().size(), 1U);
+    EXPECT_EQ(preserved.value()->recoveryNotices().front().reason,
+              bte::results::ResultRecoveryReason::missingReferences);
+    EXPECT_TRUE(std::filesystem::exists(storeRoot / "Staging" /
                                         (resultId + ".bteresult")));
+    EXPECT_FALSE(std::filesystem::exists(storeRoot / "Drafts" /
+                                         (resultId + ".bteresult")));
   }
 }
 
@@ -2249,8 +2341,14 @@ TEST_F(ResultStoreFixture,
                           staged);
   const auto recovered =
       bte::results::ResultStore::open(storeRoot, root_ / "Data");
-  ASSERT_FALSE(recovered.ok());
-  EXPECT_EQ(recovered.error().code, bte::core::ErrorCode::schemaMismatch);
+  ASSERT_TRUE(recovered.ok());
+  EXPECT_FALSE(recovered.value()->recoveryNotices().empty());
+  EXPECT_TRUE(std::ranges::any_of(
+      recovered.value()->recoveryNotices(), [&](const auto &notice) {
+        return notice.resultId == incorrectId &&
+               notice.reason ==
+                   bte::results::ResultRecoveryReason::legacyUnleased;
+      }));
   EXPECT_TRUE(std::filesystem::exists(staged));
 }
 
@@ -2299,6 +2397,307 @@ TEST_F(ResultStoreFixture,
   corrupt << "damaged published result";
   corrupt.close();
   EXPECT_FALSE(store.value()->publishDraft(resultId).ok());
+}
+
+TEST_F(ResultStoreFixture, beginPinsSourcesBeforeAnyWriterCanBeRecovered) {
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(store.ok());
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  auto retention = bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(retention.ok());
+  auto pinned = retention.value()->references(writer.value()->resultId());
+  ASSERT_TRUE(pinned.ok());
+  std::vector<std::string> expected;
+  for (const auto &span : descriptor().dataSelection.spans) {
+    expected.push_back(span.segmentId);
+  }
+  std::ranges::sort(expected);
+  EXPECT_EQ(pinned.value(), expected);
+  const auto lease = root_ / "Store" / "Leases" / (writer.value()->resultId() + ".sqlite3");
+  EXPECT_TRUE(std::filesystem::is_regular_file(lease));
+  auto observer = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(observer.ok());
+  EXPECT_TRUE(observer.value()->recoveryNotices().empty());
+  EXPECT_TRUE(observer.value()->listDrafts().value().empty());
+}
+
+TEST_F(ResultStoreFixture, initializationAndImportPinFailuresExposeNoArtifact) {
+  auto source = bte::results::ResultStore::open(root_ / "SourceStore", root_ / "Data");
+  ASSERT_TRUE(source.ok());
+  auto writer = source.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  auto finalized = writer.value()->finalizeAndPromote(bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok());
+  const auto sourceFile = root_ / "SourceStore" / "Results" / (finalized.value().resultId + ".bteresult");
+  for (const auto point : {bte::data::testing::RetentionFailurePoint::databaseOpen,
+                           bte::data::testing::RetentionFailurePoint::boundPreparation}) {
+    for (const auto importing : {false, true}) {
+      const auto directory = root_ / ("PinFailure-" + std::to_string(static_cast<int>(point)) + (importing ? "Import" : "Begin"));
+      auto destination = bte::results::ResultStore::open(directory, root_ / "Data");
+      ASSERT_TRUE(destination.ok());
+      bte::data::testing::failRetentionAfter(point);
+      if (importing) {
+        EXPECT_FALSE(destination.value()->importResult(sourceFile).ok());
+      } else {
+        EXPECT_FALSE(destination.value()->begin(descriptor()).ok());
+      }
+      bte::data::testing::clearRetentionFailure();
+      for (const auto *leaf : {"Staging", "Drafts", "Results", "Trash"}) {
+        EXPECT_TRUE(std::filesystem::is_empty(directory / leaf));
+      }
+    }
+  }
+  EXPECT_TRUE(source.value()->openResult(finalized.value().resultId).ok());
+}
+
+TEST_F(ResultStoreFixture, legacyUnleasedArtifactsRemainByteIdenticalBesideSavedResults) {
+  const auto directory = root_ / "Store";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok());
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  ASSERT_TRUE(writer.value()->finalizeAndPromote(bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900}).ok());
+  for (const auto &[id, suffix] : std::vector<std::pair<std::string, std::string>>{
+           {std::string(32, 'a'), ".bteresult"}, {std::string(32, 'b'), ".purging.bteresult"},
+           {std::string(32, 'c'), ".discarding.bteresult"}}) {
+    std::ofstream artifact{directory / "Staging" / (id + suffix)};
+    artifact << "legacy partial payload";
+  }
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    auto reopened = bte::results::ResultStore::open(directory, root_ / "Data");
+    ASSERT_TRUE(reopened.ok());
+    ASSERT_EQ(reopened.value()->recoveryNotices().size(), 3U);
+    for (const auto &notice : reopened.value()->recoveryNotices()) {
+      EXPECT_EQ(notice.reason, bte::results::ResultRecoveryReason::legacyUnleased);
+      EXPECT_FALSE(notice.diagnostic.empty());
+      EXPECT_FALSE(std::filesystem::exists(directory / "Leases" / (notice.resultId + ".sqlite3")));
+    }
+    EXPECT_EQ(reopened.value()->list().value().size(), 1U);
+    EXPECT_TRUE(reopened.value()->listDrafts().value().empty());
+    for (const auto &entry : std::filesystem::directory_iterator{directory / "Staging"}) {
+      std::ifstream input{entry.path()};
+      std::string content;
+      std::getline(input, content);
+      EXPECT_EQ(content, "legacy partial payload") << entry.path();
+    }
+  }
+}
+
+TEST_F(ResultStoreFixture, recoveryPreservesMissingPinsAndRejectsIncompleteOrSkippedBars) {
+  for (const auto mode : {0, 1, 2, 3}) {
+    const auto directory = root_ / ("InvalidPrefix-" + std::to_string(mode));
+    std::string id;
+    {
+      auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+      ASSERT_TRUE(store.ok());
+      auto writer = store.value()->begin(descriptor());
+      ASSERT_TRUE(writer.ok());
+      id = writer.value()->resultId();
+      auto prefix = records();
+      if (mode == 1) {
+        prefix.pop_back();
+      } else if (mode == 2) {
+        prefix = {prefix.front()};
+        prefix.front().timestamp = timestamp("2024-01-02 00:00:00+00:00");
+      } else if (mode == 3) {
+        prefix = {prefix.front(), prefix.front()};
+        prefix.back().sequence = 1;
+      }
+      ASSERT_TRUE(writer.value()->append(prefix).ok());
+    }
+    if (mode == 0) {
+      executeSql(root_ / "Data" / "References.sqlite3",
+                 "DELETE FROM segment_references WHERE result_id='" + id + "'");
+    }
+    auto reopened = bte::results::ResultStore::open(directory, root_ / "Data");
+    ASSERT_TRUE(reopened.ok());
+    ASSERT_EQ(reopened.value()->recoveryNotices().size(), 1U);
+    EXPECT_EQ(reopened.value()->recoveryNotices().front().reason,
+        mode == 0 ? bte::results::ResultRecoveryReason::missingReferences
+                  : bte::results::ResultRecoveryReason::invalidPrefix);
+    EXPECT_TRUE(std::filesystem::exists(directory / "Staging" / (id + ".bteresult")));
+    EXPECT_TRUE(reopened.value()->listDrafts().value().empty());
+  }
+}
+
+TEST_F(ResultStoreFixture, recoveryPreservesDuplicateIdentityArtifacts) {
+  const auto directory = root_ / "DuplicateRecovery";
+  std::string id;
+  std::filesystem::path stagingPath;
+  std::filesystem::path draftPath;
+  {
+    auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+    ASSERT_TRUE(store.ok());
+    auto writer = store.value()->begin(descriptor());
+    ASSERT_TRUE(writer.ok());
+    id = writer.value()->resultId();
+    ASSERT_TRUE(writer.value()->append(records()).ok());
+    stagingPath = directory / "Staging" / (id + ".bteresult");
+    draftPath = directory / "Drafts" / (id + ".bteresult");
+  }
+  const auto stagingBytes = [&] {
+    std::ifstream input{stagingPath, std::ios::binary};
+    return std::string{std::istreambuf_iterator<char>{input},
+                       std::istreambuf_iterator<char>{}};
+  }();
+  {
+    std::ofstream duplicate{draftPath, std::ios::binary};
+    duplicate << "unrelated duplicate identity artifact";
+  }
+  const auto draftBytes = [&] {
+    std::ifstream input{draftPath, std::ios::binary};
+    return std::string{std::istreambuf_iterator<char>{input},
+                       std::istreambuf_iterator<char>{}};
+  }();
+
+  auto reopened = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(reopened.ok());
+  ASSERT_EQ(reopened.value()->recoveryNotices().size(), 1U);
+  EXPECT_EQ(reopened.value()->recoveryNotices().front().resultId, id);
+  EXPECT_EQ(reopened.value()->recoveryNotices().front().reason,
+            bte::results::ResultRecoveryReason::invalidPrefix);
+  const auto stagingAfter = [&] {
+    std::ifstream input{stagingPath, std::ios::binary};
+    return std::string{std::istreambuf_iterator<char>{input},
+                       std::istreambuf_iterator<char>{}};
+  }();
+  const auto draftAfter = [&] {
+    std::ifstream input{draftPath, std::ios::binary};
+    return std::string{std::istreambuf_iterator<char>{input},
+                       std::istreambuf_iterator<char>{}};
+  }();
+  EXPECT_EQ(stagingBytes, stagingAfter);
+  EXPECT_EQ(draftBytes, draftAfter);
+}
+
+TEST_F(ResultStoreFixture, orphanInitializationPinsAreReportedAndTombstonesRemainQuiet) {
+  const auto directory = root_ / "Store";
+  std::string id;
+  {
+    auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+    ASSERT_TRUE(store.ok());
+    auto writer = store.value()->begin(descriptor());
+    ASSERT_TRUE(writer.ok());
+    id = writer.value()->resultId();
+  }
+  ASSERT_TRUE(std::filesystem::remove(directory / "Staging" / (id + ".bteresult")));
+  auto reopened = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(reopened.ok());
+  ASSERT_EQ(reopened.value()->recoveryNotices().size(), 1U);
+  EXPECT_EQ(reopened.value()->recoveryNotices().front().reason,
+            bte::results::ResultRecoveryReason::orphanedInitialization);
+  auto retention = bte::data::SegmentRetentionStore::open(root_ / "Data");
+  ASSERT_TRUE(retention.ok());
+  ASSERT_EQ(retention.value()->references(id).value().size(), 2U);
+  ASSERT_TRUE(retention.value()->release(id).ok());
+  reopened = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(reopened.ok());
+  EXPECT_TRUE(reopened.value()->recoveryNotices().empty());
+  EXPECT_TRUE(std::filesystem::is_regular_file(directory / "Leases" / (id + ".sqlite3")));
+}
+
+TEST_F(ResultStoreFixture, invalidLeaseIdentityVersionModeAndSchemaPreserveStaging) {
+  for (const auto &[name, sql] : std::vector<std::pair<std::string, std::string>>{
+           {"Identity", "UPDATE lease_identity SET result_id='wrong'"},
+           {"Version", "UPDATE lease_identity SET protocol_version=2"},
+           {"Mode", "PRAGMA journal_mode=WAL"},
+           {"Schema", "DROP TABLE lease_identity"},
+           {"Duplicate", "INSERT INTO lease_identity VALUES('extra',1)"}}) {
+    const auto directory = root_ / name;
+    std::string id;
+    {
+      auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+      ASSERT_TRUE(store.ok());
+      auto writer = store.value()->begin(descriptor());
+      ASSERT_TRUE(writer.ok());
+      id = writer.value()->resultId();
+    }
+    executeSql(directory / "Leases" / (id + ".sqlite3"), sql);
+    auto reopened = bte::results::ResultStore::open(directory, root_ / "Data");
+    ASSERT_TRUE(reopened.ok());
+    ASSERT_EQ(reopened.value()->recoveryNotices().size(), 1U);
+    EXPECT_EQ(reopened.value()->recoveryNotices().front().reason,
+              bte::results::ResultRecoveryReason::invalidLease);
+    EXPECT_TRUE(std::filesystem::is_regular_file(directory / "Staging" / (id + ".bteresult")));
+    EXPECT_TRUE(reopened.value()->listDrafts().value().empty());
+  }
+}
+
+TEST_F(ResultStoreFixture, terminalTailAndMetadataCommitAtomicallyAcrossFailures) {
+  for (const auto point : {bte::results::testing::FailurePoint::statementPreparation,
+                           bte::results::testing::FailurePoint::statementExecution,
+                           bte::results::testing::FailurePoint::sqlExecution}) {
+    const auto directory = root_ / ("AtomicTail-" + std::to_string(static_cast<int>(point)));
+    auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+    ASSERT_TRUE(store.ok());
+    auto writer = store.value()->begin(descriptor());
+    ASSERT_TRUE(writer.ok());
+    const auto canonical = records();
+    ASSERT_TRUE(writer.value()->append({canonical.front()}).ok());
+    const auto path = directory / "Staging" / (writer.value()->resultId() + ".bteresult");
+    bte::results::testing::failAfter(point,
+        point == bte::results::testing::FailurePoint::sqlExecution ? 1U : 0U);
+    const auto tail = std::span<const bte::results::CanonicalRecord>{canonical}.subspan(1);
+    const bte::results::FinalSummary summary{.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900};
+    EXPECT_FALSE(writer.value()->finalizeDraft(bte::results::RunStatus::completed, summary, "", tail).ok());
+    bte::results::testing::clearFailure();
+    EXPECT_EQ(queryInteger(path, "SELECT count(*) FROM canonical_records"), 1);
+    EXPECT_EQ(queryInteger(path, "SELECT count(*) FROM summary"), 0);
+    EXPECT_EQ(queryInteger(path, "SELECT status FROM result_meta"), 0);
+    auto invalid = canonical.back();
+    invalid.sequence = 0;
+    EXPECT_FALSE(writer.value()->finalizeDraft(bte::results::RunStatus::completed, summary, "", {&invalid, 1}).ok());
+    ASSERT_TRUE(writer.value()->finalizeDraft(bte::results::RunStatus::completed, summary, "", tail).ok());
+    ASSERT_TRUE(store.value()->publishDraft(writer.value()->resultId()).ok());
+    const auto opened = store.value()->openResult(writer.value()->resultId());
+    ASSERT_TRUE(opened.ok());
+    EXPECT_EQ(opened.value().records, canonical);
+    EXPECT_EQ(opened.value().summary, summary);
+  }
+}
+
+TEST_F(ResultStoreFixture, everyLifecycleMutationReturnsBusyWithoutChangingArtifacts) {
+  const auto directory = root_ / "Store";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok());
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok());
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  ASSERT_TRUE(writer.value()->finalizeDraft(bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900}).ok());
+  const auto id = writer.value()->resultId();
+  sqlite3 *raw = nullptr;
+  ASSERT_EQ(sqlite3_open((directory / "Leases" / (id + ".sqlite3")).string().c_str(), &raw), SQLITE_OK);
+  const auto database = std::unique_ptr<sqlite3, decltype(&sqlite3_close)>{raw, &sqlite3_close};
+  ASSERT_EQ(sqlite3_exec(database.get(), "BEGIN EXCLUSIVE", nullptr, nullptr, nullptr), SQLITE_OK);
+  for (const auto &operation : std::vector<std::function<bte::core::Result<void>()>>{
+           [&] { return store.value()->discardDraft(id); },
+           [&] { return store.value()->renameResult(id, "Busy"); },
+           [&] { return store.value()->moveToTrash(id); },
+           [&] { return store.value()->restore(id); },
+           [&] { return store.value()->purge(id); }}) {
+    const auto result = operation();
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code, bte::core::ErrorCode::resourceBusy);
+  }
+  const auto published = store.value()->publishDraft(id);
+  ASSERT_FALSE(published.ok());
+  EXPECT_EQ(published.error().code, bte::core::ErrorCode::resourceBusy);
+  EXPECT_TRUE(std::filesystem::is_regular_file(directory / "Drafts" / (id + ".bteresult")));
+  std::string unexpectedStagingEntries;
+  for (const auto &entry :
+       std::filesystem::directory_iterator{directory / "Staging"}) {
+    unexpectedStagingEntries += entry.path().filename().string() + " ";
+  }
+  EXPECT_TRUE(std::filesystem::is_empty(directory / "Staging"))
+      << "unexpected Staging entries: " << unexpectedStagingEntries;
+  EXPECT_TRUE(std::filesystem::is_empty(directory / "Results"));
+  EXPECT_TRUE(std::filesystem::is_empty(directory / "Trash"));
 }
 
 } // namespace

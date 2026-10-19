@@ -227,6 +227,15 @@ makeDailyFrames(const results::OpenedResult &result,
                                  result.descriptor.range.end < bucketEnd;
     const auto portfolio = records.portfolioAt(bars[end - 1].timestamp);
     if (portfolio.has_value()) {
+      auto fills = records.fillsAt(bars[begin].timestamp,
+                                   bars[end - 1].timestamp + milliseconds{1});
+      // Saved spans can omit an interior source row. Match Hourly's exact
+      // timestamp boundary rather than admitting every fill between endpoints.
+      const auto selectedDay = bars.subspan(begin, end - begin);
+      std::erase_if(fills, [selectedDay](const ResultReplayFill &fill) {
+        return !std::ranges::binary_search(selectedDay, fill.timestamp, {},
+                                           &data::SnapshotBar::timestamp);
+      });
       frames.push_back({
           .candle = {.ts = core::Timestamp{day},
                      .open = price(bars[begin].openNanodollars),
@@ -235,9 +244,7 @@ makeDailyFrames(const results::OpenedResult &result,
                      .close = price(bars[end - 1].closeNanodollars),
                      .volume =
                          static_cast<double>(volume) / microsharesPerShare},
-          .fills = records.fillsAt(bars[begin].timestamp,
-                                   bars[end - 1].timestamp +
-                                       std::chrono::milliseconds{1}),
+          .fills = std::move(fills),
           .portfolio = *portfolio,
           .partialUtcDay = !completeSourceDay || rangeCutsUtcDay,
       });

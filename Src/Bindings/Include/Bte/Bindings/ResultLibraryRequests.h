@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Results/ResultStore.h"
 
@@ -10,14 +11,13 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace bte::bindings {
 
 /// Owns cancellable Result-library work and ignores superseded completions.
 class ResultLibraryRequests final : public QObject {
 public:
-  using CatalogResult = core::Result<std::vector<results::ResultSummary>>;
+  using CatalogResult = core::Result<ResultCatalogSnapshot>;
   using DetailsResult = core::Result<results::OpenedResult>;
   using ActionResult = core::Result<void>;
   using CatalogCallback = std::function<void(CatalogResult)>;

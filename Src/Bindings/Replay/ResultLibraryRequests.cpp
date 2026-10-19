@@ -119,8 +119,15 @@ std::uint64_t ResultLibraryRequests::requestCatalog(const bool trash,
         if (!store.ok()) {
           return store.error();
         }
-        return trash ? store.value()->listTrash(token)
-                     : store.value()->list(token);
+        auto entries = trash ? store.value()->listTrash(token)
+                             : store.value()->list(token);
+        if (!entries.ok()) {
+          return entries.error();
+        }
+        return ResultCatalogSnapshot{
+            .entries = std::move(entries).value(),
+            .notices = store.value()->recoveryNotices(),
+        };
       },
       std::move(callback));
 }
