@@ -32,6 +32,7 @@ namespace {
 #if defined(BTE_ENABLE_TEST_HOOKS)
 std::atomic_bool blockNextOpen = false;
 std::atomic_bool openWorkerStarted = false;
+std::atomic_uint64_t catalogRequestCount = 0;
 #endif
 
 } // namespace
@@ -45,6 +46,10 @@ void blockNextResultOpenUntilCancelled() noexcept {
 }
 
 bool resultOpenWorkerStarted() noexcept { return openWorkerStarted.load(); }
+
+std::uint64_t resultCatalogRequestCount() noexcept {
+  return catalogRequestCount.load();
+}
 
 void clearResultReplayRequestHooks() noexcept {
   blockNextOpen.store(false);
@@ -87,6 +92,9 @@ ResultReplayRequests::~ResultReplayRequests() {
 }
 
 std::uint64_t ResultReplayRequests::requestCatalog(CatalogCallback callback) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  ++catalogRequestCount;
+#endif
   cancel();
   impl_->prune();
   impl_->cancellation = core::CancellationSource{};

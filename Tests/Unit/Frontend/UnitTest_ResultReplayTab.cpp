@@ -85,6 +85,7 @@ private slots:
   void rapidSwitchRejectsStaleCompletionAndPresentsExactFirstFrame();
   void resultControlsAndPersistedFillDetailsAreAccessible();
   void dailyMarkersAnchorToTheirCandleAndKeepActualFillTime();
+  void externalOpenDefersCatalogRefreshUntilOpenCompletes();
   void resultKeyboardShortcutsRestartAndSpeedMapping();
   void selectionWhilePlayingStopsPriorPlayback();
   void timeframeChangeDuringOpenReplacesThePendingRequest();
@@ -104,6 +105,7 @@ private slots:
 
 private:
   std::filesystem::path root_;
+  std::string snapshotId_;
   std::string firstResultId_;
   std::string secondResultId_;
   std::string emptyResultId_;
@@ -182,6 +184,7 @@ void ResultReplayTabTest::initTestCase() {
       .splitManifestHash = std::string(64, 'b'),
   });
   QVERIFY2(built.ok(), built.error().message.c_str());
+  snapshotId_ = built.value().snapshotId;
   const auto run = [this, &built](const std::int64_t quantity) {
     return bte::bindings::runPersistedBacktestConfiguration(
         {.symbol = "SYN",
@@ -309,6 +312,59 @@ void ResultReplayTabTest::initTestCase() {
 
 void ResultReplayTabTest::cleanupTestCase() {
   std::filesystem::remove_all(root_);
+}
+
+void ResultReplayTabTest::externalOpenDefersCatalogRefreshUntilOpenCompletes() {
+  const auto resultRoot = root_ / "DeferredStore";
+  bte::frontend::ReplayTab tab{resultRoot, root_ / "Data"};
+  auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  QVERIFY(selector != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return status->text() == "No saved Backtest results"; }));
+
+  const auto run = bte::bindings::runPersistedBacktestConfiguration(
+      {.symbol = "SYN",
+       .schema = "ohlcv-1h",
+       .startDate = QDate{2024, 1, 1},
+       .endDate = QDate{2024, 1, 2},
+       .initialCapital = 2'000,
+       .quantityShares = 1,
+       .selectableStrategy = {}},
+      {.resultStore = resultRoot,
+       .dataStore = root_ / "Data",
+       .snapshotId = snapshotId_,
+       .strategyHash = std::string(64, 'c')});
+  QVERIFY2(run.ok(), run.error().message.c_str());
+  auto store = bte::results::ResultStore::open(resultRoot, root_ / "Data");
+  QVERIFY2(store.ok(), store.error().message.c_str());
+  const auto published = store.value()->publishDraft(run.value().resultId);
+  QVERIFY2(published.ok(), published.error().message.c_str());
+
+  const auto catalogRequestsBeforeOpen =
+      bte::bindings::testing::resultCatalogRequestCount();
+  bte::bindings::testing::blockNextResultOpenUntilCancelled();
+  tab.openResult(QString::fromStdString(run.value().resultId));
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  while (!bte::bindings::testing::resultOpenWorkerStarted() &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  QVERIFY(bte::bindings::testing::resultOpenWorkerStarted());
+  QCOMPARE(bte::bindings::testing::resultCatalogRequestCount(),
+           catalogRequestsBeforeOpen);
+  QCOMPARE(selector->findData(QString::fromStdString(run.value().resultId)),
+           -1);
+
+  bte::bindings::testing::clearResultReplayRequestHooks();
+  tab.openResult(QString::fromStdString(run.value().resultId));
+  QVERIFY(bte::test::waitUntil([&] {
+    return status->text().startsWith("Result ") &&
+           selector->findData(QString::fromStdString(run.value().resultId)) >=
+               0;
+  }));
 }
 
 void ResultReplayTabTest::trashedActiveResultStopsReplayAndClearsSelection() {
@@ -1024,6 +1080,7 @@ void ResultReplayTabTest::longRangeSeekPresentsEveryReachedCandleAndFill() {
   auto *zoomIn = tab.findChild<QToolButton *>("replayZoomInButton");
   auto *follow = tab.findChild<QToolButton *>("replayFollowLatestButton");
   auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
   auto *chart = tab.findChild<bte::frontend::QtChartsCandlestickView *>(
       "replayCandlestickChartView");
   QVERIFY(seek != nullptr);
@@ -1031,6 +1088,7 @@ void ResultReplayTabTest::longRangeSeekPresentsEveryReachedCandleAndFill() {
   QVERIFY(zoomIn != nullptr);
   QVERIFY(follow != nullptr);
   QVERIFY(status != nullptr);
+  QVERIFY(selector != nullptr);
   QVERIFY(chart != nullptr);
   QElapsedTimer loadTimer;
   loadTimer.start();
@@ -1039,6 +1097,10 @@ void ResultReplayTabTest::longRangeSeekPresentsEveryReachedCandleAndFill() {
       bte::test::waitUntil([&] { return seek->maximum() == barCount - 1; });
   qInfo("23,777-bar / 6,793-fill Replay load: %lld ms", loadTimer.elapsed());
   QVERIFY2(loaded, qPrintable(status->text()));
+  QVERIFY(bte::test::waitUntil([&] {
+    return selector->findData(
+               QString::fromStdString(result.value().resultId)) >= 0;
+  }));
   QCOMPARE(chart->candleCount(), 1U);
   QElapsedTimer timer;
   timer.start();

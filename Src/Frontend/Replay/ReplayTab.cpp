@@ -139,7 +139,7 @@ struct ReplayTab::State final {
   std::shared_ptr<bindings::ResultReplay> resultReplay;
   const bindings::ResultReplay *chartedResultReplay = nullptr;
   std::size_t chartedFrameCount = 0;
-  std::function<void(const QString &, std::optional<core::Timestamp>)>
+  std::function<void(const QString &, std::optional<core::Timestamp>, bool)>
       requestOpen;
   std::function<void()> reloadCatalog;
   QString requestedResultId;
@@ -634,7 +634,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
 
   state_->requestOpen = [this, setup, stopPlayback, renderResult](
                             const QString &requestedId,
-                            const std::optional<core::Timestamp> cursorAnchor) {
+                            const std::optional<core::Timestamp> cursorAnchor,
+                            const bool reloadCatalogAfterOpen) {
     const auto resultId = requestedId.trimmed();
     stopPlayback();
     state_->openRequests->cancel();
@@ -648,6 +649,10 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     }
     const auto catalogIndex =
         setup.resultCombo->findData(resultId, Qt::UserRole);
+    const auto refreshCatalogAfterOpen = reloadCatalogAfterOpen;
+    if (reloadCatalogAfterOpen) {
+      state_->catalogRequests->cancel();
+    }
     if (catalogIndex >= 0 &&
         !setup.resultCombo->itemData(catalogIndex, Qt::UserRole + 1).toBool()) {
       setLabelText(
@@ -671,13 +676,17 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
                                : bindings::ResultReplayTimeframe::dailyUtc;
     state_->openRequests->requestOpen(
         resultId.toStdString(), timeframe,
-        [this, setup, resultId, renderResult, cursorAnchor](
+        [this, setup, resultId, renderResult, cursorAnchor,
+         refreshCatalogAfterOpen](
             const bindings::ResultReplayRequests::OpenResult &opened) {
           if (!opened.ok()) {
             setLabelText(
                 setup.resultStatusLabel,
                 tr("Cannot open result — %1")
                     .arg(QString::fromStdString(opened.error().message)));
+            if (refreshCatalogAfterOpen) {
+              state_->reloadCatalog();
+            }
             return;
           }
           state_->resultReplay = opened.value();
@@ -702,6 +711,9 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
                              QString::fromStdString(
                                  state_->resultReplay->terminalReason())));
           renderResult();
+          if (refreshCatalogAfterOpen) {
+            state_->reloadCatalog();
+          }
         });
   };
 
@@ -713,14 +725,14 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
             index >= 0 && text == setup.resultCombo->itemText(index)
                 ? setup.resultCombo->itemData(index, Qt::UserRole).toString()
                 : text.trimmed();
-        state_->requestOpen(selectedId, std::nullopt);
+        state_->requestOpen(selectedId, std::nullopt, false);
       });
   QObject::connect(
       setup.resultCombo, &QComboBox::activated, this,
       [this, setup](const int index) {
         state_->requestOpen(
             setup.resultCombo->itemData(index, Qt::UserRole).toString(),
-            std::nullopt);
+            std::nullopt, false);
       });
   QObject::connect(
       setup.resultTimeframeCombo, &QComboBox::currentIndexChanged, this,
@@ -729,10 +741,12 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
           const auto *frame = state_->resultReplay == nullptr
                                   ? nullptr
                                   : state_->resultReplay->current();
-          state_->requestOpen(state_->requestedResultId,
-                              frame == nullptr ? std::nullopt
-                                               : std::optional<core::Timestamp>{
-                                                     frame->candle.ts});
+          state_->requestOpen(
+              state_->requestedResultId,
+              frame == nullptr
+                  ? std::nullopt
+                  : std::optional<core::Timestamp>{frame->candle.ts},
+              false);
         }
       });
 
@@ -814,8 +828,7 @@ ReplayTab::~ReplayTab() = default;
 
 void ReplayTab::openResult(const QString &resultId) {
   if (state_->requestOpen) {
-    state_->requestOpen(resultId, std::nullopt);
-    state_->reloadCatalog();
+    state_->requestOpen(resultId, std::nullopt, true);
   }
 }
 

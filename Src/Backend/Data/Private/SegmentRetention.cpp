@@ -17,7 +17,9 @@
 #include <functional> // IWYU pragma: keep
 #include <initializer_list>
 #include <iterator>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <ranges> // IWYU pragma: keep
 #include <string>
 #include <system_error>
@@ -221,6 +223,24 @@ bool validSegmentId(const std::string &identity) {
          });
 }
 
+std::shared_ptr<std::mutex>
+storeMutexFor(const std::filesystem::path &canonicalDirectory) {
+  static std::mutex registryMutex;
+  static std::map<std::filesystem::path, std::shared_ptr<std::mutex>> registry;
+  const std::scoped_lock lock{registryMutex};
+  // Reclaim paths held only by the registry; active stores keep a second owner.
+  std::erase_if(registry, [](const auto &entry) {
+    return entry.second.use_count() == 1;
+  });
+  if (const auto position = registry.find(canonicalDirectory);
+      position != registry.end()) {
+    return position->second;
+  }
+  auto created = std::make_shared<std::mutex>();
+  registry.insert_or_assign(canonicalDirectory, created);
+  return created;
+}
+
 core::Result<std::unique_ptr<Database>>
 openDatabase(const std::filesystem::path &storeDirectory) {
   auto database = std::make_unique<Database>();
@@ -283,8 +303,10 @@ void clearRetentionFailure() noexcept {
 #endif
 
 SegmentRetentionStore::SegmentRetentionStore(
-    ConstructionKey, std::filesystem::path storeDirectory)
-    : storeDirectory_(std::move(storeDirectory)) {}
+    ConstructionKey, std::filesystem::path storeDirectory,
+    std::shared_ptr<std::mutex> storeMutex)
+    : storeDirectory_(std::move(storeDirectory)),
+      storeMutex_(std::move(storeMutex)) {}
 
 core::Result<std::unique_ptr<SegmentRetentionStore>>
 SegmentRetentionStore::open(const std::filesystem::path &storeDirectory) {
@@ -292,34 +314,40 @@ SegmentRetentionStore::open(const std::filesystem::path &storeDirectory) {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Segment retention store directory is required");
   }
+  std::filesystem::path canonicalDirectory;
   try {
     std::filesystem::create_directories(storeDirectory);
     std::filesystem::create_directories(storeDirectory / "Trash" / "Segments");
+    canonicalDirectory = std::filesystem::canonical(storeDirectory);
   } catch (const std::filesystem::filesystem_error &error) {
     return core::makeError(core::ErrorCode::permissionDenied,
-                           "Unable to create retention store: " +
+                           "Unable to prepare retention store: " +
                                std::string{error.what()});
   }
-  auto database = openDatabase(storeDirectory);
-  if (!database.ok()) {
-    return database.error();
-  }
-  for (const auto &sql : {
-           "PRAGMA journal_mode=WAL",
-           "PRAGMA synchronous=FULL",
-           "CREATE TABLE IF NOT EXISTS segment_references("
-           "result_id TEXT NOT NULL, segment_id TEXT NOT NULL, "
-           "PRIMARY KEY(result_id, segment_id)) WITHOUT ROWID",
-           "CREATE INDEX IF NOT EXISTS segment_reference_counts "
-           "ON segment_references(segment_id)",
-       }) {
-    auto executed = database.value()->execute(sql);
-    if (!executed.ok()) {
-      return executed.error();
+  auto storeMutex = storeMutexFor(canonicalDirectory);
+  {
+    const std::scoped_lock lock{*storeMutex};
+    auto database = openDatabase(canonicalDirectory);
+    if (!database.ok()) {
+      return database.error();
+    }
+    for (const auto &sql : {
+             "PRAGMA journal_mode=WAL",
+             "PRAGMA synchronous=FULL",
+             "CREATE TABLE IF NOT EXISTS segment_references("
+             "result_id TEXT NOT NULL, segment_id TEXT NOT NULL, "
+             "PRIMARY KEY(result_id, segment_id)) WITHOUT ROWID",
+             "CREATE INDEX IF NOT EXISTS segment_reference_counts "
+             "ON segment_references(segment_id)",
+         }) {
+      auto executed = database.value()->execute(sql);
+      if (!executed.ok()) {
+        return executed.error();
+      }
     }
   }
-  return std::make_unique<SegmentRetentionStore>(ConstructionKey{},
-                                                 storeDirectory);
+  return std::make_unique<SegmentRetentionStore>(
+      ConstructionKey{}, std::move(canonicalDirectory), std::move(storeMutex));
 }
 
 core::Result<std::size_t> SegmentRetentionStore::acquire(
@@ -335,6 +363,7 @@ core::Result<std::size_t> SegmentRetentionStore::acquire(
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Data Segment identities must be unique");
   }
+  const std::scoped_lock lock{*storeMutex_};
   auto database = openDatabase(storeDirectory_);
   if (!database.ok()) {
     return database.error();
@@ -410,6 +439,7 @@ SegmentRetentionStore::references(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
+  const std::scoped_lock lock{*storeMutex_};
   auto database = openDatabase(storeDirectory_);
   if (!database.ok()) {
     return database.error();
@@ -425,6 +455,7 @@ SegmentRetentionStore::release(const std::string &resultId) const {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Result ID is invalid");
   }
+  const std::scoped_lock lock{*storeMutex_};
   auto database = openDatabase(storeDirectory_);
   if (!database.ok()) {
     return database.error();
