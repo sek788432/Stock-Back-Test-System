@@ -1,5 +1,6 @@
 #include "Bte/Bindings/ResultCatalogSnapshot.h"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
