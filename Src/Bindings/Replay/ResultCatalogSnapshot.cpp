@@ -1,6 +1,6 @@
 #include "Bte/Bindings/ResultCatalogSnapshot.h"
 
-#include <algorithm>
+#include <algorithm> // IWYU pragma: keep
 #include <utility>
 #include <vector>
 
