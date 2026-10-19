@@ -4,7 +4,6 @@
 
 #include "Bte/Bindings/BacktestSessionVm.h"
 #include "Bte/Indicators/StreamingIndicator.h"
-#include "Bte/Results/ResultStore.h"
 #include "Bte/Strategy/SelectableStrategy.h"
 
 #include <QAbstractItemView>

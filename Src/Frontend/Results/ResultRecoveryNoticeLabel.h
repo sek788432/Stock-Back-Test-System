@@ -24,7 +24,7 @@ public:
     hide();
   }
 
-  void present(const std::span<const results::ResultRecoveryNotice> notices) {
+  void present(const std::span<const bindings::ResultRecoveryNotice> notices) {
     QStringList lines;
     for (const auto &notice : notices) {
       lines.push_back(

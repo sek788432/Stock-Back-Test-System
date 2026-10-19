@@ -53,7 +53,8 @@ void ResultLibraryRequestsTest::
     QCOMPARE(completed->value().notices.size(), std::size_t{1});
     const auto &notice = completed->value().notices.front();
     QCOMPARE(notice.resultId, id);
-    QCOMPARE(notice.reason, bte::results::ResultRecoveryReason::legacyUnleased);
+    QCOMPARE(notice.reason,
+             bte::bindings::ResultRecoveryReason::legacyUnleased);
     QVERIFY(!notice.diagnostic.empty());
     QVERIFY(std::filesystem::is_regular_file(staging));
     std::ifstream preserved{staging};

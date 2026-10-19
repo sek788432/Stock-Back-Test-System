@@ -20,6 +20,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string> // IWYU pragma: keep
 #include <utility>
 
@@ -346,8 +347,8 @@ listBacktestDraftCatalog(const PersistedBacktestStorage &storage,
   if (!drafts.ok()) {
     return drafts.error();
   }
-  return ResultCatalogSnapshot{.entries = std::move(drafts).value(),
-                               .notices = store.value()->recoveryNotices()};
+  return makeResultCatalogSnapshot(std::move(drafts).value(),
+                                   store.value()->recoveryNotices());
 }
 
 core::Result<std::vector<std::string>>
@@ -360,7 +361,7 @@ listBacktestDrafts(const PersistedBacktestStorage &storage,
   std::vector<std::string> resultIds;
   resultIds.reserve(catalog.value().entries.size());
   std::ranges::transform(catalog.value().entries, std::back_inserter(resultIds),
-                         &results::ResultSummary::resultId);
+                         &ResultCatalogEntry::resultId);
   return resultIds;
 }
 

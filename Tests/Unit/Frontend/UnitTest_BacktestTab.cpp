@@ -173,7 +173,7 @@ void BacktestTabTest::
         if (++calls == 1) {
           snapshot.notices.push_back({
               .resultId = preservedId,
-              .reason = bte::results::ResultRecoveryReason::legacyUnleased,
+              .reason = bte::bindings::ResultRecoveryReason::legacyUnleased,
               .diagnostic = diagnostic,
           });
         }

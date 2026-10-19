@@ -4,6 +4,7 @@
 
 // IWYU pragma: no_include "Bte/Results/ResultStore.h"
 
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Bindings/ResultLibraryRequests.h"
 #include "Bte/Core/Time.h"
 
@@ -59,19 +60,19 @@ std::filesystem::path applicationStore(const char *environmentName,
          leaf;
 }
 
-QString statusText(const results::RunStatus status) {
+QString statusText(const bindings::ResultRunStatus status) {
   switch (status) {
-  case results::RunStatus::completed:
+  case bindings::ResultRunStatus::completed:
     return "Completed";
-  case results::RunStatus::failed:
+  case bindings::ResultRunStatus::failed:
     return "Failed";
-  case results::RunStatus::canceled:
+  case bindings::ResultRunStatus::canceled:
     return "Canceled";
-  case results::RunStatus::interrupted:
+  case bindings::ResultRunStatus::interrupted:
     return "Interrupted";
-  case results::RunStatus::running:
+  case bindings::ResultRunStatus::running:
     return "Running";
-  case results::RunStatus::incomplete:
+  case bindings::ResultRunStatus::incomplete:
     return "Incomplete";
   }
   return "Unknown";
@@ -101,7 +102,7 @@ struct ResultsTab::State final {
   QPushButton *renameButton{};
   QPushButton *trashButton{};
   QPushButton *restoreButton{};
-  std::vector<results::ResultSummary> summaries;
+  std::vector<bindings::ResultCatalogEntry> summaries;
   bool busy = false;
 
   [[nodiscard]] bool showingTrash() const {
@@ -117,7 +118,7 @@ struct ResultsTab::State final {
     return item == nullptr ? QString{} : item->data(Qt::UserRole).toString();
   }
 
-  [[nodiscard]] const results::ResultSummary *selectedSummary() const {
+  [[nodiscard]] const bindings::ResultCatalogEntry *selectedSummary() const {
     const auto resultId = selectedId().toStdString();
     const auto entry =
         std::ranges::find_if(summaries, [&resultId](const auto &summary) {
@@ -265,7 +266,7 @@ ResultsTab::ResultsTab(std::filesystem::path resultStore,
                            opened.descriptor.range.start)),
                        QString::fromStdString(
                            core::time::toIso8601(opened.descriptor.range.end)),
-                       statusText(opened.status),
+                       statusText(bindings::toResultRunStatus(opened.status)),
                        moneyText(opened.summary.finalEquityMicrodollars),
                        moneyText(opened.summary.pnlMicrodollars),
                        QString::fromStdString(opened.canonicalResultHash)));

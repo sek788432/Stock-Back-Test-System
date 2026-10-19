@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include <thread>
@@ -106,10 +107,8 @@ std::uint64_t ResultReplayRequests::requestCatalog(CatalogCallback callback) {
       if (!entries.ok()) {
         return entries.error();
       }
-      return ResultCatalogSnapshot{
-          .entries = std::move(entries).value(),
-          .notices = store.value()->recoveryNotices(),
-      };
+      return makeResultCatalogSnapshot(std::move(entries).value(),
+                                       store.value()->recoveryNotices());
     };
     auto result = std::make_shared<CatalogResult>(loadCatalog());
     QTimer::singleShot(

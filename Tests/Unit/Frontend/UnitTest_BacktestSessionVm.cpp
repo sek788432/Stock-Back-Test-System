@@ -8,6 +8,7 @@
 #include <QTest>
 
 #include <algorithm>
+#include <array>
 #include <cfenv>
 #include <chrono>
 #include <cmath>
@@ -50,6 +51,7 @@ private slots:
   void invalidSelectablePlanPreservesCompileError();
   void configuredRunComposesTrackedDataAndEngine();
   void draftLifecycleBoundariesReturnStructuredResults();
+  void catalogSnapshotTranslatesEntriesAndEveryRecoveryReason();
   void draftCatalogKeepsRecoveryNoticesWithoutMutatingLegacyFiles();
 };
 
@@ -398,7 +400,7 @@ void BacktestSessionVmTest::
   QCOMPARE(catalog.value().notices.size(), 1U);
   QCOMPARE(catalog.value().notices.front().resultId, resultId);
   QCOMPARE(catalog.value().notices.front().reason,
-           bte::results::ResultRecoveryReason::legacyUnleased);
+           bte::bindings::ResultRecoveryReason::legacyUnleased);
   QVERIFY(!catalog.value().notices.front().diagnostic.empty());
   std::ifstream legacy{legacyPath};
   std::string contents;
@@ -407,6 +409,131 @@ void BacktestSessionVmTest::
   const auto compatibility = bte::bindings::listBacktestDrafts(storage);
   QVERIFY(compatibility.ok());
   QVERIFY(compatibility.value().empty());
+}
+
+void BacktestSessionVmTest::
+    catalogSnapshotTranslatesEntriesAndEveryRecoveryReason() {
+  const std::array entries{
+      bte::results::ResultSummary{
+          .resultId = "running",
+          .displayName = "Running result",
+          .canonicalResultHash = "hash-running",
+          .status = bte::results::RunStatus::running,
+          .savedUtcMillis = 101,
+          .available = true,
+          .unavailableReason = "",
+      },
+      bte::results::ResultSummary{
+          .resultId = "completed",
+          .displayName = "Completed result",
+          .canonicalResultHash = "hash-completed",
+          .status = bte::results::RunStatus::completed,
+          .savedUtcMillis = 102,
+          .available = true,
+          .unavailableReason = "",
+      },
+      bte::results::ResultSummary{
+          .resultId = "failed",
+          .displayName = "Failed result",
+          .canonicalResultHash = "hash-failed",
+          .status = bte::results::RunStatus::failed,
+          .savedUtcMillis = 103,
+          .available = false,
+          .unavailableReason = "missing segment",
+      },
+      bte::results::ResultSummary{
+          .resultId = "canceled",
+          .displayName = "Canceled result",
+          .canonicalResultHash = "hash-canceled",
+          .status = bte::results::RunStatus::canceled,
+          .savedUtcMillis = 104,
+          .available = true,
+          .unavailableReason = "",
+      },
+      bte::results::ResultSummary{
+          .resultId = "interrupted",
+          .displayName = "Interrupted result",
+          .canonicalResultHash = "hash-interrupted",
+          .status = bte::results::RunStatus::interrupted,
+          .savedUtcMillis = 105,
+          .available = false,
+          .unavailableReason = "invalid lease",
+      },
+      bte::results::ResultSummary{
+          .resultId = "incomplete",
+          .displayName = "Incomplete result",
+          .canonicalResultHash = "hash-incomplete",
+          .status = bte::results::RunStatus::incomplete,
+          .savedUtcMillis = 106,
+          .available = false,
+          .unavailableReason = "incomplete result",
+      },
+  };
+  const std::array notices{
+      bte::results::ResultRecoveryNotice{
+          .resultId = "legacy",
+          .reason = bte::results::ResultRecoveryReason::legacyUnleased,
+          .diagnostic = "legacy diagnostic",
+      },
+      bte::results::ResultRecoveryNotice{
+          .resultId = "lease",
+          .reason = bte::results::ResultRecoveryReason::invalidLease,
+          .diagnostic = "lease diagnostic",
+      },
+      bte::results::ResultRecoveryNotice{
+          .resultId = "prefix",
+          .reason = bte::results::ResultRecoveryReason::invalidPrefix,
+          .diagnostic = "prefix diagnostic",
+      },
+      bte::results::ResultRecoveryNotice{
+          .resultId = "references",
+          .reason = bte::results::ResultRecoveryReason::missingReferences,
+          .diagnostic = "references diagnostic",
+      },
+      bte::results::ResultRecoveryNotice{
+          .resultId = "initialization",
+          .reason = bte::results::ResultRecoveryReason::orphanedInitialization,
+          .diagnostic = "initialization diagnostic",
+      },
+  };
+
+  const auto catalog = bte::bindings::makeResultCatalogSnapshot(
+      std::vector<bte::results::ResultSummary>{entries.begin(), entries.end()},
+      notices);
+  const std::array expectedStatuses{
+      bte::bindings::ResultRunStatus::running,
+      bte::bindings::ResultRunStatus::completed,
+      bte::bindings::ResultRunStatus::failed,
+      bte::bindings::ResultRunStatus::canceled,
+      bte::bindings::ResultRunStatus::interrupted,
+      bte::bindings::ResultRunStatus::incomplete,
+  };
+  QCOMPARE(catalog.entries.size(), entries.size());
+  for (auto index = std::size_t{}; index < entries.size(); ++index) {
+    const auto &actual = catalog.entries[index];
+    const auto &expected = entries[index];
+    QCOMPARE(actual.resultId, expected.resultId);
+    QCOMPARE(actual.displayName, expected.displayName);
+    QCOMPARE(actual.canonicalResultHash, expected.canonicalResultHash);
+    QCOMPARE(actual.status, expectedStatuses[index]);
+    QCOMPARE(actual.savedUtcMillis, expected.savedUtcMillis);
+    QCOMPARE(actual.available, expected.available);
+    QCOMPARE(actual.unavailableReason, expected.unavailableReason);
+  }
+
+  const std::array expectedReasons{
+      bte::bindings::ResultRecoveryReason::legacyUnleased,
+      bte::bindings::ResultRecoveryReason::invalidLease,
+      bte::bindings::ResultRecoveryReason::invalidPrefix,
+      bte::bindings::ResultRecoveryReason::missingReferences,
+      bte::bindings::ResultRecoveryReason::orphanedInitialization,
+  };
+  QCOMPARE(catalog.notices.size(), expectedReasons.size());
+  for (auto index = std::size_t{}; index < expectedReasons.size(); ++index) {
+    QCOMPARE(catalog.notices[index].resultId, notices[index].resultId);
+    QCOMPARE(catalog.notices[index].reason, expectedReasons[index]);
+    QCOMPARE(catalog.notices[index].diagnostic, notices[index].diagnostic);
+  }
 }
 
 } // namespace
