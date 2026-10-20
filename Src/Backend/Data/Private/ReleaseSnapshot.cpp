@@ -1098,7 +1098,9 @@ ReleaseSnapshotReader::lastDataDaysBeforeUtcDate(
         segment->bars, utcDateStart, {}, &SnapshotBar::timestamp);
     auto bar = firstAtOrAfterBoundary;
     while (bar != segment->bars.begin()) {
-      if (cancellation.isCancellationRequested()) {
+      if (cancellationRequested(
+              cancellation,
+              testing::SnapshotFailurePoint::historyDataDayScanCancellation)) {
         return core::makeError(core::ErrorCode::cancelled,
                                "Snapshot history lookup was cancelled");
       }

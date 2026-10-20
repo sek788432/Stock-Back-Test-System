@@ -432,6 +432,28 @@ TEST(ReleaseSnapshotTest, lastDataDaysBeforeUtcDateHonorsCancellation) {
   EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
 }
 
+TEST(ReleaseSnapshotTest,
+     lastDataDaysBeforeUtcDateHonorsCancellationDuringBarScan) {
+  const ScopedSnapshotFixture fixture{"historical-data-day-bar-scan-cancelled"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  auto request = fixture.buildRequest();
+  request.rowsPerSegment = 10;
+  const auto built = bte::data::buildReleaseSnapshot(request);
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::historyDataDayScanCancellation);
+  const auto result = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-03 00:00:00+00:00"), 1);
+  bte::data::testing::clearSnapshotFailure();
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
 TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateHonorsCancellation) {
   const ScopedSnapshotFixture fixture{"prior-data-day-cancelled"};
   fixture.writeSymbol("SYN", threeHourlyRows);
