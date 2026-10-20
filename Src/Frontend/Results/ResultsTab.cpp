@@ -10,6 +10,7 @@
 
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -86,6 +87,65 @@ QString moneyText(const std::optional<std::int64_t> microdollars) {
                    static_cast<double>(*microdollars) / 1'000'000.0, 0, 'f', 2)
              : QString{"Unavailable"};
 } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+
+template <typename Capabilities>
+void appendCapabilityLines(QStringList &lines,
+                           const Capabilities &capabilities) {
+  lines.append(QCoreApplication::translate("ResultsTab", "Capabilities:"));
+  const auto append = [&lines](const QString &name, const bool supported) {
+    const auto status =
+        supported ? QCoreApplication::translate("ResultsTab", "Supported")
+                  : QCoreApplication::translate("ResultsTab", "Unavailable");
+    lines.append(
+        QCoreApplication::translate("ResultsTab", "%1: %2").arg(name, status));
+  };
+  append(QCoreApplication::translate("ResultsTab", "Orders"),
+         capabilities.orders);
+  append(QCoreApplication::translate("ResultsTab", "Fills"),
+         capabilities.fills);
+  append(QCoreApplication::translate("ResultsTab", "Post-slice portfolio"),
+         capabilities.postSlicePortfolio);
+  append(QCoreApplication::translate("ResultsTab", "Slippage costs"),
+         capabilities.slippageCosts);
+  append(QCoreApplication::translate("ResultsTab", "Warnings"),
+         capabilities.warnings);
+  append(QCoreApplication::translate("ResultsTab", "Terminal diagnostics"),
+         capabilities.terminalDiagnostics);
+  append(QCoreApplication::translate("ResultsTab", "Trade episodes"),
+         capabilities.trades);
+  append(QCoreApplication::translate("ResultsTab", "Performance metrics"),
+         capabilities.metrics);
+  append(QCoreApplication::translate("ResultsTab", "Strategy logs"),
+         capabilities.strategyLogs);
+  append(QCoreApplication::translate("ResultsTab", "Indicator snapshots"),
+         capabilities.indicatorSnapshots);
+  append(QCoreApplication::translate("ResultsTab", "Corporate actions"),
+         capabilities.corporateActions);
+  append(QCoreApplication::translate("ResultsTab", "Margin"),
+         capabilities.margin);
+}
+
+template <typename OpenedResult>
+void appendPersistedWarningLines(QStringList &lines,
+                                 const OpenedResult &opened) {
+  lines.append(
+      QCoreApplication::translate("ResultsTab", "Persisted warnings:"));
+  if (!opened.capabilities.warnings) {
+    lines.append(QCoreApplication::translate("ResultsTab", "Unavailable"));
+    return;
+  }
+  auto foundWarning = false;
+  for (const auto &record : opened.records) {
+    if (record.family == results::RecordFamily::warning) {
+      lines.append(QCoreApplication::translate("ResultsTab", "• %1")
+                       .arg(QString::fromStdString(record.text)));
+      foundWarning = true;
+    }
+  }
+  if (!foundWarning) {
+    lines.append(QCoreApplication::translate("ResultsTab", "None recorded"));
+  }
+}
 
 } // namespace
 
@@ -276,51 +336,9 @@ ResultsTab::ResultsTab(std::filesystem::path resultStore,
               tr("Canonical hash: %1")
                   .arg(QString::fromStdString(opened.canonicalResultHash)),
               tr("Data: Available"),
-              tr("Capabilities:"),
           };
-          const auto appendCapability = [&detailLines](const QString &name,
-                                                       const bool supported) {
-            detailLines.append(tr("%1: %2").arg(
-                name, supported ? tr("Supported") : tr("Unavailable")));
-          };
-          appendCapability(tr("Orders"), opened.capabilities.orders);
-          appendCapability(tr("Fills"), opened.capabilities.fills);
-          appendCapability(tr("Post-slice portfolio"),
-                           opened.capabilities.postSlicePortfolio);
-          appendCapability(tr("Slippage costs"),
-                           opened.capabilities.slippageCosts);
-          appendCapability(tr("Warnings"), opened.capabilities.warnings);
-          appendCapability(tr("Terminal diagnostics"),
-                           opened.capabilities.terminalDiagnostics);
-          appendCapability(tr("Trade episodes"), opened.capabilities.trades);
-          appendCapability(tr("Performance metrics"),
-                           opened.capabilities.metrics);
-          appendCapability(tr("Strategy logs"),
-                           opened.capabilities.strategyLogs);
-          appendCapability(tr("Indicator snapshots"),
-                           opened.capabilities.indicatorSnapshots);
-          appendCapability(tr("Corporate actions"),
-                           opened.capabilities.corporateActions);
-          appendCapability(tr("Margin"), opened.capabilities.margin);
-
-          detailLines.append(tr("Persisted warnings:"));
-          auto warnings = QStringList{};
-          if (opened.capabilities.warnings) {
-            for (const auto &record : opened.records) {
-              if (record.family == results::RecordFamily::warning) {
-                warnings.append(QString::fromStdString(record.text));
-              }
-            }
-          }
-          if (warnings.isEmpty()) {
-            detailLines.append(opened.capabilities.warnings
-                                   ? tr("None recorded")
-                                   : tr("Unavailable"));
-          } else {
-            for (const auto &warning : warnings) {
-              detailLines.append(tr("• %1").arg(warning));
-            }
-          }
+          appendCapabilityLines(detailLines, opened.capabilities);
+          appendPersistedWarningLines(detailLines, opened);
           state_->details->setText(detailLines.join('\n'));
         });
   });
