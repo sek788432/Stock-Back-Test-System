@@ -131,10 +131,6 @@ void appendPersistedWarningLines(QStringList &lines,
                                  const OpenedResult &opened) {
   lines.append(
       QCoreApplication::translate("ResultsTab", "Persisted warnings:"));
-  if (!opened.capabilities.warnings) {
-    lines.append(QCoreApplication::translate("ResultsTab", "Unavailable"));
-    return;
-  }
   auto foundWarning = false;
   for (const auto &record : opened.records) {
     if (record.family == results::RecordFamily::warning) {
