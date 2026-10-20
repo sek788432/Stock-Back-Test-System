@@ -103,7 +103,7 @@ Requires an existing **`StockData/MarketData.duckdb`** (run collect first unless
 python3 DataFetcher/GetFromDb.py
 ```
 
-Reads **`StockData/Symbols.txt`** by default and writes one CSV **per symbol that has matching rows** under **`StockData/Extracted/`** (e.g. `AAPL.csv`; dots in tickers become underscores in filenames). Symbols with **no matching rows do not produce a CSV**—and any **stale CSV** already on disk with that name is **deleted**. Each file contains only the OHLCV columns (`symbol, ts, open, high, low, close, volume`) and timestamps are emitted in **UTC** so output is reproducible across machines.
+Reads **`StockData/Symbols.txt`** by default and writes one CSV **per symbol that has matching rows** under **`StockData/Extracted/`** (e.g. `AAPL.csv`; dots in tickers become underscores in filenames). Symbols with **no matching rows do not produce a CSV**—and any **stale CSV** already on disk with that name is **deleted**. Each default file contains the OHLCV columns (`symbol, ts, open, high, low, close, volume`) and timestamps are emitted in **UTC** so output is reproducible across machines. Extraction also atomically writes `SourceManifest.btesource`, with the resolved DuckDB `schemaName` and SHA-256 of each exact CSV file. The snapshot builder requires and verifies that declaration for seven-column inputs, so identical CSV columns from hourly and daily exports cannot be confused.
 
 Optional:
 
@@ -116,7 +116,7 @@ python3 DataFetcher/GetFromDb.py \
   --include-provenance
 ```
 
-If **`--schema-name`** is omitted and a symbol has rows under more than one schema in DuckDB, extraction errors out instead of silently mixing intervals — pass **`--schema-name ohlcv-1h`** (or whatever schema you fetched) to disambiguate. Pass **`--include-provenance`** to also emit `source`, `schemaName`, and `ingestedAt` columns. If **any requested symbol has zero matching rows**, the script prints a warning and exits with status **2** (no CSV is written for those symbols).
+If **`--schema-name`** is omitted and a symbol has rows under more than one schema in DuckDB, extraction errors out instead of silently mixing intervals — pass **`--schema-name ohlcv-1h`** (or whatever schema you fetched) to disambiguate. Pass **`--include-provenance`** to also emit `source`, `schemaName`, and `ingestedAt` columns; the snapshot builder accepts the explicit `schemaName` column among trailing metadata columns and ignores the other trailing values. The sidecar is a UTF-8 line file headed by `BTE-SOURCE-MANIFEST-V1`; each sorted `file=<filename>|<timeframe>|<sha256>` record is unique and hashes the exact CSV bytes. Unrequested CSVs are retained in the refreshed sidecar only when their previous declaration still matches their contents; an undeclared or changed stale CSV stops manifest publication. If **any requested symbol has zero matching rows**, the script prints a warning and exits with status **2** (no CSV is written for those symbols).
 
 **Why two symbols can have different row counts:** trade-derived **`ohlcv-1h`** bars are emitted **per symbol**; sparse hours may be **absent** for one ticker but present for another. That is normal vendor behavior—not a CSV bug. Align series in pandas/SQL by reindexing to a fixed hourly calendar if needed.
 

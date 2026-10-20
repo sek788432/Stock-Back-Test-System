@@ -120,6 +120,100 @@ noFillSnapshot(const bte::bindings::BacktestOutcome outcome) {
   };
 }
 
+struct PreviousDataDayControls final {
+  QComboBox *strategy;
+  QComboBox *metric;
+  QComboBox *comparison;
+  QDoubleSpinBox *threshold;
+  QSpinBox *period;
+  QPushButton *run;
+};
+
+PreviousDataDayControls
+previousDataDayControls(bte::frontend::BacktestTab &tab) {
+  return {
+      .strategy = tab.findChild<QComboBox *>("backtestStrategyCombo"),
+      .metric = tab.findChild<QComboBox *>("backtestBuyMetricCombo"),
+      .comparison = tab.findChild<QComboBox *>("backtestBuyComparisonCombo"),
+      .threshold =
+          tab.findChild<QDoubleSpinBox *>("backtestBuyThresholdSpinBox"),
+      .period = tab.findChild<QSpinBox *>("backtestBuyPeriodSpinBox"),
+      .run = tab.findChild<QPushButton *>("backtestRunButton"),
+  };
+}
+
+bool previousDataDayControlsArePresent(
+    const PreviousDataDayControls &controls) {
+  return controls.strategy != nullptr && controls.metric != nullptr &&
+         controls.comparison != nullptr && controls.threshold != nullptr &&
+         controls.period != nullptr && controls.run != nullptr;
+}
+
+bool previousDataDayUiContractIsVisible(
+    const PreviousDataDayControls &controls) {
+  const auto expectedHelp = std::array{
+      QString{"CSV"},
+      QString{"UTC data day"},
+      QString{"extended-hours"},
+      QString{"current UTC date"},
+      QString{"inclusive"},
+      QString{"missing history"},
+  };
+  const auto descriptions = std::array{
+      controls.metric->toolTip(),
+      controls.metric->accessibleDescription(),
+      controls.threshold->toolTip(),
+      controls.threshold->accessibleDescription(),
+  };
+  return controls.comparison->count() == 2 &&
+         controls.comparison->itemText(0) == "Down at least" &&
+         controls.comparison->itemText(1) == "Up at least" &&
+         controls.threshold->minimum() == 0.0001 &&
+         std::ranges::all_of(descriptions,
+                             [&expectedHelp](const auto &help) {
+                               return std::ranges::all_of(
+                                   expectedHelp, [&help](const auto &phrase) {
+                                     return help.contains(phrase,
+                                                          Qt::CaseInsensitive);
+                                   });
+                             }) &&
+         controls.period->toolTip().contains("UTC data days, not bars",
+                                             Qt::CaseInsensitive) &&
+         controls.period->accessibleDescription().contains(
+             "UTC data days, not bars", Qt::CaseInsensitive);
+}
+
+bool runBacktestAndWait(QPushButton *run, std::atomic_int &runCount,
+                        const int expectedRunCount) {
+  QTest::mouseClick(run, Qt::LeftButton);
+  return bte::test::waitUntil([&runCount, run, expectedRunCount] {
+    return runCount.load() == expectedRunCount && run->isEnabled();
+  });
+}
+
+bool capturedPreviousDataDayConditionMatches(
+    std::mutex &captureMutex,
+    const std::optional<bte::bindings::BacktestConfiguration> &captured,
+    const bte::strategy::Comparison expectedComparison,
+    const double expectedThreshold) {
+  const std::scoped_lock lock{captureMutex};
+  if (!captured.has_value() || !captured->selectableStrategy.has_value() ||
+      captured->selectableStrategy->buy.conditions.size() != 1U) {
+    return false;
+  }
+  const auto &condition = captured->selectableStrategy->buy.conditions[0];
+  return condition.source == bte::strategy::ConditionSource::
+                                 previousDataDayCloseChangePercent &&
+         condition.comparison == expectedComparison &&
+         condition.threshold == expectedThreshold &&
+         condition.thresholdDomain == bte::indicators::NumericDomain::percent;
+}
+
+bool legacyConditionEditorIsRestored(const PreviousDataDayControls &controls) {
+  return controls.comparison->count() == 6 &&
+         controls.threshold->minimum() == -1'000'000'000.0;
+}
+
 class BacktestTabTest final : public QObject {
   Q_OBJECT
 
@@ -146,6 +240,7 @@ private slots:
   void applicationConfiguredRunnerUsesEnvironmentStorage();
   void selectableConditionsSubmitTypedPlanToBackend();
   void selectableMetricsSubmitTypedPlansToBackend();
+  void previousDataDayCloseMetricUsesPositiveDownUpAndExplainsUtcSource();
   void selectableMetricUnitsDescribeEveryConditionRow();
   void metricLabelsDoNotRescaleSignedOrZeroThresholds();
   void selectableConditionStatusNamesItsSelectedStrategy();
@@ -1035,12 +1130,47 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
     std::optional<bte::indicators::IndicatorKind> indicatorKind;
     bte::indicators::IndicatorOutput indicatorOutput =
         bte::indicators::IndicatorOutput::value;
+    int expectedLookbackPeriod = 0;
   };
   const auto metricCases = std::vector<MetricCase>{
       {"Close change %",
        bte::strategy::ConditionSource::closeChangePercent,
        bte::indicators::NumericDomain::percent,
        {}},
+      {"Previous data-day close change %",
+       bte::strategy::ConditionSource::previousDataDayCloseChangePercent,
+       bte::indicators::NumericDomain::percent,
+       {}},
+      {"Up X% over selected period",
+       bte::strategy::ConditionSource::dataDayGainPercent,
+       bte::indicators::NumericDomain::percent,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       30},
+      {"Down X% from period high",
+       bte::strategy::ConditionSource::periodHighDrawdownPercent,
+       bte::indicators::NumericDomain::percent,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       21},
+      {"Up X% from period low",
+       bte::strategy::ConditionSource::periodLowReboundPercent,
+       bte::indicators::NumericDomain::percent,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       21},
+      {"Break period high",
+       bte::strategy::ConditionSource::breakPeriodHigh,
+       bte::indicators::NumericDomain::scalar,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       21},
+      {"Break period low",
+       bte::strategy::ConditionSource::breakPeriodLow,
+       bte::indicators::NumericDomain::scalar,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       21},
       {"Close",
        bte::strategy::ConditionSource::barField,
        bte::indicators::NumericDomain::price,
@@ -1126,6 +1256,7 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
   period->setValue(18);
   for (std::size_t index = 0; index < metricCases.size(); ++index) {
     const auto &metricCase = metricCases[index];
+    period->setValue(18);
     metric->setCurrentText(metricCase.label);
     QTest::mouseClick(run, Qt::LeftButton);
     const auto expectedRuns = static_cast<int>(index + 1U);
@@ -1139,11 +1270,28 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
     const auto &condition = captured->selectableStrategy->buy.conditions[0];
     QCOMPARE(condition.source, metricCase.source);
     QCOMPARE(condition.thresholdDomain, metricCase.domain);
+    if (metricCase.expectedLookbackPeriod > 0) {
+      QCOMPARE(condition.lookbackPeriod, metricCase.expectedLookbackPeriod);
+      QCOMPARE(period->value(), metricCase.expectedLookbackPeriod);
+      QCOMPARE(condition.indicator.period, 14);
+      QVERIFY(metric->toolTip().contains("CSV/UTC data days"));
+      QVERIFY(period->toolTip().contains("CSV/UTC dates"));
+      if (metricCase.source ==
+              bte::strategy::ConditionSource::breakPeriodHigh ||
+          metricCase.source == bte::strategy::ConditionSource::breakPeriodLow) {
+        QCOMPARE(condition.comparison, bte::strategy::Comparison::greaterThan);
+        QCOMPARE(condition.threshold, 0.0);
+      } else {
+        QCOMPARE(condition.comparison,
+                 bte::strategy::Comparison::greaterThanOrEqual);
+        QCOMPARE(condition.threshold, 5.0);
+      }
+    }
     if (metricCase.label == "MACD histogram") {
       QCOMPARE(condition.indicator.period, 9);
       QCOMPARE(condition.indicator.secondaryPeriod, 18);
       QCOMPARE(condition.indicator.signalPeriod, 6);
-    } else {
+    } else if (metricCase.expectedLookbackPeriod == 0) {
       QCOMPARE(condition.indicator.period, 18);
     }
     if (metricCase.indicatorKind.has_value()) {
@@ -1151,6 +1299,48 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
       QCOMPARE(condition.indicator.output, metricCase.indicatorOutput);
     }
   }
+}
+
+void BacktestTabTest::
+    previousDataDayCloseMetricUsesPositiveDownUpAndExplainsUtcSource() {
+  QVERIFY(thread() == QCoreApplication::instance()->thread());
+  std::mutex captureMutex;
+  std::optional<bte::bindings::BacktestConfiguration> captured;
+  std::atomic_int runCount = 0;
+  bte::frontend::BacktestTab tab{
+      [&captureMutex, &captured,
+       &runCount](bte::bindings::BacktestConfiguration configuration,
+                  const bte::core::CancellationToken &) {
+        const std::scoped_lock lock{captureMutex};
+        captured = std::move(configuration);
+        runCount.fetch_add(1);
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  const auto controls = previousDataDayControls(tab);
+  QVERIFY(previousDataDayControlsArePresent(controls));
+  controls.strategy->setCurrentText("Selectable conditions");
+  controls.metric->setCurrentText("Previous data-day close change %");
+  QVERIFY(previousDataDayUiContractIsVisible(controls));
+  controls.threshold->setValue(0.0);
+  QCOMPARE(controls.threshold->value(), 0.0001);
+
+  controls.threshold->setValue(5.0);
+  controls.comparison->setCurrentText("Down at least");
+  QVERIFY(runBacktestAndWait(controls.run, runCount, 1));
+  QVERIFY(capturedPreviousDataDayConditionMatches(
+      captureMutex, captured, bte::strategy::Comparison::lessThanOrEqual,
+      -5.0));
+
+  controls.threshold->setValue(2.5);
+  controls.comparison->setCurrentText("Up at least");
+  QVERIFY(runBacktestAndWait(controls.run, runCount, 2));
+  QVERIFY(capturedPreviousDataDayConditionMatches(
+      captureMutex, captured, bte::strategy::Comparison::greaterThanOrEqual,
+      2.5));
+
+  controls.metric->setCurrentText("Close change %");
+  QVERIFY(legacyConditionEditorIsRestored(controls));
 }
 
 void BacktestTabTest::selectableMetricUnitsDescribeEveryConditionRow() {

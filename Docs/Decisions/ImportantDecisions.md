@@ -114,6 +114,16 @@ contract. A public data-bearing release stays
 blocked until redistribution rights and a verified split manifest exist. A
 separate updater is not a V1 dependency.
 
+Seven-column extracted CSVs use a hash-bound `SourceManifest.btesource` sidecar
+to state each file's source timeframe. `GetFromDb.py` writes a sorted V1
+declaration for the exact CSV bytes and the snapshot builder verifies it before
+accepting a selected file. The established seven-column payload stays intact;
+the explicit `schemaName` format remains supported among trailing metadata
+columns, including the exporter's optional `source` and `ingestedAt` fields.
+Inferring timeframe from a filename or a default was rejected because
+it could silently interpret daily rows as hourly. The manifest validates build
+provenance; content-addressed snapshot segments remain the runtime identity.
+
 **Owning specification.** [`Overview.md`](../Specs/Overview.md),
 [`Architecture.md`](../Specs/Architecture.md),
 [`BackendCore.md`](../Specs/BackendCore.md),
@@ -273,16 +283,23 @@ explicitly limited and regression-tested. New abstractions must arrive with a
 real second caller or adapter and complete contract tests. Indicator warm-up
 never fabricates values, and a signal cannot fill on the bar that produced it.
 
-The accepted, not-yet-implemented local historical-condition convention uses
-CSV-derived **UTC data days**, not official exchange sessions. Each UTC date
-with actual immutable source rows counts once; its last close includes extended
-hours. N-day gain uses the close exactly N available data dates earlier (30 in
-the approved example); one-month extrema use the previous 21 completed data
-dates, excluding the current date. Breakouts are strict and persistent per K
-bar. This aligns historical predicates with the existing UTC Daily Replay and
-available source data. Requiring an entitled official daily series or inferring
-a regular-session close was rejected for this local path. The UI must disclose
-the CSV/UTC convention, and future exchange-session semantics must receive a
+The implemented Task 17 prior-close condition and Task 18 historical conditions
+use CSV-derived **UTC data days**, not official exchange sessions.
+Each UTC date with actual immutable source rows counts once; its last close
+includes extended hours. Task 17 reads one last close strictly before the
+current UTC date from the same immutable snapshot as the selected bars. The
+positive-magnitude Down/Up comparisons are inclusive, missing history does not
+match, and the pre-range reference never becomes an executed or replayed bar.
+Legacy Strategy plans keep v1 hash framing, Task 17 plans use v2, and plans
+containing Task 18 sources use v3 framing including lookback periods. N-day gain
+uses the close exactly N available data dates earlier (30 by default); the
+one-month extrema and breakout choices use the previous 21 completed data
+dates, excluding the current date. Extrema thresholds use positive magnitudes
+and inclusive comparisons; breakouts are strict and persistent per K bar. This
+aligns historical predicates with the existing UTC Daily Replay and available
+source data. Requiring an entitled official daily series or inferring a
+regular-session close was rejected for this local path. The UI discloses the
+CSV/UTC convention, and future exchange-session semantics must receive a
 distinct versioned identity rather than silently changing existing plans.
 
 **Owning specification.** [`Architecture.md`](../Specs/Architecture.md),

@@ -250,6 +250,12 @@ Imports are untrusted data. The UI validates them without executing embedded
 source. **Open Replay** remains disabled with a structured reason when the
 result or referenced data is invalid or unavailable.
 
+The current **View Details** pane lists every schema-2 Result capability as
+Supported or Unavailable using the persisted capability metadata. It also
+shows persisted warning records as selectable plain text; when no warning was
+recorded it says so explicitly. Unavailable families remain unavailable and
+are not represented by synthesized values.
+
 ---
 
 ## 3. View-model seam

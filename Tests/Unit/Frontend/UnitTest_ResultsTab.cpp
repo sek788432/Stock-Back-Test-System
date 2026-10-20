@@ -332,8 +332,22 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   view->click();
   QVERIFY(bte::test::waitUntil(
       [&] { return (details->text().contains("Symbol: SYN")); }));
+  QCOMPARE(details->textFormat(), Qt::PlainText);
   QVERIFY(details->text().contains(
       QString::fromStdString(published.value().canonicalResultHash)));
+  for (const auto *capability :
+       {"Orders: Supported", "Fills: Supported",
+        "Post-slice portfolio: Supported", "Slippage costs: Supported",
+        "Warnings: Supported", "Terminal diagnostics: Supported",
+        "Trade episodes: Unavailable", "Performance metrics: Unavailable",
+        "Strategy logs: Unavailable", "Indicator snapshots: Unavailable",
+        "Corporate actions: Unavailable", "Margin: Unavailable"}) {
+    QVERIFY2(details->text().contains(QString::fromUtf8(capability)),
+             capability);
+  }
+  QVERIFY(details->text().contains("Persisted warnings:"));
+  QVERIFY(details->text().contains(
+      "dividendAccounting=excluded; price-return only"));
   QSignalSpy replayRequested{&tab,
                              &bte::frontend::ResultsTab::openResultInReplay};
   open->click();

@@ -9,8 +9,8 @@ C++ backtest engine. Execution semantics live in
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | An in-memory typed Selectable Conditions plan validates finite thresholds, fields, and indicator definitions; evaluates flat `all` / `any` buy and sell groups over chronological single-symbol bars; and feeds the limited C++ Backtest path. The current Qt page exposes up to two rows per group. |
-| **Accepted design / not implemented** | CSV/UTC-day historical conditions below; saved/versioned plans; up to five buy and five sell conditions; Python Script Mode; Debug Run; immutable managed runtimes; and the worker protocol below. |
+| **Implemented** | An in-memory typed Selectable Conditions plan validates finite thresholds, fields, and indicator definitions; evaluates flat `all` / `any` buy and sell groups over chronological single-symbol bars; and feeds the limited C++ Backtest path. The current Qt page exposes up to two rows per group, including Task 17 and Task 18 UTC data-day conditions. |
+| **Accepted design / not implemented** | Saved/versioned plans; up to five buy and five sell conditions; Python Script Mode; Debug Run; immutable managed runtimes; and the worker protocol below. |
 | **Blocked** | No strategy feature may be presented as available until its engine path and required tests exist. Public release also depends on the data-release blockers in [`DataLayer.md`](DataLayer.md). |
 
 Status words are factual, not roadmap promises. Only **Implemented** behavior may appear as shipped in user documentation.
@@ -27,6 +27,19 @@ explicit `all` / `any` selector. A missing prior close or insufficient
 indicator warm-up does not match. The current engine uses the configured whole
 share quantity, opens long only, and allows a sell group to close that position
 at the next actual open. The plan is not saved yet.
+
+The Task 17 **Previous data-day close change %** metric is implemented in this
+limited path. It compares the current actual bar close with the last source
+close from the previous available UTC data day. The UI accepts a positive
+percentage magnitude and a separate inclusive **Down at least** or **Up at
+least** direction. The source close includes extended-hours rows; it is not an
+official exchange-session close. The current UTC date is excluded from its own
+reference, and absent or zero history does not match. The reference comes from
+the same immutable snapshot as the selected execution bars and does not add a
+bar to execution or Replay. This source has a distinct Strategy identity:
+legacy plans retain their frozen v1 hash framing, while plans using this source
+use v2 framing. It remains separate from the signed prior-actual-bar close
+change metric.
 
 The Backtest editor shows a unit and an example for every offered threshold.
 Price and price-difference values use USD for the current run; close change and
@@ -49,7 +62,7 @@ Unit labels do not normalize that metadata.
 - The plan executes directly in C++ through the same strategy seam as Python commands; it does not invoke an external backtest engine.
 - Results retain the canonical plan, plan hash, and compiler version.
 
-#### Accepted CSV/UTC-day historical conditions — not implemented
+#### CSV/UTC-day historical conditions
 
 The limited local workflow will use the existing CSV-derived immutable snapshot
 as its historical price standard. A **UTC data day** is a UTC date with actual
@@ -58,10 +71,11 @@ extended hours; its high/low are the maximum high/minimum low of those rows.
 This is not an official regular-session close or an exchange trading calendar.
 Dates without rows do not consume a lookback and no missing row is synthesized.
 
-The approved predicates compare the current K bar's close with completed prior
-UTC data days, excluding the entire current UTC date from historical references:
+Task 17's previous-data-day close change predicate is implemented as described
+above. The remaining approved Task 18 predicates compare the current K bar's
+close with completed prior UTC data days, excluding the entire current UTC date
+from historical references:
 
-- Prior-day up/down X% uses the previous available data day's last close.
 - An N-day gain uses the last close exactly N available data dates before the
   current date; the approved example is 30 data days.
 - Drawdown from a period high and rebound from a period low use prior-day OHLC
@@ -72,12 +86,24 @@ UTC data days, excluding the entire current UTC date from historical references:
   Missing, zero or insufficient references are absent/nonmatching, never a
   fabricated value or a future lookup.
 
-Pre-range history warms only the Strategy's bounded chronological state. It
-must not become extra executed bars, orders, fills or Replay candles. New
-functional fields require versioned Strategy framing and compatibility review;
-the existing prior-actual-bar close-change option and its saved identity remain
-distinct and must not be reinterpreted. Implementation, immutable warm-up
-provenance and its contract tests remain pending.
+Task 18 is implemented in the limited local path. **Up X% over selected
+period** defaults to 30 available data days and compares the current close with
+the close exactly N available data dates earlier. The high drawdown, low
+rebound, and strict high/low breakout choices default to 21 completed data
+days; they compare the current close with the maximum high or minimum low from
+those prior dates. A breakout remains true on every qualifying bar rather than
+only the first crossing. The whole current UTC date is excluded from these
+references, including rows earlier in the selected run. The editor accepts a
+positive percentage magnitude for inclusive drawdown/rebound/gain thresholds;
+breakouts use strict comparisons and no threshold. Each period is part of the
+typed condition and its canonical identity.
+
+The Backtest binding requests only the bounded history needed from the same
+immutable snapshot. It seeds Strategy state without adding bars, indicator
+updates, orders, fills, portfolio records, or Replay candles. Legacy plans keep
+their frozen v1 hash framing, Task 17 plans use v2, and plans containing Task 18
+sources use v3 framing that includes the selected period. The existing
+prior-actual-bar close-change option remains distinct and unchanged.
 
 ### 2.2 Python Script Mode
 

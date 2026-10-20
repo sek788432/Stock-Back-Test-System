@@ -1,12 +1,31 @@
+from __future__ import annotations
+
 import argparse
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-import duckdb
-import pandas as pd
+if TYPE_CHECKING:
+    import duckdb
+
+if __package__:
+    from .SourceManifest import (
+        SOURCE_MANIFEST_NAME,
+        SourceFileDeclaration,
+        loadSourceManifest,
+        sourceFileDeclaration,
+        writeSourceManifest,
+    )
+else:
+    from SourceManifest import (
+        SOURCE_MANIFEST_NAME,
+        SourceFileDeclaration,
+        loadSourceManifest,
+        sourceFileDeclaration,
+        writeSourceManifest,
+    )
 
 # ---------------------------------------------------------------------------
 # Environment variables honored by this module (see README). Shell wrappers
@@ -82,7 +101,7 @@ def exportDuckdbToCsv(
     startTs: Optional[str] = None,
     endTs: Optional[str] = None,
     includeProvenance: bool = False,
-) -> int:
+) -> tuple[int, str]:
     """Export rows for a single symbol to CSV.
 
     Returns the number of rows written. Timestamps are normalized to UTC so the
@@ -95,8 +114,12 @@ def exportDuckdbToCsv(
     When zero rows match, nothing is written. If ``outputCsvPath`` already exists
     (e.g. a stale extract), it is removed so directories do not keep empty CSVs.
     """
+    import duckdb
+    import pandas as pd
+
     connection = duckdb.connect(dbPath)
     try:
+        schemas: list[str] = []
         if symbol is not None and schemaName is None:
             schemas = _distinctSchemasForSymbol(connection, symbol)
             if len(schemas) > 1:
@@ -104,6 +127,7 @@ def exportDuckdbToCsv(
                     f"Symbol {symbol!r} has rows for multiple schemas in DuckDB: {schemas}. "
                     "Pass --schema-name to pick one (e.g. --schema-name ohlcv-1h)."
                 )
+        resolvedSchemaName = schemaName or (schemas[0] if schemas else "")
 
         conditions: list[str] = []
         params: list = []
@@ -150,14 +174,18 @@ def exportDuckdbToCsv(
             print(f"No rows for target filter; removed stale CSV: {outputCsvPath}")
         else:
             print(f"No rows for target filter; skipped writing: {outputCsvPath}")
-        return 0
+        return 0, resolvedSchemaName
 
     parent = out_path.parent
     if str(parent):
         parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(outputCsvPath, index=False)
     print(f"Exported {row_count} rows from DuckDB to CSV: {outputCsvPath}")
-    return row_count
+    if not resolvedSchemaName:
+        raise ValueError(
+            f"Cannot determine source timeframe for exported CSV: {outputCsvPath}"
+        )
+    return row_count, resolvedSchemaName
 
 
 def parseArgs() -> argparse.Namespace:
@@ -206,10 +234,19 @@ def main() -> None:
     print(f"Extracting {len(symbols)} symbol(s) to {args.out_dir}")
 
     emptySymbols: list[str] = []
+    outputDirectory = Path(args.out_dir)
+    existingManifest = loadSourceManifest(
+        outputDirectory / SOURCE_MANIFEST_NAME
+    )
+    previousDeclarations = {
+        declaration.filename: declaration
+        for declaration in existingManifest or ()
+    }
+    exportedDeclarations: dict[str, SourceFileDeclaration] = {}
     for symbol in symbols:
         safeName = symbol.replace(".", "_")
         outPath = os.path.join(args.out_dir, f"{safeName}.csv")
-        rowCount = exportDuckdbToCsv(
+        rowCount, timeframe = exportDuckdbToCsv(
             dbPath=args.db_path,
             outputCsvPath=outPath,
             symbol=symbol,
@@ -218,6 +255,33 @@ def main() -> None:
         )
         if rowCount == 0:
             emptySymbols.append(symbol)
+            continue
+        declaration = sourceFileDeclaration(Path(outPath), timeframe)
+        exportedDeclarations[declaration.filename] = declaration
+
+    declarations: list[SourceFileDeclaration] = []
+    for csvPath in sorted(outputDirectory.glob("*.csv")):
+        declaration = exportedDeclarations.get(csvPath.name)
+        if declaration is not None:
+            declarations.append(declaration)
+            continue
+        previousDeclaration = previousDeclarations.get(csvPath.name)
+        if previousDeclaration is None:
+            raise ValueError(
+                "Cannot write a complete source manifest because an existing "
+                f"CSV was not exported and has no prior timeframe declaration: {csvPath}"
+            )
+        currentDeclaration = sourceFileDeclaration(
+            csvPath, previousDeclaration.timeframe
+        )
+        if currentDeclaration.sha256 != previousDeclaration.sha256:
+            raise ValueError(
+                "Cannot retain a stale source declaration because its CSV "
+                f"changed without re-export: {csvPath}"
+            )
+        declarations.append(previousDeclaration)
+    writeSourceManifest(outputDirectory, declarations)
+    print(f"Wrote source manifest: {outputDirectory / SOURCE_MANIFEST_NAME}")
 
     print(f"DuckDB source: {args.db_path}")
 

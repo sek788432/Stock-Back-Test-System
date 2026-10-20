@@ -10,6 +10,7 @@
 
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -24,6 +25,8 @@
 #include <QVariant>
 #include <QtCore/Qt>
 #include <QtCore/qbytearray.h>
+#include <QtCore/qchar.h>
+#include <QtCore/qcontainerfwd.h>
 #include <QtCore/qtenvironmentvariables.h>
 #include <QtWidgets/qlineedit.h>
 
@@ -85,6 +88,61 @@ QString moneyText(const std::optional<std::int64_t> microdollars) {
                    static_cast<double>(*microdollars) / 1'000'000.0, 0, 'f', 2)
              : QString{"Unavailable"};
 } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+
+template <typename Capabilities>
+void appendCapabilityLines(QStringList &lines,
+                           const Capabilities &capabilities) {
+  lines.append(QCoreApplication::translate("ResultsTab", "Capabilities:"));
+  const auto append = [&lines](const QString &name, const bool supported) {
+    const auto status =
+        supported ? QCoreApplication::translate("ResultsTab", "Supported")
+                  : QCoreApplication::translate("ResultsTab", "Unavailable");
+    lines.append(
+        QCoreApplication::translate("ResultsTab", "%1: %2").arg(name, status));
+  };
+  append(QCoreApplication::translate("ResultsTab", "Orders"),
+         capabilities.orders);
+  append(QCoreApplication::translate("ResultsTab", "Fills"),
+         capabilities.fills);
+  append(QCoreApplication::translate("ResultsTab", "Post-slice portfolio"),
+         capabilities.postSlicePortfolio);
+  append(QCoreApplication::translate("ResultsTab", "Slippage costs"),
+         capabilities.slippageCosts);
+  append(QCoreApplication::translate("ResultsTab", "Warnings"),
+         capabilities.warnings);
+  append(QCoreApplication::translate("ResultsTab", "Terminal diagnostics"),
+         capabilities.terminalDiagnostics);
+  append(QCoreApplication::translate("ResultsTab", "Trade episodes"),
+         capabilities.trades);
+  append(QCoreApplication::translate("ResultsTab", "Performance metrics"),
+         capabilities.metrics);
+  append(QCoreApplication::translate("ResultsTab", "Strategy logs"),
+         capabilities.strategyLogs);
+  append(QCoreApplication::translate("ResultsTab", "Indicator snapshots"),
+         capabilities.indicatorSnapshots);
+  append(QCoreApplication::translate("ResultsTab", "Corporate actions"),
+         capabilities.corporateActions);
+  append(QCoreApplication::translate("ResultsTab", "Margin"),
+         capabilities.margin);
+}
+
+template <typename OpenedResult>
+void appendPersistedWarningLines(QStringList &lines,
+                                 const OpenedResult &opened) {
+  lines.append(
+      QCoreApplication::translate("ResultsTab", "Persisted warnings:"));
+  auto foundWarning = false;
+  for (const auto &record : opened.records) {
+    if (record.family == results::RecordFamily::warning) {
+      lines.append(QCoreApplication::translate("ResultsTab", "• %1")
+                       .arg(QString::fromStdString(record.text)));
+      foundWarning = true;
+    }
+  }
+  if (!foundWarning) {
+    lines.append(QCoreApplication::translate("ResultsTab", "None recorded"));
+  }
+}
 
 } // namespace
 
@@ -221,6 +279,7 @@ ResultsTab::ResultsTab(std::filesystem::path resultStore,
           .release();
   state_->details->setObjectName("resultsDetailsLabel");
   state_->details->setWordWrap(true);
+  state_->details->setTextFormat(Qt::PlainText);
   state_->details->setTextInteractionFlags(Qt::TextSelectableByMouse);
   layout->addWidget(state_->details, 1);
 
@@ -254,23 +313,30 @@ ResultsTab::ResultsTab(std::filesystem::path resultStore,
           // universe.
           const auto symbols =
               QString::fromStdString(opened.descriptor.universe.front());
-          state_->details->setText(
-              tr("Name: %1\nResult ID: %2\nSymbol: %3\nRange (UTC): %4 to %5 "
-                 "(end exclusive)\nStatus: %6\nFinal equity: %7\nPnL: %8\n"
-                 "Canonical hash: %9\nData: Available\nTrades/advanced "
-                 "metrics: Unavailable")
+          auto detailLines = QStringList{
+              tr("Name: %1")
                   .arg(opened.displayName.empty()
                            ? resultId
-                           : QString::fromStdString(opened.displayName),
-                       resultId, symbols,
-                       QString::fromStdString(core::time::toIso8601(
+                           : QString::fromStdString(opened.displayName)),
+              tr("Result ID: %1").arg(resultId),
+              tr("Symbol: %1").arg(symbols),
+              tr("Range (UTC): %1 to %2 (end exclusive)")
+                  .arg(QString::fromStdString(core::time::toIso8601(
                            opened.descriptor.range.start)),
                        QString::fromStdString(
-                           core::time::toIso8601(opened.descriptor.range.end)),
-                       statusText(bindings::toResultRunStatus(opened.status)),
-                       moneyText(opened.summary.finalEquityMicrodollars),
-                       moneyText(opened.summary.pnlMicrodollars),
-                       QString::fromStdString(opened.canonicalResultHash)));
+                           core::time::toIso8601(opened.descriptor.range.end))),
+              tr("Status: %1")
+                  .arg(statusText(bindings::toResultRunStatus(opened.status))),
+              tr("Final equity: %1")
+                  .arg(moneyText(opened.summary.finalEquityMicrodollars)),
+              tr("PnL: %1").arg(moneyText(opened.summary.pnlMicrodollars)),
+              tr("Canonical hash: %1")
+                  .arg(QString::fromStdString(opened.canonicalResultHash)),
+              tr("Data: Available"),
+          };
+          appendCapabilityLines(detailLines, opened.capabilities);
+          appendPersistedWarningLines(detailLines, opened);
+          state_->details->setText(detailLines.join('\n'));
         });
   });
   QObject::connect(state_->openButton, &QPushButton::clicked, this, [this]() {

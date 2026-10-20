@@ -18,6 +18,7 @@
 #include <QEventLoop>
 #include <QTimer>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -204,6 +205,188 @@ TEST_F(ResultReplayTest,
   EXPECT_TRUE(replay.value()->stepBack());
   EXPECT_EQ(replay.value()->currentIndex(), 1);
   EXPECT_FALSE(replay.value()->seek(3));
+}
+
+TEST_F(ResultReplayTest,
+       realAaplResultPreservesSelectedBarsAndUtcHourlyDailyReplay) {
+  using namespace std::chrono;
+  const auto repositoryRoot = std::filesystem::path{__FILE__}
+                                  .parent_path()
+                                  .parent_path()
+                                  .parent_path()
+                                  .parent_path();
+  const auto sourceDirectory = repositoryRoot / "StockData" / "Extracted";
+  ASSERT_TRUE(std::filesystem::is_regular_file(sourceDirectory /
+                                               "SourceManifest.btesource"));
+  ASSERT_TRUE(std::filesystem::is_regular_file(sourceDirectory / "AAPL.csv"));
+
+  const auto dataStore = root_ / "RealData";
+  const auto resultStore = root_ / "RealResults";
+  const auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = dataStore,
+      .symbols = {"AAPL"},
+      .rowsPerSegment = 512,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 31'466U);
+
+  const auto selectedRange = bte::core::DateRange{
+      .start = timestamp("2018-05-01 00:00:00+00:00"),
+      .end = timestamp("2026-05-07 00:00:00+00:00"),
+  };
+  auto snapshotReader = bte::data::ReleaseSnapshotReader::open(
+      dataStore, built.value().snapshotId);
+  ASSERT_TRUE(snapshotReader.ok()) << snapshotReader.error().message;
+  auto expectedSelection = snapshotReader.value()->select({
+      .symbols = {"AAPL"},
+      .range = selectedRange,
+      .timeframe = "ohlcv-1h",
+  });
+  ASSERT_TRUE(expectedSelection.ok()) << expectedSelection.error().message;
+  ASSERT_EQ(expectedSelection.value().bars.size(), 31'466U);
+
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore = resultStore,
+      .dataStore = dataStore,
+      .snapshotId = built.value().snapshotId,
+      .strategyHash = std::string(64, 'c'),
+  };
+  const auto run = bte::bindings::runPersistedBacktestConfiguration(
+      {.symbol = "AAPL",
+       .schema = "ohlcv-1h",
+       .startDate = QDate{2018, 5, 1},
+       .endDate = QDate{2026, 5, 6},
+       .initialCapital = 1'000'000,
+       .quantityShares = 1,
+       .selectableStrategy = {}},
+      storage);
+  ASSERT_TRUE(run.ok()) << run.error().message;
+
+  auto store = bte::results::ResultStore::open(resultStore, dataStore);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto published = store.value()->publishDraft(run.value().resultId);
+  ASSERT_TRUE(published.ok()) << published.error().message;
+  const auto opened = store.value()->openResultWithData(run.value().resultId);
+  ASSERT_TRUE(opened.ok()) << opened.error().message;
+  EXPECT_EQ(opened.value().selection.identity,
+            expectedSelection.value().identity);
+  EXPECT_EQ(opened.value().result.descriptor.range.start, selectedRange.start);
+  EXPECT_EQ(opened.value().result.descriptor.range.end, selectedRange.end);
+  ASSERT_EQ(opened.value().selection.bars.size(), 31'466U);
+  EXPECT_EQ(opened.value().selection.bars, expectedSelection.value().bars);
+
+  auto hourly = bte::bindings::ResultReplay::open(
+      resultStore, dataStore, run.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(hourly.ok()) << hourly.error().message;
+  ASSERT_EQ(hourly.value()->totalFrames(), 31'466U);
+  ASSERT_EQ(hourly.value()->timeline().size(), 31'466U);
+  auto hourlyFills = std::vector<bte::bindings::ResultReplayFill>{};
+  for (std::size_t index = 0; index < expectedSelection.value().bars.size();
+       ++index) {
+    ASSERT_TRUE(hourly.value()->seek(index));
+    const auto &frame = *hourly.value()->current();
+    const auto &sourceBar = expectedSelection.value().bars[index];
+    EXPECT_EQ(frame.candle.ts, sourceBar.timestamp);
+    EXPECT_DOUBLE_EQ(frame.candle.open,
+                     static_cast<double>(sourceBar.openNanodollars) /
+                         1'000'000'000.0);
+    EXPECT_DOUBLE_EQ(frame.candle.high,
+                     static_cast<double>(sourceBar.highNanodollars) /
+                         1'000'000'000.0);
+    EXPECT_DOUBLE_EQ(frame.candle.low,
+                     static_cast<double>(sourceBar.lowNanodollars) /
+                         1'000'000'000.0);
+    EXPECT_DOUBLE_EQ(frame.candle.close,
+                     static_cast<double>(sourceBar.closeNanodollars) /
+                         1'000'000'000.0);
+    EXPECT_DOUBLE_EQ(frame.candle.volume,
+                     static_cast<double>(sourceBar.volumeMicroshares) /
+                         1'000'000.0);
+    hourlyFills.insert(hourlyFills.end(), frame.fills.begin(),
+                       frame.fills.end());
+  }
+
+  auto daily = bte::bindings::ResultReplay::open(
+      resultStore, dataStore, run.value().resultId,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  auto expectedDaily = std::vector<bte::core::Bar>{};
+  for (const auto &sourceBar : expectedSelection.value().bars) {
+    const auto dataDay = bte::core::Timestamp{floor<days>(sourceBar.timestamp)};
+    const auto open =
+        static_cast<double>(sourceBar.openNanodollars) / 1'000'000'000.0;
+    const auto high =
+        static_cast<double>(sourceBar.highNanodollars) / 1'000'000'000.0;
+    const auto low =
+        static_cast<double>(sourceBar.lowNanodollars) / 1'000'000'000.0;
+    const auto close =
+        static_cast<double>(sourceBar.closeNanodollars) / 1'000'000'000.0;
+    const auto volume =
+        static_cast<double>(sourceBar.volumeMicroshares) / 1'000'000.0;
+    if (expectedDaily.empty() || expectedDaily.back().ts != dataDay) {
+      expectedDaily.push_back(bte::core::Bar{.ts = dataDay,
+                                             .open = open,
+                                             .high = high,
+                                             .low = low,
+                                             .close = close,
+                                             .volume = volume});
+      continue;
+    }
+    expectedDaily.back().high = std::max(expectedDaily.back().high, high);
+    expectedDaily.back().low = std::min(expectedDaily.back().low, low);
+    expectedDaily.back().close = close;
+    expectedDaily.back().volume += volume;
+  }
+  ASSERT_EQ(expectedDaily.size(), 2'014U);
+  ASSERT_EQ(daily.value()->totalFrames(), expectedDaily.size());
+  ASSERT_EQ(daily.value()->timeline().size(), expectedDaily.size());
+  auto dailyFills = std::vector<bte::bindings::ResultReplayFill>{};
+  auto lastHourlyIndex = std::size_t{0};
+  auto sawMayFourth = false;
+  auto sawMayFifth = false;
+  for (std::size_t index = 0; index < expectedDaily.size(); ++index) {
+    ASSERT_TRUE(daily.value()->seek(index));
+    const auto &frame = *daily.value()->current();
+    EXPECT_EQ(frame.candle.ts, expectedDaily[index].ts);
+    EXPECT_DOUBLE_EQ(frame.candle.open, expectedDaily[index].open);
+    EXPECT_DOUBLE_EQ(frame.candle.high, expectedDaily[index].high);
+    EXPECT_DOUBLE_EQ(frame.candle.low, expectedDaily[index].low);
+    EXPECT_DOUBLE_EQ(frame.candle.close, expectedDaily[index].close);
+    EXPECT_DOUBLE_EQ(frame.candle.volume, expectedDaily[index].volume);
+    EXPECT_FALSE(frame.partialUtcDay);
+    if (expectedDaily[index].ts == timestamp("2026-05-04 00:00:00+00:00")) {
+      EXPECT_DOUBLE_EQ(frame.candle.open, 279.82);
+      EXPECT_DOUBLE_EQ(frame.candle.high, 280.63);
+      EXPECT_DOUBLE_EQ(frame.candle.low, 274.86);
+      EXPECT_DOUBLE_EQ(frame.candle.close, 276.50);
+      EXPECT_DOUBLE_EQ(frame.candle.volume, 14'649'894.0);
+      sawMayFourth = true;
+    }
+    if (expectedDaily[index].ts == timestamp("2026-05-05 00:00:00+00:00")) {
+      EXPECT_DOUBLE_EQ(frame.candle.open, 276.54);
+      EXPECT_DOUBLE_EQ(frame.candle.high, 284.56);
+      EXPECT_DOUBLE_EQ(frame.candle.low, 275.22);
+      EXPECT_DOUBLE_EQ(frame.candle.close, 282.49);
+      EXPECT_DOUBLE_EQ(frame.candle.volume, 17'512'103.0);
+      sawMayFifth = true;
+    }
+    const auto dataDay = floor<days>(frame.candle.ts);
+    const auto hourlyTimeline = hourly.value()->timeline();
+    while (lastHourlyIndex + 1U < hourlyTimeline.size() &&
+           floor<days>(hourlyTimeline[lastHourlyIndex + 1U].candle.ts) <=
+               dataDay) {
+      ++lastHourlyIndex;
+    }
+    EXPECT_EQ(frame.portfolio, hourlyTimeline[lastHourlyIndex].portfolio);
+    dailyFills.insert(dailyFills.end(), frame.fills.begin(), frame.fills.end());
+  }
+  EXPECT_TRUE(sawMayFourth);
+  EXPECT_TRUE(sawMayFifth);
+  EXPECT_EQ(dailyFills, hourlyFills);
 }
 
 TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {

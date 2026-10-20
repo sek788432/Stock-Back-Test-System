@@ -8,12 +8,14 @@ This spec owns market-data provenance, release snapshots, chronology-safe access
   C++ `CsvBarStream` reads tracked files under `StockData/Extracted` into
   memory. The direct reader currently supports symbols whose CSV filename stem
   exactly equals the canonical symbol; dotted-symbol exports are a known gap.
-  Limited immutable snapshot construction accepts the canonical seven-column
-  extracted CSV layout and the existing explicit `schemaName` fixture form.
-  Only the explicit form validates the declared hourly schema. The seven-column
-  path currently has no source-timeframe evidence and can mislabel a same-layout
-  daily export as hourly; trustworthy seven-column hourly validation remains
-  an open defect, not an implemented guarantee.
+  Limited immutable snapshot construction accepts seven-column extracts only
+  when a hash-bound source manifest declares their timeframe, and also accepts
+  the explicit `schemaName` form among trailing metadata columns, including
+  `GetFromDb.py --include-provenance` output. Other trailing columns are ignored. The
+  builder verifies each selected CSV's exact-byte SHA-256 and requires the
+  declared timeframe to match its supported hourly schema. The direct
+  development `CsvBarStream` remains a row reader and does not validate source
+  timeframe.
   Segment reading, selection identity, and result reference retention also
   exist for the single-symbol Backtest path.
 - **Planned:** complete release snapshot pipeline,
@@ -85,6 +87,29 @@ or symbol mismatches rather than silently merging them.
 
 C++ must never write the DuckDB file. V1 users cannot select an arbitrary database, import pricing data, or provide provider credentials. Database integration is deferred.
 
+### 2.1 Seven-column source manifest
+
+`GetFromDb.py` writes `SourceManifest.btesource` beside the extracted CSVs.
+The UTF-8, LF-delimited V1 file starts with `BTE-SOURCE-MANIFEST-V1`; each
+following line is `file=<filename>|<timeframe>|<sha256>`. Entries are sorted
+by filename, filenames are unique, and SHA-256 is lowercase hexadecimal over
+the exact CSV bytes on disk. The extractor resolves one `schemaName` per CSV;
+it rejects mixed-schema exports rather than assigning one timeframe to mixed
+rows. Existing unrequested CSVs are retained in the new manifest only when an
+earlier declaration exists and its hash still matches.
+
+The snapshot builder requires a valid declaration for each selected
+seven-column CSV and rejects a missing declaration, an unsupported timeframe,
+or a byte hash mismatch before publishing a snapshot. The current snapshot
+selection supports `ohlcv-1h`; other declared Databento schemas are not yet
+selectable. If a source manifest is present, a selected CSV must be declared
+even when it also has an explicit schema column. The legacy explicit
+`schemaName` CSV form remains valid without a sidecar, including when other
+metadata columns precede or follow it after the canonical seven OHLCV columns.
+The sidecar validates
+build provenance; immutable segment bytes and the snapshot manifest continue
+to define runtime data identity.
+
 ## 3. Release snapshot build
 
 Release CI, not the application runtime, builds the snapshot:
@@ -128,7 +153,42 @@ The planned reader accepts a snapshot ID, universe, timeframe, half-open date ra
 Project-owned `stockbt` receives chronology-safe current/past views without
 physical snapshot paths. There is no full-snapshot research API.
 
-### 4.1 Canonical Data Segment bytes
+### 4.1 Task 17 prior data-day close lookup
+
+The limited single-symbol Backtest path can request the last source row for a
+symbol strictly before a UTC-midnight boundary from its already-open immutable
+snapshot reader. The lookup returns at most one fixed-point close and its
+timestamp: the latest available row, even when the previous data day is many
+calendar dates earlier. A date with no rows does not count. A boundary that is
+not UTC midnight is rejected, so rows from the current UTC date cannot enter
+the reference. Missing history remains absent; runtime CSV and download
+fallbacks are not used.
+
+The persisted binding stores this value in the separate
+`SnapshotSelection::preRangeDataDayClose` field and forwards its converted
+price to Strategy. It never appends the history row to `SnapshotSelection::bars`
+or changes the selected Result span. The existing `snapshotId` in the selection
+identity identifies the immutable source for both execution bars and this
+lookup. Contract coverage includes boundary-date exclusion, long gaps,
+cancellation, empty history, and source-file mutation after snapshot creation.
+
+### 4.2 Task 18 historical UTC data-day summaries
+
+The limited Backtest path can also request up to 10,000 completed data-day
+summaries before a UTC-midnight boundary from the same open immutable snapshot.
+The result contains at most the requested number of available UTC dates in
+chronological order. Dates with no source rows are skipped; all actual rows on
+each included date contribute to its maximum high and minimum low, and the
+final chronological row supplies its close. The boundary date is excluded in
+full, including any rows earlier than the first selected bar. A zero or
+non-midnight request is rejected, and cancellation is honored during lookup.
+
+The Backtest binding converts these fixed-point summaries to Strategy values
+without adding them to selected bars, Result spans, processed-bar counts, or
+Replay candles. Snapshot summaries remain stable if the source CSV changes
+after snapshot construction.
+
+### 4.3 Canonical Data Segment bytes
 
 Data Segment schema `1.0` is one byte stream in this exact order. Every integer
 uses unsigned or two's-complement big-endian encoding as stated; strings are

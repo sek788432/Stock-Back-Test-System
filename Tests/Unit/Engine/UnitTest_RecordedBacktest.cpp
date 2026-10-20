@@ -80,6 +80,7 @@ protected:
         .symbol = "SYN",
         .initialCapitalMicrodollars = 2'000'000'000,
         .quantityShares = 10,
+        .previousDataDays = {},
     };
   }
 

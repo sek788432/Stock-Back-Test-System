@@ -20,6 +20,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <ranges> // IWYU pragma: keep
@@ -66,6 +67,8 @@ bool cancellationRequested(
 
 constexpr std::string_view segmentMagic = "BTEDATA1";
 constexpr std::string_view manifestMagic = "BTE-SNAPSHOT-MANIFEST-V1";
+constexpr std::string_view sourceManifestMagic = "BTE-SOURCE-MANIFEST-V1";
+constexpr std::string_view sourceManifestName = "SourceManifest.btesource";
 constexpr std::string_view hourlyTimeframe = "ohlcv-1h";
 constexpr std::string_view snapshotProfile = "vendorExtendedHours";
 
@@ -172,8 +175,24 @@ core::Result<std::int64_t> parseScaled(std::string_view text,
 
 struct SourceLayout final {
   std::size_t columnCount = 0;
+  std::size_t schemaColumnIndex = 0;
   bool hasSchemaColumn = false;
 };
+
+struct SourceFileDeclaration final {
+  std::string timeframe;
+  std::string sha256;
+};
+
+struct SourceManifest final {
+  bool present = false;
+  std::map<std::string, SourceFileDeclaration> files;
+};
+
+core::Result<SourceManifest>
+readSourceManifest(const std::filesystem::path &sourceDirectory);
+
+[[nodiscard]] bool validHash(const std::string &hash);
 
 [[nodiscard]] core::Result<SourceLayout>
 parseSourceLayout(const std::span<const std::string> header) {
@@ -184,37 +203,157 @@ parseSourceLayout(const std::span<const std::string> header) {
       std::ranges::equal(extractedColumns,
                          header.first(extractedColumns.size()));
   if (extractedHeader && header.size() == extractedColumns.size()) {
-    return SourceLayout{.columnCount = header.size()};
+    return SourceLayout{.columnCount = header.size(),
+                        .schemaColumnIndex = 0,
+                        .hasSchemaColumn = false};
   }
-  if (extractedHeader && header.size() == extractedColumns.size() + 1 &&
-      header.back() == "schemaName") {
-    return SourceLayout{.columnCount = header.size(), .hasSchemaColumn = true};
+  if (extractedHeader && header.size() > extractedColumns.size()) {
+    const auto trailingColumns = header.subspan(extractedColumns.size());
+    const auto schemaColumn = std::ranges::find(trailingColumns, "schemaName");
+    if (schemaColumn != trailingColumns.end() &&
+        std::ranges::count(trailingColumns, "schemaName") == 1) {
+      return SourceLayout{
+          .columnCount = header.size(),
+          .schemaColumnIndex = static_cast<std::size_t>(
+              std::distance(header.begin(), schemaColumn)),
+          .hasSchemaColumn = true,
+      };
+    }
   }
   return core::makeError(core::ErrorCode::schemaMismatch,
                          "Snapshot source has unsupported columns");
 }
 
-core::Result<std::vector<SnapshotBar>>
-readSourceBars(const std::filesystem::path &path, const std::string &symbol,
-               const core::CancellationToken &cancellation) {
-  std::ifstream input{path};
-  if (!input) {
+core::Result<std::string>
+readSourceBytes(const std::filesystem::path &path,
+                const core::CancellationToken &cancellation) {
+  std::ifstream file{path, std::ios::binary};
+  if (!file) {
     return core::makeError(core::ErrorCode::notFound,
                            "Snapshot source not found: " + path.string());
   }
+  auto sourceBytes = std::string{};
+  constexpr std::size_t readBufferSize = 65'536;
+  auto readBuffer = std::array<char, readBufferSize>{};
+  while (true) {
+    if (cancellationRequested(
+            cancellation, testing::SnapshotFailurePoint::buildCancellation)) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "Snapshot build was cancelled");
+    }
+    file.read(readBuffer.data(),
+              static_cast<std::streamsize>(readBuffer.size()));
+    const auto readCount = file.gcount();
+    if (readCount > 0) {
+      sourceBytes.append(readBuffer.data(),
+                         static_cast<std::size_t>(readCount));
+    }
+    if (file.bad()) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Unable to read snapshot source: " +
+                                 path.string());
+    }
+    if (file.eof()) {
+      break;
+    }
+  }
+  return sourceBytes;
+}
 
-  std::string line;
-  if (!std::getline(input, line)) {
+core::Result<std::optional<SourceFileDeclaration>>
+sourceDeclarationFor(const std::filesystem::path &path,
+                     const std::string &sourceBytes,
+                     const SourceManifest &sourceManifest) {
+  const auto sourceFileName = path.filename().string();
+  const auto declaration = sourceManifest.files.find(sourceFileName);
+  if (sourceManifest.present && declaration == sourceManifest.files.end()) {
     return core::makeError(core::ErrorCode::schemaMismatch,
-                           "Snapshot source is empty: " + path.string());
+                           "Snapshot source is missing from source manifest: " +
+                               sourceFileName);
   }
-  const auto header = split(line, ',');
-  const auto layout = parseSourceLayout(header);
-  if (!layout.ok()) {
-    return layout.error();
+  if (declaration == sourceManifest.files.end()) {
+    return std::optional<SourceFileDeclaration>{};
+  }
+  if (declaration->second.sha256 != core::sha256(sourceBytes)) {
+    return core::makeError(
+        core::ErrorCode::schemaMismatch,
+        "Snapshot source hash does not match source manifest: " +
+            sourceFileName);
+  }
+  return std::optional<SourceFileDeclaration>{declaration->second};
+}
+
+core::Result<std::string>
+sourceTimeframeFor(const SourceLayout &layout,
+                   const std::optional<SourceFileDeclaration> &declaration) {
+  if (!layout.hasSchemaColumn && !declaration.has_value()) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Seven-column snapshot sources require a hash-bound "
+                           "source timeframe manifest");
+  }
+  const auto timeframe = declaration.has_value() ? declaration->timeframe
+                                                 : std::string{hourlyTimeframe};
+  if (timeframe != hourlyTimeframe) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Snapshot source timeframe is not supported: " +
+                               timeframe);
+  }
+  return timeframe;
+}
+
+core::Result<SnapshotBar>
+parseSourceRow(const std::span<const std::string> fields,
+               const std::string &symbol, const SourceLayout &layout,
+               const std::string &timeframe) {
+  if (fields.size() != layout.columnCount || fields[0] != symbol) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Snapshot row identity does not match request");
+  }
+  if (layout.hasSchemaColumn && fields[layout.schemaColumnIndex] != timeframe) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Snapshot row identity does not match request");
   }
 
+  auto parsedTimestamp = core::time::parseIso8601(fields[1]);
+  auto open = parseScaled(fields[2], 9, "open");
+  auto high = parseScaled(fields[3], 9, "high");
+  auto low = parseScaled(fields[4], 9, "low");
+  auto close = parseScaled(fields[5], 9, "close");
+  auto volume = parseScaled(fields[6], 6, "volume");
+  if (!parsedTimestamp.ok()) {
+    return parsedTimestamp.error();
+  }
+  for (const auto *value : {&open, &high, &low, &close, &volume}) {
+    if (!value->ok()) {
+      return value->error();
+    }
+  }
+
+  const SnapshotBar bar{
+      .timestamp = parsedTimestamp.value(),
+      .openNanodollars = open.value(),
+      .highNanodollars = high.value(),
+      .lowNanodollars = low.value(),
+      .closeNanodollars = close.value(),
+      .volumeMicroshares = volume.value(),
+  };
+  if (bar.openNanodollars <= 0 || bar.lowNanodollars <= 0 ||
+      bar.highNanodollars < std::max({bar.openNanodollars, bar.closeNanodollars,
+                                      bar.lowNanodollars}) ||
+      bar.lowNanodollars > std::min({bar.openNanodollars, bar.closeNanodollars,
+                                     bar.highNanodollars})) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Snapshot row contains invalid OHLCV values");
+  }
+  return bar;
+}
+
+core::Result<std::vector<SnapshotBar>>
+parseSourceRows(std::istream &input, const std::string &symbol,
+                const SourceLayout &layout, const std::string &timeframe,
+                const core::CancellationToken &cancellation) {
   std::vector<SnapshotBar> bars;
+  std::string line;
   while (std::getline(input, line)) {
     if (cancellationRequested(
             cancellation, testing::SnapshotFailurePoint::buildCancellation)) {
@@ -225,52 +364,50 @@ readSourceBars(const std::filesystem::path &path, const std::string &symbol,
       continue;
     }
     const auto fields = split(line, ',');
-    if (fields.size() != layout.value().columnCount || fields[0] != symbol ||
-        (layout.value().hasSchemaColumn && fields[7] != hourlyTimeframe)) {
-      return core::makeError(core::ErrorCode::schemaMismatch,
-                             "Snapshot row identity does not match request");
+    auto bar = parseSourceRow(fields, symbol, layout, timeframe);
+    if (!bar.ok()) {
+      return bar.error();
     }
-
-    auto parsedTimestamp = core::time::parseIso8601(fields[1]);
-    auto open = parseScaled(fields[2], 9, "open");
-    auto high = parseScaled(fields[3], 9, "high");
-    auto low = parseScaled(fields[4], 9, "low");
-    auto close = parseScaled(fields[5], 9, "close");
-    auto volume = parseScaled(fields[6], 6, "volume");
-    if (!parsedTimestamp.ok()) {
-      return parsedTimestamp.error();
-    }
-    for (const auto *value : {&open, &high, &low, &close, &volume}) {
-      if (!value->ok()) {
-        return value->error();
-      }
-    }
-
-    const SnapshotBar bar{
-        .timestamp = parsedTimestamp.value(),
-        .openNanodollars = open.value(),
-        .highNanodollars = high.value(),
-        .lowNanodollars = low.value(),
-        .closeNanodollars = close.value(),
-        .volumeMicroshares = volume.value(),
-    };
-    if (bar.openNanodollars <= 0 || bar.lowNanodollars <= 0 ||
-        bar.highNanodollars <
-            std::max({bar.openNanodollars, bar.closeNanodollars,
-                      bar.lowNanodollars}) ||
-        bar.lowNanodollars >
-            std::min({bar.openNanodollars, bar.closeNanodollars,
-                      bar.highNanodollars})) {
-      return core::makeError(core::ErrorCode::invalidArgument,
-                             "Snapshot row contains invalid OHLCV values");
-    }
-    if (!bars.empty() && bars.back().timestamp >= bar.timestamp) {
+    if (!bars.empty() && bars.back().timestamp >= bar.value().timestamp) {
       return core::makeError(core::ErrorCode::invalidArgument,
                              "Snapshot source timestamps must be increasing");
     }
-    bars.push_back(bar);
+    bars.push_back(std::move(bar).value());
   }
   return bars;
+}
+
+core::Result<std::vector<SnapshotBar>>
+readSourceBars(const std::filesystem::path &path, const std::string &symbol,
+               const SourceManifest &sourceManifest,
+               const core::CancellationToken &cancellation) {
+  auto sourceBytes = readSourceBytes(path, cancellation);
+  if (!sourceBytes.ok()) {
+    return sourceBytes.error();
+  }
+  auto declaration =
+      sourceDeclarationFor(path, sourceBytes.value(), sourceManifest);
+  if (!declaration.ok()) {
+    return declaration.error();
+  }
+
+  std::istringstream input{sourceBytes.value()};
+  std::string line;
+  if (!std::getline(input, line)) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Snapshot source is empty: " + path.string());
+  }
+  const auto header = split(line, ',');
+  const auto layout = parseSourceLayout(header);
+  if (!layout.ok()) {
+    return layout.error();
+  }
+  auto timeframe = sourceTimeframeFor(layout.value(), declaration.value());
+  if (!timeframe.ok()) {
+    return timeframe.error();
+  }
+  return parseSourceRows(input, symbol, layout.value(), timeframe.value(),
+                         cancellation);
 }
 
 void appendU64(std::vector<std::byte> &bytes, const std::uint64_t value) {
@@ -516,6 +653,73 @@ bool validHash(const std::string &hash) {
          });
 }
 
+core::Result<SourceManifest>
+readSourceManifest(const std::filesystem::path &sourceDirectory) {
+  const auto manifestPath = sourceDirectory / std::string{sourceManifestName};
+  auto fileExistsError = std::error_code{};
+  const auto fileExists =
+      std::filesystem::exists(manifestPath, fileExistsError);
+  if (fileExistsError) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Unable to inspect source manifest: " +
+                               manifestPath.string());
+  }
+  if (!fileExists) {
+    return SourceManifest{};
+  }
+
+  std::ifstream input{manifestPath, std::ios::binary};
+  std::string line;
+  if (!input || !std::getline(input, line) ||
+      trim(line) != sourceManifestMagic) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Source manifest header is invalid: " +
+                               manifestPath.string());
+  }
+
+  auto sourceManifest = SourceManifest{.present = true, .files = {}};
+  constexpr std::array<std::string_view, 5> supportedTimeframes{
+      "ohlcv-1s", "ohlcv-1m", "ohlcv-1h", "ohlcv-1d", "ohlcv-eod"};
+  while (std::getline(input, line)) {
+    const auto entry = trim(line);
+    if (!entry.starts_with("file=")) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Source manifest entry is invalid");
+    }
+    const auto fields = split(
+        std::string_view{entry}.substr(std::string_view{"file="}.size()), '|');
+    if (fields.size() != 3 || fields[0].size() <= 4 ||
+        !fields[0].ends_with(".csv") ||
+        !std::ranges::all_of(fields[0],
+                             [](const char character) {
+                               return (character >= 'a' && character <= 'z') ||
+                                      (character >= 'A' && character <= 'Z') ||
+                                      (character >= '0' && character <= '9') ||
+                                      character == '.' || character == '_' ||
+                                      character == '-';
+                             }) ||
+        std::ranges::find(supportedTimeframes, fields[1]) ==
+            supportedTimeframes.end() ||
+        !validHash(fields[2])) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Source manifest metadata is invalid");
+    }
+    const auto insertion = sourceManifest.files.emplace(
+        fields[0],
+        SourceFileDeclaration{.timeframe = fields[1], .sha256 = fields[2]});
+    if (!insertion.second) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Source manifest contains a duplicate file");
+    }
+  }
+  if (input.bad()) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Unable to read source manifest: " +
+                               manifestPath.string());
+  }
+  return sourceManifest;
+}
+
 } // namespace
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
@@ -539,9 +743,9 @@ struct ReleaseSnapshotReader::Impl {
   std::vector<LoadedSegment> segments;
 };
 
-core::Result<SnapshotBuildResult>
-buildReleaseSnapshot(const SnapshotBuildRequest &request,
-                     const core::CancellationToken &cancellation) {
+core::Result<std::vector<std::string>>
+validatedSnapshotSymbols(const SnapshotBuildRequest &request,
+                         const core::CancellationToken &cancellation) {
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
                            "Snapshot build was cancelled");
@@ -560,6 +764,20 @@ buildReleaseSnapshot(const SnapshotBuildRequest &request,
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Snapshot symbols must be unique");
   }
+  return symbols;
+}
+
+core::Result<SnapshotBuildResult>
+buildReleaseSnapshot(const SnapshotBuildRequest &request,
+                     const core::CancellationToken &cancellation) {
+  auto symbols = validatedSnapshotSymbols(request, cancellation);
+  if (!symbols.ok()) {
+    return symbols.error();
+  }
+  auto sourceManifest = readSourceManifest(request.sourceDirectory);
+  if (!sourceManifest.ok()) {
+    return sourceManifest.error();
+  }
 
   struct EncodedSegment {
     SegmentMetadata metadata;
@@ -567,9 +785,9 @@ buildReleaseSnapshot(const SnapshotBuildRequest &request,
   };
   std::vector<EncodedSegment> encodedSegments;
   std::size_t totalBars = 0;
-  for (const auto &symbol : symbols) {
+  for (const auto &symbol : symbols.value()) {
     auto bars = readSourceBars(request.sourceDirectory / (symbol + ".csv"),
-                               symbol, cancellation);
+                               symbol, sourceManifest.value(), cancellation);
     if (!bars.ok()) {
       return bars.error();
     }
@@ -766,6 +984,8 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::select(
                    .timeframe = std::string{hourlyTimeframe},
                    .profile = std::string{snapshotProfile},
                    .spans = {}},
+      .preRangeDataDayClose = std::nullopt,
+      .preRangeDataDays = {},
   };
   for (const auto &segment : impl_->segments) {
     if (!symbols.contains(segment.metadata.symbol)) {
@@ -800,6 +1020,118 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::select(
   return selection;
 }
 
+core::Result<std::optional<SnapshotHistoryClose>>
+ReleaseSnapshotReader::lastCloseBeforeUtcDate(
+    const std::string_view symbol, const core::Timestamp utcDateStart,
+    const core::CancellationToken &cancellation) const {
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Snapshot history lookup was cancelled");
+  }
+  if (std::chrono::floor<std::chrono::days>(utcDateStart) != utcDateStart) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Snapshot history boundary must be midnight UTC");
+  }
+
+  std::optional<SnapshotHistoryClose> result;
+  for (const auto &segment : impl_->segments) {
+    if (cancellationRequested(
+            cancellation,
+            testing::SnapshotFailurePoint::historyLookupCancellation)) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "Snapshot history lookup was cancelled");
+    }
+    if (segment.metadata.symbol != symbol) {
+      continue;
+    }
+
+    const auto firstAtOrAfterBoundary = std::ranges::lower_bound(
+        segment.bars, utcDateStart, {}, &SnapshotBar::timestamp);
+    if (firstAtOrAfterBoundary == segment.bars.begin()) {
+      continue;
+    }
+
+    const auto &bar = *std::prev(firstAtOrAfterBoundary);
+    if (!result.has_value() || result->timestamp < bar.timestamp) {
+      result = SnapshotHistoryClose{
+          .timestamp = bar.timestamp,
+          .closeNanodollars = bar.closeNanodollars,
+      };
+    }
+  }
+  return result;
+}
+
+core::Result<std::vector<SnapshotDataDaySummary>>
+ReleaseSnapshotReader::lastDataDaysBeforeUtcDate(
+    const std::string_view symbol, const core::Timestamp utcDateStart,
+    const std::size_t count,
+    const core::CancellationToken &cancellation) const {
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Snapshot history lookup was cancelled");
+  }
+  if (count == 0 || count > maximumSnapshotHistoryDataDays) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Snapshot history day count is outside its limit");
+  }
+  if (std::chrono::floor<std::chrono::days>(utcDateStart) != utcDateStart) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Snapshot history boundary must be midnight UTC");
+  }
+
+  std::vector<SnapshotDataDaySummary> summaries;
+  bool reachedOlderDate = false;
+  for (auto segment = impl_->segments.rbegin();
+       segment != impl_->segments.rend() && !reachedOlderDate; ++segment) {
+    if (cancellationRequested(
+            cancellation,
+            testing::SnapshotFailurePoint::historyLookupCancellation)) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "Snapshot history lookup was cancelled");
+    }
+    if (segment->metadata.symbol != symbol) {
+      continue;
+    }
+
+    const auto firstAtOrAfterBoundary = std::ranges::lower_bound(
+        segment->bars, utcDateStart, {}, &SnapshotBar::timestamp);
+    auto bar = firstAtOrAfterBoundary;
+    while (bar != segment->bars.begin()) {
+      if (cancellationRequested(
+              cancellation,
+              testing::SnapshotFailurePoint::historyDataDayScanCancellation)) {
+        return core::makeError(core::ErrorCode::cancelled,
+                               "Snapshot history lookup was cancelled");
+      }
+      --bar;
+      const auto utcDateStartForBar =
+          std::chrono::floor<std::chrono::days>(bar->timestamp);
+      if (summaries.empty() ||
+          summaries.back().utcDateStart != utcDateStartForBar) {
+        if (summaries.size() == count) {
+          reachedOlderDate = true;
+          break;
+        }
+        summaries.push_back(SnapshotDataDaySummary{
+            .utcDateStart = utcDateStartForBar,
+            .highNanodollars = bar->highNanodollars,
+            .lowNanodollars = bar->lowNanodollars,
+            .closeNanodollars = bar->closeNanodollars,
+        });
+        continue;
+      }
+      auto &summary = summaries.back();
+      summary.highNanodollars =
+          std::max(summary.highNanodollars, bar->highNanodollars);
+      summary.lowNanodollars =
+          std::min(summary.lowNanodollars, bar->lowNanodollars);
+    }
+  }
+  std::ranges::reverse(summaries);
+  return summaries;
+}
+
 core::Result<SnapshotSelection> ReleaseSnapshotReader::readExact(
     const DataSelectionIdentity &identity,
     const core::CancellationToken &cancellation) const {
@@ -816,7 +1148,12 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::readExact(
                            "Persisted Data Selection identity is unavailable");
   }
 
-  SnapshotSelection selection{.bars = {}, .identity = identity};
+  SnapshotSelection selection{
+      .bars = {},
+      .identity = identity,
+      .preRangeDataDayClose = std::nullopt,
+      .preRangeDataDays = {},
+  };
   std::optional<std::size_t> previousOrdinal;
   for (const auto &span : identity.spans) {
     if (cancellation.isCancellationRequested()) {

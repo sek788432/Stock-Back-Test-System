@@ -17,6 +17,7 @@
 #include <future>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -110,6 +111,12 @@ void writeFile(const std::filesystem::path &path, const std::string &content) {
   ASSERT_TRUE(output) << path;
 }
 
+void writeSourceManifest(const std::filesystem::path &sourceDirectory,
+                         const std::string &entries) {
+  writeFile(sourceDirectory / "SourceManifest.btesource",
+            "BTE-SOURCE-MANIFEST-V1\n" + entries);
+}
+
 void executeSql(const std::filesystem::path &path, const std::string &sql) {
   sqlite3 *rawDatabase = nullptr;
   ASSERT_EQ(sqlite3_open(path.string().c_str(), &rawDatabase), SQLITE_OK);
@@ -193,9 +200,348 @@ TEST(ReleaseSnapshotTest,
   EXPECT_EQ(selected.value().identity.snapshotId, built.value().snapshotId);
 }
 
+TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateExcludesRowsFromBoundaryDate) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-boundary"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-05 20:00:00+00:00,99,101,98,100,100,ohlcv-1h\n"
+             "SYN,2024-01-05 22:00:00+00:00,100,111,99,110,100,ohlcv-1h\n"
+             "SYN,2024-01-08 00:00:00+00:00,110,121,109,120,100,ohlcv-1h\n"
+             "SYN,2024-01-08 01:00:00+00:00,120,122,119,121,100,ohlcv-1h\n");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto boundary = timestamp("2024-01-08 00:00:00+00:00");
+  const auto history = reader.value()->lastCloseBeforeUtcDate("SYN", boundary);
+  ASSERT_TRUE(history.ok()) << history.error().message;
+  const auto expected = std::optional{bte::data::SnapshotHistoryClose{
+      .timestamp = timestamp("2024-01-05 22:00:00+00:00"),
+      .closeNanodollars = 110'000'000'000,
+  }};
+  EXPECT_EQ(history.value(), expected);
+
+  const auto selection = reader.value()->select({
+      .symbols = {"SYN"},
+      .range = {.start = boundary,
+                .end = timestamp("2024-01-08 02:00:00+00:00")},
+      .timeframe = "ohlcv-1h",
+  });
+  ASSERT_TRUE(selection.ok()) << selection.error().message;
+  ASSERT_EQ(selection.value().bars.size(), 2U);
+  EXPECT_EQ(selection.value().bars.front().timestamp, boundary);
+  EXPECT_FALSE(selection.value().preRangeDataDayClose.has_value());
+}
+
+TEST(ReleaseSnapshotTest,
+     lastCloseBeforeUtcDateReturnsLastAvailableRowAcrossLongGap) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-long-gap"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-02 20:00:00+00:00,99,101,98,100,100,ohlcv-1h\n"
+             "SYN,2024-01-19 22:00:00+00:00,100,111,99,110,100,ohlcv-1h\n"
+             "SYN,2024-03-15 22:00:00+00:00,110,121,109,120,100,ohlcv-1h\n");
+  auto request = fixture.buildRequest();
+  request.rowsPerSegment = 1;
+  const auto built = bte::data::buildReleaseSnapshot(request);
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  ASSERT_EQ(built.value().segmentCount, 3U);
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto history = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-04-30 00:00:00+00:00"));
+
+  ASSERT_TRUE(history.ok()) << history.error().message;
+  const auto expected = std::optional{bte::data::SnapshotHistoryClose{
+      .timestamp = timestamp("2024-03-15 22:00:00+00:00"),
+      .closeNanodollars = 120'000'000'000,
+  }};
+  EXPECT_EQ(history.value(), expected);
+}
+
+TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateReturnsEmptyWithoutPriorRows) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-empty"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-08 00:00:00+00:00,110,121,109,120,100,ohlcv-1h\n"
+             "SYN,2024-01-08 01:00:00+00:00,120,122,119,121,100,ohlcv-1h\n");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto boundary = timestamp("2024-01-08 00:00:00+00:00");
+  const auto history = reader.value()->lastCloseBeforeUtcDate("SYN", boundary);
+  ASSERT_TRUE(history.ok()) << history.error().message;
+  EXPECT_FALSE(history.value().has_value());
+
+  const auto absentSymbol =
+      reader.value()->lastCloseBeforeUtcDate("MISSING", boundary);
+  ASSERT_TRUE(absentSymbol.ok()) << absentSymbol.error().message;
+  EXPECT_FALSE(absentSymbol.value().has_value());
+}
+
+TEST(ReleaseSnapshotTest,
+     lastDataDaysBeforeUtcDateAggregatesAvailableDatesAndExcludesBoundary) {
+  const ScopedSnapshotFixture fixture{"historical-data-day-summaries"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-01 20:00:00+00:00,99,105,95,100,100,ohlcv-1h\n"
+             "SYN,2024-01-01 22:00:00+00:00,100,120,80,110,100,ohlcv-1h\n"
+             "SYN,2024-01-02 20:00:00+00:00,110,115,108,112,100,ohlcv-1h\n"
+             "SYN,2024-01-04 20:00:00+00:00,112,118,109,116,100,ohlcv-1h\n"
+             "SYN,2024-01-05 00:00:00+00:00,116,999,1,117,100,ohlcv-1h\n");
+  auto request = fixture.buildRequest();
+  request.rowsPerSegment = 2;
+  const auto built = bte::data::buildReleaseSnapshot(request);
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto summaries = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-05 00:00:00+00:00"), 3);
+
+  ASSERT_TRUE(summaries.ok()) << summaries.error().message;
+  const auto expected = std::vector<bte::data::SnapshotDataDaySummary>{
+      {.utcDateStart = timestamp("2024-01-01 00:00:00+00:00"),
+       .highNanodollars = 120'000'000'000,
+       .lowNanodollars = 80'000'000'000,
+       .closeNanodollars = 110'000'000'000},
+      {.utcDateStart = timestamp("2024-01-02 00:00:00+00:00"),
+       .highNanodollars = 115'000'000'000,
+       .lowNanodollars = 108'000'000'000,
+       .closeNanodollars = 112'000'000'000},
+      {.utcDateStart = timestamp("2024-01-04 00:00:00+00:00"),
+       .highNanodollars = 118'000'000'000,
+       .lowNanodollars = 109'000'000'000,
+       .closeNanodollars = 116'000'000'000},
+  };
+  EXPECT_EQ(summaries.value(), expected);
+}
+
+TEST(ReleaseSnapshotTest,
+     historicalDataDaySummariesRemainStableAfterSourceMutation) {
+  const ScopedSnapshotFixture fixture{"historical-data-day-source-mutation"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-01 23:00:00+00:00,100,1000,99,999,1200,ohlcv-1h\n"
+             "SYN,2024-01-02 00:00:00+00:00,999,999,999,999,2300,ohlcv-1h\n");
+
+  const auto summaries = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-03 00:00:00+00:00"), 2);
+
+  ASSERT_TRUE(summaries.ok()) << summaries.error().message;
+  const auto expected = std::vector<bte::data::SnapshotDataDaySummary>{
+      {.utcDateStart = timestamp("2024-01-01 00:00:00+00:00"),
+       .highNanodollars = 102'000'000'000,
+       .lowNanodollars = 99'500'000'000,
+       .closeNanodollars = 101'250'000'000},
+      {.utcDateStart = timestamp("2024-01-02 00:00:00+00:00"),
+       .highNanodollars = 104'000'000'000,
+       .lowNanodollars = 100'000'000'000,
+       .closeNanodollars = 103'125'000'000},
+  };
+  EXPECT_EQ(summaries.value(), expected);
+}
+
+TEST(ReleaseSnapshotTest,
+     lastDataDaysBeforeUtcDateReturnsAvailableHistoryAndEnforcesCountLimit) {
+  const ScopedSnapshotFixture fixture{"historical-data-day-count-boundary"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-05 20:00:00+00:00,99,101,98,100,100,ohlcv-1h\n");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  const auto boundary = timestamp("2024-01-05 00:00:00+00:00");
+
+  const auto noPriorDate =
+      reader.value()->lastDataDaysBeforeUtcDate("SYN", boundary, 1);
+  ASSERT_TRUE(noPriorDate.ok()) << noPriorDate.error().message;
+  EXPECT_TRUE(noPriorDate.value().empty());
+
+  const auto maximumCount = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", boundary, bte::data::maximumSnapshotHistoryDataDays);
+  ASSERT_TRUE(maximumCount.ok()) << maximumCount.error().message;
+  EXPECT_TRUE(maximumCount.value().empty());
+
+  const auto zeroCount =
+      reader.value()->lastDataDaysBeforeUtcDate("SYN", boundary, 0);
+  ASSERT_FALSE(zeroCount.ok());
+  EXPECT_EQ(zeroCount.error().code, bte::core::ErrorCode::invalidArgument);
+
+  const auto excessiveCount = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", boundary, bte::data::maximumSnapshotHistoryDataDays + 1);
+  ASSERT_FALSE(excessiveCount.ok());
+  EXPECT_EQ(excessiveCount.error().code, bte::core::ErrorCode::invalidArgument);
+
+  const auto invalidBoundary = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-05 00:01:00+00:00"), 1);
+  ASSERT_FALSE(invalidBoundary.ok());
+  EXPECT_EQ(invalidBoundary.error().code,
+            bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(ReleaseSnapshotTest, lastDataDaysBeforeUtcDateHonorsCancellation) {
+  const ScopedSnapshotFixture fixture{"historical-data-day-cancelled"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  auto request = fixture.buildRequest();
+  request.rowsPerSegment = 1;
+  const auto built = bte::data::buildReleaseSnapshot(request);
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  bte::core::CancellationSource alreadyCancelled;
+  alreadyCancelled.requestCancellation();
+  const auto cancelledBeforeLookup = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-03 00:00:00+00:00"), 1,
+      alreadyCancelled.token());
+  ASSERT_FALSE(cancelledBeforeLookup.ok());
+  EXPECT_EQ(cancelledBeforeLookup.error().code,
+            bte::core::ErrorCode::cancelled);
+
+  const auto absentSymbol = reader.value()->lastDataDaysBeforeUtcDate(
+      "ABSENT", timestamp("2024-01-03 00:00:00+00:00"), 1);
+  ASSERT_TRUE(absentSymbol.ok()) << absentSymbol.error().message;
+  EXPECT_TRUE(absentSymbol.value().empty());
+
+  const auto limitedHistory = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-03 00:00:00+00:00"), 1);
+  ASSERT_TRUE(limitedHistory.ok()) << limitedHistory.error().message;
+  ASSERT_EQ(limitedHistory.value().size(), 1U);
+  EXPECT_EQ(limitedHistory.value().front().utcDateStart,
+            timestamp("2024-01-02 00:00:00+00:00"));
+
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::historyLookupCancellation);
+  const auto result = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-03 00:00:00+00:00"), 1);
+  bte::data::testing::clearSnapshotFailure();
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST(ReleaseSnapshotTest,
+     lastDataDaysBeforeUtcDateHonorsCancellationDuringBarScan) {
+  const ScopedSnapshotFixture fixture{"historical-data-day-bar-scan-cancelled"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  auto request = fixture.buildRequest();
+  request.rowsPerSegment = 10;
+  const auto built = bte::data::buildReleaseSnapshot(request);
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::historyDataDayScanCancellation);
+  const auto result = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-03 00:00:00+00:00"), 1);
+  bte::data::testing::clearSnapshotFailure();
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateHonorsCancellation) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-cancelled"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+
+  const auto result = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-02 00:00:00+00:00"), cancellation.token());
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST(ReleaseSnapshotTest,
+     lastCloseBeforeUtcDateHonorsCancellationDuringSegmentScan) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-scan-cancelled"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  auto request = fixture.buildRequest();
+  request.rowsPerSegment = 1;
+  const auto built = bte::data::buildReleaseSnapshot(request);
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::historyLookupCancellation);
+  const auto result = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-02 00:00:00+00:00"));
+  bte::data::testing::clearSnapshotFailure();
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateRejectsNonMidnightBoundary) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-invalid-boundary"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto result = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-02 12:00:00+00:00"));
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(ReleaseSnapshotTest, preRangeDataDayCloseIsStableAfterSourceMutation) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-source-mutation"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-05 20:00:00+00:00,99,101,98,100,100,ohlcv-1h\n"
+             "SYN,2024-01-05 22:00:00+00:00,100,111,99,110,100,ohlcv-1h\n"
+             "SYN,2024-01-08 00:00:00+00:00,110,121,109,120,100,ohlcv-1h\n");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-05 20:00:00+00:00,99,101,98,999,100,ohlcv-1h\n"
+             "SYN,2024-01-08 00:00:00+00:00,110,121,109,120,100,ohlcv-1h\n");
+
+  const auto history = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-08 00:00:00+00:00"));
+
+  ASSERT_TRUE(history.ok()) << history.error().message;
+  const auto expected = std::optional{bte::data::SnapshotHistoryClose{
+      .timestamp = timestamp("2024-01-05 22:00:00+00:00"),
+      .closeNanodollars = 110'000'000'000,
+  }};
+  EXPECT_EQ(history.value(), expected);
+}
+
 TEST(ReleaseSnapshotTest, buildAcceptsCanonicalSevenColumnExtractedHourlyCsv) {
   ScopedSnapshotFixture fixture{"canonical-extracted-input"};
   fixture.writeExtractedSymbol("SYN", threeExtractedHourlyRows);
+  const auto csvBytes = readFile(fixture.source() / "SYN.csv");
+  writeSourceManifest(fixture.source(), "file=SYN.csv|ohlcv-1h|" +
+                                            bte::core::sha256(csvBytes) + "\n");
 
   const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
   ASSERT_TRUE(built.ok()) << built.error().message;
@@ -214,6 +560,141 @@ TEST(ReleaseSnapshotTest, buildAcceptsCanonicalSevenColumnExtractedHourlyCsv) {
   ASSERT_EQ(selected.value().bars.size(), 3U);
   EXPECT_EQ(selected.value().bars[1].openNanodollars, 101'250'000'000);
   EXPECT_EQ(selected.value().bars[2].closeNanodollars, 103'125'000'000);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildRejectsSevenColumnExtractWithoutSourceTimeframeManifest) {
+  ScopedSnapshotFixture fixture{"unmanifested-extracted-input"};
+  fixture.writeExtractedSymbol("SYN", threeExtractedHourlyRows);
+
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildRejectsSevenColumnExtractWhenManifestHashDoesNotMatch) {
+  ScopedSnapshotFixture fixture{"mismatched-source-hash"};
+  fixture.writeExtractedSymbol("SYN", threeExtractedHourlyRows);
+  writeSourceManifest(fixture.source(),
+                      "file=SYN.csv|ohlcv-1h|" + std::string(64, 'a') + "\n");
+
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildRejectsSevenColumnExtractWhenManifestDeclaresDailyTimeframe) {
+  ScopedSnapshotFixture fixture{"wrong-source-timeframe"};
+  fixture.writeExtractedSymbol("SYN", threeExtractedHourlyRows);
+  const auto csvBytes = readFile(fixture.source() / "SYN.csv");
+  writeSourceManifest(fixture.source(), "file=SYN.csv|ohlcv-1d|" +
+                                            bte::core::sha256(csvBytes) + "\n");
+
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildKeepsExplicitSchemaColumnCompatibleWithoutSourceManifest) {
+  ScopedSnapshotFixture fixture{"explicit-schema-source-compatibility"};
+  writeFile(fixture.source() / "SYN.csv",
+            "symbol,ts,open,high,low,close,volume,schemaName,legacyNote\n"
+            "SYN,2024-01-01 23:00:00+00:00,100.125,102,99.5,101.25,1200,"
+            "ohlcv-1h,legacy\n"
+            "SYN,2024-01-02 00:00:00+00:00,101.25,103.5,100,102.75,2300,"
+            "ohlcv-1h,legacy\n"
+            "SYN,2024-01-02 01:00:00+00:00,102.75,104,101.5,103.125,3400,"
+            "ohlcv-1h,legacy\n");
+
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 3U);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildAcceptsExtractorProvenanceColumnsWithHashBoundManifest) {
+  ScopedSnapshotFixture fixture{"extractor-provenance-column-order"};
+  writeFile(
+      fixture.source() / "SYN.csv",
+      "symbol,ts,open,high,low,close,volume,source,schemaName,ingestedAt\n"
+      "SYN,2024-01-01 23:00:00+00:00,100.125,102,99.5,101.25,1200,"
+      "databento,ohlcv-1h,2024-01-02 00:00:00+00:00\n"
+      "SYN,2024-01-02 00:00:00+00:00,101.25,103.5,100,102.75,2300,"
+      "databento,ohlcv-1h,2024-01-02 00:00:00+00:00\n"
+      "SYN,2024-01-02 01:00:00+00:00,102.75,104,101.5,103.125,3400,"
+      "databento,ohlcv-1h,2024-01-02 00:00:00+00:00\n");
+  const auto csvBytes = readFile(fixture.source() / "SYN.csv");
+  writeSourceManifest(fixture.source(), "file=SYN.csv|ohlcv-1h|" +
+                                            bte::core::sha256(csvBytes) + "\n");
+
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 3U);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildRejectsManifestThatDoesNotDeclareEverySelectedCsv) {
+  ScopedSnapshotFixture fixture{"incomplete-source-manifest"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  writeSourceManifest(fixture.source(),
+                      "file=OTHER.csv|ohlcv-1h|" + std::string(64, 'a') + "\n");
+
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST(ReleaseSnapshotTest, buildRejectsDuplicateSourceManifestFilenames) {
+  ScopedSnapshotFixture fixture{"duplicate-source-manifest-entry"};
+  fixture.writeExtractedSymbol("SYN", threeExtractedHourlyRows);
+  const auto csvBytes = readFile(fixture.source() / "SYN.csv");
+  const auto entry =
+      "file=SYN.csv|ohlcv-1h|" + bte::core::sha256(csvBytes) + "\n";
+  writeSourceManifest(fixture.source(), entry + entry);
+
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildRejectsMalformedSourceManifestHeadersAndEntries) {
+  const auto validHash = std::string(64, 'a');
+  const std::vector<std::pair<std::string, std::string>> invalidManifests{
+      {"bad-header", "BAD-MAGIC\n"},
+      {"bad-entry-prefix", "BTE-SOURCE-MANIFEST-V1\nunexpected\n"},
+      {"bad-entry-field-count",
+       "BTE-SOURCE-MANIFEST-V1\nfile=SYN.csv|ohlcv-1h\n"},
+      {"bad-entry-filename",
+       "BTE-SOURCE-MANIFEST-V1\nfile=../SYN.csv|ohlcv-1h|" + validHash + "\n"},
+      {"bad-entry-extension",
+       "BTE-SOURCE-MANIFEST-V1\nfile=.csv|ohlcv-1h|" + validHash + "\n"},
+      {"bad-entry-timeframe",
+       "BTE-SOURCE-MANIFEST-V1\nfile=SYN.csv|ohlcv-15m|" + validHash + "\n"},
+      {"bad-entry-hash",
+       "BTE-SOURCE-MANIFEST-V1\nfile=SYN.csv|ohlcv-1h|not-a-hash\n"},
+  };
+
+  for (const auto &[name, manifest] : invalidManifests) {
+    ScopedSnapshotFixture fixture{"malformed-source-manifest-" + name};
+    fixture.writeExtractedSymbol("SYN", threeExtractedHourlyRows);
+    writeFile(fixture.source() / "SourceManifest.btesource", manifest);
+
+    const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+    ASSERT_FALSE(built.ok()) << name;
+    EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch) << name;
+  }
 }
 
 TEST(ReleaseSnapshotTest,

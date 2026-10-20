@@ -22,6 +22,61 @@
 
 namespace {
 
+struct PersistedDataDayRun final {
+  bte::bindings::BacktestSnapshot backtest;
+  bte::bindings::PersistedBacktestStorage storage;
+  bte::strategy::SelectableStrategyPlan plan;
+};
+
+void expectBacktestFilledOnNextSelectedBar(
+    const bte::bindings::BacktestSnapshot &backtest,
+    const bte::core::Timestamp expectedFillTimestamp) {
+  EXPECT_EQ(backtest.barsProcessed, 3U);
+  ASSERT_EQ(backtest.fills.size(), 1U);
+  EXPECT_EQ(backtest.fills.front().timestamp, expectedFillTimestamp);
+  EXPECT_DOUBLE_EQ(backtest.fills.front().price, 103.0103);
+}
+
+void expectReplayContainsSelectedCandles(
+    const bte::bindings::ResultReplay &replay,
+    const std::array<bte::core::Timestamp, 3> &expectedTimestamps) {
+  ASSERT_EQ(replay.totalFrames(), 3U);
+  EXPECT_EQ(replay.timeline()[0].candle.ts, expectedTimestamps[0]);
+  EXPECT_EQ(replay.timeline()[1].candle.ts, expectedTimestamps[1]);
+  EXPECT_EQ(replay.timeline()[2].candle.ts, expectedTimestamps[2]);
+}
+
+void expectFillMarkerUsesNextSelectedBar(
+    const bte::bindings::ResultReplay &replay,
+    const bte::core::Timestamp expectedFillTimestamp) {
+  EXPECT_TRUE(replay.timeline().front().fills.empty());
+  ASSERT_EQ(replay.timeline()[1].fills.size(), 1U);
+  EXPECT_EQ(replay.timeline()[1].fills.front().timestamp,
+            expectedFillTimestamp);
+}
+
+void expectPersistedTimelineContainsOnlySelectedBars(
+    const bte::results::OpenedResult &opened, const PersistedDataDayRun &run,
+    const bte::core::Timestamp firstSelectedTimestamp) {
+  EXPECT_EQ(opened.descriptor.strategyHash,
+            bte::strategy::canonicalStrategyHash(run.plan));
+  EXPECT_EQ(std::ranges::count_if(
+                opened.records,
+                [](const auto &record) {
+                  return record.family == bte::results::RecordFamily::portfolio;
+                }),
+            3);
+  const auto order =
+      std::ranges::find_if(opened.records, [](const auto &record) {
+        return record.family == bte::results::RecordFamily::order;
+      });
+  ASSERT_NE(order, opened.records.end());
+  EXPECT_EQ(order->timestamp, firstSelectedTimestamp);
+  for (const auto &record : opened.records) {
+    EXPECT_GE(record.timestamp, firstSelectedTimestamp);
+  }
+}
+
 class ReplayBacktestDeterminism : public testing::Test {
 protected:
   void SetUp() override {
@@ -102,7 +157,8 @@ protected:
          .symbol = "SYN",
          .initialCapitalMicrodollars = 10'000'000'000,
          .quantityShares = 10,
-         .selectableStrategy = plan},
+         .selectableStrategy = plan,
+         .previousDataDays = {}},
         *store.value(),
         {.universe = {"SYN"},
          .range = {.start = selection.bars.front().timestamp,
@@ -121,6 +177,118 @@ protected:
       return published.error();
     }
     return recorded;
+  }
+
+  [[nodiscard]] bte::core::Result<PersistedDataDayRun>
+  runPersistedDataDayBacktest() const {
+    const auto built = bte::data::buildReleaseSnapshot({
+        .sourceDirectory = std::filesystem::path{BTE_TEST_SOURCE_DIR} /
+                           "Tests/Fixtures/Replay",
+        .storeDirectory = root_ / "Data",
+        .symbols = {"SYN"},
+        .rowsPerSegment = 2,
+        .calendarHash = std::string(64, 'a'),
+        .splitManifestHash = std::string(64, 'b'),
+    });
+    if (!built.ok()) {
+      return built.error();
+    }
+    const auto plan = bte::strategy::SelectableStrategyPlan{
+        .buy = {.logic = bte::strategy::ConditionLogic::all,
+                .conditions =
+                    {
+                        {.source = bte::strategy::ConditionSource::
+                             previousDataDayCloseChangePercent,
+                         .comparison =
+                             bte::strategy::Comparison::greaterThanOrEqual,
+                         .threshold = 1.0,
+                         .thresholdDomain =
+                             bte::indicators::NumericDomain::percent},
+                        {.source = bte::strategy::ConditionSource::barField,
+                         .comparison = bte::strategy::Comparison::lessThan,
+                         .threshold = 102.0,
+                         .barField = bte::indicators::BarField::open},
+                    }},
+        .sell = {},
+    };
+    const auto configuration = bte::bindings::BacktestConfiguration{
+        .symbol = "SYN",
+        .schema = "ohlcv-1h",
+        .startDate = QDate{2024, 1, 2},
+        .endDate = QDate{2024, 1, 2},
+        .initialCapital = 2'000.0,
+        .quantityShares = 10,
+        .selectableStrategy = plan,
+    };
+    const auto storage = bte::bindings::PersistedBacktestStorage{
+        .resultStore = root_ / "Results",
+        .dataStore = root_ / "Data",
+        .snapshotId = built.value().snapshotId,
+        .strategyHash = std::string(64, 'd'),
+    };
+    auto backtest = bte::bindings::runPersistedBacktestConfiguration(
+        configuration, storage);
+    if (!backtest.ok()) {
+      return backtest.error();
+    }
+    return PersistedDataDayRun{
+        .backtest = std::move(backtest).value(),
+        .storage = storage,
+        .plan = plan,
+    };
+  }
+
+  [[nodiscard]] bte::core::Result<PersistedDataDayRun>
+  runPersistedHistoricalDataDayBacktest() const {
+    const auto built = bte::data::buildReleaseSnapshot({
+        .sourceDirectory = std::filesystem::path{BTE_TEST_SOURCE_DIR} /
+                           "Tests/Fixtures/Replay",
+        .storeDirectory = root_ / "Data",
+        .symbols = {"SYN"},
+        .rowsPerSegment = 2,
+        .calendarHash = std::string(64, 'a'),
+        .splitManifestHash = std::string(64, 'b'),
+    });
+    if (!built.ok()) {
+      return built.error();
+    }
+    const auto plan = bte::strategy::SelectableStrategyPlan{
+        .buy = {.logic = bte::strategy::ConditionLogic::all,
+                .conditions = {{
+                    .source =
+                        bte::strategy::ConditionSource::dataDayGainPercent,
+                    .comparison = bte::strategy::Comparison::greaterThanOrEqual,
+                    .threshold = 1.9,
+                    .thresholdDomain = bte::indicators::NumericDomain::percent,
+                    .lookbackPeriod = 1,
+                }}},
+        .sell = {},
+    };
+    const auto configuration = bte::bindings::BacktestConfiguration{
+        .symbol = "SYN",
+        .schema = "ohlcv-1h",
+        .startDate = QDate{2024, 1, 2},
+        .endDate = QDate{2024, 1, 2},
+        .initialCapital = 2'000.0,
+        .quantityShares = 10,
+        .selectableStrategy = plan,
+    };
+    const auto storage = bte::bindings::PersistedBacktestStorage{
+        .resultStore = root_ / "Results",
+        .dataStore = root_ / "Data",
+        .snapshotId = built.value().snapshotId,
+        .strategyHash = std::string(64, 'e'),
+    };
+    auto backtest = bte::bindings::runPersistedBacktestConfiguration(
+        configuration, storage);
+    if (!backtest.ok()) {
+      return backtest.error();
+    }
+    return PersistedDataDayRun{
+        .backtest = std::move(backtest).value(),
+        .storage = storage,
+        .plan = plan,
+    };
   }
 
   QTemporaryDir directory_{QString::fromStdString(
@@ -202,6 +370,63 @@ TEST_F(ReplayBacktestDeterminism,
       firstOpened.value().descriptor.strategyHash,
       bte::strategy::canonicalStrategyHash(configuration.selectableStrategy));
   EXPECT_NE(firstOpened.value().descriptor.strategyHash, storage.strategyHash);
+}
+
+TEST_F(ReplayBacktestDeterminism,
+       persistedDataDayPredicateReplaysOnlySelectedBars) {
+  auto runResult = runPersistedDataDayBacktest();
+  ASSERT_TRUE(runResult.ok()) << runResult.error().message;
+  const auto run = std::move(runResult).value();
+  expectBacktestFilledOnNextSelectedBar(run.backtest, hour(1));
+
+  const auto published =
+      bte::bindings::publishBacktestDraft(run.storage, run.backtest.resultId);
+  ASSERT_TRUE(published.ok()) << published.error().message;
+  auto replay = bte::bindings::ResultReplay::open(
+      run.storage.resultStore, run.storage.dataStore, run.backtest.resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  expectReplayContainsSelectedCandles(*replay.value(),
+                                      {hour(0), hour(1), hour(2)});
+  expectFillMarkerUsesNextSelectedBar(*replay.value(), hour(1));
+
+  auto store = bte::results::ResultStore::open(run.storage.resultStore,
+                                               run.storage.dataStore);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto opened = store.value()->openResult(run.backtest.resultId);
+  ASSERT_TRUE(opened.ok()) << opened.error().message;
+  expectPersistedTimelineContainsOnlySelectedBars(opened.value(), run, hour(0));
+}
+
+TEST_F(ReplayBacktestDeterminism,
+       historicalDataDayWarmupPersistsAndReplaysOnlySelectedBars) {
+  auto runResult = runPersistedHistoricalDataDayBacktest();
+  ASSERT_TRUE(runResult.ok()) << runResult.error().message;
+  const auto run = std::move(runResult).value();
+  expectBacktestFilledOnNextSelectedBar(run.backtest, hour(1));
+
+  auto repeatedRunResult = runPersistedHistoricalDataDayBacktest();
+  ASSERT_TRUE(repeatedRunResult.ok()) << repeatedRunResult.error().message;
+  EXPECT_EQ(run.backtest.canonicalResultHash,
+            repeatedRunResult.value().backtest.canonicalResultHash);
+
+  const auto published =
+      bte::bindings::publishBacktestDraft(run.storage, run.backtest.resultId);
+  ASSERT_TRUE(published.ok()) << published.error().message;
+  auto replay = bte::bindings::ResultReplay::open(
+      run.storage.resultStore, run.storage.dataStore, run.backtest.resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  expectReplayContainsSelectedCandles(*replay.value(),
+                                      {hour(0), hour(1), hour(2)});
+  expectFillMarkerUsesNextSelectedBar(*replay.value(), hour(1));
+
+  auto store = bte::results::ResultStore::open(run.storage.resultStore,
+                                               run.storage.dataStore);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto opened = store.value()->openResult(run.backtest.resultId);
+  ASSERT_TRUE(opened.ok()) << opened.error().message;
+  expectPersistedTimelineContainsOnlySelectedBars(opened.value(), run, hour(0));
 }
 
 TEST_F(ReplayBacktestDeterminism,

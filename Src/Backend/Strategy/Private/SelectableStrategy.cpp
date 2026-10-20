@@ -7,11 +7,16 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
+#include <compare>
+#include <deque>
 #include <exception>
 #include <functional> // IWYU pragma: keep
+#include <initializer_list>
 #include <memory>
 #include <optional>
+#include <ranges> // IWYU pragma: keep
 #include <string>
 #include <string_view>
 #include <utility>
@@ -31,7 +36,8 @@ void appendInteger(std::string &bytes, const Value value) {
   appendFrame(bytes, std::to_string(static_cast<std::uint64_t>(value)));
 }
 
-void appendCondition(std::string &bytes, const Condition &condition) {
+void appendCondition(std::string &bytes, const Condition &condition,
+                     const bool includeLookbackPeriod) {
   appendInteger(bytes, condition.source);
   appendInteger(bytes, condition.comparison);
   appendInteger(bytes, std::bit_cast<std::uint64_t>(condition.threshold));
@@ -43,13 +49,17 @@ void appendCondition(std::string &bytes, const Condition &condition) {
   appendInteger(bytes, condition.indicator.signalPeriod);
   appendInteger(bytes, condition.indicator.output);
   appendInteger(bytes, condition.indicator.field);
+  if (includeLookbackPeriod) {
+    appendInteger(bytes, condition.lookbackPeriod);
+  }
 }
 
-void appendGroup(std::string &bytes, const ConditionGroup &group) {
+void appendGroup(std::string &bytes, const ConditionGroup &group,
+                 const bool includeLookbackPeriod) {
   appendInteger(bytes, group.logic);
   appendInteger(bytes, group.conditions.size());
   for (const auto &condition : group.conditions) {
-    appendCondition(bytes, condition);
+    appendCondition(bytes, condition, includeLookbackPeriod);
   }
 }
 
@@ -58,8 +68,44 @@ void appendGroup(std::string &bytes, const ConditionGroup &group) {
 }
 
 [[nodiscard]] bool isSource(const ConditionSource source) noexcept {
-  return source >= ConditionSource::barField &&
-         source <= ConditionSource::indicator;
+  return source == ConditionSource::barField ||
+         source == ConditionSource::closeChangePercent ||
+         source == ConditionSource::indicator ||
+         source == ConditionSource::previousDataDayCloseChangePercent ||
+         source == ConditionSource::dataDayGainPercent ||
+         source == ConditionSource::periodHighDrawdownPercent ||
+         source == ConditionSource::periodLowReboundPercent ||
+         source == ConditionSource::breakPeriodHigh ||
+         source == ConditionSource::breakPeriodLow;
+}
+
+[[nodiscard]] bool
+planHasPreviousDataDayCondition(const SelectableStrategyPlan &plan) {
+  const auto groupHasCondition = [](const ConditionGroup &group) {
+    return std::ranges::any_of(group.conditions, [](const Condition &item) {
+      return item.source == ConditionSource::previousDataDayCloseChangePercent;
+    });
+  };
+  return groupHasCondition(plan.buy) || groupHasCondition(plan.sell);
+}
+
+[[nodiscard]] bool
+isHistoricalDataDaySource(const ConditionSource source) noexcept {
+  return source == ConditionSource::dataDayGainPercent ||
+         source == ConditionSource::periodHighDrawdownPercent ||
+         source == ConditionSource::periodLowReboundPercent ||
+         source == ConditionSource::breakPeriodHigh ||
+         source == ConditionSource::breakPeriodLow;
+}
+
+[[nodiscard]] bool
+planHasHistoricalDataDayCondition(const SelectableStrategyPlan &plan) {
+  const auto groupHasCondition = [](const ConditionGroup &group) {
+    return std::ranges::any_of(group.conditions, [](const Condition &item) {
+      return isHistoricalDataDaySource(item.source);
+    });
+  };
+  return groupHasCondition(plan.buy) || groupHasCondition(plan.sell);
 }
 
 [[nodiscard]] bool isComparison(const Comparison comparison) noexcept {
@@ -109,6 +155,53 @@ isNumericDomain(const indicators::NumericDomain domain) noexcept {
 }
 
 [[nodiscard]] core::Result<Condition>
+validatePreviousDataDayCondition(const Condition &condition) {
+  const bool validDirection =
+      (condition.comparison == Comparison::lessThanOrEqual &&
+       condition.threshold < 0.0) ||
+      (condition.comparison == Comparison::greaterThanOrEqual &&
+       condition.threshold > 0.0);
+  if (condition.thresholdDomain != indicators::NumericDomain::percent ||
+      condition.lookbackPeriod != 0 || !validDirection) {
+    return compileError(
+        "previous data-day close conditions require a signed inclusive "
+        "percentage comparison with a nonzero magnitude");
+  }
+  return condition;
+}
+
+[[nodiscard]] core::Result<Condition>
+validateHistoricalDataDayCondition(const Condition &condition) {
+  if (condition.lookbackPeriod < 1 ||
+      condition.lookbackPeriod > indicators::maximumIndicatorPeriod) {
+    return compileError(
+        "historical data-day conditions require a supported period and "
+        "their fixed positive-magnitude predicate");
+  }
+  const bool isBreakout =
+      condition.source == ConditionSource::breakPeriodHigh ||
+      condition.source == ConditionSource::breakPeriodLow;
+  if (isBreakout) {
+    if (condition.thresholdDomain != indicators::NumericDomain::scalar ||
+        condition.comparison != Comparison::greaterThan ||
+        condition.threshold != 0.0) {
+      return compileError(
+          "historical data-day conditions require a supported period and "
+          "their fixed positive-magnitude predicate");
+    }
+    return condition;
+  }
+  if (condition.thresholdDomain != indicators::NumericDomain::percent ||
+      condition.comparison != Comparison::greaterThanOrEqual ||
+      condition.threshold <= 0.0) {
+    return compileError(
+        "historical data-day conditions require a supported period and "
+        "their fixed positive-magnitude predicate");
+  }
+  return condition;
+}
+
+[[nodiscard]] core::Result<Condition>
 validateCondition(const Condition &condition) {
   if (!isSource(condition.source) || !isComparison(condition.comparison) ||
       !indicators::isValidBarField(condition.barField) ||
@@ -119,6 +212,10 @@ validateCondition(const Condition &condition) {
         "threshold domain");
   }
   if (condition.source == ConditionSource::barField) {
+    if (condition.lookbackPeriod != 0) {
+      return compileError(
+          "bar-field conditions do not accept a data-day period");
+    }
     const auto value =
         indicators::barFieldValue(core::Bar{}, condition.barField);
     if (value.domain != condition.thresholdDomain) {
@@ -128,11 +225,21 @@ validateCondition(const Condition &condition) {
     return condition;
   }
   if (condition.source == ConditionSource::closeChangePercent) {
-    if (condition.thresholdDomain != indicators::NumericDomain::percent) {
+    if (condition.thresholdDomain != indicators::NumericDomain::percent ||
+        condition.lookbackPeriod != 0) {
       return compileError(
           "condition threshold domain does not match close-change percentage");
     }
     return condition;
+  }
+  if (condition.source == ConditionSource::previousDataDayCloseChangePercent) {
+    return validatePreviousDataDayCondition(condition);
+  }
+  if (isHistoricalDataDaySource(condition.source)) {
+    return validateHistoricalDataDayCondition(condition);
+  }
+  if (condition.lookbackPeriod != 0) {
+    return compileError("indicator conditions do not accept a data-day period");
   }
   return condition;
 }
@@ -163,14 +270,26 @@ validateGroup(const ConditionGroup &group, const bool required) {
 
 std::string
 canonicalStrategyHash(const std::optional<SelectableStrategyPlan> &plan) {
-  std::string bytes{"bte-strategy-v1"};
+  const bool usesVersionThree =
+      plan.has_value() && planHasHistoricalDataDayCondition(*plan);
+  const bool usesVersionTwo = !usesVersionThree && plan.has_value() &&
+                              planHasPreviousDataDayCondition(*plan);
+  auto version = std::string_view{"v1"};
+  if (usesVersionThree) {
+    version = "v3";
+  } else if (usesVersionTwo) {
+    version = "v2";
+  }
+  std::string bytes{"bte-strategy-"};
+  bytes += version;
   if (!plan.has_value()) {
     appendFrame(bytes, "starter-market-buy-v1");
     return core::sha256(bytes);
   }
-  appendFrame(bytes, "selectable-conditions-v1");
-  appendGroup(bytes, plan->buy);
-  appendGroup(bytes, plan->sell);
+  appendFrame(bytes,
+              std::string{"selectable-conditions-"} + std::string{version});
+  appendGroup(bytes, plan->buy, usesVersionThree);
+  appendGroup(bytes, plan->sell, usesVersionThree);
   return core::sha256(bytes);
 }
 
@@ -185,10 +304,57 @@ struct SelectableStrategy::Impl final {
     std::vector<RuntimeCondition> conditions;
   };
 
+  struct HistoricalWindow final {
+    std::int32_t period = 0;
+    std::deque<PreviousDataDaySummary> days;
+    std::deque<PreviousDataDaySummary> maximumHighDays;
+    std::deque<PreviousDataDaySummary> minimumLowDays;
+
+    void append(const PreviousDataDaySummary &day) {
+      while (!maximumHighDays.empty() &&
+             maximumHighDays.back().high <= day.high) {
+        maximumHighDays.pop_back();
+      }
+      maximumHighDays.push_back(day);
+      while (!minimumLowDays.empty() && minimumLowDays.back().low >= day.low) {
+        minimumLowDays.pop_back();
+      }
+      minimumLowDays.push_back(day);
+      days.push_back(day);
+      if (days.size() <= static_cast<std::size_t>(period)) {
+        return;
+      }
+      const auto expiredDate = days.front().utcDateStart;
+      days.pop_front();
+      if (maximumHighDays.front().utcDateStart == expiredDate) {
+        maximumHighDays.pop_front();
+      }
+      if (minimumLowDays.front().utcDateStart == expiredDate) {
+        minimumLowDays.pop_front();
+      }
+    }
+
+    [[nodiscard]] bool isReady() const noexcept {
+      return days.size() == static_cast<std::size_t>(period);
+    }
+  };
+
   explicit Impl(SelectableStrategyPlan configuredPlan,
-                const detail::IndicatorFactory configuredIndicatorFactory)
+                const detail::IndicatorFactory configuredIndicatorFactory,
+                std::optional<PreviousDataDayClose> configuredPreviousClose,
+                std::vector<PreviousDataDaySummary> configuredPreviousDataDays)
       : plan(std::move(configuredPlan)),
-        indicatorFactory(configuredIndicatorFactory) {}
+        indicatorFactory(configuredIndicatorFactory),
+        usesPreviousDataDayClose(planHasPreviousDataDayCondition(plan)),
+        usesHistoricalDataDays(planHasHistoricalDataDayCondition(plan)),
+        usesDataDayState(usesPreviousDataDayClose || usesHistoricalDataDays),
+        seedPreviousDataDayClose(
+            configuredPreviousClose.has_value() &&
+                    std::isfinite(configuredPreviousClose->close) &&
+                    configuredPreviousClose->close > 0.0
+                ? configuredPreviousClose
+                : std::nullopt),
+        seedPreviousDataDays(std::move(configuredPreviousDataDays)) {}
 
   [[nodiscard]] core::Result<bool> initialize() {
     auto buyGroup = makeGroup(plan.buy, true, "buy condition group");
@@ -201,6 +367,46 @@ struct SelectableStrategy::Impl final {
     }
     buy = std::move(buyGroup).value();
     sell = std::move(sellGroup).value();
+    if (seedPreviousDataDays.size() >
+        static_cast<std::size_t>(indicators::maximumIndicatorPeriod)) {
+      return compileError(
+          "historical data-day seed exceeds its supported limit");
+    }
+    auto seedHistoryIsValid = true;
+    for (std::size_t index = 0; index < seedPreviousDataDays.size(); ++index) {
+      const auto &day = seedPreviousDataDays[index];
+      if (std::chrono::floor<std::chrono::days>(day.utcDateStart) !=
+              day.utcDateStart ||
+          !std::isfinite(day.high) || !std::isfinite(day.low) ||
+          !std::isfinite(day.close) || day.low <= 0.0 || day.high < day.low ||
+          day.close < day.low || day.close > day.high ||
+          (index > 0 &&
+           seedPreviousDataDays[index - 1].utcDateStart >= day.utcDateStart)) {
+        seedHistoryIsValid = false;
+        break;
+      }
+    }
+    if (!seedHistoryIsValid) {
+      seedPreviousDataDays.clear();
+    }
+    if (usesHistoricalDataDays) {
+      for (const auto &group : {std::cref(plan.buy), std::cref(plan.sell)}) {
+        for (const auto &condition : group.get().conditions) {
+          if (!isHistoricalDataDaySource(condition.source)) {
+            continue;
+          }
+          if (std::ranges::find(historicalWindows, condition.lookbackPeriod,
+                                &HistoricalWindow::period) ==
+              historicalWindows.end()) {
+            historicalWindows.push_back(
+                HistoricalWindow{.period = condition.lookbackPeriod,
+                                 .days = {},
+                                 .maximumHighDays = {},
+                                 .minimumLowDays = {}});
+          }
+        }
+      }
+    }
     return true;
   }
 
@@ -218,11 +424,17 @@ struct SelectableStrategy::Impl final {
     if (!sellUpdate.ok()) {
       return sellUpdate.error();
     }
+    if (usesDataDayState) {
+      beginDataDayBar(bar);
+    }
     const auto signal = SelectableStrategySignal{
         .buy = evaluate(buy, bar),
         .sell = evaluate(sell, bar),
     };
     previousClose = bar.close;
+    if (usesDataDayState) {
+      finishDataDayBar(bar);
+    }
     return signal;
   }
 
@@ -306,6 +518,89 @@ struct SelectableStrategy::Impl final {
     return std::ranges::any_of(group.conditions, evaluateCondition);
   }
 
+  [[nodiscard]] static std::optional<indicators::IndicatorValue>
+  percentValue(const double value) noexcept {
+    if (!std::isfinite(value)) {
+      return std::nullopt;
+    }
+    return indicators::IndicatorValue{
+        .value = value,
+        .domain = indicators::NumericDomain::percent,
+    };
+  }
+
+  [[nodiscard]] static std::optional<indicators::IndicatorValue>
+  historicalValueForCondition(const Condition &condition, const double close,
+                              const HistoricalWindow &window) noexcept {
+    if (condition.source == ConditionSource::dataDayGainPercent) {
+      const auto referenceClose = window.days.front().close;
+      if (referenceClose <= 0.0) {
+        return std::nullopt;
+      }
+      return percentValue((close / referenceClose - 1.0) * 100.0);
+    }
+    if (condition.source == ConditionSource::periodHighDrawdownPercent) {
+      const auto periodHigh = window.maximumHighDays.front().high;
+      if (periodHigh <= 0.0) {
+        return std::nullopt;
+      }
+      return percentValue(((periodHigh - close) / periodHigh) * 100.0);
+    }
+    if (condition.source == ConditionSource::periodLowReboundPercent) {
+      const auto periodLow = window.minimumLowDays.front().low;
+      if (periodLow <= 0.0) {
+        return std::nullopt;
+      }
+      return percentValue(((close - periodLow) / periodLow) * 100.0);
+    }
+
+    const auto periodHigh = window.maximumHighDays.front().high;
+    const auto periodLow = window.minimumLowDays.front().low;
+    auto breakout = false;
+    if (condition.source == ConditionSource::breakPeriodHigh) {
+      breakout = close > periodHigh;
+    } else {
+      breakout = close < periodLow;
+    }
+    return indicators::IndicatorValue{
+        .value = breakout ? 1.0 : 0.0,
+        .domain = indicators::NumericDomain::scalar,
+    };
+  }
+
+  [[nodiscard]] std::optional<indicators::IndicatorValue>
+  historicalValueFor(const RuntimeCondition &condition,
+                     const core::Bar &bar) const noexcept {
+    if (!currentBarCanUseHistoricalDataDays) {
+      return std::nullopt;
+    }
+    const auto window =
+        std::ranges::find(historicalWindows, condition.condition.lookbackPeriod,
+                          &HistoricalWindow::period);
+    if (window == historicalWindows.end() || !window->isReady()) {
+      return std::nullopt;
+    }
+    return historicalValueForCondition(condition.condition, bar.close, *window);
+  }
+
+  [[nodiscard]] std::optional<indicators::IndicatorValue>
+  previousCloseChangeValue(const core::Bar &bar) const noexcept {
+    if (!previousClose.has_value() || *previousClose == 0.0) {
+      return std::nullopt;
+    }
+    return percentValue(100.0 * (bar.close - *previousClose) / *previousClose);
+  }
+
+  [[nodiscard]] std::optional<indicators::IndicatorValue>
+  previousDataDayCloseChangeValue(const core::Bar &bar) const noexcept {
+    if (!previousDataDayCloseForCurrentBar.has_value()) {
+      return std::nullopt;
+    }
+    const auto change =
+        (bar.close / *previousDataDayCloseForCurrentBar - 1.0) * 100.0;
+    return percentValue(change);
+  }
+
   [[nodiscard]] std::optional<indicators::IndicatorValue>
   valueFor(const RuntimeCondition &condition,
            const core::Bar &bar) const noexcept {
@@ -313,15 +608,85 @@ struct SelectableStrategy::Impl final {
       return indicators::barFieldValue(bar, condition.condition.barField);
     }
     if (condition.condition.source == ConditionSource::closeChangePercent) {
-      if (!previousClose.has_value() || *previousClose == 0.0) {
-        return std::nullopt;
-      }
-      return indicators::IndicatorValue{
-          .value = 100.0 * (bar.close - *previousClose) / *previousClose,
-          .domain = indicators::NumericDomain::percent,
-      };
+      return previousCloseChangeValue(bar);
+    }
+    if (condition.condition.source ==
+        ConditionSource::previousDataDayCloseChangePercent) {
+      return previousDataDayCloseChangeValue(bar);
+    }
+    if (isHistoricalDataDaySource(condition.condition.source)) {
+      return historicalValueFor(condition, bar);
     }
     return condition.indicator->latest();
+  }
+
+  void beginDataDayBar(const core::Bar &bar) {
+    using namespace std::chrono;
+    currentBarCanUpdateDataDayClose = true;
+    currentBarCanUseHistoricalDataDays = true;
+    const auto dataDay = floor<days>(bar.ts);
+    if (!currentDataDay.has_value()) {
+      currentDataDay = dataDay;
+      if (seedPreviousDataDayClose.has_value() &&
+          floor<days>(seedPreviousDataDayClose->timestamp) < dataDay) {
+        previousDataDayClose = seedPreviousDataDayClose->close;
+      }
+      const bool hasExplicitPreviousClose = previousDataDayClose.has_value();
+      for (const auto &seed : seedPreviousDataDays) {
+        if (seed.utcDateStart >= dataDay) {
+          break;
+        }
+        appendHistoricalDataDay(seed);
+        if (!hasExplicitPreviousClose) {
+          previousDataDayClose = seed.close;
+        }
+      }
+      currentDataDaySummary = PreviousDataDaySummary{
+          .utcDateStart = dataDay,
+          .high = bar.high,
+          .low = bar.low,
+          .close = bar.close,
+      };
+    } else if (dataDay > *currentDataDay) {
+      previousDataDayClose = currentDataDayLastClose;
+      if (currentDataDaySummary.has_value() && usesHistoricalDataDays) {
+        appendHistoricalDataDay(*currentDataDaySummary);
+      }
+      currentDataDay = dataDay;
+      currentDataDayLastClose.reset();
+      currentDataDaySummary = PreviousDataDaySummary{
+          .utcDateStart = dataDay,
+          .high = bar.high,
+          .low = bar.low,
+          .close = bar.close,
+      };
+    } else if (dataDay < *currentDataDay) {
+      previousDataDayCloseForCurrentBar.reset();
+      currentBarCanUpdateDataDayClose = false;
+      currentBarCanUseHistoricalDataDays = false;
+      return;
+    }
+    previousDataDayCloseForCurrentBar = previousDataDayClose;
+  }
+
+  void appendHistoricalDataDay(const PreviousDataDaySummary &day) {
+    for (auto &window : historicalWindows) {
+      window.append(day);
+    }
+  }
+
+  void finishDataDayBar(const core::Bar &bar) {
+    if (!currentDataDay.has_value() || !currentBarCanUpdateDataDayClose) {
+      return;
+    }
+    currentDataDayLastClose = bar.close;
+    if (currentDataDaySummary.has_value()) {
+      currentDataDaySummary->high =
+          std::max(currentDataDaySummary->high, bar.high);
+      currentDataDaySummary->low =
+          std::min(currentDataDaySummary->low, bar.low);
+      currentDataDaySummary->close = bar.close;
+    }
   }
 
   SelectableStrategyPlan plan;
@@ -329,6 +694,19 @@ struct SelectableStrategy::Impl final {
   RuntimeGroup buy;
   RuntimeGroup sell;
   std::optional<double> previousClose;
+  bool usesPreviousDataDayClose = false;
+  bool usesHistoricalDataDays = false;
+  bool usesDataDayState = false;
+  std::optional<PreviousDataDayClose> seedPreviousDataDayClose;
+  std::vector<PreviousDataDaySummary> seedPreviousDataDays;
+  std::vector<HistoricalWindow> historicalWindows;
+  std::optional<std::chrono::sys_days> currentDataDay;
+  std::optional<PreviousDataDaySummary> currentDataDaySummary;
+  std::optional<double> previousDataDayClose;
+  std::optional<double> currentDataDayLastClose;
+  std::optional<double> previousDataDayCloseForCurrentBar;
+  bool currentBarCanUpdateDataDayClose = true;
+  bool currentBarCanUseHistoricalDataDays = true;
 };
 
 SelectableStrategy::SelectableStrategy(std::unique_ptr<Impl> impl) noexcept
@@ -342,10 +720,13 @@ SelectableStrategy::operator=(SelectableStrategy &&) noexcept = default;
 
 core::Result<std::unique_ptr<SelectableStrategy>>
 SelectableStrategy::createWithIndicatorFactory(
-    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory) {
+    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory,
+    std::optional<PreviousDataDayClose> previousDataDayClose,
+    std::vector<PreviousDataDaySummary> previousDataDays) {
   try {
     auto implementation = std::make_unique<SelectableStrategy::Impl>(
-        std::move(plan), indicatorFactory);
+        std::move(plan), indicatorFactory, previousDataDayClose,
+        std::move(previousDataDays));
     const auto initialized = implementation->initialize();
     if (!initialized.ok()) {
       return initialized.error();
@@ -359,10 +740,13 @@ SelectableStrategy::createWithIndicatorFactory(
   }
 }
 
-core::Result<std::unique_ptr<SelectableStrategy>>
-SelectableStrategy::create(SelectableStrategyPlan plan) {
+core::Result<std::unique_ptr<SelectableStrategy>> SelectableStrategy::create(
+    SelectableStrategyPlan plan,
+    std::optional<PreviousDataDayClose> previousDataDayClose,
+    std::vector<PreviousDataDaySummary> previousDataDays) {
   auto strategy = createWithIndicatorFactory(
-      std::move(plan), &indicators::StreamingIndicator::create);
+      std::move(plan), &indicators::StreamingIndicator::create,
+      previousDataDayClose, std::move(previousDataDays));
   return strategy;
 }
 

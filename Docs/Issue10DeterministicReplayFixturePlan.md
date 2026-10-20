@@ -1,6 +1,21 @@
 # Backtest Result K-Line Replay Implementation Plan
 
-> **Current delivery status (2026-10-19):** PR #80's snapshot-reuse and bounded
+> **Task 18 implementation checkpoint (2026-10-20):** Task 17 remains
+> implemented in the preceding local commits. Task 18's UTC data-day gain,
+> extrema and breakout predicates, bounded snapshot warm-up, v3 Strategy
+> identity, Backtest UI, and saved Replay coverage are implemented in the
+> current `codex/issue10-task18` working tree. The hash-bound source-timeframe
+> manifest is generated for all 503 tracked extracted CSVs; a real AAPL/MSFT/
+> TSLA snapshot build succeeded. `RunTest.sh` passes 316/316 on the current
+> pre-commit working tree, including source-manifest Python coverage and the
+> explicit `schemaName` provenance-column regression. The committed-HEAD
+> `RunTest.sh` rerun and complete `RunQuality.sh`, sanitizer, remote CI/CodeQL,
+> final review, and native application acceptance remain pending. Other Issue
+> 10 acceptance items remain open. See the
+> [Issue 10 remaining work](Plans/Issue10RemainingWork.md)
+> summary.
+
+> **Prior delivery status (2026-10-19):** PR #80's snapshot-reuse and bounded
 > hashing changes are merged into `main` as `dbcbd39`. R1–R3 persistence safety
 > is aligned with that `main` and passes `RunTest.sh` 270/270, including
 > child-process and exclusive-boundary regressions. Exact committed-head
@@ -861,8 +876,8 @@ limitations that were subsequently changed; Task 11B's full scenario remains ope
 | 14 | Implemented on branch; final acceptance pending | RED for absent draft APIs/buttons and prior automatic publication; review found and RED-tested multi-draft selection, live-writer recovery, cancellation-after-open and discard-removal rollback boundaries | Exact `15dfcab` RunTest 232/232 | `d0fc1c8` failed changed-line coverage at 93%, `27a1381` failed at 96%; exact `15dfcab` full non-fast quality passed static analysis, scan-build and 232/232 coverage tests, changed lines 832/845 = 98%, changed branches 103/108 = 95.4% | Actual AAPL 48-bar Save Result published ID `4c37a35f…96a6` without navigation; Save & Replay opened the same ID. A later saved ID `649b0cd43bf43c96f4d674d428b1c7bd` opened at 1/48, stepped to 11/48 with varied OHLC and its Buy on the containing bar; Daily showed 1/3 after switching | Final all-path review, multi-fill and Results workflow remain; cross-process writer recovery is unverified |
 | 15 | Partial UI implemented through `12958ea`; not accepted | RED for absent Trash list, async adapter, Results page and shell navigation; tests cover real snapshot-backed result, same-ID details/Replay, cancel/confirm Trash, restore/hash, corrupt entry, unavailable store, diagnostic statuses, stale request and currently open Replay invalidation | `12958ea` full quality coverage suite 236/236; earlier working-tree `RunTest.sh` 236/236 | Exact `12958ea` full non-fast RunQuality exit 0; changed lines 1230/1252 = 98%, branches 154/164 = 93.9%. Earlier `d469473` failed 95% changed-line coverage, and intervening IWYU/module-boundary failures were corrected | New Results page has not been desktop-operated: CUA reported Mac locked after the isolated app was launched with `/private/tmp/bte-results-desktop.tHUlMl/Results` | Multi-entry ordering, more stale/error/keyboard/size scenarios, actual Save→Results→Replay→Trash/Restore, 30-day policy, review and whole-plan acceptance remain |
 | 16 | Planned / not implemented | Backend domain mapping exists; UI unit acceptance not run | Not run | Not run | Not run | Units, scale and examples for every offered metric |
-| 17 | CSV/UTC data-day convention approved / not implemented | Prior-bar percentage exists; previous-data-day condition does not | Not run | Not run | Not run | Existing immutable CSV-derived source; previous available UTC date's last close |
-| 18 | Partially clarified / period-anchor decision pending | Not run | Not run | Not run | Not run | Period gain (for example 30 days), historical-high drawdown and monthly high/low breakout; calendar/trading-day anchor pending |
+| 17 | Implemented locally through `bed5388`; exact predecessor gates pass | Data/Strategy/Engine/Replay/UI contracts cover prior UTC data-day close, missing/future history, and no warm-up leakage | RunTest 295/295; full Quality changed lines 193/193, branches 35/36; ASan/UBSan and TSan 249/249 | Exact predecessor evidence at `bed5388`; remote checks and native acceptance remain | Same immutable snapshot; previous available UTC date's final source close, including extended hours |
+| 18 | Implemented locally in `codex/issue10-task18`; exact-head gates pending | Related CSV/Snapshot/Strategy/Engine/Replay/UI/VM CTest selection 121/121; source-manifest Python tests 4/4; N=21/N=30 literal windows, strict persistent breakouts, insufficient history, and historical buy/sell next-open fills | Current focused results only; full RunTest/RunQuality/sanitizers not yet run on submitted commit | No current-head remote or native acceptance | 30 available UTC data dates for gain; prior 21 completed dates for extrema/breakouts; same-snapshot warm-up excluded from Result/Replay |
 | 19 | Worktree launch path and exact implementation gates accepted at `c28ddec`; final delivered-checkout acceptance pending | Launcher behavior has positive, partial/invalid configuration, missing manifest and builder-failure tests | Project script suite 19/19; Launch.sh built the exact worktree and started with snapshot `229c37d2…74acf`; RunTest 221/221, 62.57s | Exact implementation revision `c28ddec`: non-fast RunQuality exit 0; coverage suite 221/221, 64.42s; changed lines 279/279, branches 49/52; clang-tidy, cppcheck, IWYU and scan-build passed | Same built executable was operated through its macOS bundle identity; AAPL Backtest completed and Open Replay worked. Raw unbundled process could not be bound by the desktop automation API, so literal raw-process interaction is not claimed | Recheck from the final delivered checkout and record its revision/process identity |
 | 20 / R9 | Launcher/snapshot implementation and actual starter workflow accepted at `c28ddec`; overall task remains partial | Launch tests first failed because no builder/configuration existed. Canonical seven-column snapshot test then failed with `Snapshot source has unsupported columns` | Data suite 37/37; project scripts 19/19. Missing/partial/invalid configuration and builder failure stop before app; tracked seven-column CSV builds successfully; RunTest 221/221, 62.57s | Exact implementation revision `c28ddec`: full non-fast RunQuality exit 0; coverage suite 221/221, 64.42s; changed lines 279/279, branches 49/52. Earlier attempts failed because `VCPKG_ROOT` was absent, then because `readSourceBars` exceeded the cognitive-complexity limit; the helper extraction corrected the latter without suppression | Launch-created snapshot `229c37d2…74acf`; actual AAPL starter Backtest completed 48 bars, result `0bbe3c12…a1456`; Open Replay progressed 1/48→12/48 with varied OHLC and one Buy marker | Later multi-fill condition-run Save/Results workflow; developer snapshot is not release data |
 | 21 / R10 | Accepted at `05c23eb` after correcting the all-candles-first desktop rejection | New progressive-prefix expectations produced 5 frontend failures: initial small/Hourly/Daily counts were 3/520/22 instead of 1; timeframe switch was 520 instead of 49; multi-fill initial was 520 instead of 1. Regression covers 499→500→519 as 500→501→520 candles | Focused Result Replay + chart suites 2/2, 9.64s; RunTest 220/220, 61.73s. Initial 1, Step 2, seek 12 gives 13, rewind gives 1, max batch gives 34; markers/log follow the same prefix | `05c23eb`: full non-fast RunQuality exit 0; coverage suite 220/220, 3608.61s; changed lines 199/199, branches 41/44; clang-tidy, cppcheck, IWYU and scan-build passed. Earlier attempts honestly failed clang-format, missing `VCPKG_ROOT`, then an ownership-transfer clang-tidy diagnostic | Actual app result `fdf8b59ca7681dfc575a744a5ae40ce9`: 520 Hourly, 22 Daily, 149 fills. Hourly 1/520→2/520→13/520 showed 0→1→4 fills; Play advanced to 7/520 and Pause stopped; rewind returned 1/520. Daily mapped to 1/22, Step 2/22, Back 1/22 with fills anchored to their day. Normal-size screenshots were inspected in the desktop session but not saved as repository artifacts | Broader layout and other plan tasks remain open; 23,777-candle terminal batch is untruncated but measured 3.606s, so no claim of instant rendering |
@@ -1388,23 +1403,33 @@ Strategy identity changes for a label-only correction.
 
 ### Task 17 — Up/down X% relative to previous UTC data-day close
 
-**Status:** CSV/UTC-day predicate semantics approved on 2026-10-12 / not
-implemented. The maintainer explicitly selected the existing CSV as the
-standard and confirmed UTC-date grouping consistent with Daily Replay.
+**Status (2026-10-20):** Implemented locally on `codex/issue10-remaining` in
+commits `5fe4505`, `2bcf948`, `ef66953`, `f5b939d`, `f5c61e8`, and `22282d2`;
+focused tests pass and the full Qt CTest suite passes 292/292. Exact-commit
+quality/sanitizer gates and remote CI/CodeQL remain pending. The maintainer
+explicitly selected the existing CSV as the standard and confirmed UTC-date
+grouping consistent with Daily Replay.
 Every UTC date containing actual source rows counts as one data day; its
 closing reference is the last chronological CSV close, including extended
 hours. This supersedes the earlier official-session-close requirement and
 removes the missing official-source blocker. It is not an exchange-calendar
 or official regular-session close. Runtime evaluation must read the same
 immutable CSV-derived snapshot, not fall back to mutable CSV or download data.
-Pre-range warm-up, versioned Strategy framing and required regression/
-integration evidence remain unimplemented; no Task 17 behavior is claimed.
-**Modify after definition approval:**
+The one-row pre-range value seeds only Strategy state and never enters executed
+or replayed bars. Existing v1 hashes remain frozen; plans using Task 17 use v2
+framing. Exact-head and broader delivery acceptance are not claimed complete.
+**Implemented surfaces:**
+`Src/Backend/Data/Include/Bte/Data/ReleaseSnapshot.h`,
+`Src/Backend/Data/Private/ReleaseSnapshot.cpp`,
 `Src/Backend/Strategy/Include/Bte/Strategy/SelectableStrategy.h`,
 `Src/Backend/Strategy/Private/SelectableStrategy.cpp`,
+`Src/Backend/Engine/Include/Bte/Engine/Backtest.h`,
+`Src/Backend/Engine/Private/Backtest.cpp`,
 `Src/Bindings/Backtest/BacktestSessionVm.cpp`,
 `Src/Frontend/Backtest/BacktestTab.cpp`,
+`Tests/Unit/Data/UnitTest_ReleaseSnapshot.cpp`,
 `Tests/Unit/Strategy/UnitTest_SelectableStrategy.cpp`,
+`Tests/Unit/Engine/UnitTest_Backtest.cpp`,
 `Tests/Unit/Replay/UnitTest_ReplayBacktestDeterminism.cpp`,
 `Tests/Unit/Frontend/UnitTest_BacktestTab.cpp`,
 `Docs/Specs/StrategyAuthoring.md`, `Docs/Specs/DataLayer.md`,
@@ -1422,55 +1447,52 @@ Preserve existing prior-bar Close change behavior as a distinct option.
   prior actual UTC data date's last immutable source close, compare
   the current bar close, and treat positive magnitude X as inclusive at-least
   down/up X percent. Include extended-hours rows under this explicit CSV policy.
-- [ ] Literal contract after approval: reference close 100 and current price 95
+- [x] Literal contract: reference close 100 and current price 95
   gives -5%; 105 gives +5%; 100 gives 0%. UI takes positive magnitude X with
-  separate **Down** / **Up** choices. Test exact threshold and immediately either
-  side according to the approved comparison, zero, invalid negative magnitude
-  and zero/absent reference.
-- [ ] Use a multi-row prior-date literal oracle: an earlier regular-hours close
+  separate **Down** / **Up** choices. Tests cover inclusive thresholds and
+  adjacent values, signed comparisons, zero change, and absent/invalid seeds.
+- [x] Use a multi-row prior-date literal oracle: an earlier regular-hours close
   is 100 but the later extended-hours close on the same UTC date is 110. On the
-  next available date, 104.5 is exactly 5% down and 115.5 exactly 5% up from 110.
-  Assert immediately adjacent threshold cases and multiple next-date bars with
-  the same reference. This must fail if regular-hours close or prior-hour close
-  is substituted. Include a UTC-midnight transition and a date with no rows.
-- [ ] RED for Friday→Monday, dates with no source rows, UTC midnight, year/leap
+  next available date, 104.5 is exactly 5% down and 115.5 exactly 5% up from
+  110. Data/Strategy tests cover the extended-hours winner, adjacent thresholds,
+  multiple bars using a stable prior-day reference, UTC midnight, and a missing
+  calendar date.
+- [x] Cover Friday→Monday, dates with no source rows, UTC midnight, year/leap
   boundaries and pre-range reference warm-up. Exchange DST does not change UTC
-  grouping. Multiple intraday bars keep the same previous-data-day reference;
-  they cannot substitute the previous hour or read the current day's future close.
-- [ ] Freeze an immutable snapshot, then change the original CSV: pre-range
+  grouping. Tests confirm multiple intraday bars keep the same reference and
+  current-date future closes do not become the prior-day reference.
+- [x] Freeze an immutable snapshot, then change the original CSV: pre-range
   references and signals must remain unchanged. If that snapshot lacks required
   history, fail absent/nonmatching with the specified reason even when mutable
   CSV contains older rows; no runtime source fallback is permitted. Warm-up
-  must not enter saved execution spans or add orders/fills/Replay candles.
-- [ ] Assert prior-day and N-day close metrics' UI labels and tooltips disclose
-  **CSV / UTC data days** and **last source close, including extended hours**.
-  Extrema and breakout metrics instead disclose all source-row highs/lows,
-  including extended hours. Percentage predicates disclose positive magnitudes
-  and their specified inclusive comparisons; breakouts disclose strict
-  comparisons. Do not call a CSV close an official exchange close.
-- [ ] GREEN real Engine saved/repeated results for buy and sell groups; Replay
-  remains read-only. Extend canonical Strategy framing for new fields with
-  explicit compatibility review; existing saved hashes must not be reinterpreted.
+  must not enter saved execution spans or add orders/fills/Replay candles. Data
+  contract tests freeze the lookup to the built snapshot; Engine/Replay
+  integration tests verify the pre-range row never enters Result or Replay.
+- [x] Assert the prior-day metric's UI labels and tooltips disclose **CSV / UTC
+  data days**, the **last source close including extended hours**, current-date
+  exclusion, inclusive positive magnitude, and absent history. Task 18 extrema
+  and breakout disclosures remain open in Task 18. No CSV close is described as
+  an official exchange close.
+- [x] GREEN Engine buy/sell round-trip execution; the persisted Result and
+  Replay integration covers the buy signal and confirms history stays outside
+  the selected timeline. Replay remains read-only. Strategy v1 hashes remain
+  frozen, Task 17 plans use v2 framing, and tests assert literal compatibility
+  digests. Exact-head and remote gates remain pending above.
 
 ### Task 18 — Historical extrema changes and one-month breakouts
 
-**Status:** Period-gain semantics clarified / not implemented. On 2026-10-06 the maintainer
-clarified that “up X%” means an increase over a chosen historical period
-(for example, 30 days), while a separate condition means a drawdown of X%
-from a historical high. It does not mean X% above the previous high. The
-maintainer then chose **30 trading sessions** for the example: compare the
-starting completed session's close with the current bar close. This is not a
-30-calendar-day or prior-hour calculation. The maintainer also approved the
-prior 21 completed trading sessions for one-month extrema/breakout, excluding
-the current session, and a persistent strict breakout predicate: every
-qualifying current K bar matches, not only the first crossing. On 2026-10-12
-the maintainer selected existing CSV-derived UTC data dates instead of official
-exchange sessions. A 30-day gain compares the current bar close with the last
-close of the UTC data date exactly 30 available data dates before the current
-date. Extrema use all rows of the previous 21 completed UTC data dates, excluding
-the current date. Empty calendar dates do not consume the lookback and no missing
-row is synthesized. History availability, pre-range warm-up and implementation
-remain open; no official-source integration is needed.
+**Status:** Implemented locally on `codex/issue10-task18`; exact-head project
+gates, remote acceptance, and native UI acceptance remain open. On 2026-10-06
+the maintainer clarified that “up X%” means an increase over a chosen historical
+period, while a separate condition means a drawdown from a historical high.
+On 2026-10-12 the maintainer selected existing CSV-derived UTC data dates
+instead of official exchange sessions. A 30-day gain compares the current bar
+close with the close on the UTC data date exactly 30 available data dates before
+the current date. Extrema use all rows of the previous 21 completed UTC data
+dates, excluding the current date. Empty calendar dates do not consume the
+lookback and no missing row is synthesized. Every qualifying strict breakout
+bar matches, not only the first crossing. No official-source integration is
+needed for this local path.
 **Modify after approval:** Strategy header/private implementation, Backtest
 Bindings/editor, Strategy/Engine/Replay integration/Frontend tests listed in
 Task 17, plus `Docs/Specs/Indicators.md` if a shared indicator is extended.
@@ -1489,35 +1511,36 @@ reference and percent/breakout signal → normal next-open Engine execution.
   thresholds, and uses strict breakout comparisons. Each qualifying bar
   matches; no previous-side sample is required. These are CSV-defined data days,
   not official exchange sessions.
-- [ ] Provide distinct readable choices for **Up X% over selected period**,
+- [x] Provide distinct readable choices for **Up X% over selected period**,
   **Down X% from period high**, **Up X% from period low**, **Break period high**
   and **Break period low**. Do not relabel period gain as a breakout above the
   high or a rebound from the low; use the approved CSV/UTC-date anchor.
-- [ ] Independent literal oracles: prior high 120/current 108 → -10%; prior low
+- [x] Independent literal oracles: prior high 120/current 108 → 10% drawdown; prior low
   80/current 88 → +10%; period start close 100/current 110 → +10% once
   the approved 30-UTC-data-day period anchor is used. Historical high 100:
   current 100 is not a strict breakout, 101 is; historical low 80: 80 is not a
   strict breakdown, 79 is. Persistent comparison, not a first-cross event,
   is the approved behavior.
-- [ ] RED for exact window edge, just inside/outside, repeated equal extremes,
-  missing bars/sessions, month length/leap year, history budget, absent warm-up,
-  invalid periods and reference zero. Adding a future high 1000 or low 1 must
-  never change an earlier signal. Do not scan unbounded history per bar.
-- [ ] Exclude the whole current UTC date, including already seen bars: with
+- [x] Added coverage for the N=20/N=21 window edge, N=30 anchor, exact and
+  adjacent percentage values, equal-to-extreme and persistent breakout bars,
+  current-date extreme exclusion and rollover, a calendar-date gap, insufficient
+  history, invalid/zero summaries, the snapshot history-count limit, and source
+  CSV mutation after snapshot construction. Historical history is read from the
+  immutable snapshot; there is no mutable-source fallback.
+- [x] Exclude the whole current UTC date, including already seen bars: with
   prior-21-date high 100, a current-date first bar high 150/close 101 and later
   close 101 must both match the strict high breakout. Mirror with prior low 80,
   current-date early low 1 and repeated close 79. On the next data date those
   completed extrema must enter the window; do not permanently omit that date.
-- [ ] Prove extended-hours rows enter the N=30 anchor and prior-21 extrema.
-  Use an anchor date with earlier close 100/later close 110; literal current
-  close 121 is a 10% period gain from 110. Use prior-date extended-hours high
-  120/low 80 to prove 108 is 10% drawdown and 88 is 10% rebound, rather than
-  comparing only regular-hours rows. Also verify fixed-snapshot CSV mutation,
-  insufficient immutable history/no fallback, and UI CSV/UTC disclosure.
-- [ ] GREEN literal signals and real repeated Engine records/hash for both buy
-  and sell conditions. Period inputs and threshold units must match Task 16;
-  pre-range warm-up never becomes extra Replay candles. Version new functional
-  Strategy fields and review any qualifying cross-module/lifecycle decision.
+- [x] Prove the UTC-date summary aggregates the final source close and extrema
+  across multiple rows, including a later extended-hours row. The N=30 literal
+  uses 110 as its exact historical close; the summary fixture verifies maximum
+  high 120 and minimum low 80 from source rows. UI tests verify CSV/UTC
+  disclosures, positive threshold magnitudes, periods and readable choices.
+- [x] GREEN literal Strategy signals and Engine/Replay integration verify
+  normal next-open execution and that pre-range history never becomes extra
+  Replay candles. V1/v2 compatibility remains covered and Task 18 plans use v3.
+  Full exact-head gates and final acceptance remain pending.
 
 ### Task 19 — Normal Launch.sh workflow and version provenance
 
@@ -1650,8 +1673,9 @@ not another implementation plan or a replacement for the dated evidence ledger.
 | Backtest Save Result and Save & Replay | 14 | Durable draft and explicit publication implemented in current worktree; final quality/review and multi-fill desktop acceptance pending |
 | Results select/view/delete and Open Replay | 15 | Isolated desktop selected a named six-year Result and opened its exact ID in Replay; delete/restore, keyboard and three-size acceptance remain |
 | Every offered indicator has correct unit, scale, example and period meaning | 16 | All 18 offered metrics have a tested display mapping and exact `cf65e2a` green full gate; explicit numeric-boundary/hash cases and fresh desktop inspection remain |
-| Relative to prior data-day close: down/up X% | 17 | CSV/UTC data-day convention approved; previous available date's last source close, including extended hours; implementation pending and distinct from prior-hour percentage |
-| Time-window historical high/low changes, up/down and monthly high/low break | 18 | CSV/UTC convention approved: 30 available data-date close-to-close gain, prior 21 completed data dates excluding the current date, and persistent strict breakouts; implementation/warm-up remain open |
+| Relative to prior data-day close: down/up X% | 17 | Implemented locally at `bed5388`; previous available date's last source close, including extended hours; predecessor local gates pass, remote/native acceptance remains |
+| Time-window historical high/low changes, up/down and monthly high/low break | 18 | Implemented locally on `codex/issue10-task18`: 30 available data-date gain, prior 21 completed-date extrema, strict persistent breakouts, and same-snapshot warm-up; exact-head gates/review/remote/native acceptance remain |
+| Seven-column CSV source timeframe and trailing-column compatibility | Data provenance | Hash-bound sidecar implemented locally; all 503 tracked CSVs match their DuckDB export bytes; snapshot builder rejects missing/mismatched declarations and explicit `schemaName` trailing-column compatibility passes focused tests |
 | Normal Launch.sh path exposes the delivered Backtest Replay action | 19 | Worktree launcher implementation and full gates are accepted at `c28ddec`; the built app exposes Open Replay, while the final delivered-checkout identity check remains |
 | Backtest cannot run: Snapshot open request is invalid | 20 / R9 | Launcher/snapshot scope is accepted at `c28ddec`; actual AAPL 48-bar Backtest and same-result Replay succeeded, while the multi-fill Save/Results final scenario remains |
 | Hourly/Daily progressively replay every selected K-line without a 500-frame truncation; fills appear with their bars | 21 / R10 | Accepted at `05c23eb`: initial prefix is one candle, cursor 500 presents 501 candles, rewind shrinks candles/fills, timeframe switching preserves the current UTC date, full gates pass, and actual Hourly/Daily app operation is recorded |
@@ -1661,10 +1685,10 @@ not another implementation plan or a replacement for the dated evidence ledger.
 | Readable saved Result name and later rename without changing identity | 25 | Naming and rename were exercised in the isolated app; exact-HEAD `12fe8eb` quality passed, but later edits and whole-plan gates remain open |
 | Chart density, Follow latest and history zoom on long playback | Replay viewport plan / 24 | The latest repair has focused RED/GREEN and isolated-app checks; width and Follow latest improved, but final resize/performance/data acceptance is open |
 | Small visible clearance between trade triangles and candle wicks; no compressed final view with Max | 26 | Eight-pixel clearance confirmed; spacing/height-resize and intrinsic-label repairs pass exact full gates through d209d21, with isolated AAPL Max/zoom/Follow checks. Responsiveness and complete three-size layout acceptance remain open |
-| Persistence, retention, mid-run durability, rounding, golden oracle, honest capabilities | R1–R4/R6/R7 | R4 scoped repair accepted at b5be0c8; R1/R2/R3/R6/R7 remain open and are not hidden behind UI completion or green tests |
+| Persistence, retention, mid-run durability, rounding, golden oracle, honest capabilities | R1–R4/R6/R7 | R1–R3 merged in PR #76; R4 is accepted at b5be0c8; R6 oracle is implemented; R7 truthful capability display and current-head acceptance remain open |
 | Publish all in-scope workspace changes and reconcile local branches/PRs | 27 | In progress; #68/#69/#70 are merged, older seven-fix branch is superseded, Issue 10 follow-up and root untracked test disposition remain open |
 | Multiple Buys in one displayed K bar use one Buy glyph | 28 | Scoped Buy-only checkpoint accepted at d209d21 with regressions, full gates, review and isolated AAPL desktop checks; Sell remains per-fill; whole-plan acceptance remains open |
-| Complete tasks, merge a CI-green PR, then remove the confirmed non-main branches | 29 | Draft PR #76 published as the requested consolidated checkpoint; CI red, not merged, no branch deleted; final content reconciliation and cleanup scope remain open |
+| Complete tasks, merge a CI-green PR, then remove the confirmed non-main branches | 29 | PR #76 is merged; Task 17/18 continuation still needs its own exact-head green gates and remote checks before merge, then local `main` sync and confirmed branch cleanup |
 | Fully inspect/operate app, track honestly, create new PR only after finished | 12 | Needs changes; the later explicit checkpoint-publication request is fulfilled by Draft #76, not whole-plan completion or a universal bug-free promise |
 
 - [x] Before implementation resumes, confirm outstanding product/lifecycle/history

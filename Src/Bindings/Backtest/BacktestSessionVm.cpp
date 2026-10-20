@@ -14,6 +14,7 @@
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include <atomic>
 #endif
+#include <chrono>
 #include <cmath>
 #include <compare> // IWYU pragma: keep
 #include <cstdint>
@@ -23,6 +24,7 @@
 #include <span>
 #include <string> // IWYU pragma: keep
 #include <utility>
+#include <vector>
 
 // libstdc++ attributes the ranges algorithm's default projection to this
 // header.
@@ -108,6 +110,44 @@ core::Timestamp timestampFromDate(const QDate date) {
                day{static_cast<unsigned>(date.day())}}};
 }
 
+bool planUsesPreviousDataDayClose(
+    const std::optional<strategy::SelectableStrategyPlan> &plan) {
+  if (!plan.has_value()) {
+    return false;
+  }
+  const auto containsCondition = [](const strategy::ConditionGroup &group) {
+    return std::ranges::any_of(group.conditions, [](const auto &condition) {
+      return condition.source ==
+             strategy::ConditionSource::previousDataDayCloseChangePercent;
+    });
+  };
+  return containsCondition(plan->buy) || containsCondition(plan->sell);
+}
+
+std::int32_t planHistoricalDataDayLookback(
+    const std::optional<strategy::SelectableStrategyPlan> &plan) {
+  if (!plan.has_value()) {
+    return 0;
+  }
+  auto maximum = std::int32_t{0};
+  const auto update = [&maximum](const strategy::ConditionGroup &group) {
+    for (const auto &condition : group.conditions) {
+      if (condition.source == strategy::ConditionSource::dataDayGainPercent ||
+          condition.source ==
+              strategy::ConditionSource::periodHighDrawdownPercent ||
+          condition.source ==
+              strategy::ConditionSource::periodLowReboundPercent ||
+          condition.source == strategy::ConditionSource::breakPeriodHigh ||
+          condition.source == strategy::ConditionSource::breakPeriodLow) {
+        maximum = std::max(maximum, condition.lookbackPeriod);
+      }
+    }
+  };
+  update(plan->buy);
+  update(plan->sell);
+  return maximum;
+}
+
 BacktestSnapshot toSnapshot(const engine::BacktestResult &result) {
   auto snapshot = BacktestSnapshot{
       .outcome = toViewOutcome(result.orderStatus),
@@ -182,6 +222,8 @@ runBacktestSession(
       .initialCapitalMicrodollars = normalizedCapital.value(),
       .quantityShares = quantityShares,
       .selectableStrategy = std::move(selectableStrategy),
+      .previousDataDayClose = std::nullopt,
+      .previousDataDays = {},
   };
   auto engineResult = engine::runBacktest(request, cancellation);
   if (!engineResult.ok()) {
@@ -239,13 +281,57 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
   if (!selected.ok()) {
     return selected.error();
   }
-  if (selected.value().bars.empty()) {
+  auto selection = std::move(selected).value();
+  if (selection.bars.empty()) {
     return core::makeError(core::ErrorCode::dataUnavailable,
                            "Backtest Data Selection is empty");
   }
+  std::optional<strategy::PreviousDataDayClose> previousDataDayClose;
+  std::vector<strategy::PreviousDataDaySummary> previousDataDays;
+  if (planUsesPreviousDataDayClose(configuration.selectableStrategy)) {
+    const auto utcDateStart =
+        core::Timestamp{std::chrono::floor<std::chrono::days>(
+            selection.bars.front().timestamp)};
+    auto history = reader.value()->lastCloseBeforeUtcDate(
+        configuration.symbol.toStdString(), utcDateStart, cancellation);
+    if (!history.ok()) {
+      return history.error();
+    }
+    selection.preRangeDataDayClose = history.value();
+    if (selection.preRangeDataDayClose.has_value()) {
+      const auto &sourceClose = *selection.preRangeDataDayClose;
+      previousDataDayClose = strategy::PreviousDataDayClose{
+          .timestamp = sourceClose.timestamp,
+          .close = priceToDollars(sourceClose.closeNanodollars),
+      };
+    }
+  }
+  const auto historyLookback =
+      planHistoricalDataDayLookback(configuration.selectableStrategy);
+  if (historyLookback > 0) {
+    const auto utcDateStart =
+        core::Timestamp{std::chrono::floor<std::chrono::days>(
+            selection.bars.front().timestamp)};
+    auto history = reader.value()->lastDataDaysBeforeUtcDate(
+        configuration.symbol.toStdString(), utcDateStart,
+        static_cast<std::size_t>(historyLookback), cancellation);
+    if (!history.ok()) {
+      return history.error();
+    }
+    selection.preRangeDataDays = history.value();
+    previousDataDays.reserve(selection.preRangeDataDays.size());
+    for (const auto &day : selection.preRangeDataDays) {
+      previousDataDays.push_back(strategy::PreviousDataDaySummary{
+          .utcDateStart = day.utcDateStart,
+          .high = priceToDollars(day.highNanodollars),
+          .low = priceToDollars(day.lowNanodollars),
+          .close = priceToDollars(day.closeNanodollars),
+      });
+    }
+  }
   std::vector<core::Bar> bars;
-  bars.reserve(selected.value().bars.size());
-  for (const auto &bar : selected.value().bars) {
+  bars.reserve(selection.bars.size());
+  for (const auto &bar : selection.bars) {
     bars.push_back({
         .ts = bar.timestamp,
         .open = priceToDollars(bar.openNanodollars),
@@ -270,14 +356,16 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
                         : "starter",
       .strategyHash =
           strategy::canonicalStrategyHash(configuration.selectableStrategy),
-      .dataSelection = selected.value().identity,
+      .dataSelection = selection.identity,
   };
   auto recorded = engine::runBacktestAndRecord(
       {.bars = std::move(bars),
        .symbol = configuration.symbol.toStdString(),
        .initialCapitalMicrodollars = capital.value(),
        .quantityShares = configuration.quantityShares,
-       .selectableStrategy = configuration.selectableStrategy},
+       .selectableStrategy = configuration.selectableStrategy,
+       .previousDataDayClose = previousDataDayClose,
+       .previousDataDays = std::move(previousDataDays)},
       *store.value(), descriptor, cancellation);
   if (!recorded.ok()) {
     return recorded.error();
