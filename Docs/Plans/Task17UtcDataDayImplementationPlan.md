@@ -98,10 +98,10 @@
 - Add `ConditionMetric::previousDataDayCloseChangePercent` and map it to the Strategy source.
 - For this metric, the existing comparison combo exposes only **Down at least** and **Up at least**, mapped to signed inclusive comparisons. The threshold control accepts positive percent magnitude; all other metrics retain their existing comparison choices and threshold ranges.
 
-- [ ] **Step 1: Write failing Qt tests.** Extend `selectableMetricsSubmitTypedPlansToBackend` with the new metric. Add `previousDataDayCloseMetricUsesPositiveDownUpAndExplainsUtcSource`; assert a UI magnitude of 5 with Down creates `lessThanOrEqual/-5.0`, Up creates `greaterThanOrEqual/+5.0`, and tooltip/accessibility text names CSV/UTC data days, last source close including extended hours, current-date exclusion, inclusive threshold, and absent-history behavior.
-- [ ] **Step 2: Verify RED.** Build `bte_backtest_frontend_tests`; expect compilation to fail only on the new metric test's missing UI contract.
-- [ ] **Step 3: Implement the metric, direction mapping, and help text.** Update the comparison items when the selected metric changes; restore legacy options unchanged for other metrics. Keep Task 17 period unused and explain that the metric uses UTC data days, not bars.
-- [ ] **Step 4: Verify GREEN.** Re-run the Backtest Qt test group and confirm legacy metric mappings still match their existing tests.
+- [x] **Step 1: Write failing Qt tests.** Extended `selectableMetricsSubmitTypedPlansToBackend` and added `previousDataDayCloseMetricUsesPositiveDownUpAndExplainsUtcSource`. The test asserts Down `lessThanOrEqual/-5.0`, Up `greaterThanOrEqual/+2.5`, positive-only input, and tooltip/accessibility wording for CSV/UTC data days, extended-hours source close, current-date exclusion, inclusive thresholds, and absent history.
+- [x] **Step 2: Verify RED.** The UI target compiled; the new Qt test failed because the metric still exposed six generic comparisons instead of Down/Up.
+- [x] **Step 3: Implement the metric, direction mapping, and help text.** The editor updates comparisons per metric, restores all legacy options and signed threshold ranges for other metrics, and explains that Task 17 uses UTC data days rather than bars. The period field remains unused by the formula.
+- [x] **Step 4: Verify GREEN.** The complete `bte_backtest_frontend_tests` CTest target passed, including the new Task 17 contract, every existing metric mapping, and metric units/accessibility descriptions. Changed-line clang-tidy passed.
 
 ### Task 5: Update Owning Specifications and Issue 10 Status
 

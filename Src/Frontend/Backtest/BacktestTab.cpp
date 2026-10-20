@@ -150,6 +150,7 @@ QString statusText(const bindings::BacktestOutcome outcome,
 
 enum class ConditionMetric : std::uint8_t {
   closeChangePercent,
+  previousDataDayCloseChangePercent,
   close,
   sma,
   ema,
@@ -174,6 +175,8 @@ void addConditionMetricItems(QComboBox *combo) {
     combo->addItem(text, static_cast<int>(metric));
   };
   add(BacktestTab::tr("Close change %"), ConditionMetric::closeChangePercent);
+  add(BacktestTab::tr("Previous data-day close change %"),
+      ConditionMetric::previousDataDayCloseChangePercent);
   add(BacktestTab::tr("Close"), ConditionMetric::close);
   add(BacktestTab::tr("SMA"), ConditionMetric::sma);
   add(BacktestTab::tr("EMA"), ConditionMetric::ema);
@@ -206,6 +209,30 @@ void addComparisonItems(QComboBox *combo) {
   add(BacktestTab::tr("does not equal"), strategy::Comparison::notEqual);
 }
 
+void updateComparisonItems(const ConditionMetric metric,
+                           QComboBox *comparison) {
+  const auto selectedComparison =
+      static_cast<strategy::Comparison>(comparison->currentData().toInt());
+  comparison->clear();
+  if (metric == ConditionMetric::previousDataDayCloseChangePercent) {
+    comparison->addItem(
+        BacktestTab::tr("Down at least"),
+        static_cast<int>(strategy::Comparison::lessThanOrEqual));
+    comparison->addItem(
+        BacktestTab::tr("Up at least"),
+        static_cast<int>(strategy::Comparison::greaterThanOrEqual));
+    const auto selectedIndex =
+        comparison->findData(static_cast<int>(selectedComparison));
+    comparison->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    return;
+  }
+
+  addComparisonItems(comparison);
+  const auto selectedIndex =
+      comparison->findData(static_cast<int>(selectedComparison));
+  comparison->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
+}
+
 strategy::Condition makeCondition(const ConditionMetric metric,
                                   const strategy::Comparison comparison,
                                   const double threshold, const int period) {
@@ -222,6 +249,14 @@ strategy::Condition makeCondition(const ConditionMetric metric,
   case ConditionMetric::closeChangePercent:
     condition.source = strategy::ConditionSource::closeChangePercent;
     condition.thresholdDomain = indicators::NumericDomain::percent;
+    break;
+  case ConditionMetric::previousDataDayCloseChangePercent:
+    condition.source =
+        strategy::ConditionSource::previousDataDayCloseChangePercent;
+    condition.thresholdDomain = indicators::NumericDomain::percent;
+    condition.threshold = comparison == strategy::Comparison::lessThanOrEqual
+                              ? -threshold
+                              : threshold;
     break;
   case ConditionMetric::close:
     condition.source = strategy::ConditionSource::barField;
@@ -328,6 +363,17 @@ MetricDisplay displayFor(const ConditionMetric metric) {
                             "in percent points."),
             BacktestTab::tr("Example: 5 means a 5% rise; -5 means a 5% fall."),
             false};
+  case ConditionMetric::previousDataDayCloseChangePercent:
+    return {" %",
+            BacktestTab::tr(
+                "Change from the previous CSV/UTC data day close, the last "
+                "source close including extended-hours rows. The current UTC "
+                "date is excluded. Down and Up thresholds are inclusive. "
+                "Missing history does not match."),
+            BacktestTab::tr(
+                "Enter a positive percent magnitude, such as 5 for Down 5% "
+                "or Up 5%."),
+            false};
   case ConditionMetric::close:
     return {" USD", BacktestTab::tr("Current close price in USD."),
             BacktestTab::tr("Example: 100 means $100 per share."), false};
@@ -381,7 +427,9 @@ MetricDisplay displayFor(const ConditionMetric metric) {
 }
 
 void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
-                         QSpinBox *period) {
+                         QSpinBox *period, QComboBox *comparison) {
+  const auto selectedMetric = metricFrom(metric);
+  updateComparisonItems(selectedMetric, comparison);
   const auto display = displayFor(metricFrom(metric));
   const auto name = metric->currentText();
   const auto explanation =
@@ -389,21 +437,32 @@ void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
   metric->setToolTip(explanation);
   metric->setAccessibleDescription(explanation);
   threshold->setSuffix(display.suffix);
+  threshold->setRange(selectedMetric ==
+                              ConditionMetric::previousDataDayCloseChangePercent
+                          ? 0.0
+                          : -1'000'000'000.0,
+                      1'000'000'000.0);
   threshold->setToolTip(explanation);
   threshold->setAccessibleDescription(explanation);
-  const auto periodExplanation =
-      metricFrom(metric) == ConditionMetric::macdHistogram
-          ? BacktestTab::tr("MACD slow period in bars; insufficient warm-up "
-                            "bars produce no signal.")
-          : BacktestTab::tr(
-                "Indicator lookback in bars, not calendar days or months; "
-                "insufficient warm-up bars produce no signal.");
-  period->setToolTip(
-      display.usesPeriod
-          ? periodExplanation
-          : BacktestTab::tr("This metric does not use a period in its formula. "
-                            "The editable value remains part of the strategy "
-                            "identity for compatibility."));
+  auto periodHelp = QString{};
+  if (selectedMetric == ConditionMetric::previousDataDayCloseChangePercent) {
+    periodHelp = BacktestTab::tr(
+        "This metric uses UTC data days, not bars. The editable value remains "
+        "part of the strategy identity for compatibility.");
+  } else if (!display.usesPeriod) {
+    periodHelp = BacktestTab::tr(
+        "This metric does not use a period in its formula. The editable value "
+        "remains part of the strategy identity for compatibility.");
+  } else if (selectedMetric == ConditionMetric::macdHistogram) {
+    periodHelp = BacktestTab::tr(
+        "MACD slow period in bars; insufficient warm-up bars produce no "
+        "signal.");
+  } else {
+    periodHelp = BacktestTab::tr(
+        "Indicator lookback in bars, not calendar days or months; insufficient "
+        "warm-up bars produce no signal.");
+  }
+  period->setToolTip(periodHelp);
   period->setAccessibleDescription(period->toolTip());
 }
 
@@ -1026,22 +1085,25 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
         comparison->setEnabled(enabled);
         threshold->setEnabled(enabled);
         period->setEnabled(enabled);
-        updateMetricDisplay(metric, threshold, period);
+        updateMetricDisplay(metric, threshold, period, comparison);
       };
   const auto connectMetricDisplay = [this](QComboBox *metric,
+                                           QComboBox *comparison,
                                            QDoubleSpinBox *threshold,
                                            QSpinBox *period) {
-    const auto refresh = [metric, threshold, period] {
-      updateMetricDisplay(metric, threshold, period);
+    const auto refresh = [metric, comparison, threshold, period] {
+      updateMetricDisplay(metric, threshold, period, comparison);
     };
     QObject::connect(metric, qOverload<int>(&QComboBox::currentIndexChanged),
                      this, [refresh](int) { refresh(); });
     refresh();
   };
-  connectMetricDisplay(buyMetric, buyThreshold, buyPeriod);
-  connectMetricDisplay(buySecondMetric, buySecondThreshold, buySecondPeriod);
-  connectMetricDisplay(sellMetric, sellThreshold, sellPeriod);
-  connectMetricDisplay(sellSecondMetric, sellSecondThreshold, sellSecondPeriod);
+  connectMetricDisplay(buyMetric, buyComparison, buyThreshold, buyPeriod);
+  connectMetricDisplay(buySecondMetric, buySecondComparison, buySecondThreshold,
+                       buySecondPeriod);
+  connectMetricDisplay(sellMetric, sellComparison, sellThreshold, sellPeriod);
+  connectMetricDisplay(sellSecondMetric, sellSecondComparison,
+                       sellSecondThreshold, sellSecondPeriod);
   setSecondConditionEnabled(false, buySecondMetric, buySecondComparison,
                             buySecondThreshold, buySecondPeriod);
   setSecondConditionEnabled(false, sellSecondMetric, sellSecondComparison,
