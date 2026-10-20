@@ -39,10 +39,12 @@ final whole-branch review remain.
   passes with 98.0% diff line coverage and 96.9% changed-branch coverage;
   ASan/UBSan and TSan each pass 274/274. These are local gates, not remote
   CI/CodeQL results.
-- Earlier PR creation through the connected GitHub integration failed with
-  HTTP 403 (`Resource not accessible by integration`), and the local `gh` CLI
-  was unavailable. At this checkpoint no continuation PR is open and remote
-  CI/CodeQL has not run; retry publishing now that local gates pass.
+- The continuation branch has been pushed as `codex/issue10-task18`. Creating
+  its PR through the connected GitHub integration returned HTTP 403
+  (`Resource not accessible by integration`); no continuation PR is open and
+  remote CI/CodeQL has not run. The connected integration needs PR-write
+  access, or the PR must be opened from GitHub before remote acceptance can
+  continue.
 - The user-requested branch reconciliation was completed before this
   continuation. Work is on `codex/issue10-task18`, based on `4415373` with
   `508d2d9` in its `main` ancestry. Task 17/18 and provenance commits precede
