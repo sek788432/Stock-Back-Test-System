@@ -20,6 +20,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -661,6 +662,77 @@ TEST(ReleaseSnapshotTest,
 
   ASSERT_TRUE(built.ok()) << built.error().message;
   EXPECT_EQ(built.value().barCount, 1U);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildPrefersManifestDeclaredCanonicalDottedSymbolFilename) {
+  ScopedSnapshotFixture fixture{"both-dotted-symbol-filenames-declared"};
+  constexpr auto exactCsv =
+      "symbol,ts,open,high,low,close,volume\n"
+      "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200\n";
+  constexpr auto extractedCsv =
+      "symbol,ts,open,high,low,close,volume\n"
+      "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200\n"
+      "BRK.B,2024-01-02 00:00:00+00:00,101,103,100,102,2300\n";
+  writeFile(fixture.source() / "BRK.B.csv", exactCsv);
+  writeFile(fixture.source() / "BRK_B.csv", extractedCsv);
+  writeSourceManifest(fixture.source(),
+                      "file=BRK.B.csv|ohlcv-1h|" + bte::core::sha256(exactCsv) +
+                          "\n" + "file=BRK_B.csv|ohlcv-1h|" +
+                          bte::core::sha256(extractedCsv) + "\n");
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 1U);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildReportsInspectionFailureForAnUnrepresentableExactFilename) {
+  ScopedSnapshotFixture fixture{"unrepresentable-dotted-symbol-filename"};
+  const auto symbol = std::string(260, 'A') + ".B";
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({symbol}));
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+  EXPECT_EQ(built.error().message,
+            "Unable to inspect snapshot source: " +
+                (fixture.source() / (symbol + ".csv")).string());
+}
+
+TEST(ReleaseSnapshotTest,
+     buildReportsInspectionFailureForAnUninspectableExtractedFilename) {
+  ScopedSnapshotFixture fixture{"uninspectable-extracted-symbol-filename"};
+  const auto extractedPath = fixture.source() / "BRK_B.csv";
+  auto filesystemError = std::error_code{};
+  std::filesystem::create_symlink(extractedPath.filename(), extractedPath,
+                                  filesystemError);
+  ASSERT_FALSE(filesystemError) << filesystemError.message();
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+  EXPECT_EQ(built.error().message,
+            "Unable to inspect snapshot source: " + extractedPath.string());
+}
+
+TEST(ReleaseSnapshotTest,
+     buildKeepsExactDottedFilenameAsMissingSourceFallback) {
+  ScopedSnapshotFixture fixture{"missing-dotted-symbol-source"};
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::notFound);
+  EXPECT_EQ(built.error().message,
+            "Snapshot source not found: " +
+                (fixture.source() / "BRK.B.csv").string());
 }
 
 TEST(ReleaseSnapshotTest,
