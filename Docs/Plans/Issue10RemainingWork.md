@@ -18,10 +18,12 @@ long-range AAPL Result/Replay reconciliation are now in `main`. Its required
 CI and CodeQL checks passed on the exact submitted head. Native application
 acceptance remains. The independent review of PR #81 found a dotted-ticker CSV
 filename mismatch and a weak non-empty-fill assertion; this fresh branch now
-contains regression coverage and fixes for both. Independent implementation,
-documentation, and test reviews found no further actionable issues, and the
-working-tree RunTest passed 329/329; commit and clean exact-head Quality and
-remote CI remain.
+contains fixes and regression coverage for both. Independent implementation,
+documentation, and test reviews found no further actionable issues. Commits
+`3e406ab` and `03524bd` pass exact-head RunTest 333/333 and RunQuality with
+100% changed-line and changed-branch coverage. The branch is pushed, but the
+GitHub connector returns 403 when creating its PR, so remote CI and merge are
+pending.
 
 ## Latest merged delivery
 
@@ -262,8 +264,9 @@ Task 17/18 and source provenance are merged in `main` as PR #81 (`c7e487e`).
 The submitted head passed local RunTest, Quality, ASan/UBSan, TSan, required
 remote CI, and CodeQL. The remaining product work is hands-on native
 application acceptance. The fresh branch also closes the two independent
-review findings above; independent review is clear, while its commit and clean
-exact-head gates remain.
+review findings above; independent review and exact-head local gates are
+complete, while remote CI and merge await PR creation. The GitHub connector
+currently rejects PR creation (HTTP 403: Resource not accessible by integration).
 
 Workspace reconciliation is complete: local `main` matches `origin/main`, both
 old personal branches were removed after verifying their contents were merged,
@@ -272,7 +275,7 @@ and the six stashes remain intact.
 | Request / plan task | Remaining work |
 | --- | --- |
 | Historical conditions, Task 18 | Implemented: 30 available UTC data-date close-to-close gain; prior 21 complete data-date highs/lows excluding the current date; persistent strict breakouts; bounded same-snapshot pre-range warm-up. Local and remote checks passed; confirm expected signals in the native workflow |
-| Post-merge review follow-up | Fix dotted ticker snapshot-source filename resolution while preserving exact-name compatibility; require the AAPL Hourly and Daily fill timelines to match non-empty persisted fill records. Regression cases and working-tree RunTest pass; independent review is clear, while commit and clean exact-head Quality remain |
+| Post-merge review follow-up | Fix dotted ticker snapshot-source filename resolution while preserving exact-name compatibility; require the AAPL Hourly and Daily fill timelines to match non-empty persisted fill records. Implemented and independently reviewed on pushed branch `codex/issue10-final-acceptance`; exact-head RunTest passed 333/333 and RunQuality passed with 100% changed-line and branch coverage. PR creation is blocked by GitHub connector 403, so remote CI and merge remain |
 | Save Result / Save & Replay, Task 14 | Exercise save, save-and-replay, restart, and injected failure recovery in the native application |
 | Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Exercise the full native workflow against saved real data, including rename, trash, restore, and replay opening |
 | Progressive Hourly/Daily replay, Tasks 21/24 | Automated deterministic and full-range AAPL tests pass for exact bars, dates, fills and portfolio checkpoints; confirm native viewport behavior and readable long-range display |
