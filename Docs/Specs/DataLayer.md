@@ -70,10 +70,12 @@ The boundary has these consequences:
    becomes a candidate V1 input only after re-extraction, validation, review,
    and inclusion of the resulting CSV revision.
 
-The planned Release Snapshot uses the canonical symbol stored in each validated
-row/manifest entry; an extract filename is transport metadata and cannot define
-snapshot identity. Snapshot building must reject ambiguous filename mappings
-or symbol mismatches rather than silently merging them.
+The Release Snapshot builder uses the canonical symbol stored in each validated
+row; an extract filename is transport metadata and cannot define snapshot
+identity. It prefers the exact canonical filename for compatibility, then
+resolves the `GetFromDb.py` period-to-underscore filename when the exact file is
+absent or the source manifest declares that export. It rejects multiple
+requested symbols that resolve to one CSV and rejects row-symbol mismatches.
 
 ## 2. Source roles
 
@@ -263,8 +265,9 @@ A `.bteresult` stores snapshot/segment IDs and hashes, not duplicate OHLCV.
   become visible. Pins remain through Drafts, Results, and Trash. Recovery takes
   ownership before reading Staging and verifies references before exposing a
   recovered draft. This is implemented and covered by store and child-process
-  tests; final exact-head and native application acceptance remain pending. See
-  the [safety design](ResultPersistenceSafetyDesign.md).
+  tests; the PR #81 submitted head passed exact local and remote gates. Native
+  application acceptance remains pending. See the
+  [safety design](ResultPersistenceSafetyDesign.md).
 - K-line Replay resolves those exact segments and validates their hashes.
 - Missing referenced data yields `DataSnapshotUnavailable`; it never silently substitutes newer data.
 - Imported results validate result schema, canonical hash, snapshot identity,

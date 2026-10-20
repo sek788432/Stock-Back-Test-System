@@ -17,8 +17,11 @@ Staging/import visibility. The recorded Engine commits each completed bar's
 canonical batch before advancing progress; a storage failure stops execution.
 Recovery preserves legacy unleased staging with a warning and exposes only a
 validated committed prefix as an **Interrupted Draft**. Final exact-head CI,
-remote checks, and native application acceptance are still pending; see the
-[safety design](ResultPersistenceSafetyDesign.md).
+Quality and sanitizer workflows passed locally on submitted head
+`1591427ee61d88a661f85ebd98d99c0aa10c6ef1`; PR #81's required remote CI and
+CodeQL also passed on that head. Native application acceptance remains; see
+the [safety design](ResultPersistenceSafetyDesign.md) and the
+[Issue 10 remaining-work list](../Plans/Issue10RemainingWork.md).
 
 | Status | Scope |
 | --- | --- |
@@ -34,15 +37,15 @@ starter slice remains single-order. The removed legacy JSON summary is not part
 of the durable result contract.
 
 Task 17's previous-data-day close condition is implemented in the limited
-local path. It uses the previous available UTC date's last source close from
-the same immutable snapshot, including extended-hours rows, and excludes the
-current UTC date from the reference. The one-row pre-range value seeds only
-Strategy state; Engine records, processed-bar counts, and Replay candles remain
-within the selected execution range. This CSV convention is not an official
-exchange-session close and does not implement the general exchange-calendar
-contract below. Task 18's 30-data-day gain and prior-21-data-day extrema and
-breakouts are implemented in the limited Selectable Conditions path. The
-binding requests the required pre-range UTC data-day summaries from the same
+Selectable Conditions path and was merged in PR #81. It uses the previous
+available UTC date's last source close from the same immutable snapshot,
+including extended-hours rows, and excludes the current UTC date from the
+reference. The one-row pre-range value seeds only Strategy state; Engine
+records, processed-bar counts, and Replay candles remain within the selected
+execution range. This CSV convention is not an official exchange-session close
+and does not implement the general exchange-calendar contract below. Task 18's
+30-data-day gain and prior-21-data-day extrema and breakouts are implemented in
+the limited Selectable Conditions path. The binding requests the required pre-range UTC data-day summaries from the same
 snapshot; Strategy uses them only as historical state and then rolls completed
 dates as actual execution bars arrive. Insufficient history produces no
 historical match. Warm-up contributes no processed bars, result records, or

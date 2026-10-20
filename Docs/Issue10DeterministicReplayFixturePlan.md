@@ -1,6 +1,19 @@
 # Backtest Result K-Line Replay Implementation Plan
 
-> **Task 18 implementation checkpoint (2026-10-20):** Task 17 remains
+> **Current delivery status (2026-10-21):** PR #81 merged Tasks 17 and 18,
+> source-timeframe provenance, truthful Result capabilities, and long-range
+> AAPL reconciliation to `main` at `c7e487ee9034d54ed3cf61eca765c368276eb8a8`.
+> The submitted head passed local RunTest, Quality, ASan/UBSan, TSan, required
+> remote CI, and CodeQL. The old Task 17/18 branches were verified against
+> `main` and removed; post-merge regression fixes are on
+> `codex/issue10-final-acceptance`, whose independent review is clear and whose
+> final exact-head gates remain. Hands-on native Results, Replay viewport,
+> and delivered-launch acceptance remain open in
+> [Issue10RemainingWork.md](Plans/Issue10RemainingWork.md). The dated
+> checkpoints below are historical evidence and do not describe current branch
+> or merge status.
+
+> **Historical Task 18 implementation checkpoint (2026-10-20):** Task 17 remains
 > implemented in the preceding local commits. Task 18's UTC data-day gain,
 > extrema and breakout predicates, bounded snapshot warm-up, v3 Strategy
 > identity, Backtest UI, and saved Replay coverage are implemented in the
@@ -876,8 +889,8 @@ limitations that were subsequently changed; Task 11B's full scenario remains ope
 | 14 | Implemented on branch; final acceptance pending | RED for absent draft APIs/buttons and prior automatic publication; review found and RED-tested multi-draft selection, live-writer recovery, cancellation-after-open and discard-removal rollback boundaries | Exact `15dfcab` RunTest 232/232 | `d0fc1c8` failed changed-line coverage at 93%, `27a1381` failed at 96%; exact `15dfcab` full non-fast quality passed static analysis, scan-build and 232/232 coverage tests, changed lines 832/845 = 98%, changed branches 103/108 = 95.4% | Actual AAPL 48-bar Save Result published ID `4c37a35f…96a6` without navigation; Save & Replay opened the same ID. A later saved ID `649b0cd43bf43c96f4d674d428b1c7bd` opened at 1/48, stepped to 11/48 with varied OHLC and its Buy on the containing bar; Daily showed 1/3 after switching | Final all-path review, multi-fill and Results workflow remain; cross-process writer recovery is unverified |
 | 15 | Partial UI implemented through `12958ea`; not accepted | RED for absent Trash list, async adapter, Results page and shell navigation; tests cover real snapshot-backed result, same-ID details/Replay, cancel/confirm Trash, restore/hash, corrupt entry, unavailable store, diagnostic statuses, stale request and currently open Replay invalidation | `12958ea` full quality coverage suite 236/236; earlier working-tree `RunTest.sh` 236/236 | Exact `12958ea` full non-fast RunQuality exit 0; changed lines 1230/1252 = 98%, branches 154/164 = 93.9%. Earlier `d469473` failed 95% changed-line coverage, and intervening IWYU/module-boundary failures were corrected | New Results page has not been desktop-operated: CUA reported Mac locked after the isolated app was launched with `/private/tmp/bte-results-desktop.tHUlMl/Results` | Multi-entry ordering, more stale/error/keyboard/size scenarios, actual Save→Results→Replay→Trash/Restore, 30-day policy, review and whole-plan acceptance remain |
 | 16 | Planned / not implemented | Backend domain mapping exists; UI unit acceptance not run | Not run | Not run | Not run | Units, scale and examples for every offered metric |
-| 17 | Implemented locally through `bed5388`; exact predecessor gates pass | Data/Strategy/Engine/Replay/UI contracts cover prior UTC data-day close, missing/future history, and no warm-up leakage | RunTest 295/295; full Quality changed lines 193/193, branches 35/36; ASan/UBSan and TSan 249/249 | Exact predecessor evidence at `bed5388`; remote checks and native acceptance remain | Same immutable snapshot; previous available UTC date's final source close, including extended hours |
-| 18 | Implemented locally in `codex/issue10-task18`; exact-head gates pending | Related CSV/Snapshot/Strategy/Engine/Replay/UI/VM CTest selection 121/121; source-manifest Python tests 4/4; N=21/N=30 literal windows, strict persistent breakouts, insufficient history, and historical buy/sell next-open fills | Current focused results only; full RunTest/RunQuality/sanitizers not yet run on submitted commit | No current-head remote or native acceptance | 30 available UTC data dates for gain; prior 21 completed dates for extrema/breakouts; same-snapshot warm-up excluded from Result/Replay |
+| 17 | Implemented and merged in PR #81 | Data/Strategy/Engine/Replay/UI contracts cover prior UTC data-day close, missing/future history, and no warm-up leakage | Submitted head passed RunTest 322/322, Quality, ASan/UBSan 274/274 and TSan 274/274 | PR #81 required CI and CodeQL passed; native acceptance remains open | Same immutable snapshot; previous available UTC date's final source close, including extended hours |
+| 18 | Implemented and merged in PR #81 | CSV/Snapshot/Strategy/Engine/Replay/UI/VM coverage includes N=21/N=30 literal windows, strict persistent breakouts, insufficient history, and next-open fills | Submitted head passed RunTest 322/322, Quality, ASan/UBSan 274/274 and TSan 274/274 | PR #81 required CI and CodeQL passed; native acceptance remains open | 30 available UTC data dates for gain; prior 21 completed dates for extrema/breakouts; same-snapshot warm-up excluded from Result/Replay |
 | 19 | Worktree launch path and exact implementation gates accepted at `c28ddec`; final delivered-checkout acceptance pending | Launcher behavior has positive, partial/invalid configuration, missing manifest and builder-failure tests | Project script suite 19/19; Launch.sh built the exact worktree and started with snapshot `229c37d2…74acf`; RunTest 221/221, 62.57s | Exact implementation revision `c28ddec`: non-fast RunQuality exit 0; coverage suite 221/221, 64.42s; changed lines 279/279, branches 49/52; clang-tidy, cppcheck, IWYU and scan-build passed | Same built executable was operated through its macOS bundle identity; AAPL Backtest completed and Open Replay worked. Raw unbundled process could not be bound by the desktop automation API, so literal raw-process interaction is not claimed | Recheck from the final delivered checkout and record its revision/process identity |
 | 20 / R9 | Launcher/snapshot implementation and actual starter workflow accepted at `c28ddec`; overall task remains partial | Launch tests first failed because no builder/configuration existed. Canonical seven-column snapshot test then failed with `Snapshot source has unsupported columns` | Data suite 37/37; project scripts 19/19. Missing/partial/invalid configuration and builder failure stop before app; tracked seven-column CSV builds successfully; RunTest 221/221, 62.57s | Exact implementation revision `c28ddec`: full non-fast RunQuality exit 0; coverage suite 221/221, 64.42s; changed lines 279/279, branches 49/52. Earlier attempts failed because `VCPKG_ROOT` was absent, then because `readSourceBars` exceeded the cognitive-complexity limit; the helper extraction corrected the latter without suppression | Launch-created snapshot `229c37d2…74acf`; actual AAPL starter Backtest completed 48 bars, result `0bbe3c12…a1456`; Open Replay progressed 1/48→12/48 with varied OHLC and one Buy marker | Later multi-fill condition-run Save/Results workflow; developer snapshot is not release data |
 | 21 / R10 | Accepted at `05c23eb` after correcting the all-candles-first desktop rejection | New progressive-prefix expectations produced 5 frontend failures: initial small/Hourly/Daily counts were 3/520/22 instead of 1; timeframe switch was 520 instead of 49; multi-fill initial was 520 instead of 1. Regression covers 499→500→519 as 500→501→520 candles | Focused Result Replay + chart suites 2/2, 9.64s; RunTest 220/220, 61.73s. Initial 1, Step 2, seek 12 gives 13, rewind gives 1, max batch gives 34; markers/log follow the same prefix | `05c23eb`: full non-fast RunQuality exit 0; coverage suite 220/220, 3608.61s; changed lines 199/199, branches 41/44; clang-tidy, cppcheck, IWYU and scan-build passed. Earlier attempts honestly failed clang-format, missing `VCPKG_ROOT`, then an ownership-transfer clang-tidy diagnostic | Actual app result `fdf8b59ca7681dfc575a744a5ae40ce9`: 520 Hourly, 22 Daily, 149 fills. Hourly 1/520→2/520→13/520 showed 0→1→4 fills; Play advanced to 7/520 and Pause stopped; rewind returned 1/520. Daily mapped to 1/22, Step 2/22, Back 1/22 with fills anchored to their day. Normal-size screenshots were inspected in the desktop session but not saved as repository artifacts | Broader layout and other plan tasks remain open; 23,777-candle terminal batch is untruncated but measured 3.606s, so no claim of instant rendering |
@@ -1403,10 +1416,16 @@ Strategy identity changes for a label-only correction.
 
 ### Task 17 — Up/down X% relative to previous UTC data-day close
 
-**Status (2026-10-20):** Implemented locally on `codex/issue10-remaining` in
+**Status (2026-10-21):** Implemented and merged in PR #81 at `c7e487e`. Its
+submitted head passed exact local and remote gates; native workflow acceptance
+remains open. On 2026-10-20, the maintainer selected the existing CSV as the
+standard and confirmed UTC-date grouping consistent with Daily Replay.
+**Historical implementation checkpoint (2026-10-20):** Implemented locally on
+`codex/issue10-remaining` in
 commits `5fe4505`, `2bcf948`, `ef66953`, `f5b939d`, `f5c61e8`, and `22282d2`;
 focused tests pass and the full Qt CTest suite passes 292/292. Exact-commit
-quality/sanitizer gates and remote CI/CodeQL remain pending. The maintainer
+quality/sanitizer gates and remote CI/CodeQL were pending at that checkpoint.
+The maintainer
 explicitly selected the existing CSV as the standard and confirmed UTC-date
 grouping consistent with Daily Replay.
 Every UTC date containing actual source rows counts as one data day; its
@@ -1417,7 +1436,8 @@ or official regular-session close. Runtime evaluation must read the same
 immutable CSV-derived snapshot, not fall back to mutable CSV or download data.
 The one-row pre-range value seeds only Strategy state and never enters executed
 or replayed bars. Existing v1 hashes remain frozen; plans using Task 17 use v2
-framing. Exact-head and broader delivery acceptance are not claimed complete.
+framing. Exact submitted-head gates passed; broader native acceptance remains
+open.
 **Implemented surfaces:**
 `Src/Backend/Data/Include/Bte/Data/ReleaseSnapshot.h`,
 `Src/Backend/Data/Private/ReleaseSnapshot.cpp`,
@@ -1477,12 +1497,14 @@ Preserve existing prior-bar Close change behavior as a distinct option.
   Replay integration covers the buy signal and confirms history stays outside
   the selected timeline. Replay remains read-only. Strategy v1 hashes remain
   frozen, Task 17 plans use v2 framing, and tests assert literal compatibility
-  digests. Exact-head and remote gates remain pending above.
+  digests. Exact-head and remote gates passed on PR #81; native acceptance
+  remains open.
 
 ### Task 18 — Historical extrema changes and one-month breakouts
 
-**Status:** Implemented locally on `codex/issue10-task18`; exact-head project
-gates, remote acceptance, and native UI acceptance remain open. On 2026-10-06
+**Status (2026-10-21):** Implemented and merged in PR #81 at `c7e487e`. The
+submitted head passed exact local and remote gates; native UI acceptance remains
+open. On 2026-10-06
 the maintainer clarified that “up X%” means an increase over a chosen historical
 period, while a separate condition means a drawdown from a historical high.
 On 2026-10-12 the maintainer selected existing CSV-derived UTC data dates
@@ -1493,10 +1515,12 @@ dates, excluding the current date. Empty calendar dates do not consume the
 lookback and no missing row is synthesized. Every qualifying strict breakout
 bar matches, not only the first crossing. No official-source integration is
 needed for this local path.
-**Modify after approval:** Strategy header/private implementation, Backtest
-Bindings/editor, Strategy/Engine/Replay integration/Frontend tests listed in
-Task 17, plus `Docs/Specs/Indicators.md` if a shared indicator is extended.
-No new public predicate API is claimed to exist.
+**Original planned change scope (completed in PR #81):** Strategy
+header/implementation, Backtest Bindings/editor, Strategy/Engine/Replay
+integration and frontend tests using the approved bounded-history interface.
+The Task 18 condition sources are implemented; see the current
+[`StrategyAuthoring.md`](Specs/StrategyAuthoring.md#csvutc-day-historical-conditions)
+contract.
 **Interfaces:** approved bounded chronological historical window → high/low
 reference and percent/breakout signal → normal next-open Engine execution.
 
@@ -1670,12 +1694,12 @@ not another implementation plan or a replacement for the dated evidence ledger.
 | Buy green ▲, sell red ▼, exact fill time/price, readable overlaps | 9 | Accepted at e43c7fb; exact gates and isolated real-Engine 5/5 desktop evidence recorded |
 | Bigger chart, collapsible settings, adjustable log/chart, three sizes | 10 | Automated implementation and prior full quality gate passed at `8256300`; the isolated Mac is now usable, but three-size desktop acceptance remains open |
 | Actual Selectable Conditions Backtest gives at least five buys/five sells | 11A + 11B | Offline 7-test coverage accepted at 6b9b3e7; fresh desktop acceptance missing |
-| Backtest Save Result and Save & Replay | 14 | Durable draft and explicit publication implemented in current worktree; final quality/review and multi-fill desktop acceptance pending |
+| Backtest Save Result and Save & Replay | 14 | Durable draft and explicit publication merged in PR #81; the current follow-up branch adds source-path and long-range fill regressions, with final gates/review and multi-fill desktop acceptance pending |
 | Results select/view/delete and Open Replay | 15 | Isolated desktop selected a named six-year Result and opened its exact ID in Replay; delete/restore, keyboard and three-size acceptance remain |
 | Every offered indicator has correct unit, scale, example and period meaning | 16 | All 18 offered metrics have a tested display mapping and exact `cf65e2a` green full gate; explicit numeric-boundary/hash cases and fresh desktop inspection remain |
-| Relative to prior data-day close: down/up X% | 17 | Implemented locally at `bed5388`; previous available date's last source close, including extended hours; predecessor local gates pass, remote/native acceptance remains |
-| Time-window historical high/low changes, up/down and monthly high/low break | 18 | Implemented locally on `codex/issue10-task18`: 30 available data-date gain, prior 21 completed-date extrema, strict persistent breakouts, and same-snapshot warm-up; exact-head gates/review/remote/native acceptance remain |
-| Seven-column CSV source timeframe and trailing-column compatibility | Data provenance | Hash-bound sidecar implemented locally; all 503 tracked CSVs match their DuckDB export bytes; snapshot builder rejects missing/mismatched declarations and explicit `schemaName` trailing-column compatibility passes focused tests |
+| Relative to prior data-day close: down/up X% | 17 | Implemented and merged in PR #81; previous available date's last source close, including extended hours; exact submitted-head local/remote gates passed, native acceptance remains |
+| Time-window historical high/low changes, up/down and monthly high/low break | 18 | Implemented and merged in PR #81: 30 available data-date gain, prior 21 completed-date extrema, strict persistent breakouts, and same-snapshot warm-up; exact submitted-head local/remote gates passed, native acceptance remains |
+| Seven-column CSV source timeframe and trailing-column compatibility | Data provenance | Hash-bound sidecar merged in PR #81; all 503 tracked CSVs match their DuckDB export bytes; snapshot builder rejects missing/mismatched declarations and explicit `schemaName` trailing-column compatibility passes focused tests |
 | Normal Launch.sh path exposes the delivered Backtest Replay action | 19 | Worktree launcher implementation and full gates are accepted at `c28ddec`; the built app exposes Open Replay, while the final delivered-checkout identity check remains |
 | Backtest cannot run: Snapshot open request is invalid | 20 / R9 | Launcher/snapshot scope is accepted at `c28ddec`; actual AAPL 48-bar Backtest and same-result Replay succeeded, while the multi-fill Save/Results final scenario remains |
 | Hourly/Daily progressively replay every selected K-line without a 500-frame truncation; fills appear with their bars | 21 / R10 | Accepted at `05c23eb`: initial prefix is one candle, cursor 500 presents 501 candles, rewind shrinks candles/fills, timeframe switching preserves the current UTC date, full gates pass, and actual Hourly/Daily app operation is recorded |
@@ -1685,10 +1709,10 @@ not another implementation plan or a replacement for the dated evidence ledger.
 | Readable saved Result name and later rename without changing identity | 25 | Naming and rename were exercised in the isolated app; exact-HEAD `12fe8eb` quality passed, but later edits and whole-plan gates remain open |
 | Chart density, Follow latest and history zoom on long playback | Replay viewport plan / 24 | The latest repair has focused RED/GREEN and isolated-app checks; width and Follow latest improved, but final resize/performance/data acceptance is open |
 | Small visible clearance between trade triangles and candle wicks; no compressed final view with Max | 26 | Eight-pixel clearance confirmed; spacing/height-resize and intrinsic-label repairs pass exact full gates through d209d21, with isolated AAPL Max/zoom/Follow checks. Responsiveness and complete three-size layout acceptance remain open |
-| Persistence, retention, mid-run durability, rounding, golden oracle, honest capabilities | R1–R4/R6/R7 | R1–R3 merged in PR #76; R4 is accepted at b5be0c8; R6 oracle is implemented; R7 truthful capability display and current-head acceptance remain open |
-| Publish all in-scope workspace changes and reconcile local branches/PRs | 27 | In progress; #68/#69/#70 are merged, older seven-fix branch is superseded, Issue 10 follow-up and root untracked test disposition remain open |
+| Persistence, retention, mid-run durability, rounding, golden oracle, honest capabilities | R1–R4/R6/R7 | R1–R3 merged in PR #76; R4 is accepted at b5be0c8; R6 oracle and R7 truthful capability display are merged; native acceptance remains |
+| Publish all in-scope workspace changes and reconcile local branches/PRs | 27 | PR #81 is merged, local `main` matches `origin/main`, and both completed personal branches are removed; this acceptance branch tracks remaining work |
 | Multiple Buys in one displayed K bar use one Buy glyph | 28 | Scoped Buy-only checkpoint accepted at d209d21 with regressions, full gates, review and isolated AAPL desktop checks; Sell remains per-fill; whole-plan acceptance remains open |
-| Complete tasks, merge a CI-green PR, then remove the confirmed non-main branches | 29 | PR #76 is merged; Task 17/18 continuation still needs its own exact-head green gates and remote checks before merge, then local `main` sync and confirmed branch cleanup |
+| Complete tasks, merge a CI-green PR, then remove the confirmed non-main branches | 29 | PR #81 merged after exact-head CI/CodeQL passed; local `main` matches `origin/main`, completed personal branches are removed, and remaining acceptance is on a fresh branch |
 | Fully inspect/operate app, track honestly, create new PR only after finished | 12 | Needs changes; the later explicit checkpoint-publication request is fulfilled by Draft #76, not whole-plan completion or a universal bug-free promise |
 
 - [x] Before implementation resumes, confirm outstanding product/lifecycle/history

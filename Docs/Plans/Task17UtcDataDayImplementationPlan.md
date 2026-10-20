@@ -116,11 +116,11 @@
 - Modify: `Docs/Decisions/ImportantDecisions.md`
 
 **Interfaces:**
-- Document only the implemented Task 17 behavior after Tasks 1–4 pass. Keep Task 18 labeled accepted/not implemented and do not claim official-session close behavior.
+- At the original Task 17 documentation checkpoint, Task 18 was accepted but not implemented. The merged status recorded in Task 6 below supersedes that checkpoint; document Task 17/18 as implemented and merged, and do not claim official-session close behavior.
 
-- [x] **Step 1: Update the owning specs and fixture evidence.** After Tasks 1–4 focused tests passed, marked Task 17 implemented locally with exact-head gates pending. Documented immutable snapshot lookup, the one-row bounded pre-range context, UTC state rollover, positive Down/Up UI comparisons, v1/v2 hashing, missing-history behavior, and unchanged Result/Replay timelines. The focused contracts passed: Data 44/44, Strategy 23/23, Engine/Recorded/Replay 64/64, and the complete `bte_backtest_frontend_tests` target.
-- [x] **Step 2: Update decision traceability and Issue 10 status.** Extended the historical-condition decision with the approved pre-range/hash choices, removed Task 17 from unfinished feature behavior, and retained exact-head quality, sanitizer, remote, and native acceptance as pending. Task 18 and the other open Issue 10 items remain listed.
-- [x] **Step 3: Verify documentation.** `git diff --check` and `Tools/CheckProjectStandards.py --base 508d2d9e18befe2ebb1e80b9a6d8bf528c5c5def` passed. Manually verified the added relative links and the StrategyAuthoring anchor; current specifications label Task 18 accepted/not implemented.
+- [x] **Step 1: Update the owning specs and fixture evidence.** At that checkpoint, after Tasks 1–4 focused tests passed, Task 17 was marked implemented locally with exact-head gates pending. The docs covered immutable snapshot lookup, the one-row bounded pre-range context, UTC state rollover, positive Down/Up UI comparisons, v1/v2 hashing, missing-history behavior, and unchanged Result/Replay timelines. Focused contracts then passed: Data 44/44, Strategy 23/23, Engine/Recorded/Replay 64/64, and the complete `bte_backtest_frontend_tests` target.
+- [x] **Step 2: Update decision traceability and Issue 10 status.** Extended the historical-condition decision with the approved pre-range/hash choices and removed Task 17 from unfinished feature behavior. At that checkpoint, exact-head quality, sanitizer, remote, and native acceptance remained pending; Task 18 and other open Issue 10 items stayed listed.
+- [x] **Step 3: Verify documentation.** At the original checkpoint, `git diff --check` and `Tools/CheckProjectStandards.py --base 508d2d9e18befe2ebb1e80b9a6d8bf528c5c5def` passed. The Task 18 status was later superseded by its implementation and PR #81 merge.
 
 ### Task 6: Verify the Complete Exact-Head Change
 
@@ -132,19 +132,19 @@
 - [x] **Step 3: Commit the reviewed implementation and documentation.** The source and test slices are committed as `5fe4505`, `2bcf948`, `ef66953`, `f5b939d`, `f5c61e8`, `22282d2`, `6dbf1b3`, `ee86535`, and `bed5388`; documentation checkpoints are `7b004dc`, `e24868c`, `1b442b9` (local gates), and `610d846` (remote PR access status).
 - [x] **Step 4: Run exact-head project quality.** On `bed5388`, `./RunTest.sh` passed 295/295 in 93.71 seconds. `./RunQuality.sh --base 508d2d9e18befe2ebb1e80b9a6d8bf528c5c5def --head HEAD` exited 0: standards passed (10,336,874 lines / 759 files), full Clang 18 quality build, clang-tidy, cppcheck, IWYU, and scan-build (`No bugs found`) passed; coverage tests passed 295/295, changed-line coverage was 100% (193/193), and changed-branch coverage was 97.2% (35/36).
 - [x] **Step 5: Run sanitizers on the exact code commit.** The `dev-sanitize` ASan/UBSan configuration passed CTest 249/249 in 58.42 seconds, and `dev-tsan` passed 249/249 in 93.77 seconds, with no sanitizer reports. These runs used the exact source/test tree at `bed5388`.
-- [ ] **Step 6: Record remote acceptance.** The verified branch is published, but the connected GitHub integration rejected PR creation with HTTP 403 (`Resource not accessible by integration`); the browser session is signed out and no `gh` CLI is installed. A PR must be opened after repository integration access includes pull-request write permission (or by an authenticated maintainer); then require project CI and CodeQL to pass before merging.
-- [ ] **Step 7: Merge and continue cleanly.** After required CI and CodeQL pass, merge the PR under the user's standing authorization, fast-forward local `main` to `origin/main`, audit and remove the completed Task 17 branch, then create a fresh branch from `main` for the other unfinished Issue 10 items.
+- [x] **Step 6: Record remote acceptance.** PR #81 was merged after required CI and CodeQL passed on submitted head `1591427ee61d88a661f85ebd98d99c0aa10c6ef1`; merge commit `c7e487ee9034d54ed3cf61eca765c368276eb8a8`.
+- [x] **Step 7: Merge and continue cleanly.** Local `main` was fast-forwarded to and verified against `origin/main`. Both completed personal branches were audited and removed locally and remotely; remaining work continued on fresh branch `codex/issue10-final-acceptance`.
 
 ## Completion Criteria
 
-- All new and existing focused tests pass; exact-head `RunTest.sh`, full `RunQuality.sh`, and both sanitizer configurations pass on `bed5388`.
+- All new and existing focused tests pass; PR #81's submitted head passed `RunTest.sh` 322/322, complete `RunQuality.sh`, ASan/UBSan 274/274, and TSan 274/274.
 - Legacy Strategy v1 hashes and prior-actual-bar behavior remain unchanged; Task 17 plans use v2 framing.
 - Recorded Results include only actual execution bars; Replay remains read-only and presents no warm-up data.
-- Documentation marks only Task 17 as implemented and lists remaining Issue 10 work accurately.
+- Documentation records Task 17 and Task 18 as implemented and merged, and lists the remaining native Issue 10 acceptance accurately.
 
 ## Plan Self-Review
 
 - Spec coverage is complete: Task 1 proves immutable bounded lookup; Task 2 proves predicate, date rollover, validation, and hash compatibility; Task 3 proves Engine, Result, and Replay boundaries; Task 4 proves authoring behavior and accessible disclosure; Task 5 updates the owning documentation; Task 6 verifies the reviewed exact commit.
-- Task 18 historical extrema, gain, and breakouts remain a separate implementation slice as required by the design.
-- After Task 17 merges, continue the remaining Issue 10 work on a new branch based on the updated `main`.
+- At the original planning checkpoint, Task 18 historical extrema, gain, and breakouts were a separate implementation slice; PR #81 later delivered and merged that slice.
+- The plan's follow-up instruction was carried out after PR #81 merged: remaining Issue 10 acceptance work continues on `codex/issue10-final-acceptance`, based on the updated `main`.
 - Native visual Replay and delivered `Launch.sh` acceptance remain separately tracked in `Issue10RemainingWork.md`; this plan does not claim those broader Issue 10 checks are complete.

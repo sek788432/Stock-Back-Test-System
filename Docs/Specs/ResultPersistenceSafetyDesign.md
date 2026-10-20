@@ -1,11 +1,12 @@
 # Result Persistence Safety Design
 
-**Status:** Implemented in the local Issue 10 consolidation; final exact-head
-quality gates, remote PR checks, and native-application acceptance remain
-pending. The maintainer approved the detailed design and R1–R3 implementation
-on 2026-10-18. This spec records the implemented boundaries and the evidence
-still required. It does not close the remaining historical predicates, CSV
-timeframe contract, real-data completeness, or chart acceptance work.
+**Status:** R1–R3 are merged in PR #76; PR #81 also passed exact-submitted-head
+local Quality, sanitizer, required CI, and CodeQL checks. Native application
+acceptance remains open. The maintainer approved the detailed design and R1–R3
+implementation on 2026-10-18. Historical predicates, hash-bound CSV timeframe
+provenance, and long-range real-data reconciliation are implemented in PR #81;
+remaining native checks are listed in the
+[Issue 10 remaining-work list](../Plans/Issue10RemainingWork.md).
 
 **Owners:** [Engine/Results](EngineReplayPnL.md), [Data](DataLayer.md),
 [Frontend](FrontendQt.md), and the
@@ -23,8 +24,9 @@ published Staging before pinning source data, and recorded the Engine timeline
 after execution. The current implementation replaces those paths with a
 per-Result SQLite lease, retention before visibility, an atomic write for each
 completed bar, and recovery limited to the committed prefix. These operational
-fields do not change schema-2 canonical identity. The remaining acceptance
-gate is exact-head CI and native application validation, not design approval.
+fields do not change schema-2 canonical identity. Automated delivery gates have
+passed; the remaining acceptance gate is native application validation, not
+design approval.
 
 ## 2. Scope and unchanged contracts
 
@@ -320,7 +322,7 @@ conservative orphan policy above were approved before implementation. The
 local implementation includes real child-process tests for live-writer
 isolation, zero/one/multiple committed bars, alias paths, and recovery after
 process death, plus Results/Engine/Bindings/UI fault and lifecycle tests.
-R1–R3 code and local automated-test coverage are implemented. Keep final
-acceptance open until the exact submitted commit passes the repository's full
-test, Quality, ASan/TSan, and required remote checks, and the actual application
-flow is exercised against real saved data.
+R1–R3 code and local automated-test coverage are implemented and merged. The
+exact PR #81 submitted head passed repository tests, Quality, ASan/TSan, and
+required remote checks. Keep final native acceptance open until the actual
+application flow is exercised against real saved data.
