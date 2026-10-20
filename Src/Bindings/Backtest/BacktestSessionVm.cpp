@@ -222,6 +222,8 @@ runBacktestSession(
       .initialCapitalMicrodollars = normalizedCapital.value(),
       .quantityShares = quantityShares,
       .selectableStrategy = std::move(selectableStrategy),
+      .previousDataDayClose = std::nullopt,
+      .previousDataDays = {},
   };
   auto engineResult = engine::runBacktest(request, cancellation);
   if (!engineResult.ok()) {

@@ -175,7 +175,8 @@ core::Result<std::int64_t> parseScaled(std::string_view text,
 
 struct SourceLayout final {
   std::size_t columnCount = 0;
-  std::optional<std::size_t> schemaColumnIndex;
+  std::size_t schemaColumnIndex = 0;
+  bool hasSchemaColumn = false;
 };
 
 struct SourceFileDeclaration final {
@@ -202,7 +203,9 @@ parseSourceLayout(const std::span<const std::string> header) {
       std::ranges::equal(extractedColumns,
                          header.first(extractedColumns.size()));
   if (extractedHeader && header.size() == extractedColumns.size()) {
-    return SourceLayout{.columnCount = header.size()};
+    return SourceLayout{.columnCount = header.size(),
+                        .schemaColumnIndex = 0,
+                        .hasSchemaColumn = false};
   }
   if (extractedHeader && header.size() > extractedColumns.size()) {
     const auto trailingColumns = header.subspan(extractedColumns.size());
@@ -213,6 +216,7 @@ parseSourceLayout(const std::span<const std::string> header) {
           .columnCount = header.size(),
           .schemaColumnIndex = static_cast<std::size_t>(
               std::distance(header.begin(), schemaColumn)),
+          .hasSchemaColumn = true,
       };
     }
   }
@@ -220,17 +224,17 @@ parseSourceLayout(const std::span<const std::string> header) {
                          "Snapshot source has unsupported columns");
 }
 
-core::Result<std::vector<SnapshotBar>>
-readSourceBars(const std::filesystem::path &path, const std::string &symbol,
-               const SourceManifest &sourceManifest,
-               const core::CancellationToken &cancellation) {
+core::Result<std::string>
+readSourceBytes(const std::filesystem::path &path,
+                const core::CancellationToken &cancellation) {
   std::ifstream file{path, std::ios::binary};
   if (!file) {
     return core::makeError(core::ErrorCode::notFound,
                            "Snapshot source not found: " + path.string());
   }
   auto sourceBytes = std::string{};
-  auto readBuffer = std::array<char, 64 * 1024>{};
+  constexpr std::size_t readBufferSize = 65'536;
+  auto readBuffer = std::array<char, readBufferSize>{};
   while (true) {
     if (cancellationRequested(
             cancellation, testing::SnapshotFailurePoint::buildCancellation)) {
@@ -253,6 +257,13 @@ readSourceBars(const std::filesystem::path &path, const std::string &symbol,
       break;
     }
   }
+  return sourceBytes;
+}
+
+core::Result<std::optional<SourceFileDeclaration>>
+sourceDeclarationFor(const std::filesystem::path &path,
+                     const std::string &sourceBytes,
+                     const SourceManifest &sourceManifest) {
   const auto sourceFileName = path.filename().string();
   const auto declaration = sourceManifest.files.find(sourceFileName);
   if (sourceManifest.present && declaration == sourceManifest.files.end()) {
@@ -260,39 +271,89 @@ readSourceBars(const std::filesystem::path &path, const std::string &symbol,
                            "Snapshot source is missing from source manifest: " +
                                sourceFileName);
   }
-  if (declaration != sourceManifest.files.end() &&
-      declaration->second.sha256 != core::sha256(sourceBytes)) {
+  if (declaration == sourceManifest.files.end()) {
+    return std::optional<SourceFileDeclaration>{};
+  }
+  if (declaration->second.sha256 != core::sha256(sourceBytes)) {
     return core::makeError(
         core::ErrorCode::schemaMismatch,
         "Snapshot source hash does not match source manifest: " +
             sourceFileName);
   }
+  return std::optional<SourceFileDeclaration>{declaration->second};
+}
 
-  std::istringstream input{sourceBytes};
-  std::string line;
-  if (!std::getline(input, line)) {
-    return core::makeError(core::ErrorCode::schemaMismatch,
-                           "Snapshot source is empty: " + path.string());
-  }
-  const auto header = split(line, ',');
-  const auto layout = parseSourceLayout(header);
-  if (!layout.ok()) {
-    return layout.error();
-  }
-  if (!layout.value().schemaColumnIndex.has_value() &&
-      declaration == sourceManifest.files.end()) {
+core::Result<std::string>
+sourceTimeframeFor(const SourceLayout &layout,
+                   const std::optional<SourceFileDeclaration> &declaration) {
+  if (!layout.hasSchemaColumn && !declaration.has_value()) {
     return core::makeError(core::ErrorCode::schemaMismatch,
                            "Seven-column snapshot sources require a hash-bound "
                            "source timeframe manifest");
   }
-  if (declaration != sourceManifest.files.end() &&
-      declaration->second.timeframe != hourlyTimeframe) {
+  const auto timeframe = declaration.has_value() ? declaration->timeframe
+                                                 : std::string{hourlyTimeframe};
+  if (timeframe != hourlyTimeframe) {
     return core::makeError(core::ErrorCode::schemaMismatch,
                            "Snapshot source timeframe is not supported: " +
-                               declaration->second.timeframe);
+                               timeframe);
+  }
+  return timeframe;
+}
+
+core::Result<SnapshotBar>
+parseSourceRow(const std::span<const std::string> fields,
+               const std::string &symbol, const SourceLayout &layout,
+               const std::string &timeframe) {
+  if (fields.size() != layout.columnCount || fields[0] != symbol) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Snapshot row identity does not match request");
+  }
+  if (layout.hasSchemaColumn && fields[layout.schemaColumnIndex] != timeframe) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Snapshot row identity does not match request");
   }
 
+  auto parsedTimestamp = core::time::parseIso8601(fields[1]);
+  auto open = parseScaled(fields[2], 9, "open");
+  auto high = parseScaled(fields[3], 9, "high");
+  auto low = parseScaled(fields[4], 9, "low");
+  auto close = parseScaled(fields[5], 9, "close");
+  auto volume = parseScaled(fields[6], 6, "volume");
+  if (!parsedTimestamp.ok()) {
+    return parsedTimestamp.error();
+  }
+  for (const auto *value : {&open, &high, &low, &close, &volume}) {
+    if (!value->ok()) {
+      return value->error();
+    }
+  }
+
+  const SnapshotBar bar{
+      .timestamp = parsedTimestamp.value(),
+      .openNanodollars = open.value(),
+      .highNanodollars = high.value(),
+      .lowNanodollars = low.value(),
+      .closeNanodollars = close.value(),
+      .volumeMicroshares = volume.value(),
+  };
+  if (bar.openNanodollars <= 0 || bar.lowNanodollars <= 0 ||
+      bar.highNanodollars < std::max({bar.openNanodollars, bar.closeNanodollars,
+                                      bar.lowNanodollars}) ||
+      bar.lowNanodollars > std::min({bar.openNanodollars, bar.closeNanodollars,
+                                     bar.highNanodollars})) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Snapshot row contains invalid OHLCV values");
+  }
+  return bar;
+}
+
+core::Result<std::vector<SnapshotBar>>
+parseSourceRows(std::istream &input, const std::string &symbol,
+                const SourceLayout &layout, const std::string &timeframe,
+                const core::CancellationToken &cancellation) {
   std::vector<SnapshotBar> bars;
+  std::string line;
   while (std::getline(input, line)) {
     if (cancellationRequested(
             cancellation, testing::SnapshotFailurePoint::buildCancellation)) {
@@ -303,56 +364,50 @@ readSourceBars(const std::filesystem::path &path, const std::string &symbol,
       continue;
     }
     const auto fields = split(line, ',');
-    if (fields.size() != layout.value().columnCount || fields[0] != symbol ||
-        (layout.value().schemaColumnIndex.has_value() &&
-         fields[*layout.value().schemaColumnIndex] !=
-             (declaration == sourceManifest.files.end()
-                  ? hourlyTimeframe
-                  : declaration->second.timeframe))) {
-      return core::makeError(core::ErrorCode::schemaMismatch,
-                             "Snapshot row identity does not match request");
+    auto bar = parseSourceRow(fields, symbol, layout, timeframe);
+    if (!bar.ok()) {
+      return bar.error();
     }
-
-    auto parsedTimestamp = core::time::parseIso8601(fields[1]);
-    auto open = parseScaled(fields[2], 9, "open");
-    auto high = parseScaled(fields[3], 9, "high");
-    auto low = parseScaled(fields[4], 9, "low");
-    auto close = parseScaled(fields[5], 9, "close");
-    auto volume = parseScaled(fields[6], 6, "volume");
-    if (!parsedTimestamp.ok()) {
-      return parsedTimestamp.error();
-    }
-    for (const auto *value : {&open, &high, &low, &close, &volume}) {
-      if (!value->ok()) {
-        return value->error();
-      }
-    }
-
-    const SnapshotBar bar{
-        .timestamp = parsedTimestamp.value(),
-        .openNanodollars = open.value(),
-        .highNanodollars = high.value(),
-        .lowNanodollars = low.value(),
-        .closeNanodollars = close.value(),
-        .volumeMicroshares = volume.value(),
-    };
-    if (bar.openNanodollars <= 0 || bar.lowNanodollars <= 0 ||
-        bar.highNanodollars <
-            std::max({bar.openNanodollars, bar.closeNanodollars,
-                      bar.lowNanodollars}) ||
-        bar.lowNanodollars >
-            std::min({bar.openNanodollars, bar.closeNanodollars,
-                      bar.highNanodollars})) {
-      return core::makeError(core::ErrorCode::invalidArgument,
-                             "Snapshot row contains invalid OHLCV values");
-    }
-    if (!bars.empty() && bars.back().timestamp >= bar.timestamp) {
+    if (!bars.empty() && bars.back().timestamp >= bar.value().timestamp) {
       return core::makeError(core::ErrorCode::invalidArgument,
                              "Snapshot source timestamps must be increasing");
     }
-    bars.push_back(bar);
+    bars.push_back(std::move(bar).value());
   }
   return bars;
+}
+
+core::Result<std::vector<SnapshotBar>>
+readSourceBars(const std::filesystem::path &path, const std::string &symbol,
+               const SourceManifest &sourceManifest,
+               const core::CancellationToken &cancellation) {
+  auto sourceBytes = readSourceBytes(path, cancellation);
+  if (!sourceBytes.ok()) {
+    return sourceBytes.error();
+  }
+  auto declaration =
+      sourceDeclarationFor(path, sourceBytes.value(), sourceManifest);
+  if (!declaration.ok()) {
+    return declaration.error();
+  }
+
+  std::istringstream input{sourceBytes.value()};
+  std::string line;
+  if (!std::getline(input, line)) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Snapshot source is empty: " + path.string());
+  }
+  const auto header = split(line, ',');
+  const auto layout = parseSourceLayout(header);
+  if (!layout.ok()) {
+    return layout.error();
+  }
+  auto timeframe = sourceTimeframeFor(layout.value(), declaration.value());
+  if (!timeframe.ok()) {
+    return timeframe.error();
+  }
+  return parseSourceRows(input, symbol, layout.value(), timeframe.value(),
+                         cancellation);
 }
 
 void appendU64(std::vector<std::byte> &bytes, const std::uint64_t value) {
@@ -622,7 +677,7 @@ readSourceManifest(const std::filesystem::path &sourceDirectory) {
                                manifestPath.string());
   }
 
-  auto sourceManifest = SourceManifest{.present = true};
+  auto sourceManifest = SourceManifest{.present = true, .files = {}};
   constexpr std::array<std::string_view, 5> supportedTimeframes{
       "ohlcv-1s", "ohlcv-1m", "ohlcv-1h", "ohlcv-1d", "ohlcv-eod"};
   while (std::getline(input, line)) {
@@ -688,9 +743,9 @@ struct ReleaseSnapshotReader::Impl {
   std::vector<LoadedSegment> segments;
 };
 
-core::Result<SnapshotBuildResult>
-buildReleaseSnapshot(const SnapshotBuildRequest &request,
-                     const core::CancellationToken &cancellation) {
+core::Result<std::vector<std::string>>
+validatedSnapshotSymbols(const SnapshotBuildRequest &request,
+                         const core::CancellationToken &cancellation) {
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
                            "Snapshot build was cancelled");
@@ -709,6 +764,16 @@ buildReleaseSnapshot(const SnapshotBuildRequest &request,
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Snapshot symbols must be unique");
   }
+  return symbols;
+}
+
+core::Result<SnapshotBuildResult>
+buildReleaseSnapshot(const SnapshotBuildRequest &request,
+                     const core::CancellationToken &cancellation) {
+  auto symbols = validatedSnapshotSymbols(request, cancellation);
+  if (!symbols.ok()) {
+    return symbols.error();
+  }
   auto sourceManifest = readSourceManifest(request.sourceDirectory);
   if (!sourceManifest.ok()) {
     return sourceManifest.error();
@@ -720,7 +785,7 @@ buildReleaseSnapshot(const SnapshotBuildRequest &request,
   };
   std::vector<EncodedSegment> encodedSegments;
   std::size_t totalBars = 0;
-  for (const auto &symbol : symbols) {
+  for (const auto &symbol : symbols.value()) {
     auto bars = readSourceBars(request.sourceDirectory / (symbol + ".csv"),
                                symbol, sourceManifest.value(), cancellation);
     if (!bars.ok()) {
@@ -920,6 +985,7 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::select(
                    .profile = std::string{snapshotProfile},
                    .spans = {}},
       .preRangeDataDayClose = std::nullopt,
+      .preRangeDataDays = {},
   };
   for (const auto &segment : impl_->segments) {
     if (!symbols.contains(segment.metadata.symbol)) {
@@ -1084,6 +1150,7 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::readExact(
       .bars = {},
       .identity = identity,
       .preRangeDataDayClose = std::nullopt,
+      .preRangeDataDays = {},
   };
   std::optional<std::size_t> previousOrdinal;
   for (const auto &span : identity.spans) {

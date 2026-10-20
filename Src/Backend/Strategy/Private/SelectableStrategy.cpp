@@ -153,6 +153,53 @@ isNumericDomain(const indicators::NumericDomain domain) noexcept {
 }
 
 [[nodiscard]] core::Result<Condition>
+validatePreviousDataDayCondition(const Condition &condition) {
+  const bool validDirection =
+      (condition.comparison == Comparison::lessThanOrEqual &&
+       condition.threshold < 0.0) ||
+      (condition.comparison == Comparison::greaterThanOrEqual &&
+       condition.threshold > 0.0);
+  if (condition.thresholdDomain != indicators::NumericDomain::percent ||
+      condition.lookbackPeriod != 0 || !validDirection) {
+    return compileError(
+        "previous data-day close conditions require a signed inclusive "
+        "percentage comparison with a nonzero magnitude");
+  }
+  return condition;
+}
+
+[[nodiscard]] core::Result<Condition>
+validateHistoricalDataDayCondition(const Condition &condition) {
+  if (condition.lookbackPeriod < 1 ||
+      condition.lookbackPeriod > indicators::maximumIndicatorPeriod) {
+    return compileError(
+        "historical data-day conditions require a supported period and "
+        "their fixed positive-magnitude predicate");
+  }
+  const bool isBreakout =
+      condition.source == ConditionSource::breakPeriodHigh ||
+      condition.source == ConditionSource::breakPeriodLow;
+  if (isBreakout) {
+    if (condition.thresholdDomain != indicators::NumericDomain::scalar ||
+        condition.comparison != Comparison::greaterThan ||
+        condition.threshold != 0.0) {
+      return compileError(
+          "historical data-day conditions require a supported period and "
+          "their fixed positive-magnitude predicate");
+    }
+    return condition;
+  }
+  if (condition.thresholdDomain != indicators::NumericDomain::percent ||
+      condition.comparison != Comparison::greaterThanOrEqual ||
+      condition.threshold <= 0.0) {
+    return compileError(
+        "historical data-day conditions require a supported period and "
+        "their fixed positive-magnitude predicate");
+  }
+  return condition;
+}
+
+[[nodiscard]] core::Result<Condition>
 validateCondition(const Condition &condition) {
   if (!isSource(condition.source) || !isComparison(condition.comparison) ||
       !indicators::isValidBarField(condition.barField) ||
@@ -184,40 +231,10 @@ validateCondition(const Condition &condition) {
     return condition;
   }
   if (condition.source == ConditionSource::previousDataDayCloseChangePercent) {
-    const bool validDirection =
-        (condition.comparison == Comparison::lessThanOrEqual &&
-         condition.threshold < 0.0) ||
-        (condition.comparison == Comparison::greaterThanOrEqual &&
-         condition.threshold > 0.0);
-    if (condition.thresholdDomain != indicators::NumericDomain::percent ||
-        condition.lookbackPeriod != 0 || !validDirection) {
-      return compileError(
-          "previous data-day close conditions require a signed inclusive "
-          "percentage comparison with a nonzero magnitude");
-    }
-    return condition;
+    return validatePreviousDataDayCondition(condition);
   }
   if (isHistoricalDataDaySource(condition.source)) {
-    const bool validPeriod =
-        condition.lookbackPeriod >= 1 &&
-        condition.lookbackPeriod <= indicators::maximumIndicatorPeriod;
-    const bool isBreakout =
-        condition.source == ConditionSource::breakPeriodHigh ||
-        condition.source == ConditionSource::breakPeriodLow;
-    const bool validPredicate =
-        isBreakout
-            ? condition.thresholdDomain == indicators::NumericDomain::scalar &&
-                  condition.comparison == Comparison::greaterThan &&
-                  condition.threshold == 0.0
-            : condition.thresholdDomain == indicators::NumericDomain::percent &&
-                  condition.comparison == Comparison::greaterThanOrEqual &&
-                  condition.threshold > 0.0;
-    if (!validPeriod || !validPredicate) {
-      return compileError(
-          "historical data-day conditions require a supported period and "
-          "their fixed positive-magnitude predicate");
-    }
-    return condition;
+    return validateHistoricalDataDayCondition(condition);
   }
   if (condition.lookbackPeriod != 0) {
     return compileError("indicator conditions do not accept a data-day period");
@@ -255,14 +272,20 @@ canonicalStrategyHash(const std::optional<SelectableStrategyPlan> &plan) {
       plan.has_value() && planHasHistoricalDataDayCondition(*plan);
   const bool usesVersionTwo = !usesVersionThree && plan.has_value() &&
                               planHasPreviousDataDayCondition(*plan);
-  const auto version = usesVersionThree ? "v3" : (usesVersionTwo ? "v2" : "v1");
+  auto version = std::string_view{"v1"};
+  if (usesVersionThree) {
+    version = "v3";
+  } else if (usesVersionTwo) {
+    version = "v2";
+  }
   std::string bytes{"bte-strategy-"};
   bytes += version;
   if (!plan.has_value()) {
     appendFrame(bytes, "starter-market-buy-v1");
     return core::sha256(bytes);
   }
-  appendFrame(bytes, std::string{"selectable-conditions-"} + version);
+  appendFrame(bytes,
+              std::string{"selectable-conditions-"} + std::string{version});
   appendGroup(bytes, plan->buy, usesVersionThree);
   appendGroup(bytes, plan->sell, usesVersionThree);
   return core::sha256(bytes);
@@ -374,7 +397,10 @@ struct SelectableStrategy::Impl final {
                                 &HistoricalWindow::period) ==
               historicalWindows.end()) {
             historicalWindows.push_back(
-                HistoricalWindow{.period = condition.lookbackPeriod});
+                HistoricalWindow{.period = condition.lookbackPeriod,
+                                 .days = {},
+                                 .maximumHighDays = {},
+                                 .minimumLowDays = {}});
           }
         }
       }
@@ -490,6 +516,89 @@ struct SelectableStrategy::Impl final {
     return std::ranges::any_of(group.conditions, evaluateCondition);
   }
 
+  [[nodiscard]] static std::optional<indicators::IndicatorValue>
+  percentValue(const double value) noexcept {
+    if (!std::isfinite(value)) {
+      return std::nullopt;
+    }
+    return indicators::IndicatorValue{
+        .value = value,
+        .domain = indicators::NumericDomain::percent,
+    };
+  }
+
+  [[nodiscard]] static std::optional<indicators::IndicatorValue>
+  historicalValueForCondition(const Condition &condition, const double close,
+                              const HistoricalWindow &window) noexcept {
+    if (condition.source == ConditionSource::dataDayGainPercent) {
+      const auto referenceClose = window.days.front().close;
+      if (referenceClose <= 0.0) {
+        return std::nullopt;
+      }
+      return percentValue((close / referenceClose - 1.0) * 100.0);
+    }
+    if (condition.source == ConditionSource::periodHighDrawdownPercent) {
+      const auto periodHigh = window.maximumHighDays.front().high;
+      if (periodHigh <= 0.0) {
+        return std::nullopt;
+      }
+      return percentValue(((periodHigh - close) / periodHigh) * 100.0);
+    }
+    if (condition.source == ConditionSource::periodLowReboundPercent) {
+      const auto periodLow = window.minimumLowDays.front().low;
+      if (periodLow <= 0.0) {
+        return std::nullopt;
+      }
+      return percentValue(((close - periodLow) / periodLow) * 100.0);
+    }
+
+    const auto periodHigh = window.maximumHighDays.front().high;
+    const auto periodLow = window.minimumLowDays.front().low;
+    auto breakout = false;
+    if (condition.source == ConditionSource::breakPeriodHigh) {
+      breakout = close > periodHigh;
+    } else {
+      breakout = close < periodLow;
+    }
+    return indicators::IndicatorValue{
+        .value = breakout ? 1.0 : 0.0,
+        .domain = indicators::NumericDomain::scalar,
+    };
+  }
+
+  [[nodiscard]] std::optional<indicators::IndicatorValue>
+  historicalValueFor(const RuntimeCondition &condition,
+                     const core::Bar &bar) const noexcept {
+    if (!currentBarCanUseHistoricalDataDays) {
+      return std::nullopt;
+    }
+    const auto window =
+        std::ranges::find(historicalWindows, condition.condition.lookbackPeriod,
+                          &HistoricalWindow::period);
+    if (window == historicalWindows.end() || !window->isReady()) {
+      return std::nullopt;
+    }
+    return historicalValueForCondition(condition.condition, bar.close, *window);
+  }
+
+  [[nodiscard]] std::optional<indicators::IndicatorValue>
+  previousCloseChangeValue(const core::Bar &bar) const noexcept {
+    if (!previousClose.has_value() || *previousClose == 0.0) {
+      return std::nullopt;
+    }
+    return percentValue(100.0 * (bar.close - *previousClose) / *previousClose);
+  }
+
+  [[nodiscard]] std::optional<indicators::IndicatorValue>
+  previousDataDayCloseChangeValue(const core::Bar &bar) const noexcept {
+    if (!previousDataDayCloseForCurrentBar.has_value()) {
+      return std::nullopt;
+    }
+    const auto change =
+        (bar.close / *previousDataDayCloseForCurrentBar - 1.0) * 100.0;
+    return percentValue(change);
+  }
+
   [[nodiscard]] std::optional<indicators::IndicatorValue>
   valueFor(const RuntimeCondition &condition,
            const core::Bar &bar) const noexcept {
@@ -497,93 +606,14 @@ struct SelectableStrategy::Impl final {
       return indicators::barFieldValue(bar, condition.condition.barField);
     }
     if (condition.condition.source == ConditionSource::closeChangePercent) {
-      if (!previousClose.has_value() || *previousClose == 0.0) {
-        return std::nullopt;
-      }
-      return indicators::IndicatorValue{
-          .value = 100.0 * (bar.close - *previousClose) / *previousClose,
-          .domain = indicators::NumericDomain::percent,
-      };
+      return previousCloseChangeValue(bar);
     }
     if (condition.condition.source ==
         ConditionSource::previousDataDayCloseChangePercent) {
-      if (!previousDataDayCloseForCurrentBar.has_value()) {
-        return std::nullopt;
-      }
-      const auto change =
-          (bar.close / *previousDataDayCloseForCurrentBar - 1.0) * 100.0;
-      if (!std::isfinite(change)) {
-        return std::nullopt;
-      }
-      return indicators::IndicatorValue{
-          .value = change,
-          .domain = indicators::NumericDomain::percent,
-      };
+      return previousDataDayCloseChangeValue(bar);
     }
     if (isHistoricalDataDaySource(condition.condition.source)) {
-      if (!currentBarCanUseHistoricalDataDays) {
-        return std::nullopt;
-      }
-      const auto window = std::ranges::find(historicalWindows,
-                                            condition.condition.lookbackPeriod,
-                                            &HistoricalWindow::period);
-      if (window == historicalWindows.end() || !window->isReady()) {
-        return std::nullopt;
-      }
-      if (condition.condition.source == ConditionSource::dataDayGainPercent) {
-        const auto referenceClose = window->days.front().close;
-        if (referenceClose <= 0.0) {
-          return std::nullopt;
-        }
-        const auto change = (bar.close / referenceClose - 1.0) * 100.0;
-        if (!std::isfinite(change)) {
-          return std::nullopt;
-        }
-        return indicators::IndicatorValue{
-            .value = change,
-            .domain = indicators::NumericDomain::percent,
-        };
-      }
-      if (condition.condition.source ==
-          ConditionSource::periodHighDrawdownPercent) {
-        const auto periodHigh = window->maximumHighDays.front().high;
-        if (periodHigh <= 0.0) {
-          return std::nullopt;
-        }
-        const auto drawdown = ((periodHigh - bar.close) / periodHigh) * 100.0;
-        if (!std::isfinite(drawdown)) {
-          return std::nullopt;
-        }
-        return indicators::IndicatorValue{
-            .value = drawdown,
-            .domain = indicators::NumericDomain::percent,
-        };
-      }
-      if (condition.condition.source ==
-          ConditionSource::periodLowReboundPercent) {
-        const auto periodLow = window->minimumLowDays.front().low;
-        if (periodLow <= 0.0) {
-          return std::nullopt;
-        }
-        const auto rebound = ((bar.close - periodLow) / periodLow) * 100.0;
-        if (!std::isfinite(rebound)) {
-          return std::nullopt;
-        }
-        return indicators::IndicatorValue{
-            .value = rebound,
-            .domain = indicators::NumericDomain::percent,
-        };
-      }
-      const auto periodHigh = window->maximumHighDays.front().high;
-      const auto periodLow = window->minimumLowDays.front().low;
-      const bool breakout =
-          condition.condition.source == ConditionSource::breakPeriodHigh
-              ? bar.close > periodHigh
-              : bar.close < periodLow;
-      return indicators::IndicatorValue{
-          .value = breakout ? 1.0 : 0.0,
-          .domain = indicators::NumericDomain::scalar,
-      };
+      return historicalValueFor(condition, bar);
     }
     return condition.indicator->latest();
   }
