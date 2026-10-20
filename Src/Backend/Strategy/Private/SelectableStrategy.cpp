@@ -16,7 +16,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
-#include <ranges>
+#include <ranges> // IWYU pragma: keep
 #include <string>
 #include <string_view>
 #include <utility>
