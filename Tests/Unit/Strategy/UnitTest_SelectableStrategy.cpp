@@ -533,6 +533,34 @@ TEST(SelectableStrategyTest,
 }
 
 TEST(SelectableStrategyTest,
+     historicalConditionsDiscardSeedsThatAreNotUtcDataDayBoundaries) {
+  using namespace std::chrono;
+  using namespace bte::strategy;
+  const auto history = std::vector<PreviousDataDaySummary>{
+      {.utcDateStart =
+           bte::core::Timestamp{sys_days{year{2024} / January / 1} + hours{1}},
+       .high = 120.0,
+       .low = 80.0,
+       .close = 100.0},
+  };
+  const auto plan = SelectableStrategyPlan{
+      .buy = {.conditions = {historicalDataDayCondition(
+                  ConditionSource::dataDayGainPercent, 1, 1.0)}},
+      .sell = {},
+  };
+
+  auto created = SelectableStrategy::create(plan, std::nullopt, history);
+  ASSERT_TRUE(created.ok()) << created.error().message;
+  auto strategy = std::move(created).value();
+  const auto signal = strategy->onBar(makeBarAt(
+      bte::core::Timestamp{sys_days{year{2024} / January / 2} + hours{9}},
+      110.0));
+
+  ASSERT_TRUE(signal.ok()) << signal.error().message;
+  EXPECT_FALSE(signal.value().buy);
+}
+
+TEST(SelectableStrategyTest,
      historicalPredicatesRejectUnsupportedConditionParameters) {
   using namespace bte::strategy;
   const auto rejects = [](const Condition condition) {
