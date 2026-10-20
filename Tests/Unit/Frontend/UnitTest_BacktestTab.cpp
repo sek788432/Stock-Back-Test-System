@@ -168,7 +168,7 @@ bool previousDataDayUiContractIsVisible(
   return controls.comparison->count() == 2 &&
          controls.comparison->itemText(0) == "Down at least" &&
          controls.comparison->itemText(1) == "Up at least" &&
-         controls.threshold->minimum() == 0.0 &&
+         controls.threshold->minimum() == 0.0001 &&
          std::ranges::all_of(descriptions,
                              [&expectedHelp](const auto &help) {
                                return std::ranges::all_of(
@@ -1273,6 +1273,8 @@ void BacktestTabTest::
   controls.strategy->setCurrentText("Selectable conditions");
   controls.metric->setCurrentText("Previous data-day close change %");
   QVERIFY(previousDataDayUiContractIsVisible(controls));
+  controls.threshold->setValue(0.0);
+  QCOMPARE(controls.threshold->value(), 0.0001);
 
   controls.threshold->setValue(5.0);
   controls.comparison->setCurrentText("Down at least");

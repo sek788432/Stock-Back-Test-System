@@ -439,7 +439,7 @@ void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
   threshold->setSuffix(display.suffix);
   threshold->setRange(selectedMetric ==
                               ConditionMetric::previousDataDayCloseChangePercent
-                          ? 0.0
+                          ? 0.0001
                           : -1'000'000'000.0,
                       1'000'000'000.0);
   threshold->setToolTip(explanation);
