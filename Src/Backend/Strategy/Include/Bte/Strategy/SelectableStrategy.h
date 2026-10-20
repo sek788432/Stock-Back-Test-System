@@ -25,6 +25,7 @@ enum class ConditionSource : std::uint8_t {
   barField,
   closeChangePercent,
   indicator,
+  previousDataDayCloseChangePercent,
 };
 
 enum class Comparison : std::uint8_t {
@@ -34,6 +35,13 @@ enum class Comparison : std::uint8_t {
   lessThanOrEqual,
   equal,
   notEqual,
+};
+
+struct PreviousDataDayClose {
+  /// Timestamp of the source row that supplied this close.
+  core::Timestamp timestamp;
+  /// Close in dollars from the immutable data snapshot.
+  double close = 0.0;
 };
 
 struct Condition {
@@ -65,12 +73,16 @@ struct SelectableStrategySignal {
 [[nodiscard]] std::string
 canonicalStrategyHash(const std::optional<SelectableStrategyPlan> &plan);
 
-/// Evaluates the version-one flat Selectable Conditions plan against actual
-/// chronological bars. It has no access to orders, fills, or portfolio state.
+/// Evaluates a flat Selectable Conditions plan against actual chronological
+/// bars. It has no access to orders, fills, or portfolio state.
 class SelectableStrategy final {
 public:
-  [[nodiscard]] static core::Result<std::unique_ptr<SelectableStrategy>>
-  create(SelectableStrategyPlan plan);
+  /// Seeds the optional prior-data-day predicate from the same immutable
+  /// snapshot as the actual bars. Seeds on or after the first UTC data day are
+  /// ignored; invalid closes are treated as absent history.
+  [[nodiscard]] static core::Result<std::unique_ptr<SelectableStrategy>> create(
+      SelectableStrategyPlan plan,
+      std::optional<PreviousDataDayClose> previousDataDayClose = std::nullopt);
 
   ~SelectableStrategy();
   SelectableStrategy(SelectableStrategy &&) noexcept;
@@ -87,8 +99,9 @@ private:
       const indicators::IndicatorDefinition &definition);
 
   [[nodiscard]] static core::Result<std::unique_ptr<SelectableStrategy>>
-  createWithIndicatorFactory(SelectableStrategyPlan plan,
-                             IndicatorFactory indicatorFactory);
+  createWithIndicatorFactory(
+      SelectableStrategyPlan plan, IndicatorFactory indicatorFactory,
+      std::optional<PreviousDataDayClose> previousDataDayClose = std::nullopt);
 
   friend struct detail::SelectableStrategyTestAccess;
 

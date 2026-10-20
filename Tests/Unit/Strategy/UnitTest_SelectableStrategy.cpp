@@ -9,20 +9,41 @@
 #include <array>
 #include <chrono>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 namespace {
 
+bte::core::Bar makeBarAt(bte::core::Timestamp timestamp, double close);
+
 bte::core::Bar makeBar(const int day, const double close) {
+  return makeBarAt(bte::core::Timestamp{std::chrono::sys_days{
+                       std::chrono::year{2024} / 1 / day}},
+                   close);
+}
+
+bte::core::Bar makeBarAt(const bte::core::Timestamp timestamp,
+                         const double close) {
   return bte::core::Bar{
-      .ts = bte::core::Timestamp{std::chrono::sys_days{std::chrono::year{2024} /
-                                                       1 / day}},
+      .ts = timestamp,
       .open = close,
       .high = close + 1.0,
       .low = std::max(0.01, close - 1.0),
       .close = close,
       .volume = 100.0,
+  };
+}
+
+bte::strategy::Condition
+previousDataDayCloseCondition(const bte::strategy::Comparison comparison,
+                              const double threshold) {
+  return bte::strategy::Condition{
+      .source =
+          bte::strategy::ConditionSource::previousDataDayCloseChangePercent,
+      .comparison = comparison,
+      .threshold = threshold,
+      .thresholdDomain = bte::indicators::NumericDomain::percent,
   };
 }
 
@@ -93,8 +114,7 @@ TEST(SelectableStrategyTest, allRequiresEveryWarmedConditionBeforeBuying) {
   EXPECT_TRUE(third.value().buy);
 }
 
-TEST(SelectableStrategyTest,
-     canonicalHashIsStableAndCoversEverySelectablePlanField) {
+TEST(SelectableStrategyTest, legacySelectableHashRemainsV1) {
   auto plan = bte::strategy::SelectableStrategyPlan{
       .buy = {.logic = bte::strategy::ConditionLogic::all,
               .conditions = {priceChangeCondition(
@@ -109,6 +129,8 @@ TEST(SelectableStrategyTest,
                                  .period = 14}}}},
   };
   const auto original = bte::strategy::canonicalStrategyHash(plan);
+  EXPECT_EQ(original,
+            "d8722c8bb0625c68107e91460de923d06ef0847c10ae4e3294ec76c028b6aa85");
   EXPECT_EQ(original, bte::strategy::canonicalStrategyHash(plan));
   EXPECT_EQ(original.size(), 64U);
   EXPECT_NE(original, bte::strategy::canonicalStrategyHash(std::nullopt));
@@ -119,6 +141,280 @@ TEST(SelectableStrategyTest,
   auto changedIndicator = plan;
   changedIndicator.sell.conditions.front().indicator.period = 15;
   EXPECT_NE(original, bte::strategy::canonicalStrategyHash(changedIndicator));
+}
+
+TEST(SelectableStrategyTest,
+     dataDayCloseConditionUsesInclusivePositiveMagnitude) {
+  using namespace std::chrono;
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {previousDataDayCloseCondition(
+                  bte::strategy::Comparison::lessThanOrEqual, -5.0)}},
+      .sell = {.conditions = {previousDataDayCloseCondition(
+                   bte::strategy::Comparison::greaterThanOrEqual, 5.0)}},
+  };
+  const auto previousClose = bte::strategy::PreviousDataDayClose{
+      .timestamp =
+          bte::core::Timestamp{sys_days{year{2024} / January / 1} + hours{22}},
+      .close = 100.0,
+  };
+  auto created = bte::strategy::SelectableStrategy::create(plan, previousClose);
+  ASSERT_TRUE(created.ok());
+  auto strategy = std::move(created).value();
+  const auto testDate = sys_days{year{2024} / January / 2};
+
+  const auto exactDown = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{testDate + hours{1}}, 95.0));
+  const auto belowDown = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{testDate + hours{2}}, 94.99));
+  const auto aboveDown = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{testDate + hours{3}}, 95.01));
+  const auto exactUp = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{testDate + hours{4}}, 105.0));
+  const auto belowUp = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{testDate + hours{5}}, 104.99));
+  const auto aboveUp = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{testDate + hours{6}}, 105.01));
+
+  ASSERT_TRUE(exactDown.ok());
+  ASSERT_TRUE(belowDown.ok());
+  ASSERT_TRUE(aboveDown.ok());
+  ASSERT_TRUE(exactUp.ok());
+  ASSERT_TRUE(belowUp.ok());
+  ASSERT_TRUE(aboveUp.ok());
+  EXPECT_TRUE(exactDown.value().buy);
+  EXPECT_TRUE(belowDown.value().buy);
+  EXPECT_FALSE(aboveDown.value().buy);
+  EXPECT_FALSE(exactDown.value().sell);
+  EXPECT_TRUE(exactUp.value().sell);
+  EXPECT_FALSE(belowUp.value().sell);
+  EXPECT_TRUE(aboveUp.value().sell);
+}
+
+TEST(SelectableStrategyTest,
+     dataDayCloseConditionKeepsReferenceAcrossIntradayBars) {
+  using namespace std::chrono;
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {previousDataDayCloseCondition(
+                  bte::strategy::Comparison::lessThanOrEqual, -5.0)}},
+      .sell = {},
+  };
+  const auto previousClose = bte::strategy::PreviousDataDayClose{
+      .timestamp =
+          bte::core::Timestamp{sys_days{year{2024} / January / 1} + hours{22}},
+      .close = 110.0,
+  };
+  auto created = bte::strategy::SelectableStrategy::create(plan, previousClose);
+  ASSERT_TRUE(created.ok());
+  auto strategy = std::move(created).value();
+  const auto date = sys_days{year{2024} / January / 2};
+
+  const auto down =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{date + hours{9}}, 104.5));
+  const auto intradayRise =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{date + hours{15}}, 121.0));
+  const auto downAgain =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{date + hours{23}}, 104.5));
+
+  ASSERT_TRUE(down.ok());
+  ASSERT_TRUE(intradayRise.ok());
+  ASSERT_TRUE(downAgain.ok());
+  EXPECT_TRUE(down.value().buy);
+  EXPECT_FALSE(intradayRise.value().buy);
+  EXPECT_TRUE(downAgain.value().buy);
+}
+
+TEST(SelectableStrategyTest,
+     dataDayCloseConditionRollsAtUtcDateBoundaryAfterFridayExtendedClose) {
+  using namespace std::chrono;
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {previousDataDayCloseCondition(
+                  bte::strategy::Comparison::lessThanOrEqual, -5.0)}},
+      .sell = {},
+  };
+  const auto previousClose = bte::strategy::PreviousDataDayClose{
+      .timestamp =
+          bte::core::Timestamp{sys_days{year{2024} / March / 7} + hours{22}},
+      .close = 100.0,
+  };
+  auto created = bte::strategy::SelectableStrategy::create(plan, previousClose);
+  ASSERT_TRUE(created.ok());
+  auto strategy = std::move(created).value();
+  const auto friday = sys_days{year{2024} / March / 8};
+  const auto monday = sys_days{year{2024} / March / 11};
+
+  const auto regularClose = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{friday + hours{16}}, 100.0));
+  const auto extendedClose = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{friday + hours{22}}, 110.0));
+  const auto mondayOpen =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{monday}, 104.5));
+
+  ASSERT_TRUE(regularClose.ok());
+  ASSERT_TRUE(extendedClose.ok());
+  ASSERT_TRUE(mondayOpen.ok());
+  EXPECT_FALSE(regularClose.value().buy);
+  EXPECT_FALSE(extendedClose.value().buy);
+  EXPECT_TRUE(mondayOpen.value().buy);
+}
+
+TEST(SelectableStrategyTest,
+     dataDayCloseConditionUsesUtcDatesAcrossYearLeapAndExchangeDst) {
+  using namespace std::chrono;
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {previousDataDayCloseCondition(
+                  bte::strategy::Comparison::lessThanOrEqual, -5.0)}},
+      .sell = {.conditions = {previousDataDayCloseCondition(
+                   bte::strategy::Comparison::greaterThanOrEqual, 5.0)}},
+  };
+  const auto previousClose = bte::strategy::PreviousDataDayClose{
+      .timestamp = bte::core::Timestamp{sys_days{year{2023} / December / 30} +
+                                        hours{22}},
+      .close = 100.0,
+  };
+  auto created = bte::strategy::SelectableStrategy::create(plan, previousClose);
+  ASSERT_TRUE(created.ok());
+  auto strategy = std::move(created).value();
+  const auto dec31 = sys_days{year{2023} / December / 31};
+  const auto jan1 = sys_days{year{2024} / January / 1};
+  const auto feb28 = sys_days{year{2024} / February / 28};
+  const auto feb29 = sys_days{year{2024} / February / 29};
+  const auto mar10 = sys_days{year{2024} / March / 10};
+
+  const auto lastYear = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{dec31 + hours{23}}, 100.0));
+  const auto newYearDown =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{jan1}, 95.0));
+  const auto newYearUp =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{jan1 + hours{23}}, 110.0));
+  const auto afterLongGap = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{feb28 + hours{23}}, 104.5));
+  const auto leapDayDown =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{feb29}, 99.0));
+  const auto leapDayIntraday = strategy->onBar(
+      makeBarAt(bte::core::Timestamp{feb29 + hours{23}}, 104.5));
+  const auto afterDstDate =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{mar10 + hours{8}}, 99.0));
+
+  ASSERT_TRUE(lastYear.ok());
+  ASSERT_TRUE(newYearDown.ok());
+  ASSERT_TRUE(newYearUp.ok());
+  ASSERT_TRUE(afterLongGap.ok());
+  ASSERT_TRUE(leapDayDown.ok());
+  ASSERT_TRUE(leapDayIntraday.ok());
+  ASSERT_TRUE(afterDstDate.ok());
+  EXPECT_FALSE(lastYear.value().buy);
+  EXPECT_TRUE(newYearDown.value().buy);
+  EXPECT_TRUE(newYearUp.value().sell);
+  EXPECT_TRUE(afterLongGap.value().buy);
+  EXPECT_TRUE(leapDayDown.value().buy);
+  EXPECT_FALSE(leapDayIntraday.value().sell);
+  EXPECT_TRUE(afterDstDate.value().buy);
+}
+
+TEST(SelectableStrategyTest,
+     dataDayCloseConditionIgnoresAbsentInvalidAndFutureHistory) {
+  using namespace std::chrono;
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {previousDataDayCloseCondition(
+                  bte::strategy::Comparison::lessThanOrEqual, -5.0)}},
+      .sell = {},
+  };
+  const auto priorDate = sys_days{year{2024} / January / 1};
+  const auto runWithoutSeed =
+      [&](const std::optional<bte::strategy::PreviousDataDayClose> seed) {
+        auto created = bte::strategy::SelectableStrategy::create(plan, seed);
+        ASSERT_TRUE(created.ok());
+        auto strategy = std::move(created).value();
+        const auto signal = strategy->onBar(makeBar(2, 94.99));
+        ASSERT_TRUE(signal.ok());
+        EXPECT_FALSE(signal.value().buy);
+      };
+
+  runWithoutSeed(std::nullopt);
+  runWithoutSeed(bte::strategy::PreviousDataDayClose{
+      .timestamp = bte::core::Timestamp{priorDate}, .close = 0.0});
+  runWithoutSeed(bte::strategy::PreviousDataDayClose{
+      .timestamp = bte::core::Timestamp{priorDate}, .close = -100.0});
+  runWithoutSeed(bte::strategy::PreviousDataDayClose{
+      .timestamp = bte::core::Timestamp{priorDate},
+      .close = std::numeric_limits<double>::quiet_NaN()});
+  runWithoutSeed(bte::strategy::PreviousDataDayClose{
+      .timestamp = bte::core::Timestamp{priorDate},
+      .close = std::numeric_limits<double>::infinity()});
+  runWithoutSeed(bte::strategy::PreviousDataDayClose{
+      .timestamp = bte::core::Timestamp{sys_days{year{2024} / January / 2}},
+      .close = 100.0});
+  runWithoutSeed(bte::strategy::PreviousDataDayClose{
+      .timestamp = bte::core::Timestamp{sys_days{year{2024} / January / 3}},
+      .close = 100.0});
+}
+
+TEST(SelectableStrategyTest,
+     dataDayCloseConditionRejectsInvalidDirectionAndDomain) {
+  using namespace bte::strategy;
+  const auto makePlan = [](const Condition condition) {
+    return SelectableStrategyPlan{.buy = {.conditions = {condition}},
+                                  .sell = {}};
+  };
+  const auto wrongDirection = SelectableStrategy::create(makePlan(
+      previousDataDayCloseCondition(Comparison::lessThanOrEqual, 5.0)));
+  const auto wrongComparison = SelectableStrategy::create(
+      makePlan(previousDataDayCloseCondition(Comparison::lessThan, -5.0)));
+  const auto zeroThreshold = SelectableStrategy::create(makePlan(
+      previousDataDayCloseCondition(Comparison::greaterThanOrEqual, 0.0)));
+  const auto oppositeSignedThreshold = SelectableStrategy::create(makePlan(
+      previousDataDayCloseCondition(Comparison::greaterThanOrEqual, -5.0)));
+  auto wrongDomainCondition =
+      previousDataDayCloseCondition(Comparison::lessThanOrEqual, -5.0);
+  wrongDomainCondition.thresholdDomain = bte::indicators::NumericDomain::price;
+  const auto wrongDomain =
+      SelectableStrategy::create(makePlan(wrongDomainCondition));
+
+  EXPECT_FALSE(wrongDirection.ok());
+  EXPECT_FALSE(wrongComparison.ok());
+  EXPECT_FALSE(zeroThreshold.ok());
+  EXPECT_FALSE(oppositeSignedThreshold.ok());
+  EXPECT_FALSE(wrongDomain.ok());
+}
+
+TEST(SelectableStrategyTest, dataDayClosePlanUsesV2Hash) {
+  using namespace bte::strategy;
+  auto plan = SelectableStrategyPlan{
+      .buy = {.conditions = {previousDataDayCloseCondition(
+                  Comparison::lessThanOrEqual, -5.0)}},
+      .sell = {},
+  };
+  const auto original = canonicalStrategyHash(plan);
+  EXPECT_EQ(original,
+            "87d4d78867b5cc107f74913b4c917f695a70fc43562b9715e1eb13c94dbeabbb");
+
+  auto changedSource = plan;
+  changedSource.buy.conditions.front().source =
+      ConditionSource::closeChangePercent;
+  EXPECT_NE(original, canonicalStrategyHash(changedSource));
+  auto changedComparison = plan;
+  changedComparison.buy.conditions.front().comparison =
+      Comparison::greaterThanOrEqual;
+  EXPECT_NE(original, canonicalStrategyHash(changedComparison));
+  auto changedDirection = plan;
+  changedDirection.buy.conditions.front().threshold = 5.0;
+  EXPECT_NE(original, canonicalStrategyHash(changedDirection));
+  auto changedThreshold = plan;
+  changedThreshold.buy.conditions.front().threshold = -5.5;
+  EXPECT_NE(original, canonicalStrategyHash(changedThreshold));
+  auto changedLogic = plan;
+  changedLogic.buy.logic = ConditionLogic::any;
+  EXPECT_NE(original, canonicalStrategyHash(changedLogic));
+
+  auto changedOrder = plan;
+  changedOrder.buy.conditions.push_back(Condition{
+      .source = ConditionSource::barField,
+      .comparison = Comparison::greaterThan,
+      .threshold = 10.0,
+  });
+  const auto changedOrderHash = canonicalStrategyHash(changedOrder);
+  std::ranges::reverse(changedOrder.buy.conditions);
+  EXPECT_NE(changedOrderHash, canonicalStrategyHash(changedOrder));
 }
 
 TEST(SelectableStrategyTest, anyUsesPriceChangeOrAnIndicatorAndSeparatesSell) {

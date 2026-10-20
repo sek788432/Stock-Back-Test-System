@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <functional> // IWYU pragma: keep
@@ -58,8 +59,20 @@ void appendGroup(std::string &bytes, const ConditionGroup &group) {
 }
 
 [[nodiscard]] bool isSource(const ConditionSource source) noexcept {
-  return source >= ConditionSource::barField &&
-         source <= ConditionSource::indicator;
+  return source == ConditionSource::barField ||
+         source == ConditionSource::closeChangePercent ||
+         source == ConditionSource::indicator ||
+         source == ConditionSource::previousDataDayCloseChangePercent;
+}
+
+[[nodiscard]] bool
+planHasPreviousDataDayCondition(const SelectableStrategyPlan &plan) {
+  const auto groupHasCondition = [](const ConditionGroup &group) {
+    return std::ranges::any_of(group.conditions, [](const Condition &item) {
+      return item.source == ConditionSource::previousDataDayCloseChangePercent;
+    });
+  };
+  return groupHasCondition(plan.buy) || groupHasCondition(plan.sell);
 }
 
 [[nodiscard]] bool isComparison(const Comparison comparison) noexcept {
@@ -134,6 +147,20 @@ validateCondition(const Condition &condition) {
     }
     return condition;
   }
+  if (condition.source == ConditionSource::previousDataDayCloseChangePercent) {
+    const bool validDirection =
+        (condition.comparison == Comparison::lessThanOrEqual &&
+         condition.threshold < 0.0) ||
+        (condition.comparison == Comparison::greaterThanOrEqual &&
+         condition.threshold > 0.0);
+    if (condition.thresholdDomain != indicators::NumericDomain::percent ||
+        !validDirection) {
+      return compileError(
+          "previous data-day close conditions require a signed inclusive "
+          "percentage comparison with a nonzero magnitude");
+    }
+    return condition;
+  }
   return condition;
 }
 
@@ -163,12 +190,15 @@ validateGroup(const ConditionGroup &group, const bool required) {
 
 std::string
 canonicalStrategyHash(const std::optional<SelectableStrategyPlan> &plan) {
-  std::string bytes{"bte-strategy-v1"};
+  const bool usesVersionTwo =
+      plan.has_value() && planHasPreviousDataDayCondition(*plan);
+  std::string bytes{usesVersionTwo ? "bte-strategy-v2" : "bte-strategy-v1"};
   if (!plan.has_value()) {
     appendFrame(bytes, "starter-market-buy-v1");
     return core::sha256(bytes);
   }
-  appendFrame(bytes, "selectable-conditions-v1");
+  appendFrame(bytes, usesVersionTwo ? "selectable-conditions-v2"
+                                    : "selectable-conditions-v1");
   appendGroup(bytes, plan->buy);
   appendGroup(bytes, plan->sell);
   return core::sha256(bytes);
@@ -186,9 +216,17 @@ struct SelectableStrategy::Impl final {
   };
 
   explicit Impl(SelectableStrategyPlan configuredPlan,
-                const detail::IndicatorFactory configuredIndicatorFactory)
+                const detail::IndicatorFactory configuredIndicatorFactory,
+                std::optional<PreviousDataDayClose> configuredPreviousClose)
       : plan(std::move(configuredPlan)),
-        indicatorFactory(configuredIndicatorFactory) {}
+        indicatorFactory(configuredIndicatorFactory),
+        usesPreviousDataDayClose(planHasPreviousDataDayCondition(plan)),
+        seedPreviousDataDayClose(
+            configuredPreviousClose.has_value() &&
+                    std::isfinite(configuredPreviousClose->close) &&
+                    configuredPreviousClose->close > 0.0
+                ? configuredPreviousClose
+                : std::nullopt) {}
 
   [[nodiscard]] core::Result<bool> initialize() {
     auto buyGroup = makeGroup(plan.buy, true, "buy condition group");
@@ -218,11 +256,17 @@ struct SelectableStrategy::Impl final {
     if (!sellUpdate.ok()) {
       return sellUpdate.error();
     }
+    if (usesPreviousDataDayClose) {
+      beginDataDayBar(bar);
+    }
     const auto signal = SelectableStrategySignal{
         .buy = evaluate(buy, bar),
         .sell = evaluate(sell, bar),
     };
     previousClose = bar.close;
+    if (usesPreviousDataDayClose) {
+      finishDataDayBar(bar);
+    }
     return signal;
   }
 
@@ -321,7 +365,51 @@ struct SelectableStrategy::Impl final {
           .domain = indicators::NumericDomain::percent,
       };
     }
+    if (condition.condition.source ==
+        ConditionSource::previousDataDayCloseChangePercent) {
+      if (!previousDataDayCloseForCurrentBar.has_value()) {
+        return std::nullopt;
+      }
+      const auto change =
+          (bar.close / *previousDataDayCloseForCurrentBar - 1.0) * 100.0;
+      if (!std::isfinite(change)) {
+        return std::nullopt;
+      }
+      return indicators::IndicatorValue{
+          .value = change,
+          .domain = indicators::NumericDomain::percent,
+      };
+    }
     return condition.indicator->latest();
+  }
+
+  void beginDataDayBar(const core::Bar &bar) {
+    using namespace std::chrono;
+    currentBarCanUpdateDataDayClose = true;
+    const auto dataDay = floor<days>(bar.ts);
+    if (!currentDataDay.has_value()) {
+      currentDataDay = dataDay;
+      if (seedPreviousDataDayClose.has_value() &&
+          floor<days>(seedPreviousDataDayClose->timestamp) < dataDay) {
+        previousDataDayClose = seedPreviousDataDayClose->close;
+      }
+    } else if (dataDay > *currentDataDay) {
+      previousDataDayClose = currentDataDayLastClose;
+      currentDataDay = dataDay;
+      currentDataDayLastClose.reset();
+    } else if (dataDay < *currentDataDay) {
+      previousDataDayCloseForCurrentBar.reset();
+      currentBarCanUpdateDataDayClose = false;
+      return;
+    }
+    previousDataDayCloseForCurrentBar = previousDataDayClose;
+  }
+
+  void finishDataDayBar(const core::Bar &bar) {
+    if (!currentDataDay.has_value() || !currentBarCanUpdateDataDayClose) {
+      return;
+    }
+    currentDataDayLastClose = bar.close;
   }
 
   SelectableStrategyPlan plan;
@@ -329,6 +417,13 @@ struct SelectableStrategy::Impl final {
   RuntimeGroup buy;
   RuntimeGroup sell;
   std::optional<double> previousClose;
+  bool usesPreviousDataDayClose = false;
+  std::optional<PreviousDataDayClose> seedPreviousDataDayClose;
+  std::optional<std::chrono::sys_days> currentDataDay;
+  std::optional<double> previousDataDayClose;
+  std::optional<double> currentDataDayLastClose;
+  std::optional<double> previousDataDayCloseForCurrentBar;
+  bool currentBarCanUpdateDataDayClose = true;
 };
 
 SelectableStrategy::SelectableStrategy(std::unique_ptr<Impl> impl) noexcept
@@ -342,10 +437,11 @@ SelectableStrategy::operator=(SelectableStrategy &&) noexcept = default;
 
 core::Result<std::unique_ptr<SelectableStrategy>>
 SelectableStrategy::createWithIndicatorFactory(
-    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory) {
+    SelectableStrategyPlan plan, const IndicatorFactory indicatorFactory,
+    std::optional<PreviousDataDayClose> previousDataDayClose) {
   try {
     auto implementation = std::make_unique<SelectableStrategy::Impl>(
-        std::move(plan), indicatorFactory);
+        std::move(plan), indicatorFactory, previousDataDayClose);
     const auto initialized = implementation->initialize();
     if (!initialized.ok()) {
       return initialized.error();
@@ -359,10 +455,12 @@ SelectableStrategy::createWithIndicatorFactory(
   }
 }
 
-core::Result<std::unique_ptr<SelectableStrategy>>
-SelectableStrategy::create(SelectableStrategyPlan plan) {
+core::Result<std::unique_ptr<SelectableStrategy>> SelectableStrategy::create(
+    SelectableStrategyPlan plan,
+    std::optional<PreviousDataDayClose> previousDataDayClose) {
   auto strategy = createWithIndicatorFactory(
-      std::move(plan), &indicators::StreamingIndicator::create);
+      std::move(plan), &indicators::StreamingIndicator::create,
+      previousDataDayClose);
   return strategy;
 }
 
