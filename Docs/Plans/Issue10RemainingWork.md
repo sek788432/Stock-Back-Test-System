@@ -1,20 +1,22 @@
 # Issue 10 Remaining Work
 
-**As of 2026-10-20: Needs changes.** This is a current delivery/acceptance
-summary, not a replacement for the full dated
+**As of 2026-10-20: Broader delivery acceptance remains.** This is a current
+delivery/acceptance summary, not a replacement for the full dated
 [implementation plan](../Issue10DeterministicReplayFixturePlan.md) or the
 [source inventory](Issue10IncrementalDeliveryInventory.md).
 
 GitHub Issue #10 itself is narrowly scoped to the offline deterministic Replay
 fixture. Its committed fixture and both named snapshot-determinism tests are
-present; this report tracks the broader Issue 10 delivery plan. The issue is
-left open for the maintainer to close.
+present, and GitHub closed the issue as completed on 2026-10-20. This report
+tracks the broader Issue 10 delivery plan; those broader acceptance items are
+separate from the closed issue.
 
 PR #76 is now merged, including R1–R3 persistence safety and the previously
 published Replay repairs. Task 17/18, seven-column CSV timeframe provenance,
 truthful capability details, and long-range AAPL Result/Replay reconciliation
-are implemented on the local continuation. Final exact-head gates, remote
-checks, native application acceptance, and whole-branch review remain.
+are implemented on the local continuation. Exact-head local test, quality, and
+sanitizer gates now pass. Remote CI/CodeQL, native application acceptance, and
+final whole-branch review remain.
 
 ## Latest local continuation
 
@@ -33,12 +35,14 @@ checks, native application acceptance, and whole-branch review remain.
   RunTest 295/295, Quality with 100% changed-line coverage, ASan/UBSan 249/249,
   and TSan 249/249. Before the current R7/R8 additions, commit `1e1c592`
   passed exact-head RunTest 321/321 and complete Quality with 98.0% diff
-  coverage. R7/R8 focused tests pass; the final combined head still needs
-  exact-head tests, Quality, and both sanitizer presets.
+  coverage. Current continuation RunTest passes 322/322; complete Quality
+  passes with 98.0% diff line coverage and 96.9% changed-branch coverage;
+  ASan/UBSan and TSan each pass 274/274. These are local gates, not remote
+  CI/CodeQL results.
 - Earlier PR creation through the connected GitHub integration failed with
   HTTP 403 (`Resource not accessible by integration`), and the local `gh` CLI
-  was unavailable. Remote CI/CodeQL has not run for this continuation; retry
-  publishing after the final local gates.
+  was unavailable. At this checkpoint no continuation PR is open and remote
+  CI/CodeQL has not run; retry publishing now that local gates pass.
 - The user-requested branch reconciliation was completed before this
   continuation. Work is on `codex/issue10-task18`, based on `4415373` with
   `508d2d9` in its `main` ancestry. Task 17/18 and provenance commits precede
@@ -61,9 +65,10 @@ persisted dividend-accounting warning as plain text. R8 builds all 31,466 AAPL
 source rows into an immutable snapshot, runs and saves the full 2018–2026
 backtest, then checks all 31,466 saved Hourly frames and 2,014 UTC Daily frames;
 known 2026-05-04/05 OHLCV values, fills, exact saved spans, and per-day portfolio
-checkpoints are reconciled. These focused checks pass locally; final exact-head
-Quality and sanitizer gates and remote CI/CodeQL remain pending. Native Replay
-checks across window sizes, resizing, playback, zoom/pan and long-range data,
+checkpoints are reconciled. The combined exact-head local gates now pass:
+RunTest 322/322, Quality 98.0% diff lines and 96.9% changed-branch coverage,
+ASan/UBSan 274/274, and TSan 274/274. Remote CI/CodeQL remain pending. Native
+Replay checks across window sizes, resizing, playback, zoom/pan and long-range data,
 plus delivered-checkout `Launch.sh` acceptance, remain open. The native
 interactive action was rejected by automatic review for a usage limit; no
 workaround was attempted. Automated Qt workflows do not replace the requested
@@ -234,24 +239,23 @@ Latest follow-up evidence (2026-10-15):
 | R3: execution-time durability | Final exact-head, remote and native acceptance | Implemented with per-bar atomic commits, atomic terminal tail, and committed-prefix recovery; local Engine/Store/process tests pass |
 | Legacy staging compatibility | Final review and native workflow acceptance | Unleased Staging and sidecars stay byte-identical and produce typed English preservation notices; accessibility/refresh test passes |
 | CI / Results rename acceptance | Verify current exact head | Prior GCC wait/IWYU/rename fixes are present; current Results workflow test and full local CTest pass |
-| Exact-head CI readiness | Run final committed-head checks, publish a PR, and obtain required CI/CodeQL | Commit `1e1c592` passed RunTest 321/321 and Quality with 98.0% diff coverage. R7/R8 focused tests pass; their current changes still need full exact-head tests, Quality, ASan/UBSan, TSan, and remote CI/CodeQL |
+| Exact-head CI readiness | Publish a PR and obtain required CI/CodeQL | Local committed-head RunTest 322/322 and Quality pass (98.0% diff lines; 96.9% changed branches); ASan/UBSan and TSan each pass 274/274. Remote CI/CodeQL remain pending |
 | CI long-load responsiveness | Verify on current remote coverage runner | Snapshot reuse and bounded SHA work are present; previous local samples do not replace current exact-head remote coverage |
 | R8: long-range saved-data completeness | Complete native visible-chart confirmation against exact saved bars and fills | Automated AAPL acceptance passes across all 31,466 source/snapshot/result Hourly bars and 2,014 UTC Daily candles; exact spans, 2026-05-04/05 OHLCV, fills, and daily portfolio checkpoints match. Native viewport acceptance remains open |
 | T: exact Daily fill selection | Verify exact behavior against real saved data | Fixed locally by requiring exact selected timestamps; regression test covers an interior gap |
-| L: seven-column source provenance | Distinguish actual hourly CSV from a seven-column daily export; preserve or explicitly decide trailing-column compatibility | Implemented locally with exact-byte hash-bound timeframe declarations; 503 tracked CSVs were byte-compared to DuckDB exports, C++ accepts/rejects and legacy trailing-column tests pass; exact-head gates remain |
+| L: seven-column source provenance | Verify remote CI/CodeQL | Implemented with exact-byte hash-bound timeframe declarations; 503 tracked CSVs were byte-compared to DuckDB exports, C++ accepts/rejects and legacy trailing-column tests pass; local exact-head gates pass |
 | R6: independent hash oracle | Re-run on final exact submitted commit | Independent literal schema-2 hash oracle is implemented and passes locally |
-| R7: truthful capabilities | Complete exact-head and native confirmation | Implemented in the Result details pane. Focused UI test verifies all persisted supported/unavailable families and the dividend-accounting warning as plain text; no unsupported values are synthesized |
+| R7: truthful capabilities | Complete native confirmation | Implemented in the Result details pane. UI tests verify all persisted supported/unavailable families and the dividend-accounting warning as plain text; no unsupported values are synthesized |
 
 ## Requested features and final acceptance still unfinished
 
 Task 17/18 and source provenance are implemented on the continuation branch.
-The pre-R7/R8 head `1e1c592` passed local RunTest and Quality; current R7/R8
-changes have focused tests but still need final combined-head tests, Quality,
-ASan/UBSan, TSan, branch review, and remote CI/CodeQL.
+The current combined head passes local RunTest, Quality, ASan/UBSan, and TSan.
+Remote CI/CodeQL, native application acceptance, and final branch review remain.
 
 | Request / plan task | Remaining work |
 | --- | --- |
-| Historical conditions, Task 18 | Implemented locally: 30 available UTC data-date close-to-close gain; prior 21 complete data-date highs/lows excluding the current date; persistent strict breakouts; bounded same-snapshot pre-range warm-up. Current final-head gates, remote checks, and native acceptance remain |
+| Historical conditions, Task 18 | Implemented: 30 available UTC data-date close-to-close gain; prior 21 complete data-date highs/lows excluding the current date; persistent strict breakouts; bounded same-snapshot pre-range warm-up. Exact-head local gates pass; verify remote CI/CodeQL and native acceptance |
 | Save Result / Save & Replay, Task 14 | R1–R3 and current local workflow tests are implemented; exact-head/remote checks and native restart/failure acceptance remain |
 | Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Current worker/error/refresh/restore tests pass; exercise the full native workflow and real saved data |
 | Progressive Hourly/Daily replay, Tasks 21/24 | Automated deterministic and full-range AAPL tests pass for exact bars, dates, fills and portfolio checkpoints; native viewport behavior and readable long-range display remain |
@@ -259,7 +263,7 @@ ASan/UBSan, TSan, branch review, and remote CI/CodeQL.
 | Viewport / zoom / Follow latest / Max | Automated viewport coverage passes; complete native three-size, wheel/pan, resize-during-playback, full-range and readable-tail checks |
 | Exact real-data comparison / Tasks 10/11B/13 | Automated full-range AAPL source/snapshot/saved Result/Replay reconciliation passes; native visible-candle confirmation remains |
 | Delivered Launch.sh path / Tasks 19/20/27 | Verify the final merged checkout builds/launches the exact code, exposes Save/Replay, and runs the selected long-range multi-fill configuration |
-| Whole-branch review / Task 12 | Review all branch commits and current changes, run final exact-head tests/Quality/sanitizers, obtain CI/CodeQL, and complete native acceptance |
+| Whole-branch review / Task 12 | Finish final branch review, obtain CI/CodeQL, and complete native acceptance; local exact-head tests/Quality/sanitizers pass |
 | Workspace and branches / Tasks 27/29 | Reconcile every intended hunk, preserved root draft and stash; only remove confirmed non-main branches after all unique intended code is merged or explicitly retained |
 
 ## Preserved work, not omitted delivery
@@ -267,9 +271,9 @@ ASan/UBSan, TSan, branch review, and remote CI/CodeQL.
 - The old user branches were audited and removed after confirming their
   delivered changes are represented in `main`. The Task 18 continuation is on
   `codex/issue10-task18`, based on `4415373` with `508d2d9` as its `main`
-  ancestry. Task 17/18 and source-manifest commits are local; commit `1e1c592`
-  passed RunTest and Quality. Current R7/R8 and status-document changes are
-  uncommitted and require the final exact-head gates before publication.
+  ancestry. Task 17/18, source-manifest, R7 and R8 changes are committed; local
+  exact-head test, quality, and sanitizer gates pass. Publish this continuation
+  and obtain remote CI/CodeQL before merging or cleaning up its branch.
 - R1–R3 persistence implementation and its owning documentation are merged in
   PR #76. Remote checks and native acceptance for the broader continuation
   remain open.
