@@ -237,6 +237,59 @@ protected:
     };
   }
 
+  [[nodiscard]] bte::core::Result<PersistedDataDayRun>
+  runPersistedHistoricalDataDayBacktest() const {
+    const auto built = bte::data::buildReleaseSnapshot({
+        .sourceDirectory = std::filesystem::path{BTE_TEST_SOURCE_DIR} /
+                           "Tests/Fixtures/Replay",
+        .storeDirectory = root_ / "Data",
+        .symbols = {"SYN"},
+        .rowsPerSegment = 2,
+        .calendarHash = std::string(64, 'a'),
+        .splitManifestHash = std::string(64, 'b'),
+    });
+    if (!built.ok()) {
+      return built.error();
+    }
+    const auto plan = bte::strategy::SelectableStrategyPlan{
+        .buy = {.logic = bte::strategy::ConditionLogic::all,
+                .conditions = {{
+                    .source =
+                        bte::strategy::ConditionSource::dataDayGainPercent,
+                    .comparison = bte::strategy::Comparison::greaterThanOrEqual,
+                    .threshold = 1.9,
+                    .thresholdDomain = bte::indicators::NumericDomain::percent,
+                    .lookbackPeriod = 1,
+                }}},
+        .sell = {},
+    };
+    const auto configuration = bte::bindings::BacktestConfiguration{
+        .symbol = "SYN",
+        .schema = "ohlcv-1h",
+        .startDate = QDate{2024, 1, 2},
+        .endDate = QDate{2024, 1, 2},
+        .initialCapital = 2'000.0,
+        .quantityShares = 10,
+        .selectableStrategy = plan,
+    };
+    const auto storage = bte::bindings::PersistedBacktestStorage{
+        .resultStore = root_ / "Results",
+        .dataStore = root_ / "Data",
+        .snapshotId = built.value().snapshotId,
+        .strategyHash = std::string(64, 'e'),
+    };
+    auto backtest = bte::bindings::runPersistedBacktestConfiguration(
+        configuration, storage);
+    if (!backtest.ok()) {
+      return backtest.error();
+    }
+    return PersistedDataDayRun{
+        .backtest = std::move(backtest).value(),
+        .storage = storage,
+        .plan = plan,
+    };
+  }
+
   QTemporaryDir directory_{QString::fromStdString(
       (std::filesystem::temp_directory_path() / "bte-replay-backtest-XXXXXX")
           .string())};
@@ -324,6 +377,37 @@ TEST_F(ReplayBacktestDeterminism,
   ASSERT_TRUE(runResult.ok()) << runResult.error().message;
   const auto run = std::move(runResult).value();
   expectBacktestFilledOnNextSelectedBar(run.backtest, hour(1));
+
+  const auto published =
+      bte::bindings::publishBacktestDraft(run.storage, run.backtest.resultId);
+  ASSERT_TRUE(published.ok()) << published.error().message;
+  auto replay = bte::bindings::ResultReplay::open(
+      run.storage.resultStore, run.storage.dataStore, run.backtest.resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  expectReplayContainsSelectedCandles(*replay.value(),
+                                      {hour(0), hour(1), hour(2)});
+  expectFillMarkerUsesNextSelectedBar(*replay.value(), hour(1));
+
+  auto store = bte::results::ResultStore::open(run.storage.resultStore,
+                                               run.storage.dataStore);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto opened = store.value()->openResult(run.backtest.resultId);
+  ASSERT_TRUE(opened.ok()) << opened.error().message;
+  expectPersistedTimelineContainsOnlySelectedBars(opened.value(), run, hour(0));
+}
+
+TEST_F(ReplayBacktestDeterminism,
+       historicalDataDayWarmupPersistsAndReplaysOnlySelectedBars) {
+  auto runResult = runPersistedHistoricalDataDayBacktest();
+  ASSERT_TRUE(runResult.ok()) << runResult.error().message;
+  const auto run = std::move(runResult).value();
+  expectBacktestFilledOnNextSelectedBar(run.backtest, hour(1));
+
+  auto repeatedRunResult = runPersistedHistoricalDataDayBacktest();
+  ASSERT_TRUE(repeatedRunResult.ok()) << repeatedRunResult.error().message;
+  EXPECT_EQ(run.backtest.canonicalResultHash,
+            repeatedRunResult.value().backtest.canonicalResultHash);
 
   const auto published =
       bte::bindings::publishBacktestDraft(run.storage, run.backtest.resultId);

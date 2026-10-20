@@ -22,7 +22,7 @@ remote checks, and native application acceptance are still pending; see the
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar. Task 17's prior UTC data-day close condition also runs through the immutable snapshot context without adding warm-up bars to Engine or Replay. |
+| **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar. Task 17 and Task 18 UTC data-day conditions use bounded history from the same immutable snapshot without adding warm-up bars to Engine or Replay. |
 | **Planned** | Synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, the complete Results-management UI and migration workflow, and the remaining canonical record families. |
 | **Blocked** | Public release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
 
@@ -41,7 +41,13 @@ Strategy state; Engine records, processed-bar counts, and Replay candles remain
 within the selected execution range. This CSV convention is not an official
 exchange-session close and does not implement the general exchange-calendar
 contract below. Task 18's 30-data-day gain and prior-21-data-day extrema and
-breakouts remain accepted but not implemented. See the
+breakouts are implemented in the limited Selectable Conditions path. The
+binding requests the required pre-range UTC data-day summaries from the same
+snapshot; Strategy uses them only as historical state and then rolls completed
+dates as actual execution bars arrive. Insufficient history produces no
+historical match. Warm-up contributes no processed bars, result records, or
+Replay candles. Strategy v1 and v2 hash framing stay frozen; Task 18 sources use
+v3 framing including the lookback period. See the
 [`StrategyAuthoring.md`](StrategyAuthoring.md#csvutc-day-historical-conditions)
 contract.
 

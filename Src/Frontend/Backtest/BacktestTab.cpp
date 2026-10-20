@@ -151,6 +151,11 @@ QString statusText(const bindings::BacktestOutcome outcome,
 enum class ConditionMetric : std::uint8_t {
   closeChangePercent,
   previousDataDayCloseChangePercent,
+  dataDayGainPercent,
+  periodHighDrawdownPercent,
+  periodLowReboundPercent,
+  breakPeriodHigh,
+  breakPeriodLow,
   close,
   sma,
   ema,
@@ -177,6 +182,14 @@ void addConditionMetricItems(QComboBox *combo) {
   add(BacktestTab::tr("Close change %"), ConditionMetric::closeChangePercent);
   add(BacktestTab::tr("Previous data-day close change %"),
       ConditionMetric::previousDataDayCloseChangePercent);
+  add(BacktestTab::tr("Up X% over selected period"),
+      ConditionMetric::dataDayGainPercent);
+  add(BacktestTab::tr("Down X% from period high"),
+      ConditionMetric::periodHighDrawdownPercent);
+  add(BacktestTab::tr("Up X% from period low"),
+      ConditionMetric::periodLowReboundPercent);
+  add(BacktestTab::tr("Break period high"), ConditionMetric::breakPeriodHigh);
+  add(BacktestTab::tr("Break period low"), ConditionMetric::breakPeriodLow);
   add(BacktestTab::tr("Close"), ConditionMetric::close);
   add(BacktestTab::tr("SMA"), ConditionMetric::sma);
   add(BacktestTab::tr("EMA"), ConditionMetric::ema);
@@ -227,6 +240,30 @@ void updateComparisonItems(const ConditionMetric metric,
     return;
   }
 
+  if (metric == ConditionMetric::dataDayGainPercent ||
+      metric == ConditionMetric::periodLowReboundPercent) {
+    comparison->addItem(
+        BacktestTab::tr("Up at least"),
+        static_cast<int>(strategy::Comparison::greaterThanOrEqual));
+    return;
+  }
+  if (metric == ConditionMetric::periodHighDrawdownPercent) {
+    comparison->addItem(
+        BacktestTab::tr("Down at least"),
+        static_cast<int>(strategy::Comparison::greaterThanOrEqual));
+    return;
+  }
+  if (metric == ConditionMetric::breakPeriodHigh) {
+    comparison->addItem(BacktestTab::tr("Strictly above"),
+                        static_cast<int>(strategy::Comparison::greaterThan));
+    return;
+  }
+  if (metric == ConditionMetric::breakPeriodLow) {
+    comparison->addItem(BacktestTab::tr("Strictly below"),
+                        static_cast<int>(strategy::Comparison::greaterThan));
+    return;
+  }
+
   addComparisonItems(comparison);
   const auto selectedIndex =
       comparison->findData(static_cast<int>(selectedComparison));
@@ -257,6 +294,40 @@ strategy::Condition makeCondition(const ConditionMetric metric,
     condition.threshold = comparison == strategy::Comparison::lessThanOrEqual
                               ? -threshold
                               : threshold;
+    break;
+  case ConditionMetric::dataDayGainPercent:
+    condition.source = strategy::ConditionSource::dataDayGainPercent;
+    condition.thresholdDomain = indicators::NumericDomain::percent;
+    condition.lookbackPeriod = period;
+    condition.indicator = {};
+    break;
+  case ConditionMetric::periodHighDrawdownPercent:
+    condition.source = strategy::ConditionSource::periodHighDrawdownPercent;
+    condition.thresholdDomain = indicators::NumericDomain::percent;
+    condition.lookbackPeriod = period;
+    condition.indicator = {};
+    break;
+  case ConditionMetric::periodLowReboundPercent:
+    condition.source = strategy::ConditionSource::periodLowReboundPercent;
+    condition.thresholdDomain = indicators::NumericDomain::percent;
+    condition.lookbackPeriod = period;
+    condition.indicator = {};
+    break;
+  case ConditionMetric::breakPeriodHigh:
+    condition.source = strategy::ConditionSource::breakPeriodHigh;
+    condition.comparison = strategy::Comparison::greaterThan;
+    condition.threshold = 0.0;
+    condition.thresholdDomain = indicators::NumericDomain::scalar;
+    condition.lookbackPeriod = period;
+    condition.indicator = {};
+    break;
+  case ConditionMetric::breakPeriodLow:
+    condition.source = strategy::ConditionSource::breakPeriodLow;
+    condition.comparison = strategy::Comparison::greaterThan;
+    condition.threshold = 0.0;
+    condition.thresholdDomain = indicators::NumericDomain::scalar;
+    condition.lookbackPeriod = period;
+    condition.indicator = {};
     break;
   case ConditionMetric::close:
     condition.source = strategy::ConditionSource::barField;
@@ -348,6 +419,19 @@ ConditionMetric metricFrom(const QComboBox *combo) {
   return static_cast<ConditionMetric>(combo->currentData().toInt());
 }
 
+bool isHistoricalDataDayMetric(const ConditionMetric metric) noexcept {
+  return metric == ConditionMetric::dataDayGainPercent ||
+         metric == ConditionMetric::periodHighDrawdownPercent ||
+         metric == ConditionMetric::periodLowReboundPercent ||
+         metric == ConditionMetric::breakPeriodHigh ||
+         metric == ConditionMetric::breakPeriodLow;
+}
+
+bool isBreakoutMetric(const ConditionMetric metric) noexcept {
+  return metric == ConditionMetric::breakPeriodHigh ||
+         metric == ConditionMetric::breakPeriodLow;
+}
+
 struct MetricDisplay {
   QString suffix;
   QString meaning;
@@ -374,6 +458,49 @@ MetricDisplay displayFor(const ConditionMetric metric) {
                 "Enter a positive percent magnitude, such as 5 for Down 5% "
                 "or Up 5%."),
             false};
+  case ConditionMetric::dataDayGainPercent:
+    return {" %",
+            BacktestTab::tr(
+                "Compares the current close with the close exactly N "
+                "available prior CSV/UTC data days earlier. Each data day "
+                "uses its last source close including extended-hours rows. "
+                "The current UTC date is excluded; missing history does not "
+                "match."),
+            BacktestTab::tr("Enter a positive percent magnitude."), true};
+  case ConditionMetric::periodHighDrawdownPercent:
+    return {" %",
+            BacktestTab::tr(
+                "Compares the current close with the highest source high in "
+                "the prior N complete CSV/UTC data days, including "
+                "extended-hours rows. The current UTC date is excluded; "
+                "missing history does not match."),
+            BacktestTab::tr("Enter a positive drawdown magnitude."), true};
+  case ConditionMetric::periodLowReboundPercent:
+    return {" %",
+            BacktestTab::tr(
+                "Compares the current close with the lowest source low in "
+                "the prior N complete CSV/UTC data days, including "
+                "extended-hours rows. The current UTC date is excluded; "
+                "missing history does not match."),
+            BacktestTab::tr("Enter a positive rebound magnitude."), true};
+  case ConditionMetric::breakPeriodHigh:
+    return {"",
+            BacktestTab::tr(
+                "Every bar matches only when its close is strictly above the "
+                "highest source high in the prior N complete CSV/UTC data "
+                "days, including extended-hours rows. The current UTC date "
+                "is excluded; missing history does not match."),
+            BacktestTab::tr("Equality with the prior high does not match."),
+            true};
+  case ConditionMetric::breakPeriodLow:
+    return {"",
+            BacktestTab::tr(
+                "Every bar matches only when its close is strictly below the "
+                "lowest source low in the prior N complete CSV/UTC data "
+                "days, including extended-hours rows. The current UTC date "
+                "is excluded; missing history does not match."),
+            BacktestTab::tr("Equality with the prior low does not match."),
+            true};
   case ConditionMetric::close:
     return {" USD", BacktestTab::tr("Current close price in USD."),
             BacktestTab::tr("Example: 100 means $100 per share."), false};
@@ -429,6 +556,17 @@ MetricDisplay displayFor(const ConditionMetric metric) {
 void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
                          QSpinBox *period, QComboBox *comparison) {
   const auto selectedMetric = metricFrom(metric);
+  const auto selectedMetricValue = static_cast<int>(selectedMetric);
+  const auto previousMetricValue =
+      metric->property("lastConditionMetric").toInt();
+  if (previousMetricValue != selectedMetricValue) {
+    if (selectedMetric == ConditionMetric::dataDayGainPercent) {
+      period->setValue(30);
+    } else if (isHistoricalDataDayMetric(selectedMetric)) {
+      period->setValue(21);
+    }
+    metric->setProperty("lastConditionMetric", selectedMetricValue);
+  }
   updateComparisonItems(selectedMetric, comparison);
   const auto display = displayFor(metricFrom(metric));
   const auto name = metric->currentText();
@@ -437,27 +575,58 @@ void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
   metric->setToolTip(explanation);
   metric->setAccessibleDescription(explanation);
   threshold->setSuffix(display.suffix);
-  threshold->setRange(selectedMetric ==
-                              ConditionMetric::previousDataDayCloseChangePercent
-                          ? 0.0001
-                          : -1'000'000'000.0,
-                      1'000'000'000.0);
+  const bool positiveMagnitude =
+      selectedMetric == ConditionMetric::previousDataDayCloseChangePercent ||
+      selectedMetric == ConditionMetric::dataDayGainPercent ||
+      selectedMetric == ConditionMetric::periodHighDrawdownPercent ||
+      selectedMetric == ConditionMetric::periodLowReboundPercent;
+  if (isBreakoutMetric(selectedMetric)) {
+    threshold->setRange(0.0, 0.0);
+    threshold->setValue(0.0);
+  } else {
+    threshold->setRange(positiveMagnitude ? 0.0001 : -1'000'000'000.0,
+                        1'000'000'000.0);
+  }
+  const bool fixedComparison =
+      selectedMetric == ConditionMetric::dataDayGainPercent ||
+      selectedMetric == ConditionMetric::periodHighDrawdownPercent ||
+      selectedMetric == ConditionMetric::periodLowReboundPercent ||
+      isBreakoutMetric(selectedMetric);
+  comparison->setEnabled(metric->isEnabled() && !fixedComparison);
+  threshold->setEnabled(metric->isEnabled() &&
+                        !isBreakoutMetric(selectedMetric));
   threshold->setToolTip(explanation);
   threshold->setAccessibleDescription(explanation);
   auto periodHelp = QString{};
-  if (selectedMetric == ConditionMetric::previousDataDayCloseChangePercent) {
+  if (isHistoricalDataDayMetric(selectedMetric)) {
+    period->setSuffix(BacktestTab::tr(" UTC data days"));
+    period->setAccessibleName(BacktestTab::tr("Lookback in UTC data days"));
+    periodHelp = BacktestTab::tr(
+        "Uses the prior N available CSV/UTC dates with source rows. Empty "
+        "dates are skipped, all N dates are required, and extended-hours "
+        "rows are included. The current UTC date is excluded.");
+  } else if (selectedMetric ==
+             ConditionMetric::previousDataDayCloseChangePercent) {
+    period->setSuffix({});
+    period->setAccessibleName(BacktestTab::tr("Strategy period metadata"));
     periodHelp = BacktestTab::tr(
         "This metric uses UTC data days, not bars. The editable value remains "
         "part of the strategy identity for compatibility.");
   } else if (!display.usesPeriod) {
+    period->setSuffix({});
+    period->setAccessibleName(BacktestTab::tr("Indicator period"));
     periodHelp = BacktestTab::tr(
         "This metric does not use a period in its formula. The editable value "
         "remains part of the strategy identity for compatibility.");
   } else if (selectedMetric == ConditionMetric::macdHistogram) {
+    period->setSuffix({});
+    period->setAccessibleName(BacktestTab::tr("Indicator period"));
     periodHelp = BacktestTab::tr(
         "MACD slow period in bars; insufficient warm-up bars produce no "
         "signal.");
   } else {
+    period->setSuffix({});
+    period->setAccessibleName(BacktestTab::tr("Indicator period"));
     periodHelp = BacktestTab::tr(
         "Indicator lookback in bars, not calendar days or months; insufficient "
         "warm-up bars produce no signal.");

@@ -26,6 +26,11 @@ enum class ConditionSource : std::uint8_t {
   closeChangePercent,
   indicator,
   previousDataDayCloseChangePercent,
+  dataDayGainPercent,
+  periodHighDrawdownPercent,
+  periodLowReboundPercent,
+  breakPeriodHigh,
+  breakPeriodLow,
 };
 
 enum class Comparison : std::uint8_t {
@@ -44,6 +49,13 @@ struct PreviousDataDayClose {
   double close = 0.0;
 };
 
+struct PreviousDataDaySummary {
+  core::Timestamp utcDateStart;
+  double high = 0.0;
+  double low = 0.0;
+  double close = 0.0;
+};
+
 struct Condition {
   ConditionSource source = ConditionSource::barField;
   Comparison comparison = Comparison::greaterThan;
@@ -51,6 +63,7 @@ struct Condition {
   indicators::NumericDomain thresholdDomain = indicators::NumericDomain::price;
   indicators::BarField barField = indicators::BarField::close;
   indicators::IndicatorDefinition indicator{};
+  std::int32_t lookbackPeriod = 0;
 };
 
 struct ConditionGroup {
@@ -82,7 +95,8 @@ public:
   /// ignored; invalid closes are treated as absent history.
   [[nodiscard]] static core::Result<std::unique_ptr<SelectableStrategy>> create(
       SelectableStrategyPlan plan,
-      std::optional<PreviousDataDayClose> previousDataDayClose = std::nullopt);
+      std::optional<PreviousDataDayClose> previousDataDayClose = std::nullopt,
+      std::vector<PreviousDataDaySummary> previousDataDays = {});
 
   ~SelectableStrategy();
   SelectableStrategy(SelectableStrategy &&) noexcept;
@@ -101,7 +115,8 @@ private:
   [[nodiscard]] static core::Result<std::unique_ptr<SelectableStrategy>>
   createWithIndicatorFactory(
       SelectableStrategyPlan plan, IndicatorFactory indicatorFactory,
-      std::optional<PreviousDataDayClose> previousDataDayClose = std::nullopt);
+      std::optional<PreviousDataDayClose> previousDataDayClose = std::nullopt,
+      std::vector<PreviousDataDaySummary> previousDataDays = {});
 
   friend struct detail::SelectableStrategyTestAccess;
 

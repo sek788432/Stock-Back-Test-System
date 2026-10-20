@@ -1130,6 +1130,7 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
     std::optional<bte::indicators::IndicatorKind> indicatorKind;
     bte::indicators::IndicatorOutput indicatorOutput =
         bte::indicators::IndicatorOutput::value;
+    int expectedLookbackPeriod = 0;
   };
   const auto metricCases = std::vector<MetricCase>{
       {"Close change %",
@@ -1140,6 +1141,36 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
        bte::strategy::ConditionSource::previousDataDayCloseChangePercent,
        bte::indicators::NumericDomain::percent,
        {}},
+      {"Up X% over selected period",
+       bte::strategy::ConditionSource::dataDayGainPercent,
+       bte::indicators::NumericDomain::percent,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       30},
+      {"Down X% from period high",
+       bte::strategy::ConditionSource::periodHighDrawdownPercent,
+       bte::indicators::NumericDomain::percent,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       21},
+      {"Up X% from period low",
+       bte::strategy::ConditionSource::periodLowReboundPercent,
+       bte::indicators::NumericDomain::percent,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       21},
+      {"Break period high",
+       bte::strategy::ConditionSource::breakPeriodHigh,
+       bte::indicators::NumericDomain::scalar,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       21},
+      {"Break period low",
+       bte::strategy::ConditionSource::breakPeriodLow,
+       bte::indicators::NumericDomain::scalar,
+       {},
+       bte::indicators::IndicatorOutput::value,
+       21},
       {"Close",
        bte::strategy::ConditionSource::barField,
        bte::indicators::NumericDomain::price,
@@ -1225,6 +1256,7 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
   period->setValue(18);
   for (std::size_t index = 0; index < metricCases.size(); ++index) {
     const auto &metricCase = metricCases[index];
+    period->setValue(18);
     metric->setCurrentText(metricCase.label);
     QTest::mouseClick(run, Qt::LeftButton);
     const auto expectedRuns = static_cast<int>(index + 1U);
@@ -1238,11 +1270,28 @@ void BacktestTabTest::selectableMetricsSubmitTypedPlansToBackend() {
     const auto &condition = captured->selectableStrategy->buy.conditions[0];
     QCOMPARE(condition.source, metricCase.source);
     QCOMPARE(condition.thresholdDomain, metricCase.domain);
+    if (metricCase.expectedLookbackPeriod > 0) {
+      QCOMPARE(condition.lookbackPeriod, metricCase.expectedLookbackPeriod);
+      QCOMPARE(period->value(), metricCase.expectedLookbackPeriod);
+      QCOMPARE(condition.indicator.period, 14);
+      QVERIFY(metric->toolTip().contains("CSV/UTC data days"));
+      QVERIFY(period->toolTip().contains("CSV/UTC dates"));
+      if (metricCase.source ==
+              bte::strategy::ConditionSource::breakPeriodHigh ||
+          metricCase.source == bte::strategy::ConditionSource::breakPeriodLow) {
+        QCOMPARE(condition.comparison, bte::strategy::Comparison::greaterThan);
+        QCOMPARE(condition.threshold, 0.0);
+      } else {
+        QCOMPARE(condition.comparison,
+                 bte::strategy::Comparison::greaterThanOrEqual);
+        QCOMPARE(condition.threshold, 5.0);
+      }
+    }
     if (metricCase.label == "MACD histogram") {
       QCOMPARE(condition.indicator.period, 9);
       QCOMPARE(condition.indicator.secondaryPeriod, 18);
       QCOMPARE(condition.indicator.signalPeriod, 6);
-    } else {
+    } else if (metricCase.expectedLookbackPeriod == 0) {
       QCOMPARE(condition.indicator.period, 18);
     }
     if (metricCase.indicatorKind.has_value()) {

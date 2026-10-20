@@ -35,6 +35,17 @@ struct SnapshotHistoryClose {
   bool operator==(const SnapshotHistoryClose &) const = default;
 };
 
+struct SnapshotDataDaySummary {
+  core::Timestamp utcDateStart;
+  std::int64_t highNanodollars = 0;
+  std::int64_t lowNanodollars = 0;
+  std::int64_t closeNanodollars = 0;
+
+  bool operator==(const SnapshotDataDaySummary &) const = default;
+};
+
+inline constexpr std::size_t maximumSnapshotHistoryDataDays = 10'000;
+
 // Data-only aggregate initializers do not produce reliably attributable gcov
 // branches across supported compilers. GCOVR_EXCL_START
 struct DataSegmentSpan {
@@ -66,6 +77,7 @@ struct SnapshotSelection {
   std::vector<SnapshotBar> bars;
   DataSelectionIdentity identity;
   std::optional<SnapshotHistoryClose> preRangeDataDayClose;
+  std::vector<SnapshotDataDaySummary> preRangeDataDays;
 };
 
 struct SnapshotBuildRequest {
@@ -121,6 +133,15 @@ public:
   [[nodiscard]] core::Result<std::optional<SnapshotHistoryClose>>
   lastCloseBeforeUtcDate(
       std::string_view symbol, core::Timestamp utcDateStart,
+      const core::CancellationToken &cancellation = {}) const;
+
+  /// Returns up to the latest `count` UTC dates containing source rows strictly
+  /// before the UTC date boundary, in chronological order. High, low, and
+  /// close include every source row for each date, including extended hours.
+  /// `count` must be between one and maximumSnapshotHistoryDataDays.
+  [[nodiscard]] core::Result<std::vector<SnapshotDataDaySummary>>
+  lastDataDaysBeforeUtcDate(
+      std::string_view symbol, core::Timestamp utcDateStart, std::size_t count,
       const core::CancellationToken &cancellation = {}) const;
 
   /// Reopens the exact immutable rows previously selected. Every identity and

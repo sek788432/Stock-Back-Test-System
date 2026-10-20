@@ -177,6 +177,120 @@ TEST(BacktestTest, selectableStrategyHistoryDoesNotAddExecutedBarsOrRecords) {
 }
 
 TEST(BacktestTest,
+     historicalDataDayWarmupSignalsWithoutAddingExecutedBarsOrRecords) {
+  using namespace std::chrono;
+  const auto bars = std::vector<bte::core::Bar>{makeBar(2, 103.0, 103.0),
+                                                makeBar(3, 104.0, 104.0)};
+  const auto request = bte::engine::BacktestRequest{
+      .bars = bars,
+      .symbol = "SYN",
+      .initialCapitalMicrodollars = 2'000'000'000,
+      .quantityShares = 10,
+      .selectableStrategy =
+          bte::strategy::SelectableStrategyPlan{
+              .buy =
+                  {.conditions = {bte::strategy::Condition{
+                       .source =
+                           bte::strategy::ConditionSource::dataDayGainPercent,
+                       .comparison =
+                           bte::strategy::Comparison::greaterThanOrEqual,
+                       .threshold = 1.0,
+                       .thresholdDomain =
+                           bte::indicators::NumericDomain::percent,
+                       .lookbackPeriod = 1}}},
+              .sell = {},
+          },
+      .previousDataDays = {bte::strategy::PreviousDataDaySummary{
+          .utcDateStart =
+              bte::core::Timestamp{sys_days{year{2024} / January / 1}},
+          .high = 102.0,
+          .low = 99.0,
+          .close = 101.0,
+      }},
+  };
+
+  const auto result = bte::engine::runBacktest(request);
+
+  ASSERT_TRUE(result.ok()) << result.error().message;
+  EXPECT_EQ(result.value().barsProcessed, bars.size());
+  ASSERT_TRUE(result.value().fill.has_value());
+  EXPECT_EQ(result.value().fill->timestamp, bars[1].ts);
+  expectNoPreRangeRecords(result.value(), request);
+}
+
+TEST(BacktestTest, historicalDataDayBuyAndSellSignalsFillAtNextSelectedOpens) {
+  using namespace std::chrono;
+  const auto makeHourlyBar = [](const sys_days date, const hours hour,
+                                const double open, const double high,
+                                const double low, const double close) {
+    return bte::core::Bar{.ts = bte::core::Timestamp{date + hour},
+                          .open = open,
+                          .high = high,
+                          .low = low,
+                          .close = close,
+                          .volume = 1'000'000.0};
+  };
+  const auto request =
+      bte::engine::BacktestRequest{
+          .bars =
+              {
+                  makeHourlyBar(sys_days{year{2024} / January / 2}, hours{9},
+                                102.0, 103.0, 102.0, 103.0),
+                  makeHourlyBar(sys_days{year{2024} / January / 2}, hours{10},
+                                104.0, 105.0, 104.0, 105.0),
+                  makeHourlyBar(sys_days{year{2024} / January / 3}, hours{9},
+                                94.0, 94.0, 94.0, 94.0),
+                  makeHourlyBar(sys_days{year{2024} / January / 3}, hours{10},
+                                93.0, 93.0, 93.0, 93.0),
+              },
+          .symbol = "SYN",
+          .initialCapitalMicrodollars = 2'000'000'000,
+          .quantityShares = 10,
+          .selectableStrategy =
+              bte::strategy::SelectableStrategyPlan{
+                  .buy = {.conditions = {bte::strategy::Condition{
+                              .source = bte::strategy::ConditionSource::
+                                  dataDayGainPercent,
+                              .comparison =
+                                  bte::strategy::Comparison::greaterThanOrEqual,
+                              .threshold = 1.0,
+                              .thresholdDomain =
+                                  bte::indicators::NumericDomain::percent,
+                              .lookbackPeriod = 1}}},
+                  .sell = {.conditions =
+                               {
+                                   bte::strategy::Condition{.source =
+                                                                bte::strategy::ConditionSource::periodHighDrawdownPercent,
+                                                            .comparison = bte::strategy::Comparison::greaterThanOrEqual,
+                                                            .threshold = 10.0,
+                                                            .thresholdDomain =
+                                                                bte::indicators::NumericDomain::percent,
+                                                            .lookbackPeriod =
+                                                                1}}},
+              },
+          .previousDataDays = {bte::strategy::PreviousDataDaySummary{
+              .utcDateStart =
+                  bte::core::Timestamp{sys_days{year{2024} / January / 1}},
+              .high = 102.0,
+              .low = 99.0,
+              .close = 101.0,
+          }},
+      };
+
+  const auto result = bte::engine::runBacktest(request);
+
+  ASSERT_TRUE(result.ok()) << result.error().message;
+  expectRequestedBarsWereProcessed(result.value(), request);
+  ASSERT_EQ(result.value().fills.size(), 2U);
+  EXPECT_EQ(result.value().fills[0].side, bte::engine::BacktestOrderSide::buy);
+  EXPECT_EQ(result.value().fills[0].timestamp, request.bars[1].ts);
+  EXPECT_EQ(result.value().fills[1].side, bte::engine::BacktestOrderSide::sell);
+  EXPECT_EQ(result.value().fills[1].timestamp, request.bars[3].ts);
+  EXPECT_EQ(result.value().positionShares, 0);
+  expectNoPreRangeRecords(result.value(), request);
+}
+
+TEST(BacktestTest,
      canonicalTimelineOrdersSameTimestampFillBeforePostSlicePortfolio) {
   const bte::engine::BacktestRequest request{
       .bars = {makeBar(2, 100.0, 100.0), makeBar(3, 110.0, 120.0)},

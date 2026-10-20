@@ -9,8 +9,8 @@ C++ backtest engine. Execution semantics live in
 
 | Status | Scope |
 | --- | --- |
-| **Implemented** | An in-memory typed Selectable Conditions plan validates finite thresholds, fields, and indicator definitions; evaluates flat `all` / `any` buy and sell groups over chronological single-symbol bars; and feeds the limited C++ Backtest path. The current Qt page exposes up to two rows per group, including the Task 17 previous UTC data-day close percentage condition. |
-| **Accepted design / not implemented** | Task 18 historical gain/extrema/breakout conditions below; saved/versioned plans; up to five buy and five sell conditions; Python Script Mode; Debug Run; immutable managed runtimes; and the worker protocol below. |
+| **Implemented** | An in-memory typed Selectable Conditions plan validates finite thresholds, fields, and indicator definitions; evaluates flat `all` / `any` buy and sell groups over chronological single-symbol bars; and feeds the limited C++ Backtest path. The current Qt page exposes up to two rows per group, including Task 17 and Task 18 UTC data-day conditions. |
+| **Accepted design / not implemented** | Saved/versioned plans; up to five buy and five sell conditions; Python Script Mode; Debug Run; immutable managed runtimes; and the worker protocol below. |
 | **Blocked** | No strategy feature may be presented as available until its engine path and required tests exist. Public release also depends on the data-release blockers in [`DataLayer.md`](DataLayer.md). |
 
 Status words are factual, not roadmap promises. Only **Implemented** behavior may appear as shipped in user documentation.
@@ -86,11 +86,24 @@ from historical references:
   Missing, zero or insufficient references are absent/nonmatching, never a
   fabricated value or a future lookup.
 
-Task 18 remains accepted and not implemented. Its pre-range history must warm
-only bounded Strategy state and must not become extra executed bars, orders,
-fills or Replay candles. New functional fields require versioned Strategy
-framing and compatibility review; the existing prior-actual-bar close-change
-option and its saved identity remain distinct and must not be reinterpreted.
+Task 18 is implemented in the limited local path. **Up X% over selected
+period** defaults to 30 available data days and compares the current close with
+the close exactly N available data dates earlier. The high drawdown, low
+rebound, and strict high/low breakout choices default to 21 completed data
+days; they compare the current close with the maximum high or minimum low from
+those prior dates. A breakout remains true on every qualifying bar rather than
+only the first crossing. The whole current UTC date is excluded from these
+references, including rows earlier in the selected run. The editor accepts a
+positive percentage magnitude for inclusive drawdown/rebound/gain thresholds;
+breakouts use strict comparisons and no threshold. Each period is part of the
+typed condition and its canonical identity.
+
+The Backtest binding requests only the bounded history needed from the same
+immutable snapshot. It seeds Strategy state without adding bars, indicator
+updates, orders, fills, portfolio records, or Replay candles. Legacy plans keep
+their frozen v1 hash framing, Task 17 plans use v2, and plans containing Task 18
+sources use v3 framing that includes the selected period. The existing
+prior-actual-bar close-change option remains distinct and unchanged.
 
 ### 2.2 Python Script Mode
 
