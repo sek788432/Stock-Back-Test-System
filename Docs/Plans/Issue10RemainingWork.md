@@ -33,7 +33,11 @@ acceptance remain distinct requirements.
   `./RunTest.sh` passed 295/295, full `RunQuality.sh` passed with 100% changed
   line coverage (193/193) and 97.2% changed branch coverage (35/36),
   ASan/UBSan passed 249/249, and TSan passed 249/249. The submitted PR's
-  required CI and CodeQL checks are still pending.
+  required CI and CodeQL checks are still pending. The verified branch has
+  been pushed, but PR creation through the connected GitHub integration failed
+  with HTTP 403 (`Resource not accessible by integration`); the browser
+  session is signed out and the local `gh` CLI is unavailable, so no remote
+  workflow has started yet.
 - The user-requested branch reconciliation is complete: the workspace was
   synchronized with `main`, previously merged local and remote branches were
   removed, and remaining work continues on `codex/issue10-remaining`. Local
@@ -224,7 +228,7 @@ Latest follow-up evidence (2026-10-15):
 | R3: execution-time durability | Final exact-head, remote and native acceptance | Implemented with per-bar atomic commits, atomic terminal tail, and committed-prefix recovery; local Engine/Store/process tests pass |
 | Legacy staging compatibility | Final review and native workflow acceptance | Unleased Staging and sidecars stay byte-identical and produce typed English preservation notices; accessibility/refresh test passes |
 | CI / Results rename acceptance | Verify current exact head | Prior GCC wait/IWYU/rename fixes are present; current Results workflow test and full local CTest pass |
-| Exact-head CI readiness | Obtain required PR checks for Task 17 and subsequent implementation commits | Task 17 local gates pass on `bed5388`: RunTest 295/295, full Quality with 100% changed-line and 97.2% changed-branch coverage, ASan/UBSan 249/249, and TSan 249/249; remote CI and CodeQL remain pending |
+| Exact-head CI readiness | Obtain required PR checks for Task 17 and subsequent implementation commits | Task 17 local gates pass on `bed5388`: RunTest 295/295, full Quality with 100% changed-line and 97.2% changed-branch coverage, ASan/UBSan 249/249, and TSan 249/249; PR creation is blocked by GitHub integration HTTP 403, so CI and CodeQL have not started |
 | CI long-load responsiveness | Verify on current remote coverage runner | Snapshot reuse and bounded SHA work are present; previous local samples do not replace current exact-head remote coverage |
 | R8: long-range saved-data completeness | Compare selected range, exact saved spans, actual source rows and visible Hourly/Daily candles to explain the reported sparse chart | Final real-data correctness comparison remains open; a faster load or longer wait cannot close this finding |
 | T: exact Daily fill selection | Verify exact behavior against real saved data | Fixed locally by requiring exact selected timestamps; regression test covers an interior gap |
