@@ -766,6 +766,7 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::select(
                    .timeframe = std::string{hourlyTimeframe},
                    .profile = std::string{snapshotProfile},
                    .spans = {}},
+      .preRangeDataDayClose = std::nullopt,
   };
   for (const auto &segment : impl_->segments) {
     if (!symbols.contains(segment.metadata.symbol)) {
@@ -856,7 +857,11 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::readExact(
                            "Persisted Data Selection identity is unavailable");
   }
 
-  SnapshotSelection selection{.bars = {}, .identity = identity};
+  SnapshotSelection selection{
+      .bars = {},
+      .identity = identity,
+      .preRangeDataDayClose = std::nullopt,
+  };
   std::optional<std::size_t> previousOrdinal;
   for (const auto &span : identity.spans) {
     if (cancellation.isCancellationRequested()) {
