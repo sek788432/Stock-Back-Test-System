@@ -136,6 +136,11 @@ Trash, Restore, and Rename. Replay also has its own named catalog selector,
 and Backtest can
 hand it an exact promoted Result ID.
 
+The limited Result details view enumerates every schema-2 capability from the
+persisted capability metadata and displays persisted warning records. It does
+not fabricate values for unsupported trade, metric, log, indicator, corporate
+action, or margin families.
+
 The accepted complete Results page shows status, Strategy name,
 symbols/universe, timeframe, range, completion time, valid total return,
 result-schema version, canonical-hash state, and data availability. It sorts
