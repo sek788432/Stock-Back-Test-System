@@ -401,6 +401,27 @@ TEST(ReleaseSnapshotTest, lastDataDaysBeforeUtcDateHonorsCancellation) {
       fixture.store(), built.value().snapshotId);
   ASSERT_TRUE(reader.ok()) << reader.error().message;
 
+  bte::core::CancellationSource alreadyCancelled;
+  alreadyCancelled.requestCancellation();
+  const auto cancelledBeforeLookup = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-03 00:00:00+00:00"), 1,
+      alreadyCancelled.token());
+  ASSERT_FALSE(cancelledBeforeLookup.ok());
+  EXPECT_EQ(cancelledBeforeLookup.error().code,
+            bte::core::ErrorCode::cancelled);
+
+  const auto absentSymbol = reader.value()->lastDataDaysBeforeUtcDate(
+      "ABSENT", timestamp("2024-01-03 00:00:00+00:00"), 1);
+  ASSERT_TRUE(absentSymbol.ok()) << absentSymbol.error().message;
+  EXPECT_TRUE(absentSymbol.value().empty());
+
+  const auto limitedHistory = reader.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-03 00:00:00+00:00"), 1);
+  ASSERT_TRUE(limitedHistory.ok()) << limitedHistory.error().message;
+  ASSERT_EQ(limitedHistory.value().size(), 1U);
+  EXPECT_EQ(limitedHistory.value().front().utcDateStart,
+            timestamp("2024-01-02 00:00:00+00:00"));
+
   bte::data::testing::failSnapshotAt(
       bte::data::testing::SnapshotFailurePoint::historyLookupCancellation);
   const auto result = reader.value()->lastDataDaysBeforeUtcDate(
@@ -622,6 +643,36 @@ TEST(ReleaseSnapshotTest, buildRejectsDuplicateSourceManifestFilenames) {
 
   ASSERT_FALSE(built.ok());
   EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildRejectsMalformedSourceManifestHeadersAndEntries) {
+  const auto validHash = std::string(64, 'a');
+  const std::vector<std::pair<std::string, std::string>> invalidManifests{
+      {"bad-header", "BAD-MAGIC\n"},
+      {"bad-entry-prefix", "BTE-SOURCE-MANIFEST-V1\nunexpected\n"},
+      {"bad-entry-field-count",
+       "BTE-SOURCE-MANIFEST-V1\nfile=SYN.csv|ohlcv-1h\n"},
+      {"bad-entry-filename",
+       "BTE-SOURCE-MANIFEST-V1\nfile=../SYN.csv|ohlcv-1h|" + validHash + "\n"},
+      {"bad-entry-extension",
+       "BTE-SOURCE-MANIFEST-V1\nfile=.csv|ohlcv-1h|" + validHash + "\n"},
+      {"bad-entry-timeframe",
+       "BTE-SOURCE-MANIFEST-V1\nfile=SYN.csv|ohlcv-15m|" + validHash + "\n"},
+      {"bad-entry-hash",
+       "BTE-SOURCE-MANIFEST-V1\nfile=SYN.csv|ohlcv-1h|not-a-hash\n"},
+  };
+
+  for (const auto &[name, manifest] : invalidManifests) {
+    ScopedSnapshotFixture fixture{"malformed-source-manifest-" + name};
+    fixture.writeExtractedSymbol("SYN", threeExtractedHourlyRows);
+    writeFile(fixture.source() / "SourceManifest.btesource", manifest);
+
+    const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+    ASSERT_FALSE(built.ok()) << name;
+    EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch) << name;
+  }
 }
 
 TEST(ReleaseSnapshotTest,
