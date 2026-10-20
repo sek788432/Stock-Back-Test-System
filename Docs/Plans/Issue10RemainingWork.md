@@ -259,9 +259,11 @@ not leave the feature implementation itself unfinished.
 
 - The old user branches were audited and removed after confirming their
   delivered changes are represented in `main`. The Task 17 continuation is on
-  `codex/issue10-remaining`, based on `main` at `508d2d9`, and currently ends
-  at `bed5388`; after its required checks pass and it merges, branch cleanup
-  and a fresh branch for remaining Issue 10 work are still required.
+  `codex/issue10-remaining`, based on `main` at `508d2d9`. Implementation and
+  local gate evidence end at `bed5388`; documentation follow-ups bring the
+  current branch head to `610d846`. After required remote checks pass and it
+  merges, branch cleanup and a fresh branch for remaining Issue 10 work are
+  still required.
 - R1–R3 persistence implementation and its owning documentation are merged in
   PR #76. Task 17 exact-head local gates now pass; remote checks and native
   acceptance remain open.
