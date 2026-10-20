@@ -13,6 +13,7 @@
 #include <deque>
 #include <exception>
 #include <functional> // IWYU pragma: keep
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>

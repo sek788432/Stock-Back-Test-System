@@ -4,6 +4,7 @@
 #include "Bte/Core/Result.h"
 #include "Bte/Indicators/StreamingIndicator.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
