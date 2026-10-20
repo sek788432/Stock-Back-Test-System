@@ -6,15 +6,29 @@
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Engine/Backtest.h"
 #include "Bte/Results/ResultStore.h"
+#if defined(BTE_ENABLE_TEST_HOOKS)
+#include "BacktestSessionVmTestHooks.h"
+#endif
 
 #include <algorithm> // IWYU pragma: keep
+#if defined(BTE_ENABLE_TEST_HOOKS)
+#include <atomic>
+#endif
 #include <cmath>
 #include <compare> // IWYU pragma: keep
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string> // IWYU pragma: keep
 #include <utility>
+
+// libstdc++ attributes the ranges algorithm's default projection to this
+// header.
+#if defined(__GLIBCXX__)
+#include <functional>
+#endif
 
 namespace bte::bindings {
 namespace {
@@ -22,6 +36,17 @@ namespace {
 constexpr auto microdollarsPerDollar = 1'000'000.0;
 constexpr auto nanodollarsPerDollar = 1'000'000'000.0;
 constexpr auto int64ExclusiveUpperBound = 9'223'372'036'854'775'808.0;
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+std::atomic<core::CancellationSource *> cancelAfterDraftOpen = nullptr;
+
+void triggerDraftOpenCancellation() noexcept {
+  if (auto *const source = cancelAfterDraftOpen.exchange(nullptr);
+      source != nullptr) {
+    source->requestCancellation();
+  }
+}
+#endif
 
 core::Result<std::int64_t>
 normalizedCapitalMicrodollars(const double initialCapital) {
@@ -116,6 +141,18 @@ BacktestSnapshot toSnapshot(const engine::BacktestResult &result) {
 }
 
 } // namespace
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+namespace testing {
+
+void cancelAfterNextDraftStoreOpen(core::CancellationSource &source) noexcept {
+  cancelAfterDraftOpen.store(&source);
+}
+
+void clearDraftStoreOpenHook() noexcept { cancelAfterDraftOpen.store(nullptr); }
+
+} // namespace testing
+#endif
 
 core::Result<BacktestSnapshot>
 // The scalar inputs are intentionally kept explicit at this starter seam.
@@ -261,6 +298,97 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
   snapshot.resultId = recorded.value().persisted.resultId;
   snapshot.canonicalResultHash = recorded.value().persisted.canonicalResultHash;
   return snapshot;
+}
+
+core::Result<std::string>
+publishBacktestDraft(const PersistedBacktestStorage &storage,
+                     const std::string &resultId,
+                     const std::string &displayName,
+                     const core::CancellationToken &cancellation) {
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Backtest save was cancelled");
+  }
+  auto store =
+      results::ResultStore::open(storage.resultStore, storage.dataStore);
+  if (!store.ok()) {
+    return store.error();
+  }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  triggerDraftOpenCancellation();
+#endif
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Backtest save was cancelled");
+  }
+  auto published = store.value()->publishDraft(resultId, displayName);
+  if (!published.ok()) {
+    return published.error();
+  }
+  return published.value().resultId;
+}
+
+core::Result<ResultCatalogSnapshot>
+listBacktestDraftCatalog(const PersistedBacktestStorage &storage,
+                         const core::CancellationToken &cancellation) {
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Backtest draft list was cancelled");
+  }
+  if (!std::filesystem::exists(storage.resultStore)) {
+    return ResultCatalogSnapshot{};
+  }
+  auto store = results::ResultStore::open(storage.resultStore,
+                                          storage.dataStore, cancellation);
+  if (!store.ok()) {
+    return store.error();
+  }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  triggerDraftOpenCancellation();
+#endif
+  auto drafts = store.value()->listDrafts(cancellation);
+  if (!drafts.ok()) {
+    return drafts.error();
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+  return makeResultCatalogSnapshot(std::move(drafts).value(),
+                                   store.value()->recoveryNotices());
+}
+
+core::Result<std::vector<std::string>>
+listBacktestDrafts(const PersistedBacktestStorage &storage,
+                   const core::CancellationToken &cancellation) {
+  auto catalog = listBacktestDraftCatalog(storage, cancellation);
+  if (!catalog.ok()) {
+    return catalog.error();
+  }
+  std::vector<std::string> resultIds;
+  resultIds.reserve(catalog.value().entries.size());
+  std::ranges::transform(catalog.value().entries, std::back_inserter(resultIds),
+                         &ResultCatalogEntry::resultId);
+  return resultIds;
+}
+
+core::Result<void>
+discardBacktestDraft(const PersistedBacktestStorage &storage,
+                     const std::string &resultId,
+                     const core::CancellationToken &cancellation) {
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Backtest draft discard was cancelled");
+  }
+  auto store = results::ResultStore::open(storage.resultStore,
+                                          storage.dataStore, cancellation);
+  if (!store.ok()) {
+    return store.error();
+  }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  triggerDraftOpenCancellation();
+#endif
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Backtest draft discard was cancelled");
+  }
+  return store.value()->discardDraft(resultId);
 }
 
 } // namespace bte::bindings

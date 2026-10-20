@@ -49,6 +49,15 @@ public:
     }
   }
 
+  void writeExtractedSymbol(const std::string &symbol,
+                            const std::string &rows) const {
+    std::ofstream output{source_ / (symbol + ".csv")};
+    output << "symbol,ts,open,high,low,close,volume\n" << rows;
+    if (!output) {
+      throw std::runtime_error{"Unable to write extracted CSV fixture"};
+    }
+  }
+
   [[nodiscard]] bte::data::SnapshotBuildRequest
   buildRequest(std::vector<std::string> symbols = {"SYN"}) const {
     return bte::data::SnapshotBuildRequest{
@@ -79,6 +88,11 @@ constexpr auto threeHourlyRows =
     "SYN,2024-01-01 23:00:00+00:00,100.125,102,99.5,101.25,1200,ohlcv-1h\n"
     "SYN,2024-01-02 00:00:00+00:00,101.25,103.5,100,102.75,2300,ohlcv-1h\n"
     "SYN,2024-01-02 01:00:00+00:00,102.75,104,101.5,103.125,3400,ohlcv-1h\n";
+
+constexpr auto threeExtractedHourlyRows =
+    "SYN,2024-01-01 23:00:00+00:00,100.125,102,99.5,101.25,1200\n"
+    "SYN,2024-01-02 00:00:00+00:00,101.25,103.5,100,102.75,2300\n"
+    "SYN,2024-01-02 01:00:00+00:00,102.75,104,101.5,103.125,3400\n";
 
 bte::core::Timestamp timestamp(const std::string &text) {
   return bte::core::time::parseIso8601(text).value();
@@ -177,6 +191,29 @@ TEST(ReleaseSnapshotTest,
   EXPECT_EQ(selected.value().identity.spans[1].firstRow, 0);
   EXPECT_EQ(selected.value().identity.spans[1].rowCount, 1);
   EXPECT_EQ(selected.value().identity.snapshotId, built.value().snapshotId);
+}
+
+TEST(ReleaseSnapshotTest, buildAcceptsCanonicalSevenColumnExtractedHourlyCsv) {
+  ScopedSnapshotFixture fixture{"canonical-extracted-input"};
+  fixture.writeExtractedSymbol("SYN", threeExtractedHourlyRows);
+
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 3U);
+
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  const auto selected = reader.value()->select({
+      .symbols = {"SYN"},
+      .range = {.start = timestamp("2024-01-01 23:00:00+00:00"),
+                .end = timestamp("2024-01-02 02:00:00+00:00")},
+      .timeframe = "ohlcv-1h",
+  });
+  ASSERT_TRUE(selected.ok()) << selected.error().message;
+  ASSERT_EQ(selected.value().bars.size(), 3U);
+  EXPECT_EQ(selected.value().bars[1].openNanodollars, 101'250'000'000);
+  EXPECT_EQ(selected.value().bars[2].closeNanodollars, 103'125'000'000);
 }
 
 TEST(ReleaseSnapshotTest,
@@ -763,6 +800,24 @@ TEST(SegmentRetentionTest,
             std::vector<std::string>{built.value().segments[0]});
   EXPECT_FALSE(std::filesystem::exists(
       fixture.store() / "Segments" / (built.value().segments[0] + ".btedata")));
+}
+
+TEST(SegmentRetentionTest,
+     referencesRejectInvalidIdentityAndReportDatabaseOpenFailure) {
+  ScopedSnapshotFixture fixture{"retention-reference-errors"};
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+
+  const auto invalid = retention.value()->references("Invalid");
+  ASSERT_FALSE(invalid.ok());
+  EXPECT_EQ(invalid.error().code, bte::core::ErrorCode::invalidArgument);
+
+  bte::data::testing::failRetentionAfter(
+      bte::data::testing::RetentionFailurePoint::databaseOpen);
+  const auto unavailable = retention.value()->references("valid-result-id");
+  bte::data::testing::clearRetentionFailure();
+  ASSERT_FALSE(unavailable.ok());
+  EXPECT_EQ(unavailable.error().code, bte::core::ErrorCode::internal);
 }
 
 TEST(SegmentRetentionTest,

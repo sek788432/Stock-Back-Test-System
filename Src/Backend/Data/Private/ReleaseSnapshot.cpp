@@ -170,6 +170,30 @@ core::Result<std::int64_t> parseScaled(std::string_view text,
   return integer.value() * scale + fractional.value();
 }
 
+struct SourceLayout final {
+  std::size_t columnCount = 0;
+  bool hasSchemaColumn = false;
+};
+
+[[nodiscard]] core::Result<SourceLayout>
+parseSourceLayout(const std::span<const std::string> header) {
+  constexpr std::array extractedColumns{"symbol", "ts",    "open",  "high",
+                                        "low",    "close", "volume"};
+  const auto extractedHeader =
+      header.size() >= extractedColumns.size() &&
+      std::ranges::equal(extractedColumns,
+                         header.first(extractedColumns.size()));
+  if (extractedHeader && header.size() == extractedColumns.size()) {
+    return SourceLayout{.columnCount = header.size()};
+  }
+  if (extractedHeader && header.size() == extractedColumns.size() + 1 &&
+      header.back() == "schemaName") {
+    return SourceLayout{.columnCount = header.size(), .hasSchemaColumn = true};
+  }
+  return core::makeError(core::ErrorCode::schemaMismatch,
+                         "Snapshot source has unsupported columns");
+}
+
 core::Result<std::vector<SnapshotBar>>
 readSourceBars(const std::filesystem::path &path, const std::string &symbol,
                const core::CancellationToken &cancellation) {
@@ -185,12 +209,9 @@ readSourceBars(const std::filesystem::path &path, const std::string &symbol,
                            "Snapshot source is empty: " + path.string());
   }
   const auto header = split(line, ',');
-  constexpr std::array required{"symbol", "ts",    "open",   "high",
-                                "low",    "close", "volume", "schemaName"};
-  if (header.size() < required.size() ||
-      !std::ranges::equal(required, std::span{header}.first(required.size()))) {
-    return core::makeError(core::ErrorCode::schemaMismatch,
-                           "Snapshot source has unsupported columns");
+  const auto layout = parseSourceLayout(header);
+  if (!layout.ok()) {
+    return layout.error();
   }
 
   std::vector<SnapshotBar> bars;
@@ -204,8 +225,8 @@ readSourceBars(const std::filesystem::path &path, const std::string &symbol,
       continue;
     }
     const auto fields = split(line, ',');
-    if (fields.size() < required.size() || fields[0] != symbol ||
-        fields[7] != hourlyTimeframe) {
+    if (fields.size() != layout.value().columnCount || fields[0] != symbol ||
+        (layout.value().hasSchemaColumn && fields[7] != hourlyTimeframe)) {
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "Snapshot row identity does not match request");
     }

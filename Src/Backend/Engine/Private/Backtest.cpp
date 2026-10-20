@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -519,7 +520,10 @@ struct BacktestExecution::Impl final {
   std::optional<BacktestOrderSide> pendingOrder = std::nullopt;
   std::size_t nextBar = 0;
   bool rejectedOrder = false;
-  bool recordsWritten = false;
+  std::unique_ptr<results::ResultWriter> ownedWriter = nullptr;
+  results::ResultWriter *recordingWriter = nullptr;
+  std::size_t committedRecords = 0;
+  std::optional<core::Error> persistenceError;
   bool finalized = false;
 
   [[nodiscard]] SliceCheckpoint checkpoint() const {
@@ -682,9 +686,50 @@ BacktestExecution::start(BacktestRequest request) {
       .request = std::move(request),
       .result = std::move(result),
       .strategy = std::move(strategy),
+      .persistenceError = std::nullopt,
   });
   return std::make_unique<BacktestExecution>(ConstructionKey{},
                                              std::move(implementation));
+}
+
+core::Result<std::unique_ptr<BacktestExecution>>
+BacktestExecution::startRecorded(BacktestRequest request,
+                                 const results::ResultStore &store,
+                                 const results::RunDescriptor &descriptor,
+                                 const core::CancellationToken &cancellation) {
+  if (cancellation.isCancellationRequested()) {
+    return cancelled();
+  }
+  auto execution = start(std::move(request));
+  if (!execution.ok()) {
+    return execution.error();
+  }
+  const auto &validated = execution.value()->impl_->request;
+  if (descriptor.universe != std::vector<std::string>{validated.symbol} ||
+      descriptor.initialCapitalMicrodollars !=
+          validated.initialCapitalMicrodollars ||
+      validated.bars.front().ts < descriptor.range.start ||
+      validated.bars.back().ts >= descriptor.range.end) {
+    return invalidArgument(
+        "Result descriptor does not identify the validated Backtest request");
+  }
+  auto normalized = normalizeBars(validated.bars);
+  if (!normalized.ok()) {
+    return normalized.error();
+  }
+  auto exact = store.validateSelectedBars(descriptor.dataSelection,
+                                          normalized.value(), cancellation);
+  if (!exact.ok()) {
+    return exact.error();
+  }
+  auto writer = store.begin(descriptor);
+  if (!writer.ok()) {
+    return writer.error();
+  }
+  auto &implementation = *execution.value()->impl_;
+  implementation.ownedWriter = std::move(writer).value();
+  implementation.recordingWriter = implementation.ownedWriter.get();
+  return std::move(execution).value();
 }
 
 core::Result<void>
@@ -707,6 +752,26 @@ BacktestExecution::advance(const core::CancellationToken &cancellation) {
     impl_->restore(saved);
     impl_->fail(processed.error(), timestamp);
     return processed.error();
+  }
+  if (impl_->recordingWriter != nullptr) {
+    // Only this completed bar's delta is copied; preceding records stay put.
+    const auto records = std::span{impl_->result.canonicalRecords}.subspan(
+        impl_->committedRecords);
+    const auto batch =
+        std::vector<results::CanonicalRecord>{records.begin(), records.end()};
+    auto appended = impl_->recordingWriter->append(batch);
+    if (!appended.ok()) {
+      impl_->restore(saved);
+      impl_->result.canonicalRecords.resize(impl_->committedRecords);
+      impl_->result.status = results::RunStatus::failed;
+      impl_->result.terminalError = appended.error();
+      impl_->persistenceError = appended.error();
+      // An uncertain append is never retried. Recovery owns the disk verdict.
+      impl_->recordingWriter = nullptr;
+      impl_->ownedWriter.reset();
+      return appended.error();
+    }
+    impl_->committedRecords = impl_->result.canonicalRecords.size();
   }
   ++impl_->nextBar;
   impl_->result.barsProcessed = impl_->nextBar;
@@ -742,15 +807,15 @@ BacktestExecution::terminalError() const noexcept {
 
 core::Result<RecordedBacktestOutcome>
 BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
+  if (const auto persistenceError = impl_->persistenceError;
+      persistenceError.has_value()) {
+    return persistenceError.value();
+  }
   if (impl_->result.status == results::RunStatus::running || impl_->finalized) {
     return invalidArgument("only one terminal backtest result can be recorded");
   }
-  if (!impl_->recordsWritten) {
-    auto appended = writer.append(impl_->result.canonicalRecords);
-    if (!appended.ok()) {
-      return appended.error();
-    }
-    impl_->recordsWritten = true;
+  if (impl_->recordingWriter != nullptr && impl_->recordingWriter != &writer) {
+    return invalidArgument("recorded execution cannot switch Result writers");
   }
   const auto completed = impl_->result.status == results::RunStatus::completed;
   const auto summary =
@@ -764,8 +829,11 @@ BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
       terminalError.has_value()) {
     reason = terminalError.value().message;
   }
+  const auto tail =
+      std::span<const results::CanonicalRecord>{impl_->result.canonicalRecords}
+          .subspan(impl_->committedRecords);
   auto finalized =
-      writer.finalizeAndPromote(impl_->result.status, summary, reason);
+      writer.finalizeDraft(impl_->result.status, summary, reason, tail);
   if (!finalized.ok()) {
     return finalized.error();
   }
@@ -776,6 +844,17 @@ BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
       .status = impl_->result.status,
       .terminalError = impl_->result.terminalError,
   };
+}
+
+core::Result<RecordedBacktestOutcome> BacktestExecution::finalizeRecorded() {
+  if (const auto persistenceError = impl_->persistenceError;
+      persistenceError.has_value()) {
+    return persistenceError.value();
+  }
+  if (impl_->recordingWriter == nullptr) {
+    return invalidArgument("Backtest execution is not recorded");
+  }
+  return finalizeAndRecord(*impl_->recordingWriter);
 }
 
 core::Result<BacktestResult>
@@ -806,6 +885,7 @@ runBacktestAndRecord(const BacktestRequest &request,
   if (!execution.ok()) {
     return execution.error();
   }
+  execution.value()->impl_->recordingWriter = &writer;
   const auto ignored = execution.value()->runToCompletion(cancellation);
   return execution.value()->finalizeAndRecord(writer);
 }
@@ -815,36 +895,13 @@ runBacktestAndRecord(const BacktestRequest &request,
                      const results::ResultStore &store,
                      const results::RunDescriptor &descriptor,
                      const core::CancellationToken &cancellation) {
-  if (cancellation.isCancellationRequested()) {
-    return cancelled();
-  }
-  auto execution = BacktestExecution::start(request);
+  auto execution = BacktestExecution::startRecorded(request, store, descriptor,
+                                                    cancellation);
   if (!execution.ok()) {
     return execution.error();
   }
-  if (descriptor.universe != std::vector<std::string>{request.symbol} ||
-      descriptor.initialCapitalMicrodollars !=
-          request.initialCapitalMicrodollars ||
-      request.bars.front().ts < descriptor.range.start ||
-      request.bars.back().ts >= descriptor.range.end) {
-    return invalidArgument(
-        "Result descriptor does not identify the validated Backtest request");
-  }
-  auto normalized = normalizeBars(request.bars);
-  if (!normalized.ok()) {
-    return normalized.error();
-  }
-  auto exact = store.validateSelectedBars(descriptor.dataSelection,
-                                          normalized.value(), cancellation);
-  if (!exact.ok()) {
-    return exact.error();
-  }
-  auto writer = store.begin(descriptor);
-  if (!writer.ok()) {
-    return writer.error();
-  }
   const auto ignored = execution.value()->runToCompletion(cancellation);
-  return execution.value()->finalizeAndRecord(*writer.value());
+  return execution.value()->finalizeRecorded();
 }
 
 } // namespace bte::engine

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
@@ -90,5 +91,24 @@ runBacktestConfiguration(const BacktestConfiguration &configuration,
     const BacktestConfiguration &configuration,
     const PersistedBacktestStorage &storage,
     const core::CancellationToken &cancellation = {});
+
+[[nodiscard]] core::Result<std::string>
+publishBacktestDraft(const PersistedBacktestStorage &storage,
+                     const std::string &resultId,
+                     const std::string &displayName = {},
+                     const core::CancellationToken &cancellation = {});
+
+[[nodiscard]] core::Result<ResultCatalogSnapshot>
+listBacktestDraftCatalog(const PersistedBacktestStorage &storage,
+                         const core::CancellationToken &cancellation = {});
+
+[[nodiscard]] core::Result<std::vector<std::string>>
+listBacktestDrafts(const PersistedBacktestStorage &storage,
+                   const core::CancellationToken &cancellation = {});
+
+[[nodiscard]] core::Result<void>
+discardBacktestDraft(const PersistedBacktestStorage &storage,
+                     const std::string &resultId,
+                     const core::CancellationToken &cancellation = {});
 
 } // namespace bte::bindings

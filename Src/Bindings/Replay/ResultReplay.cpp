@@ -191,6 +191,11 @@ makeDailyFrames(const results::OpenedResult &result,
       return core::makeError(core::ErrorCode::cancelled,
                              "Result Replay open was cancelled");
     }
+    // Match Hourly's trust boundary before computing any Daily OHLCV.
+    if (!records.portfolioAt(bars[begin].timestamp).has_value()) {
+      ++begin;
+      continue;
+    }
     const auto day = floor<days>(bars[begin].timestamp);
     auto end = begin + 1;
     auto high = bars[begin].highNanodollars;
@@ -222,6 +227,15 @@ makeDailyFrames(const results::OpenedResult &result,
                                  result.descriptor.range.end < bucketEnd;
     const auto portfolio = records.portfolioAt(bars[end - 1].timestamp);
     if (portfolio.has_value()) {
+      auto fills = records.fillsAt(bars[begin].timestamp,
+                                   bars[end - 1].timestamp + milliseconds{1});
+      // Saved spans can omit an interior source row. Match Hourly's exact
+      // timestamp boundary rather than admitting every fill between endpoints.
+      const auto selectedDay = bars.subspan(begin, end - begin);
+      std::erase_if(fills, [selectedDay](const ResultReplayFill &fill) {
+        return !std::ranges::binary_search(selectedDay, fill.timestamp, {},
+                                           &data::SnapshotBar::timestamp);
+      });
       frames.push_back({
           .candle = {.ts = core::Timestamp{day},
                      .open = price(bars[begin].openNanodollars),
@@ -230,7 +244,7 @@ makeDailyFrames(const results::OpenedResult &result,
                      .close = price(bars[end - 1].closeNanodollars),
                      .volume =
                          static_cast<double>(volume) / microsharesPerShare},
-          .fills = records.fillsAt(core::Timestamp{day}, bucketEnd),
+          .fills = std::move(fills),
           .portfolio = *portfolio,
           .partialUtcDay = !completeSourceDay || rangeCutsUtcDay,
       });
@@ -396,6 +410,10 @@ int ResultReplay::progressPercent() const noexcept {
     return 0;
   }
   return static_cast<int>(((currentIndex_ + 1) * 100) / frames_.size());
+}
+
+std::span<const ResultReplayFrame> ResultReplay::timeline() const noexcept {
+  return frames_;
 }
 
 std::vector<ResultReplayFrame> ResultReplay::visibleWindow() const {

@@ -384,6 +384,48 @@ TEST_F(ReplayFixture, diagnosticReplayStopsAtLastTrustworthyFrame) {
   EXPECT_EQ(diagnostic.progress, (std::vector<int>{33, 66, 100}));
   EXPECT_EQ(replay.value()->terminalReason(), terminalReason);
   EXPECT_FALSE(replay.value()->stepForward());
+
+  auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Results", root_ / "Data", finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  const auto dailyDiagnostic = snapshots(*daily.value());
+  const auto expectedDays = std::vector<bte::bindings::ResultReplayFrame>{
+      {.candle = {.ts = timestamp("2024-01-01 00:00:00+00:00"),
+                  .open = 100,
+                  .high = 102,
+                  .low = 99,
+                  .close = 101,
+                  .volume = 1200},
+       .fills = {},
+       .portfolio = {.cash = 2000, .equity = 2000},
+       .partialUtcDay = true},
+      {.candle = {.ts = timestamp("2024-01-02 00:00:00+00:00"),
+                  .open = 101,
+                  .high = 105,
+                  .low = 100,
+                  .close = 104,
+                  .volume = 5700},
+       .fills = {{.timestamp = timestamp("2024-01-02 00:00:00+00:00"),
+                  .isBuy = true,
+                  .quantityShares = 10,
+                  .price = 103,
+                  .amount = 1030}},
+       .portfolio = {.cash = 970,
+                     .positionShares = 10,
+                     .marketValue = 1040,
+                     .equity = 2010,
+                     .pnl = 10},
+       .partialUtcDay = true}};
+  EXPECT_EQ(dailyDiagnostic.frames, expectedDays);
+  EXPECT_EQ(dailyDiagnostic.progress, (std::vector<int>{50, 100}));
+  EXPECT_EQ(daily.value()->terminalReason(), terminalReason);
+  EXPECT_FALSE(daily.value()->stepForward());
+  EXPECT_FALSE(daily.value()->seek(2));
+  ASSERT_TRUE(daily.value()->stepBack());
+  EXPECT_EQ(*daily.value()->current(), expectedDays.front());
+  ASSERT_TRUE(daily.value()->seek(1));
+  EXPECT_EQ(*daily.value()->current(), expectedDays.back());
 }
 
 } // namespace

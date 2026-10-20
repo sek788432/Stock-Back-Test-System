@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -103,6 +104,7 @@ struct FinalizedResult {
 
 struct ResultSummary {
   std::string resultId;
+  std::string displayName;
   std::string canonicalResultHash;
   RunStatus status = RunStatus::incomplete;
   std::int64_t savedUtcMillis = 0;
@@ -112,6 +114,7 @@ struct ResultSummary {
 
 struct OpenedResult {
   std::string resultId;
+  std::string displayName;
   std::string canonicalResultHash;
   RunStatus status = RunStatus::incomplete;
   std::int64_t savedUtcMillis = 0;
@@ -125,6 +128,22 @@ struct OpenedResult {
 struct OpenedResultWithData {
   OpenedResult result;
   data::SnapshotSelection selection;
+};
+
+enum class ResultRecoveryReason : std::uint8_t {
+  legacyUnleased,
+  invalidLease,
+  invalidPrefix,
+  missingReferences,
+  orphanedInitialization,
+};
+
+struct ResultRecoveryNotice {
+  std::string resultId;
+  ResultRecoveryReason reason = ResultRecoveryReason::invalidPrefix;
+  std::string diagnostic;
+
+  bool operator==(const ResultRecoveryNotice &) const = default;
 };
 
 class ResultWriter final {
@@ -144,10 +163,24 @@ public:
   [[nodiscard]] core::Result<void>
   append(const std::vector<CanonicalRecord> &records);
   [[nodiscard]] core::Result<FinalizedResult>
+  finalizeDraft(RunStatus status, const FinalSummary &summary,
+                const std::string &terminalReason = {});
+  [[nodiscard]] core::Result<FinalizedResult>
+  finalizeDraft(RunStatus status, const FinalSummary &summary,
+                const std::string &terminalReason,
+                std::span<const CanonicalRecord> terminalTail);
+  [[nodiscard]] core::Result<FinalizedResult>
   finalizeAndPromote(RunStatus status, const FinalSummary &summary,
                      const std::string &terminalReason = {});
 
 private:
+  enum class FinalizationTarget : std::uint8_t { draft, promoted };
+
+  [[nodiscard]] core::Result<FinalizedResult>
+  finalize(RunStatus status, const FinalSummary &summary,
+           const std::string &terminalReason, FinalizationTarget target,
+           std::span<const CanonicalRecord> terminalTail = {});
+
   friend class ResultStore;
   std::unique_ptr<Impl> impl_;
 };
@@ -158,7 +191,8 @@ private:
 
 public:
   explicit ResultStore(ConstructionKey, std::filesystem::path root,
-                       std::filesystem::path dataStore);
+                       std::filesystem::path dataStore,
+                       std::vector<ResultRecoveryNotice> notices = {});
   ~ResultStore() = default;
   ResultStore(const ResultStore &) = delete;
   ResultStore &operator=(const ResultStore &) = delete;
@@ -170,6 +204,9 @@ public:
        const std::filesystem::path &dataStore,
        const core::CancellationToken &cancellation = {});
 
+  [[nodiscard]] const std::vector<ResultRecoveryNotice> &
+  recoveryNotices() const noexcept;
+
   [[nodiscard]] core::Result<std::unique_ptr<ResultWriter>>
   begin(const RunDescriptor &descriptor) const;
   [[nodiscard]] core::Result<void>
@@ -178,6 +215,18 @@ public:
                        const core::CancellationToken &cancellation = {}) const;
   [[nodiscard]] core::Result<std::vector<ResultSummary>>
   list(const core::CancellationToken &cancellation = {}) const;
+  [[nodiscard]] core::Result<std::vector<ResultSummary>>
+  listDrafts(const core::CancellationToken &cancellation = {}) const;
+  [[nodiscard]] core::Result<std::vector<ResultSummary>>
+  listTrash(const core::CancellationToken &cancellation = {}) const;
+  [[nodiscard]] core::Result<FinalizedResult>
+  publishDraft(const std::string &resultId,
+               const std::string &displayName = {}) const;
+  [[nodiscard]] core::Result<void>
+  renameResult(const std::string &resultId,
+               const std::string &displayName) const;
+  [[nodiscard]] core::Result<void>
+  discardDraft(const std::string &resultId) const;
   [[nodiscard]] core::Result<OpenedResult>
   openResult(const std::string &resultId,
              const core::CancellationToken &cancellation = {}) const;
@@ -194,6 +243,7 @@ public:
 private:
   std::filesystem::path root_;
   std::filesystem::path dataStore_;
+  std::vector<ResultRecoveryNotice> recoveryNotices_;
 };
 
 } // namespace bte::results

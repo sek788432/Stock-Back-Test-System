@@ -1,13 +1,20 @@
 #include "Bte/Bindings/BacktestSessionVm.h"
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 
 #include "Bte/Core/Bar.h"
 
+#include "BacktestSessionVmTestHooks.h"
+
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <algorithm>
+#include <array>
 #include <cfenv>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <vector>
 
@@ -44,6 +51,9 @@ private slots:
   void selectablePlanPresentsNoSignalOutcome();
   void invalidSelectablePlanPreservesCompileError();
   void configuredRunComposesTrackedDataAndEngine();
+  void draftLifecycleBoundariesReturnStructuredResults();
+  void catalogSnapshotTranslatesEntriesAndEveryRecoveryReason();
+  void draftCatalogKeepsRecoveryNoticesWithoutMutatingLegacyFiles();
 };
 
 void BacktestSessionVmTest::runPresentsFilledStarterBacktest() {
@@ -281,6 +291,276 @@ void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
   QCOMPARE(result.value().positionShares, 7);
   QVERIFY(result.value().barsProcessed > 1U);
   QVERIFY(result.value().fill.has_value());
+}
+
+void BacktestSessionVmTest::draftLifecycleBoundariesReturnStructuredResults() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore =
+          std::filesystem::path{directory.path().toStdString()} / "Results",
+      .dataStore =
+          std::filesystem::path{directory.path().toStdString()} / "Data",
+      .snapshotId = {},
+      .strategyHash = {},
+  };
+  const auto empty = bte::bindings::listBacktestDrafts(storage);
+  QVERIFY(empty.ok());
+  QVERIFY(empty.value().empty());
+
+  const auto missing =
+      bte::bindings::discardBacktestDraft(storage, std::string(32, 'a'));
+  QVERIFY(!missing.ok());
+  QCOMPARE(missing.error().code, bte::core::ErrorCode::notFound);
+  const auto invalid = bte::bindings::publishBacktestDraft(storage, "bad-id");
+  QVERIFY(!invalid.ok());
+  QCOMPARE(invalid.error().code, bte::core::ErrorCode::invalidArgument);
+
+  auto invalidStorage = storage;
+  invalidStorage.resultStore.clear();
+  const auto unopenablePublish =
+      bte::bindings::publishBacktestDraft(invalidStorage, std::string(32, 'a'));
+  const auto unopenableDiscard =
+      bte::bindings::discardBacktestDraft(invalidStorage, std::string(32, 'a'));
+  QVERIFY(!unopenablePublish.ok());
+  QVERIFY(!unopenableDiscard.ok());
+  auto blockedStorage = storage;
+  blockedStorage.resultStore =
+      std::filesystem::path{directory.path().toStdString()} / "BlockedStore";
+  std::ofstream blocked{blockedStorage.resultStore};
+  blocked << "not a directory";
+  blocked.close();
+  const auto unopenableList = bte::bindings::listBacktestDrafts(blockedStorage);
+  QVERIFY(!unopenableList.ok());
+
+  bte::core::CancellationSource source;
+  source.requestCancellation();
+  const auto cancellation = source.token();
+  const auto cancelledList =
+      bte::bindings::listBacktestDrafts(storage, cancellation);
+  const auto cancelledPublish = bte::bindings::publishBacktestDraft(
+      storage, std::string(32, 'a'), {}, cancellation);
+  const auto cancelledDiscard = bte::bindings::discardBacktestDraft(
+      storage, std::string(32, 'a'), cancellation);
+  QVERIFY(!cancelledList.ok());
+  QVERIFY(!cancelledPublish.ok());
+  QVERIFY(!cancelledDiscard.ok());
+  QCOMPARE(cancelledList.error().code, bte::core::ErrorCode::cancelled);
+  QCOMPARE(cancelledPublish.error().code, bte::core::ErrorCode::cancelled);
+  QCOMPARE(cancelledDiscard.error().code, bte::core::ErrorCode::cancelled);
+
+  bte::core::CancellationSource cancelDuringPublish;
+  bte::bindings::testing::cancelAfterNextDraftStoreOpen(cancelDuringPublish);
+  const auto interruptedPublish = bte::bindings::publishBacktestDraft(
+      storage, std::string(32, 'a'), {}, cancelDuringPublish.token());
+  bte::bindings::testing::clearDraftStoreOpenHook();
+  QVERIFY(!interruptedPublish.ok());
+  QCOMPARE(interruptedPublish.error().code, bte::core::ErrorCode::cancelled);
+
+  bte::core::CancellationSource cancelDuringDiscard;
+  bte::bindings::testing::cancelAfterNextDraftStoreOpen(cancelDuringDiscard);
+  const auto interruptedDiscard = bte::bindings::discardBacktestDraft(
+      storage, std::string(32, 'a'), cancelDuringDiscard.token());
+  bte::bindings::testing::clearDraftStoreOpenHook();
+  QVERIFY(!interruptedDiscard.ok());
+  QCOMPARE(interruptedDiscard.error().code, bte::core::ErrorCode::cancelled);
+}
+
+void BacktestSessionVmTest::
+    draftCatalogKeepsRecoveryNoticesWithoutMutatingLegacyFiles() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto storage =
+      bte::bindings::PersistedBacktestStorage{.resultStore = root / "Results",
+                                              .dataStore = root / "Data",
+                                              .snapshotId = {},
+                                              .strategyHash = {}};
+  const auto missing = bte::bindings::listBacktestDraftCatalog(storage);
+  QVERIFY(missing.ok());
+  QVERIFY(missing.value().entries.empty());
+  QVERIFY(missing.value().notices.empty());
+  QVERIFY(!std::filesystem::exists(storage.resultStore));
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+  const auto cancelled =
+      bte::bindings::listBacktestDraftCatalog(storage, cancellation.token());
+  QVERIFY(!cancelled.ok());
+  QCOMPARE(cancelled.error().code, bte::core::ErrorCode::cancelled);
+
+  std::filesystem::create_directories(storage.resultStore);
+  bte::core::CancellationSource cancelDuringList;
+  bte::bindings::testing::cancelAfterNextDraftStoreOpen(cancelDuringList);
+  const auto interruptedList = bte::bindings::listBacktestDraftCatalog(
+      storage, cancelDuringList.token());
+  bte::bindings::testing::clearDraftStoreOpenHook();
+  QVERIFY(!interruptedList.ok());
+  QCOMPARE(interruptedList.error().code, bte::core::ErrorCode::cancelled);
+
+  std::filesystem::create_directories(storage.resultStore / "Staging");
+  const auto resultId = std::string(32, 'a');
+  const auto legacyPath =
+      storage.resultStore / "Staging" / (resultId + ".bteresult");
+  {
+    std::ofstream legacy{legacyPath};
+    legacy << "unleased legacy staging";
+  }
+  const auto catalog = bte::bindings::listBacktestDraftCatalog(storage);
+  QVERIFY2(catalog.ok(), catalog.error().message.c_str());
+  QVERIFY(catalog.value().entries.empty());
+  QCOMPARE(catalog.value().notices.size(), 1U);
+  QCOMPARE(catalog.value().notices.front().resultId, resultId);
+  QCOMPARE(catalog.value().notices.front().reason,
+           bte::bindings::ResultRecoveryReason::legacyUnleased);
+  QVERIFY(!catalog.value().notices.front().diagnostic.empty());
+  std::ifstream legacy{legacyPath};
+  std::string contents;
+  std::getline(legacy, contents);
+  QCOMPARE(contents, std::string{"unleased legacy staging"});
+  const auto compatibility = bte::bindings::listBacktestDrafts(storage);
+  QVERIFY(compatibility.ok());
+  QVERIFY(compatibility.value().empty());
+}
+
+void BacktestSessionVmTest::
+    catalogSnapshotTranslatesEntriesAndEveryRecoveryReason() {
+  const std::array entries{
+      bte::results::ResultSummary{
+          .resultId = "running",
+          .displayName = "Running result",
+          .canonicalResultHash = "hash-running",
+          .status = bte::results::RunStatus::running,
+          .savedUtcMillis = 101,
+          .available = true,
+          .unavailableReason = "",
+      },
+      bte::results::ResultSummary{
+          .resultId = "completed",
+          .displayName = "Completed result",
+          .canonicalResultHash = "hash-completed",
+          .status = bte::results::RunStatus::completed,
+          .savedUtcMillis = 102,
+          .available = true,
+          .unavailableReason = "",
+      },
+      bte::results::ResultSummary{
+          .resultId = "failed",
+          .displayName = "Failed result",
+          .canonicalResultHash = "hash-failed",
+          .status = bte::results::RunStatus::failed,
+          .savedUtcMillis = 103,
+          .available = false,
+          .unavailableReason = "missing segment",
+      },
+      bte::results::ResultSummary{
+          .resultId = "canceled",
+          .displayName = "Canceled result",
+          .canonicalResultHash = "hash-canceled",
+          .status = bte::results::RunStatus::canceled,
+          .savedUtcMillis = 104,
+          .available = true,
+          .unavailableReason = "",
+      },
+      bte::results::ResultSummary{
+          .resultId = "interrupted",
+          .displayName = "Interrupted result",
+          .canonicalResultHash = "hash-interrupted",
+          .status = bte::results::RunStatus::interrupted,
+          .savedUtcMillis = 105,
+          .available = false,
+          .unavailableReason = "invalid lease",
+      },
+      bte::results::ResultSummary{
+          .resultId = "incomplete",
+          .displayName = "Incomplete result",
+          .canonicalResultHash = "hash-incomplete",
+          .status = bte::results::RunStatus::incomplete,
+          .savedUtcMillis = 106,
+          .available = false,
+          .unavailableReason = "incomplete result",
+      },
+  };
+  const std::array notices{
+      bte::results::ResultRecoveryNotice{
+          .resultId = "legacy",
+          .reason = bte::results::ResultRecoveryReason::legacyUnleased,
+          .diagnostic = "legacy diagnostic",
+      },
+      bte::results::ResultRecoveryNotice{
+          .resultId = "lease",
+          .reason = bte::results::ResultRecoveryReason::invalidLease,
+          .diagnostic = "lease diagnostic",
+      },
+      bte::results::ResultRecoveryNotice{
+          .resultId = "prefix",
+          .reason = bte::results::ResultRecoveryReason::invalidPrefix,
+          .diagnostic = "prefix diagnostic",
+      },
+      bte::results::ResultRecoveryNotice{
+          .resultId = "references",
+          .reason = bte::results::ResultRecoveryReason::missingReferences,
+          .diagnostic = "references diagnostic",
+      },
+      bte::results::ResultRecoveryNotice{
+          .resultId = "initialization",
+          .reason = bte::results::ResultRecoveryReason::orphanedInitialization,
+          .diagnostic = "initialization diagnostic",
+      },
+  };
+
+  const auto catalog = bte::bindings::makeResultCatalogSnapshot(
+      std::vector<bte::results::ResultSummary>{entries.begin(), entries.end()},
+      notices);
+  const std::array expectedStatuses{
+      bte::bindings::ResultRunStatus::running,
+      bte::bindings::ResultRunStatus::completed,
+      bte::bindings::ResultRunStatus::failed,
+      bte::bindings::ResultRunStatus::canceled,
+      bte::bindings::ResultRunStatus::interrupted,
+      bte::bindings::ResultRunStatus::incomplete,
+  };
+  QCOMPARE(catalog.entries.size(), entries.size());
+  for (auto index = std::size_t{}; index < entries.size(); ++index) {
+    const auto &actual = catalog.entries[index];
+    const auto &expected = entries[index];
+    QCOMPARE(actual.resultId, expected.resultId);
+    QCOMPARE(actual.displayName, expected.displayName);
+    QCOMPARE(actual.canonicalResultHash, expected.canonicalResultHash);
+    QCOMPARE(actual.status, expectedStatuses[index]);
+    QCOMPARE(actual.savedUtcMillis, expected.savedUtcMillis);
+    QCOMPARE(actual.available, expected.available);
+    QCOMPARE(actual.unavailableReason, expected.unavailableReason);
+  }
+
+  const std::array expectedReasons{
+      bte::bindings::ResultRecoveryReason::legacyUnleased,
+      bte::bindings::ResultRecoveryReason::invalidLease,
+      bte::bindings::ResultRecoveryReason::invalidPrefix,
+      bte::bindings::ResultRecoveryReason::missingReferences,
+      bte::bindings::ResultRecoveryReason::orphanedInitialization,
+  };
+  QCOMPARE(catalog.notices.size(), expectedReasons.size());
+  for (auto index = std::size_t{}; index < expectedReasons.size(); ++index) {
+    QCOMPARE(catalog.notices[index].resultId, notices[index].resultId);
+    QCOMPARE(catalog.notices[index].reason, expectedReasons[index]);
+    QCOMPARE(catalog.notices[index].diagnostic, notices[index].diagnostic);
+  }
+
+  const auto invalidStatus = bte::bindings::toResultRunStatus(
+      static_cast<bte::results::RunStatus>(255));
+  QCOMPARE(invalidStatus, bte::bindings::ResultRunStatus::incomplete);
+  const std::array invalidNotice{
+      bte::results::ResultRecoveryNotice{
+          .resultId = "unknown",
+          .reason = static_cast<bte::results::ResultRecoveryReason>(255),
+          .diagnostic = "unknown recovery reason",
+      },
+  };
+  const auto fallback =
+      bte::bindings::makeResultCatalogSnapshot({}, invalidNotice);
+  QCOMPARE(fallback.notices.size(), 1U);
+  QCOMPARE(fallback.notices.front().reason,
+           bte::bindings::ResultRecoveryReason::invalidPrefix);
 }
 
 } // namespace

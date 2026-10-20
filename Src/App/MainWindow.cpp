@@ -2,13 +2,18 @@
 
 #include "Bte/Frontend/BacktestTab.h"
 #include "Bte/Frontend/ReplayTab.h"
+#include "Bte/Frontend/ResultsTab.h"
 
 #include <QLabel>
+#include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QObject>
 #include <QStatusBar>
 #include <QString>
 #include <QtCore/Qt>
+#include <QtCore/qtenvironmentvariables.h>
+#include <QtGui/qaction.h>
 
 #include <memory>
 
@@ -22,6 +27,22 @@ QWidget *makePlaceholderTab(const QString &message) {
   label->setAccessibleName(label->text());
   return label.release();
 }
+
+QString launcherValue(const char *name) {
+  const auto value = qEnvironmentVariable(name);
+  return value.isEmpty() ? QString{"unavailable"} : value;
+}
+
+QString buildInformation() {
+  return QString{"Checkout: %1\nBranch: %2\nCommit: %3\nDirty: %4\n"
+                 "App SHA-256: %5\nSnapshot ID: %6"}
+      .arg(launcherValue("BTE_LAUNCH_CHECKOUT"),
+           launcherValue("BTE_LAUNCH_BRANCH"),
+           launcherValue("BTE_LAUNCH_COMMIT"),
+           launcherValue("BTE_LAUNCH_DIRTY"),
+           launcherValue("BTE_LAUNCH_APP_SHA256"),
+           launcherValue("BTE_DATA_SNAPSHOT_ID"));
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 } // namespace
 
@@ -85,7 +106,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   menuBar()->addMenu(tr("&Strategy"));
   menuBar()->addMenu(tr("&Data"));
   menuBar()->addMenu(tr("&View"));
-  menuBar()->addMenu(tr("&Help"));
+  auto *helpMenu = menuBar()->addMenu(tr("&Help"));
+  auto *buildInformationAction = helpMenu->addAction(tr("Build Information"));
+  buildInformationAction->setObjectName("buildInformationAction");
+  QObject::connect(buildInformationAction, &QAction::triggered, this, [this] {
+    auto *dialog = std::make_unique<QMessageBox>(
+                       QMessageBox::Information, tr("Build Information"),
+                       buildInformation(), QMessageBox::Ok, this)
+                       .release();
+    dialog->setObjectName("buildInformationDialog");
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+  });
 
   tabs_ = std::make_unique<QTabWidget>(this).release();
   tabs_->setObjectName("mainTabWidget");
@@ -97,16 +129,27 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
       frontend::BacktestTab::createApplicationConfigured(tabs_);
   auto *backtest = backtestOwner.release();
   tabs_->addTab(backtest, tr("Backtest"));
-  tabs_->addTab(
-      makePlaceholderTab(tr("Result library management is planned; stored "
-                            "results can be opened in Replay.")),
-      tr("Results"));
+  auto *results = std::make_unique<frontend::ResultsTab>(tabs_).release();
+  const auto resultsIndex = tabs_->addTab(results, tr("Results"));
   auto *replay = std::make_unique<frontend::ReplayTab>(tabs_).release();
   const auto replayIndex = tabs_->addTab(replay, tr("Replay"));
   QObject::connect(backtest, &frontend::BacktestTab::openResultInReplay, this,
                    [this, replay, replayIndex](const QString &resultId) {
                      replay->openResult(resultId);
                      tabs_->setCurrentIndex(replayIndex);
+                   });
+  QObject::connect(results, &frontend::ResultsTab::openResultInReplay, this,
+                   [this, replay, replayIndex](const QString &resultId) {
+                     replay->openResult(resultId);
+                     tabs_->setCurrentIndex(replayIndex);
+                   });
+  QObject::connect(results, &frontend::ResultsTab::resultMovedToTrash, replay,
+                   &frontend::ReplayTab::closeResultIfId);
+  QObject::connect(tabs_, &QTabWidget::currentChanged, results,
+                   [results, resultsIndex](const int index) {
+                     if (index == resultsIndex) {
+                       results->refresh();
+                     }
                    });
   tabs_->setCurrentIndex(1);
   setCentralWidget(tabs_);

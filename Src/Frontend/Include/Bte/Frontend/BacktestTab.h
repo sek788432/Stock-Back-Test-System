@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Bte/Bindings/BacktestSessionVm.h"
+#include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
 
@@ -10,6 +11,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace bte::frontend {
 
@@ -20,9 +22,22 @@ public:
   using BacktestRunner = std::function<core::Result<bindings::BacktestSnapshot>(
       const bindings::BacktestConfiguration &,
       const core::CancellationToken &)>;
+  using ResultPublisher = std::function<core::Result<std::string>(
+      const std::string &, const std::string &,
+      const core::CancellationToken &)>;
+  using DraftLister =
+      std::function<core::Result<bindings::ResultCatalogSnapshot>(
+          const core::CancellationToken &)>;
+  using DraftDiscarder = std::function<core::Result<void>(
+      const std::string &, const core::CancellationToken &)>;
 
   explicit BacktestTab(QWidget *parent = nullptr);
   explicit BacktestTab(BacktestRunner runner, QWidget *parent = nullptr);
+  BacktestTab(BacktestRunner runner, ResultPublisher publisher,
+              QWidget *parent = nullptr);
+  BacktestTab(BacktestRunner runner, ResultPublisher publisher,
+              DraftLister draftLister, DraftDiscarder draftDiscarder,
+              QWidget *parent = nullptr);
   [[nodiscard]] static std::unique_ptr<BacktestTab>
   createApplicationConfigured(QWidget *parent = nullptr);
   ~BacktestTab() override;

@@ -25,6 +25,7 @@ enum class ErrorCode : std::uint8_t {
   insufficientCash,
   insufficientShares,
   pluginIncompatibleAbi,
+  resourceBusy,
 };
 
 struct Error {

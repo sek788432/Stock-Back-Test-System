@@ -1,5 +1,7 @@
 #include "Bte/Frontend/BacktestTab.h"
 
+#include "ResultRecoveryNoticeLabel.h"
+
 #include "Bte/Bindings/BacktestSessionVm.h"
 #include "Bte/Indicators/StreamingIndicator.h"
 #include "Bte/Strategy/SelectableStrategy.h"
@@ -20,6 +22,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLayout>
+#include <QLineEdit>
 #include <QList>
 #include <QLocale>
 #include <QObject>
@@ -31,6 +34,8 @@
 #include <QVariant>
 #include <QtConcurrentRun>
 #include <QtCore/Qt>
+#include <QtCore/qbytearray.h>
+#include <QtCore/qchar.h>
 #include <QtCore/qtenvironmentvariables.h>
 #include <QtCore/qtimezone.h>
 #include <QtGui/qkeysequence.h>
@@ -40,8 +45,10 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <tuple>       // IWYU pragma: keep
 #include <type_traits> // IWYU pragma: keep
@@ -404,10 +411,16 @@ void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
 
 struct BacktestTab::RunState final {
   using BacktestResult = core::Result<bindings::BacktestSnapshot>;
+  using PublishResult = core::Result<std::string>;
+  using DraftListResult = core::Result<bindings::ResultCatalogSnapshot>;
+  using DiscardResult = core::Result<void>;
 
   ~RunState() {
     cancellation.requestCancellation();
     watcher.waitForFinished();
+    publishWatcher.waitForFinished();
+    draftListWatcher.waitForFinished();
+    discardWatcher.waitForFinished();
   }
 
   RunState() = default;
@@ -418,8 +431,270 @@ struct BacktestTab::RunState final {
 
   core::CancellationSource cancellation;
   QFutureWatcher<BacktestResult> watcher;
+  QFutureWatcher<PublishResult> publishWatcher;
+  QFutureWatcher<DraftListResult> draftListWatcher;
+  QFutureWatcher<DiscardResult> discardWatcher;
   bool selectableConditions = false;
+  bool openAfterPublish = false;
 };
+
+namespace {
+
+using BacktestResult = core::Result<bindings::BacktestSnapshot>;
+using DraftListResult = core::Result<bindings::ResultCatalogSnapshot>;
+using PublishResult = core::Result<std::string>;
+using DiscardResult = core::Result<void>;
+
+BacktestResult
+runConfigured(const bindings::PersistedBacktestStorage &storage,
+              const bindings::BacktestConfiguration &configuration,
+              const core::CancellationToken &cancellation) {
+  return bindings::runPersistedBacktestConfiguration(configuration, storage,
+                                                     cancellation);
+}
+
+struct DraftActionWidgets final {
+  BacktestTab *owner =
+      nullptr; // Non-owning; Qt connections use owner as context.
+  QPushButton *run = nullptr;
+  QPushButton *saveResult = nullptr;
+  QPushButton *saveAndReplay = nullptr;
+  QLineEdit *resultName = nullptr;
+  QPushButton *refreshDrafts = nullptr;
+  QPushButton *discardDraft = nullptr;
+  QComboBox *drafts = nullptr;
+  ResultRecoveryNoticeLabel *recoveryNotices = nullptr;
+  QLabel *status = nullptr;
+  QFutureWatcher<BacktestResult> *runWatcher = nullptr;
+  QFutureWatcher<DraftListResult> *draftListWatcher = nullptr;
+  QFutureWatcher<PublishResult> *publishWatcher = nullptr;
+  QFutureWatcher<DiscardResult> *discardWatcher = nullptr;
+  core::CancellationSource *cancellation = nullptr;
+  bool *openAfterPublish = nullptr;
+};
+
+void updateDraftActionAvailability(const DraftActionWidgets &controls) {
+  const auto idle = !controls.runWatcher->isRunning() &&
+                    !controls.publishWatcher->isRunning() &&
+                    !controls.discardWatcher->isRunning();
+  const auto hasResult =
+      !controls.saveResult->property("resultId").toString().isEmpty();
+  controls.saveResult->setEnabled(hasResult && idle);
+  controls.saveAndReplay->setEnabled(hasResult && idle);
+  controls.discardDraft->setEnabled(controls.drafts->currentIndex() >= 0 &&
+                                    idle);
+}
+
+std::function<void()>
+connectDraftListing(const DraftActionWidgets &controls,
+                    BacktestTab::DraftLister draftLister) {
+  QObject::connect(
+      controls.draftListWatcher, &QFutureWatcher<DraftListResult>::finished,
+      controls.owner, [controls] {
+        controls.refreshDrafts->setEnabled(true);
+        const auto previous = controls.drafts->currentData().toString();
+        const auto listed = controls.draftListWatcher->result();
+        if (!listed.ok()) {
+          setLabelText(
+              controls.status,
+              QObject::tr("Cannot load unsaved runs — %1")
+                  .arg(QString::fromStdString(listed.error().message)));
+          return;
+        }
+        controls.recoveryNotices->present(listed.value().notices);
+        {
+          const QSignalBlocker blockSelection{controls.drafts};
+          controls.drafts->clear();
+          for (const auto &entry : listed.value().entries) {
+            const auto draftId = QString::fromStdString(entry.resultId);
+            controls.drafts->addItem(draftId, draftId);
+          }
+          const auto previousIndex = controls.drafts->findData(previous);
+          if (previousIndex >= 0) {
+            controls.drafts->setCurrentIndex(previousIndex);
+          } else if (previous.isEmpty() && controls.drafts->count() > 0) {
+            controls.drafts->setCurrentIndex(0);
+            controls.saveResult->setProperty("resultId",
+                                             controls.drafts->currentData());
+          } else {
+            controls.drafts->setCurrentIndex(-1);
+          }
+        }
+        updateDraftActionAvailability(controls);
+      });
+
+  auto refresh = [controls, listDrafts = std::move(draftLister)] {
+    if (controls.draftListWatcher->isRunning()) {
+      return;
+    }
+    controls.refreshDrafts->setEnabled(false);
+    const auto cancellation = controls.cancellation->token();
+    controls.draftListWatcher->setFuture(
+        QtConcurrent::run([listDrafts, cancellation] {
+          try {
+            return listDrafts(cancellation);
+          } catch (const std::exception &error) {
+            return DraftListResult{core::makeError(
+                core::ErrorCode::internal,
+                std::string{"draft list worker failed: "} + error.what())};
+          } catch (...) {
+            return DraftListResult{core::makeError(core::ErrorCode::internal,
+                                                   "draft list worker failed")};
+          }
+        }));
+  };
+  QObject::connect(controls.refreshDrafts, &QPushButton::clicked,
+                   controls.owner, refresh);
+  QObject::connect(
+      controls.drafts, qOverload<int>(&QComboBox::currentIndexChanged),
+      controls.owner, [controls](const int) {
+        const auto draftId = controls.drafts->currentData().toString();
+        if (!draftId.isEmpty()) {
+          controls.saveResult->setProperty("resultId", draftId);
+        }
+        updateDraftActionAvailability(controls);
+      });
+  return refresh;
+}
+
+void connectDraftDiscard(const DraftActionWidgets &controls,
+                         BacktestTab::DraftDiscarder draftDiscarder,
+                         const std::function<void()> &refresh) {
+  QObject::connect(
+      controls.discardWatcher, &QFutureWatcher<DiscardResult>::finished,
+      controls.owner, [controls, refresh] {
+        controls.run->setEnabled(true);
+        const auto discarded = controls.discardWatcher->result();
+        if (!discarded.ok()) {
+          setLabelText(controls.status, QObject::tr("Cannot discard draft — %1")
+                                            .arg(QString::fromStdString(
+                                                discarded.error().message)));
+          const auto hasDraft =
+              !controls.drafts->currentData().toString().isEmpty();
+          const auto hasResult =
+              !controls.saveResult->property("resultId").toString().isEmpty();
+          controls.discardDraft->setEnabled(hasDraft);
+          controls.saveResult->setEnabled(hasResult);
+          controls.saveAndReplay->setEnabled(hasResult);
+          return;
+        }
+        if (controls.saveResult->property("resultId") ==
+            controls.discardDraft->property("resultId")) {
+          controls.saveResult->setProperty("resultId", QString{});
+          controls.saveResult->setEnabled(false);
+          controls.saveAndReplay->setEnabled(false);
+        }
+        controls.discardDraft->setProperty("resultId", QString{});
+        setLabelText(controls.status, QObject::tr("Draft discarded"));
+        refresh();
+      });
+  QObject::connect(
+      controls.discardDraft, &QPushButton::clicked, controls.owner,
+      [controls, discardResult = std::move(draftDiscarder)] {
+        const auto resultId = controls.drafts->currentData().toString();
+        if (resultId.isEmpty() || controls.discardWatcher->isRunning()) {
+          return;
+        }
+        controls.discardDraft->setEnabled(false);
+        controls.discardDraft->setProperty("resultId", resultId);
+        controls.run->setEnabled(false);
+        controls.saveResult->setEnabled(false);
+        controls.saveAndReplay->setEnabled(false);
+        const auto cancellation = controls.cancellation->token();
+        controls.discardWatcher->setFuture(QtConcurrent::run(
+            [discardResult, draftId = resultId.toStdString(), cancellation] {
+              try {
+                return discardResult(draftId, cancellation);
+              } catch (const std::exception &error) {
+                return DiscardResult{core::makeError(
+                    core::ErrorCode::internal,
+                    std::string{"draft discard worker failed: "} +
+                        error.what())};
+              } catch (...) {
+                return DiscardResult{core::makeError(
+                    core::ErrorCode::internal, "draft discard worker failed")};
+              }
+            }));
+      });
+}
+
+void connectDraftPublish(const DraftActionWidgets &controls,
+                         BacktestTab::ResultPublisher publisher,
+                         const std::function<void()> &refresh) {
+  QObject::connect(
+      controls.publishWatcher, &QFutureWatcher<PublishResult>::finished,
+      controls.owner, [controls, refresh] {
+        controls.run->setEnabled(true);
+        const auto published = controls.publishWatcher->result();
+        if (!published.ok()) {
+          const auto hasResult =
+              !controls.saveResult->property("resultId").toString().isEmpty();
+          controls.saveResult->setEnabled(hasResult);
+          controls.saveAndReplay->setEnabled(hasResult);
+          controls.discardDraft->setEnabled(
+              !controls.drafts->currentData().toString().isEmpty());
+          setLabelText(controls.status, QObject::tr("Cannot save — %1")
+                                            .arg(QString::fromStdString(
+                                                published.error().message)));
+          *controls.openAfterPublish = false;
+          return;
+        }
+        const auto resultId = QString::fromStdString(published.value());
+        setLabelText(controls.status,
+                     QObject::tr("Saved result %1").arg(resultId));
+        if (*controls.openAfterPublish) {
+          emit controls.owner->openResultInReplay(resultId);
+        }
+        *controls.openAfterPublish = false;
+        refresh();
+      });
+
+  const auto beginPublish = [controls, publishResult = std::move(publisher)](
+                                const bool openAfterPublish) {
+    const auto resultId = controls.saveResult->property("resultId").toString();
+    if (resultId.isEmpty() || controls.publishWatcher->isRunning()) {
+      return;
+    }
+    const auto displayName = controls.resultName->text().trimmed();
+    if (displayName.toUtf8().size() > 160 ||
+        std::ranges::any_of(displayName, [](const QChar character) {
+          return character.isNull() ||
+                 character.category() == QChar::Other_Control;
+        })) {
+      setLabelText(controls.status,
+                   QObject::tr("Cannot save — Result name is too long or "
+                               "contains control characters"));
+      return;
+    }
+    controls.run->setEnabled(false);
+    controls.saveResult->setEnabled(false);
+    controls.saveAndReplay->setEnabled(false);
+    controls.discardDraft->setEnabled(false);
+    setLabelText(controls.status, QObject::tr("Saving result…"));
+    *controls.openAfterPublish = openAfterPublish;
+    const auto cancellation = controls.cancellation->token();
+    controls.publishWatcher->setFuture(
+        QtConcurrent::run([publishResult, draftId = resultId.toStdString(),
+                           name = displayName.toStdString(), cancellation] {
+          try {
+            return publishResult(draftId, name, cancellation);
+          } catch (const std::exception &error) {
+            return PublishResult{core::makeError(
+                core::ErrorCode::internal,
+                std::string{"save worker failed: "} + error.what())};
+          } catch (...) {
+            return PublishResult{core::makeError(core::ErrorCode::internal,
+                                                 "save worker failed")};
+          }
+        }));
+  };
+  QObject::connect(controls.saveResult, &QPushButton::clicked, controls.owner,
+                   [beginPublish] { beginPublish(false); });
+  QObject::connect(controls.saveAndReplay, &QPushButton::clicked,
+                   controls.owner, [beginPublish] { beginPublish(true); });
+}
+
+} // namespace
 
 BacktestTab::BacktestTab(QWidget *parent)
     : BacktestTab(
@@ -449,16 +724,44 @@ BacktestTab::createApplicationConfigured(QWidget *parent) {
       .strategyHash = {},
   };
   return std::make_unique<BacktestTab>(
-      // NOLINTNEXTLINE(bugprone-exception-escape): worker catches failures
-      [storage](const bindings::BacktestConfiguration &configuration,
-                const core::CancellationToken &cancellation) {
-        return bindings::runPersistedBacktestConfiguration(
-            configuration, storage, cancellation);
-      },
-      parent);
+      std::bind_front(runConfigured, storage),
+      std::bind_front(bindings::publishBacktestDraft, storage),
+      std::bind_front(bindings::listBacktestDraftCatalog, storage),
+      std::bind_front(bindings::discardBacktestDraft, storage), parent);
 }
 
 BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
+    : BacktestTab(
+          std::move(runner),
+          [](const std::string &, const std::string &,
+             const core::CancellationToken &) {
+            return core::Result<std::string>{core::makeError(
+                core::ErrorCode::invalidArgument,
+                "Result saving requires persisted Backtest storage")};
+          }, // GCOVR_EXCL_LINE: the compiler emits no executable instruction
+             // here.
+          parent) {}
+
+BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
+                         QWidget *parent)
+    : BacktestTab(
+          std::move(runner), std::move(publisher),
+          [](const core::CancellationToken &) {
+            return core::Result<bindings::ResultCatalogSnapshot>{
+                bindings::ResultCatalogSnapshot{}};
+          }, // GCOVR_EXCL_LINE: the compiler emits no executable instruction
+             // here.
+          [](const std::string &, const core::CancellationToken &) {
+            return core::Result<void>{core::makeError(
+                core::ErrorCode::invalidArgument,
+                "Draft discard requires persisted Backtest storage")};
+          }, // GCOVR_EXCL_LINE: the compiler emits no executable instruction
+             // here.
+          parent) {}
+
+BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
+                         DraftLister draftLister, DraftDiscarder draftDiscarder,
+                         QWidget *parent)
     : QWidget(parent), runState_(std::make_unique<RunState>()) {
   setObjectName("backtestTab");
   setAccessibleName("Backtest tab");
@@ -466,7 +769,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
     #backtestTab { background: #07111b; color: #dce9f5; }
     QGroupBox { border: 1px solid #28435e; border-radius: 6px; margin-top: 10px; padding-top: 12px; }
     QGroupBox::title { color: #8ed6df; left: 12px; padding: 0 5px; }
-    QComboBox, QDateEdit, QDoubleSpinBox, QSpinBox, QTableWidget { background: #0d1d2c; border: 1px solid #34536e; color: #e8f1f8; padding: 5px; }
+    QComboBox, QDateEdit, QDoubleSpinBox, QSpinBox, QLineEdit, QTableWidget { background: #0d1d2c; border: 1px solid #34536e; color: #e8f1f8; padding: 5px; }
     QPushButton { background: #1e91a0; border: 0; border-radius: 4px; color: white; font-weight: 600; padding: 8px 18px; }
     QPushButton:hover { background: #27aaba; }
   )");
@@ -723,6 +1026,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         comparison->setEnabled(enabled);
         threshold->setEnabled(enabled);
         period->setEnabled(enabled);
+        updateMetricDisplay(metric, threshold, period);
       };
   const auto connectMetricDisplay = [this](QComboBox *metric,
                                            QDoubleSpinBox *threshold,
@@ -760,20 +1064,58 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
   auto *status = makeLabel(tr("Ready to run"), "backtestStatusLabel", this);
   root->addWidget(status);
 
-  auto *openInReplay =
-      std::make_unique<QPushButton>(tr("Open in Replay"), this).release();
-  openInReplay->setObjectName("backtestOpenInReplayButton");
-  openInReplay->setAccessibleName("Open completed result in Replay");
-  openInReplay->setEnabled(false);
-  openInReplay->setProperty("resultId", QString{});
-  root->addWidget(openInReplay, 0, Qt::AlignRight);
-  QObject::connect(
-      openInReplay, &QPushButton::clicked, this, [this, openInReplay]() {
-        const auto resultId = openInReplay->property("resultId").toString();
-        if (!resultId.isEmpty()) {
-          emit openResultInReplay(resultId);
-        }
-      });
+  auto *saveActions = std::make_unique<QWidget>(this).release();
+  saveActions->setObjectName("backtestSaveActions");
+  saveActions->setAccessibleName("Backtest result save actions");
+  auto *saveLayout = std::make_unique<QHBoxLayout>(saveActions).release();
+  saveLayout->setContentsMargins(0, 0, 0, 0);
+  auto *resultName = std::make_unique<QLineEdit>(saveActions).release();
+  resultName->setObjectName("backtestResultNameEdit");
+  resultName->setAccessibleName(tr("Result name (optional)"));
+  resultName->setPlaceholderText(tr("Result name (optional)"));
+  resultName->setMaxLength(160);
+  resultName->setMinimumWidth(260);
+  auto *saveResult =
+      std::make_unique<QPushButton>(tr("Save Result"), saveActions).release();
+  saveResult->setObjectName("backtestSaveResultButton");
+  saveResult->setAccessibleName("Save Backtest result");
+  saveResult->setEnabled(false);
+  auto *saveAndReplay =
+      std::make_unique<QPushButton>(tr("Save && Replay"), saveActions)
+          .release();
+  saveAndReplay->setObjectName("backtestSaveAndReplayButton");
+  saveAndReplay->setAccessibleName("Save Backtest result and open Replay");
+  saveAndReplay->setEnabled(false);
+  saveLayout->addWidget(resultName);
+  saveLayout->addWidget(saveResult);
+  saveLayout->addWidget(saveAndReplay);
+  root->addWidget(saveActions, 0, Qt::AlignRight);
+
+  auto *unsavedRuns =
+      std::make_unique<QGroupBox>(tr("Unsaved Runs"), this).release();
+  unsavedRuns->setObjectName("backtestUnsavedRunsBox");
+  unsavedRuns->setAccessibleName("Unsaved Backtest runs");
+  auto *unsavedLayout = std::make_unique<QHBoxLayout>(unsavedRuns).release();
+  auto *drafts = std::make_unique<QComboBox>(unsavedRuns).release();
+  drafts->setObjectName("backtestUnsavedRunsCombo");
+  drafts->setAccessibleName("Unsaved Backtest runs");
+  auto *refreshDrafts =
+      std::make_unique<QPushButton>(tr("Refresh"), unsavedRuns).release();
+  refreshDrafts->setObjectName("backtestRefreshUnsavedRunsButton");
+  refreshDrafts->setAccessibleName("Refresh unsaved Backtest runs");
+  auto *discardDraft =
+      std::make_unique<QPushButton>(tr("Discard Draft"), unsavedRuns).release();
+  discardDraft->setObjectName("backtestDiscardDraftButton");
+  discardDraft->setAccessibleName("Discard selected Backtest draft");
+  discardDraft->setEnabled(false);
+  unsavedLayout->addWidget(drafts, 1);
+  unsavedLayout->addWidget(refreshDrafts);
+  unsavedLayout->addWidget(discardDraft);
+  root->addWidget(unsavedRuns);
+  auto *recoveryNotices = std::make_unique<ResultRecoveryNoticeLabel>(
+                              "backtestRecoveryNoticesLabel", this)
+                              .release();
+  root->addWidget(recoveryNotices);
 
   auto *summary =
       std::make_unique<QGroupBox>(tr("Result summary"), this).release();
@@ -808,26 +1150,62 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
   root->addWidget(tradeLog, 1);
 
   auto *watcher = &runState_->watcher;
+  auto *publishWatcher = &runState_->publishWatcher;
+  auto *draftListWatcher = &runState_->draftListWatcher;
+  auto *discardWatcher = &runState_->discardWatcher;
 
+  const auto draftControls = DraftActionWidgets{
+      .owner = this,
+      .run = run,
+      .saveResult = saveResult,
+      .saveAndReplay = saveAndReplay,
+      .resultName = resultName,
+      .refreshDrafts = refreshDrafts,
+      .discardDraft = discardDraft,
+      .drafts = drafts,
+      .recoveryNotices = recoveryNotices,
+      .status = status,
+      .runWatcher = watcher,
+      .draftListWatcher = draftListWatcher,
+      .publishWatcher = publishWatcher,
+      .discardWatcher = discardWatcher,
+      .cancellation = &runState_->cancellation,
+      .openAfterPublish = &runState_->openAfterPublish,
+  };
+  const auto beginDraftRefresh =
+      connectDraftListing(draftControls, std::move(draftLister));
+  connectDraftDiscard(draftControls, std::move(draftDiscarder),
+                      beginDraftRefresh);
+  connectDraftPublish(draftControls, std::move(publisher), beginDraftRefresh);
   QObject::connect(
       watcher, &QFutureWatcher<RunState::BacktestResult>::finished, this,
       [this, run, watcher, status, cash, position, market, equity, pnl, bars,
-       tradeLog, openInReplay]() {
+       tradeLog, drafts, saveResult, saveAndReplay, discardDraft,
+       beginDraftRefresh]() {
         run->setEnabled(true);
         const auto result = watcher->result();
         if (!result.ok()) {
-          openInReplay->setEnabled(false);
-          openInReplay->setProperty("resultId", QString{});
           setLabelText(
               status, tr("Cannot run — %1")
                           .arg(QString::fromStdString(result.error().message)));
+          beginDraftRefresh();
           return;
         }
 
         const auto &snapshot = result.value();
         const auto resultId = QString::fromStdString(snapshot.resultId);
-        openInReplay->setProperty("resultId", resultId);
-        openInReplay->setEnabled(!resultId.isEmpty());
+        if (!resultId.isEmpty()) {
+          saveResult->setProperty("resultId", resultId);
+          auto draftIndex = drafts->findData(resultId);
+          if (draftIndex < 0) {
+            drafts->addItem(resultId, resultId);
+            draftIndex = drafts->count() - 1;
+          }
+          drafts->setCurrentIndex(draftIndex);
+          saveResult->setEnabled(true);
+          saveAndReplay->setEnabled(true);
+          discardDraft->setEnabled(true);
+        }
         setLabelText(status, statusText(snapshot.outcome,
                                         runState_->selectableConditions));
         setLabelText(cash, tr("Cash: %1").arg(formatMoney(snapshot.cash)));
@@ -868,11 +1246,11 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
   QObject::connect(
       run, &QPushButton::clicked, this,
       [this, tradeLog, status, cash, position, market, equity, pnl, bars, run,
-       openInReplay, symbol, strategyCombo, start, end, capital, quantity,
-       watcher, buyLogic, buyMetric, buyComparison, buyThreshold, buyPeriod,
-       buySecondEnabled, buySecondMetric, buySecondComparison,
-       buySecondThreshold, buySecondPeriod, sellLogic, sellMetric,
-       sellComparison, sellThreshold, sellPeriod, sellSecondEnabled,
+       saveResult, saveAndReplay, discardDraft, symbol, strategyCombo, start,
+       end, capital, quantity, watcher, buyLogic, buyMetric, buyComparison,
+       buyThreshold, buyPeriod, buySecondEnabled, buySecondMetric,
+       buySecondComparison, buySecondThreshold, buySecondPeriod, sellLogic,
+       sellMetric, sellComparison, sellThreshold, sellPeriod, sellSecondEnabled,
        sellSecondMetric, sellSecondComparison, sellSecondThreshold,
        sellSecondPeriod, executeBacktest = std::move(runner)]() {
         tradeLog->setRowCount(0);
@@ -884,8 +1262,10 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
         setLabelText(pnl, tr("PnL: --"));
         setLabelText(bars, tr("Bars: --"));
         run->setEnabled(false);
-        openInReplay->setEnabled(false);
-        openInReplay->setProperty("resultId", QString{});
+        saveResult->setEnabled(false);
+        saveResult->setProperty("resultId", QString{});
+        saveAndReplay->setEnabled(false);
+        discardDraft->setEnabled(false);
 
         auto backtestConfiguration = bindings::BacktestConfiguration{
             .symbol = symbol->currentText(),
@@ -951,6 +1331,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
               }
             }));
       });
+  beginDraftRefresh();
 }
 
 BacktestTab::~BacktestTab() = default;

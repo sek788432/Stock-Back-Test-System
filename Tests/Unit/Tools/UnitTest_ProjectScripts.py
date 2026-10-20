@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
@@ -34,6 +35,28 @@ class ProjectScriptsTest(unittest.TestCase):
         shutil.copy2(REPOSITORY_ROOT / name, destination)
         return destination
 
+    def install_fake_snapshot_builder(
+        self, snapshot_id: str = "a" * 64, exit_code: int = 0
+    ) -> None:
+        builder = (
+            self.root / "Output/qt-dev/Src/Backend/Data/bte_snapshot_builder"
+        )
+        builder.parent.mkdir(parents=True, exist_ok=True)
+        builder.write_text(
+            "#!/usr/bin/env bash\n"
+            'printf "snapshot-builder %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n'
+            f"if [[ {exit_code} -ne 0 ]]; then exit {exit_code}; fi\n"
+            'mkdir -p "$2/Snapshots/'
+            + snapshot_id
+            + '"\n'
+            + 'touch "$2/Snapshots/'
+            + snapshot_id
+            + '/Manifest.btesnapshot"\n'
+            + f'printf "%s\\n" "{snapshot_id}"\n',
+            encoding="utf-8",
+        )
+        builder.chmod(builder.stat().st_mode | stat.S_IXUSR)
+
     def environment(self) -> dict[str, str]:
         environment = os.environ.copy()
         environment["PATH"] = f"{self.bin_directory}{os.pathsep}{environment['PATH']}"
@@ -57,11 +80,17 @@ class ProjectScriptsTest(unittest.TestCase):
 
     def test_launch_configures_builds_and_starts_qt_app_from_any_directory(self) -> None:
         script = self.copy_script("Launch.sh")
-        self.install_fake_command("cmake", 'printf "cmake %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n')
+        self.install_fake_command(
+            "cmake", 'printf "cmake %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n'
+        )
+        self.install_fake_snapshot_builder()
         app = self.root / "Output/qt-dev/Src/App/stockBacktester"
         app.parent.mkdir(parents=True)
         app.write_text(
-            '#!/usr/bin/env bash\nprintf "app %s\\n" "$PWD" >> "$BTE_SCRIPT_TEST_LOG"\n',
+            "#!/usr/bin/env bash\n"
+            'printf "app %s data=%s snapshot=%s\\n" "$PWD" '
+            '"$BTE_DATA_STORE" "$BTE_DATA_SNAPSHOT_ID" '
+            '>> "$BTE_SCRIPT_TEST_LOG"\n',
             encoding="utf-8",
         )
         app.chmod(app.stat().st_mode | stat.S_IXUSR)
@@ -69,14 +98,251 @@ class ProjectScriptsTest(unittest.TestCase):
         result = self.run_script(script)
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"Checkout: {self.root}", result.stdout)
+        self.assertIn("Commit: unavailable", result.stdout)
+        self.assertIn("Dirty: unknown", result.stdout)
         self.assertEqual(
             self.logged_commands(),
             [
                 "cmake --preset qt-dev -DBTE_BUILD_TESTS=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON",
                 "cmake --build --preset qt-dev --parallel",
-                f"app {self.root}",
+                "snapshot-builder "
+                f"{self.root / 'StockData/Extracted'} "
+                f"{self.root / 'Output/DevData'} "
+                f"{'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'} "
+                f"{'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'} "
+                "AAPL MSFT NVDA",
+                f"app {self.root} data={self.root / 'Output/DevData'} "
+                f"snapshot={'a' * 64}",
             ],
         )
+
+    def test_launch_reports_checkout_build_and_snapshot_identity(self) -> None:
+        script = self.copy_script("Launch.sh")
+        self.install_fake_command("cmake", 'printf "cmake %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n')
+        self.install_fake_command(
+            "git",
+            '''printf "git %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"
+if [[ "$*" == *"rev-parse --verify HEAD" ]]; then
+  printf '%s\\n' '1234567890abcdef1234567890abcdef12345678'
+elif [[ "$*" == *"symbolic-ref --short -q HEAD" ]]; then
+  printf '%s\\n' 'codex/provenance-test'
+elif [[ "$*" == *"status --porcelain"* ]]; then
+  printf '%s\\n' ' M Launch.sh'
+fi
+''',
+        )
+        self.install_fake_snapshot_builder(snapshot_id="a" * 64)
+        app = self.root / "Output/qt-dev/Src/App/stockBacktester"
+        app.parent.mkdir(parents=True)
+        app.write_text(
+            '#!/usr/bin/env bash\nprintf "identity %s %s %s %s %s %s\\n" '
+            '"$BTE_LAUNCH_CHECKOUT" "$BTE_LAUNCH_BRANCH" '
+            '"$BTE_LAUNCH_COMMIT" "$BTE_LAUNCH_DIRTY" '
+            '"$BTE_LAUNCH_APP_SHA256" "$BTE_DATA_SNAPSHOT_ID" '
+            '>> "$BTE_SCRIPT_TEST_LOG"\n',
+            encoding="utf-8",
+        )
+        app.chmod(app.stat().st_mode | stat.S_IXUSR)
+
+        result = self.run_script(script)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"Checkout: {self.root}", result.stdout)
+        self.assertIn("Branch: codex/provenance-test", result.stdout)
+        self.assertIn("Commit: 1234567890abcdef1234567890abcdef12345678", result.stdout)
+        self.assertIn("Dirty: yes", result.stdout)
+        self.assertIn(
+            f"App SHA-256: {hashlib.sha256(app.read_bytes()).hexdigest()}",
+            result.stdout,
+        )
+        self.assertIn(f"Snapshot ID: {'a' * 64}", result.stdout)
+        self.assertIn(
+            "identity "
+            f"{self.root} codex/provenance-test "
+            "1234567890abcdef1234567890abcdef12345678 yes "
+            f"{hashlib.sha256(app.read_bytes()).hexdigest()} {'a' * 64}",
+            self.logged_commands(),
+        )
+        self.assertFalse(
+            any(
+                command.startswith(("git fetch", "git checkout", "git switch"))
+                for command in self.logged_commands()
+            )
+        )
+
+    def test_launch_reports_clean_detached_checkout_without_inventing_branch(self) -> None:
+        script = self.copy_script("Launch.sh")
+        self.install_fake_command("cmake", "exit 0\n")
+        self.install_fake_command(
+            "git",
+            '''if [[ "$*" == *"rev-parse --verify HEAD" ]]; then
+  printf '%s\\n' 'abcdef1234567890abcdef1234567890abcdef12'
+elif [[ "$*" == *"symbolic-ref --short -q HEAD" ]]; then
+  exit 1
+fi
+''',
+        )
+        self.install_fake_snapshot_builder()
+        app = self.root / "Output/qt-dev/Src/App/stockBacktester"
+        app.parent.mkdir(parents=True)
+        app.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        app.chmod(app.stat().st_mode | stat.S_IXUSR)
+
+        result = self.run_script(script)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Branch: detached", result.stdout)
+        self.assertIn("Commit: abcdef1234567890abcdef1234567890abcdef12", result.stdout)
+        self.assertIn("Dirty: no", result.stdout)
+
+    def test_launch_preserves_complete_explicit_snapshot_configuration(self) -> None:
+        script = self.copy_script("Launch.sh")
+        self.install_fake_command(
+            "cmake", 'printf "cmake %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n'
+        )
+        app = self.root / "Output/qt-dev/Src/App/stockBacktester"
+        app.parent.mkdir(parents=True)
+        app.write_text(
+            "#!/usr/bin/env bash\n"
+            'printf "app data=%s snapshot=%s\\n" "$BTE_DATA_STORE" '
+            '"$BTE_DATA_SNAPSHOT_ID" >> "$BTE_SCRIPT_TEST_LOG"\n',
+            encoding="utf-8",
+        )
+        app.chmod(app.stat().st_mode | stat.S_IXUSR)
+        environment = self.environment()
+        environment["BTE_DATA_STORE"] = str(self.root / "Explicit Data")
+        environment["BTE_DATA_SNAPSHOT_ID"] = "b" * 64
+        manifest = (
+            self.root
+            / "Explicit Data/Snapshots"
+            / ("b" * 64)
+            / "Manifest.btesnapshot"
+        )
+        manifest.parent.mkdir(parents=True)
+        manifest.touch()
+
+        result = subprocess.run(
+            ["bash", str(script)],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.logged_commands()[-1],
+            f"app data={self.root / 'Explicit Data'} snapshot={'b' * 64}",
+        )
+        self.assertFalse(
+            any(
+                command.startswith("snapshot-builder ")
+                for command in self.logged_commands()
+            )
+        )
+
+    def test_launch_rejects_invalid_explicit_snapshot_identity(self) -> None:
+        script = self.copy_script("Launch.sh")
+        environment = self.environment()
+        environment["BTE_DATA_STORE"] = str(self.root / "Explicit Data")
+        environment["BTE_DATA_SNAPSHOT_ID"] = "invalid"
+
+        result = subprocess.run(
+            ["bash", str(script)],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "BTE_DATA_SNAPSHOT_ID must be 64 lowercase hex", result.stderr
+        )
+        self.assertEqual(self.logged_commands(), [])
+
+    def test_launch_rejects_missing_explicit_snapshot_manifest(self) -> None:
+        script = self.copy_script("Launch.sh")
+        environment = self.environment()
+        environment["BTE_DATA_STORE"] = str(self.root / "Explicit Data")
+        environment["BTE_DATA_SNAPSHOT_ID"] = "b" * 64
+
+        result = subprocess.run(
+            ["bash", str(script)],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("snapshot manifest does not exist", result.stderr)
+        self.assertEqual(self.logged_commands(), [])
+
+    def test_launch_rejects_partial_snapshot_configuration(self) -> None:
+        script = self.copy_script("Launch.sh")
+        environment = self.environment()
+        environment["BTE_DATA_STORE"] = str(self.root / "Explicit Data")
+        environment.pop("BTE_DATA_SNAPSHOT_ID", None)
+
+        result = subprocess.run(
+            ["bash", str(script)],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "BTE_DATA_STORE and BTE_DATA_SNAPSHOT_ID must be set together",
+            result.stderr,
+        )
+        self.assertEqual(self.logged_commands(), [])
+
+    def test_launch_does_not_start_app_when_snapshot_builder_fails(self) -> None:
+        script = self.copy_script("Launch.sh")
+        self.install_fake_command(
+            "cmake", 'printf "cmake %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n'
+        )
+        self.install_fake_snapshot_builder(exit_code=29)
+        app = self.root / "Output/qt-dev/Src/App/stockBacktester"
+        app.parent.mkdir(parents=True)
+        app.write_text(
+            '#!/usr/bin/env bash\nprintf "started\\n" >> "$BTE_SCRIPT_TEST_LOG"\n',
+            encoding="utf-8",
+        )
+        app.chmod(app.stat().st_mode | stat.S_IXUSR)
+
+        result = self.run_script(script)
+
+        self.assertEqual(result.returncode, 29)
+        self.assertNotIn("started", self.logged_commands())
+
+    def test_launch_rejects_invalid_snapshot_builder_identity(self) -> None:
+        script = self.copy_script("Launch.sh")
+        self.install_fake_command(
+            "cmake", 'printf "cmake %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n'
+        )
+        self.install_fake_snapshot_builder(snapshot_id="not-a-snapshot-id")
+        app = self.root / "Output/qt-dev/Src/App/stockBacktester"
+        app.parent.mkdir(parents=True)
+        app.write_text(
+            '#!/usr/bin/env bash\nprintf "started\\n" >> "$BTE_SCRIPT_TEST_LOG"\n',
+            encoding="utf-8",
+        )
+        app.chmod(app.stat().st_mode | stat.S_IXUSR)
+
+        result = self.run_script(script)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("snapshot builder returned an invalid ID", result.stderr)
+        self.assertNotIn("started", self.logged_commands())
 
     def test_launch_does_not_start_app_when_configure_fails(self) -> None:
         script = self.copy_script("Launch.sh")
@@ -93,6 +359,26 @@ class ProjectScriptsTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 23)
         self.assertEqual(self.logged_commands(), [])
+
+    def test_launch_does_not_start_app_or_claim_build_when_build_fails(self) -> None:
+        script = self.copy_script("Launch.sh")
+        self.install_fake_command(
+            "cmake",
+            'if [[ "$1" == "--build" ]]; then exit 31; fi\n',
+        )
+        app = self.root / "Output/qt-dev/Src/App/stockBacktester"
+        app.parent.mkdir(parents=True)
+        app.write_text(
+            '#!/usr/bin/env bash\nprintf "started\\n" >> "$BTE_SCRIPT_TEST_LOG"\n',
+            encoding="utf-8",
+        )
+        app.chmod(app.stat().st_mode | stat.S_IXUSR)
+
+        result = self.run_script(script)
+
+        self.assertEqual(result.returncode, 31)
+        self.assertNotIn("started", self.logged_commands())
+        self.assertNotIn("App SHA-256:", result.stdout)
 
     def test_run_test_uses_qt_preset_and_runs_every_registered_test(self) -> None:
         script = self.copy_script("RunTest.sh")

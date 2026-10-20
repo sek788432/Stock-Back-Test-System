@@ -90,6 +90,11 @@ public:
 
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   start(BacktestRequest request);
+  /// Owns a durable writer; advance commits each complete bar before progress.
+  [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
+  startRecorded(BacktestRequest request, const results::ResultStore &store,
+                const results::RunDescriptor &descriptor,
+                const core::CancellationToken &cancellation = {});
   [[nodiscard]] core::Result<void>
   advance(const core::CancellationToken &cancellation = {});
   [[nodiscard]] core::Result<void>
@@ -100,8 +105,14 @@ public:
   terminalError() const noexcept;
   [[nodiscard]] core::Result<RecordedBacktestOutcome>
   finalizeAndRecord(results::ResultWriter &writer);
+  [[nodiscard]] core::Result<RecordedBacktestOutcome> finalizeRecorded();
 
 private:
+  // The borrowed writer is attached only inside this synchronous entry point.
+  friend core::Result<RecordedBacktestOutcome>
+  runBacktestAndRecord(const BacktestRequest &request,
+                       results::ResultWriter &writer,
+                       const core::CancellationToken &cancellation);
   std::unique_ptr<Impl> impl_;
 };
 
@@ -111,8 +122,8 @@ private:
 runBacktest(const BacktestRequest &request,
             const core::CancellationToken &cancellation = {});
 
-/// Executes an already-described run, persists its authoritative timeline, and
-/// promotes either a completed Result or a typed diagnostic Result.
+/// Executes an already-described run and finalizes its authoritative timeline
+/// as a durable completed or diagnostic draft for explicit publication.
 [[nodiscard]] core::Result<RecordedBacktestOutcome>
 runBacktestAndRecord(const BacktestRequest &request,
                      results::ResultWriter &writer,
@@ -120,7 +131,7 @@ runBacktestAndRecord(const BacktestRequest &request,
 
 /// Preferred complete recording seam. Validation and Strategy construction
 /// finish before the writer is created, so rejected configurations leave no
-/// staged or promoted Result artifact.
+/// staged, draft, or published Result artifact.
 [[nodiscard]] core::Result<RecordedBacktestOutcome>
 runBacktestAndRecord(const BacktestRequest &request,
                      const results::ResultStore &store,

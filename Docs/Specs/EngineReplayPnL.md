@@ -8,6 +8,18 @@ that reads a Backtest Result and never executes a Strategy or engine event.
 
 ## 1. Delivery status
 
+**Implemented lifecycle and R1–R3 durability:** Results retain recoverable
+execution drafts outside the saved catalog and publish only through **Save
+Result** or **Save & Replay**. Both publish the same recorded run idempotently;
+only the latter navigates, and neither reruns Engine. Per-Result SQLite leases
+coordinate supported processes. Immutable source references are pinned before
+Staging/import visibility. The recorded Engine commits each completed bar's
+canonical batch before advancing progress; a storage failure stops execution.
+Recovery preserves legacy unleased staging with a warning and exposes only a
+validated committed prefix as an **Interrupted Draft**. Final exact-head CI,
+remote checks, and native application acceptance are still pending; see the
+[safety design](ResultPersistenceSafetyDesign.md).
+
 | Status | Scope |
 | --- | --- |
 | **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar. |
@@ -20,6 +32,17 @@ exit. They persist only the canonical families they can truthfully produce and
 are not evidence that the complete engine contract below is implemented. The
 starter slice remains single-order. The removed legacy JSON summary is not part
 of the durable result contract.
+
+Historical conditions are accepted but not implemented for this limited local
+path. They use the same CSV-derived immutable source as Replay, counting only
+UTC dates with actual rows and taking each prior date's last close, including
+extended hours. The approved 30-data-day gain and prior-21-data-day extrema
+exclude the current UTC date from their references. These are explicitly not
+official exchange-session closes; the general exchange-calendar contract below
+must not be claimed as implemented by this convention. Bounded pre-range
+warm-up must remain outside the executed result timeline. Predicate, warm-up
+provenance and versioned Strategy contracts are specified in
+[`StrategyAuthoring.md`](StrategyAuthoring.md#accepted-csvutc-day-historical-conditions--not-implemented).
 
 ### 1.1 Execution modes and scheduling
 
@@ -34,6 +57,22 @@ of the durable result contract.
 - **K-line Replay** reads an existing completed or diagnostic Backtest Result
   and its referenced bars; it never calls Strategy hooks, starts Python, or
   creates new fills.
+- Hourly and UTC Daily Replay use the exact saved selected spans, excluding
+  bars before the first trusted portfolio checkpoint. Diagnostic results also
+  exclude bars after the last processed checkpoint. Daily OHLCV uses only those
+  trusted selected bars; broader source-day coverage is used solely to label
+  Partial, never to add candles. Hourly and UTC Daily fills match the exact
+  selected bar timestamps, including dates with interior missing-bar gaps. The
+  saved records and canonical hash are unchanged by presentation.
+- Result Replay loads and indexes the entire trusted candle timeline, while the
+  presented chart starts with the first candle and exposes the untruncated
+  `0..cursor` prefix. Playback, pause, step, speed, seek, and back advance or
+  rewind the candle prefix and its persisted portfolio state together. A
+  persisted fill is visible as a marker and synchronized trade row only when
+  its containing candle is presented; rewinding hides future candles and fills.
+  The prefix is not a sliding 500-frame window, and the terminal frame exposes
+  the complete trusted timeline. Hourly and UTC Daily are alternate
+  aggregations of the same saved time range.
 - V1 permits one active Backtest. Advanced multi-run concurrency is outside the
   accepted scope.
 

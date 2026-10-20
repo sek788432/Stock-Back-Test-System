@@ -76,6 +76,20 @@ QString replayTabStyleSheet() {
       min-width: 64px;
       padding: 5px;
     }
+    #replaySetupToggleButton {
+      background: transparent;
+      border: 0;
+      color: #9fc9ed;
+      font-weight: 700;
+      min-width: 148px;
+      padding: 3px 6px;
+    }
+    #replayChartTradeSplitter::handle {
+      background: #29435e;
+      border-radius: 2px;
+      height: 6px;
+      margin: 2px 40px;
+    }
     #replayLoadButton,
     #replayPlayPauseButton {
       background: #1f63c6;

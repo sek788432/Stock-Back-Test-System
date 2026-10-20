@@ -1,6 +1,7 @@
 #include "Bte/Bindings/ResultReplayRequests.h"
 
 #include "Bte/Core/Cancellation.h"
+#include "Bte/Results/ResultStore.h"
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include "ResultReplayRequestsTestHooks.h"
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include <thread>
@@ -30,6 +32,7 @@ namespace {
 #if defined(BTE_ENABLE_TEST_HOOKS)
 std::atomic_bool blockNextOpen = false;
 std::atomic_bool openWorkerStarted = false;
+std::atomic_uint64_t catalogRequestCount = 0;
 #endif
 
 } // namespace
@@ -43,6 +46,10 @@ void blockNextResultOpenUntilCancelled() noexcept {
 }
 
 bool resultOpenWorkerStarted() noexcept { return openWorkerStarted.load(); }
+
+std::uint64_t resultCatalogRequestCount() noexcept {
+  return catalogRequestCount.load();
+}
 
 void clearResultReplayRequestHooks() noexcept {
   blockNextOpen.store(false);
@@ -85,27 +92,41 @@ ResultReplayRequests::~ResultReplayRequests() {
 }
 
 std::uint64_t ResultReplayRequests::requestCatalog(CatalogCallback callback) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  ++catalogRequestCount;
+#endif
   cancel();
   impl_->prune();
   impl_->cancellation = core::CancellationSource{};
   const auto token = impl_->cancellation.token();
   const auto generation = ++impl_->generation;
   auto *const owner = this;
-  impl_->futures.push_back(QtConcurrent::run(
-      [owner, generation, token, callback = std::move(callback),
-       resultStore = impl_->resultStore,
-       dataStore = impl_->dataStore]() mutable {
-        auto result = std::make_shared<CatalogResult>(
-            ResultReplay::list(resultStore, dataStore, token));
-        QTimer::singleShot(0, owner,
-                           [owner, generation, callback = std::move(callback),
-                            result]() mutable {
-                             if (generation ==
-                                 owner->impl_->generation.load()) {
-                               callback(std::move(*result));
-                             }
-                           });
-      }));
+  impl_->futures.push_back(QtConcurrent::run([owner, generation, token,
+                                              callback = std::move(callback),
+                                              resultStore = impl_->resultStore,
+                                              dataStore =
+                                                  impl_->dataStore]() mutable {
+    const auto loadCatalog = [&]() -> CatalogResult {
+      auto store = results::ResultStore::open(resultStore, dataStore, token);
+      if (!store.ok()) {
+        return store.error();
+      }
+      auto entries = store.value()->list(token);
+      if (!entries.ok()) {
+        return entries.error();
+      }
+      return makeResultCatalogSnapshot(std::move(entries).value(),
+                                       store.value()->recoveryNotices());
+    };
+    auto result = std::make_shared<CatalogResult>(loadCatalog());
+    QTimer::singleShot(
+        0, owner,
+        [owner, generation, callback = std::move(callback), result]() mutable {
+          if (generation == owner->impl_->generation.load()) {
+            callback(std::move(*result));
+          }
+        });
+  }));
   return generation;
 }
 

@@ -1,9 +1,14 @@
 add_library(
   bte_result_replay_bindings
   STATIC
+    Include/Bte/Bindings/ResultCatalogSnapshot.h
     Include/Bte/Bindings/ResultReplay.h
+    Include/Bte/Bindings/ResultLibraryRequests.h
     Include/Bte/Bindings/ResultReplayRequests.h
+    Replay/ResultCatalogSnapshot.cpp
     Replay/ResultReplay.cpp
+    Replay/ResultLibraryRequests.cpp
+    Replay/ResultLibraryRequestsTestHooks.h
     Replay/ResultReplayRequests.cpp
     Replay/ResultReplayRequestsTestHooks.h)
 
@@ -35,6 +40,7 @@ add_library(
     Include/Bte/Bindings/ReplayDataLoader.h
     Include/Bte/Bindings/ReplaySessionVm.h
     Backtest/BacktestSessionVm.cpp
+    Backtest/BacktestSessionVmTestHooks.h
     Replay/ReplayDataLoader.cpp
     Replay/ReplaySessionVm.cpp)
 
