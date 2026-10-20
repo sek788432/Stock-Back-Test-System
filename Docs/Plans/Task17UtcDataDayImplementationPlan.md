@@ -112,23 +112,24 @@
 - Modify: `Docs/Specs/BacktestReplayProduct.md`
 - Modify: `Docs/Issue10DeterministicReplayFixturePlan.md`
 - Modify: `Docs/Plans/Issue10RemainingWork.md`
+- Modify: `Docs/Plans/Task17UtcDataDayPredicateDesign.md`
 - Modify: `Docs/Decisions/ImportantDecisions.md`
 
 **Interfaces:**
 - Document only the implemented Task 17 behavior after Tasks 1–4 pass. Keep Task 18 labeled accepted/not implemented and do not claim official-session close behavior.
 
-- [ ] **Step 1: Update the owning specs and fixture evidence.** After Tasks 1–4 focused tests pass, mark Task 17 implemented locally with exact-head gates pending. Document the immutable snapshot lookup, one-row bounded pre-range context, UTC state rollover, Up/Down UI and signed comparisons, v1/v2 hash rule, missing-history behavior, and unchanged Result/Replay timeline. Add literal test evidence while leaving Task 18 open.
-- [ ] **Step 2: Update decision traceability and Issue 10 status.** Extend the existing historical-condition decision with the approved pre-range/hash implementation choices. Remove Task 17 from unfinished behavior while retaining exact-head quality/remote acceptance as pending; keep all other open items.
-- [ ] **Step 3: Verify documentation.** Run `git diff --check`; manually verify every relative link and confirm no spec claims Task 18 is implemented.
+- [x] **Step 1: Update the owning specs and fixture evidence.** After Tasks 1–4 focused tests passed, marked Task 17 implemented locally with exact-head gates pending. Documented immutable snapshot lookup, the one-row bounded pre-range context, UTC state rollover, positive Down/Up UI comparisons, v1/v2 hashing, missing-history behavior, and unchanged Result/Replay timelines. The focused contracts passed: Data 44/44, Strategy 23/23, Engine/Recorded/Replay 64/64, and the complete `bte_backtest_frontend_tests` target.
+- [x] **Step 2: Update decision traceability and Issue 10 status.** Extended the historical-condition decision with the approved pre-range/hash choices, removed Task 17 from unfinished feature behavior, and retained exact-head quality, sanitizer, remote, and native acceptance as pending. Task 18 and the other open Issue 10 items remain listed.
+- [x] **Step 3: Verify documentation.** `git diff --check` and `Tools/CheckProjectStandards.py --base 508d2d9e18befe2ebb1e80b9a6d8bf528c5c5def` passed. Manually verified the added relative links and the StrategyAuthoring anchor; current specifications label Task 18 accepted/not implemented.
 
 ### Task 6: Verify the Complete Exact-Head Change
 
 **Files:**
 - Review all Task 17 code, tests, docs, build wiring, and commits.
 
-- [ ] **Step 1: Run the complete test suite before commit.** Run `./RunTest.sh`; expect every registered test to pass. Resolve any stale-cache issue by configuring a separate ignored build directory; do not remove or reset an existing build tree.
-- [ ] **Step 2: Review the complete change before commit.** Apply `superpowers:review` to all code, tests, docs, and build wiring; close findings and rerun affected focused tests. Run `git diff --check` and verify generated build output is untracked.
-- [ ] **Step 3: Commit the reviewed implementation.** Stage only Task 17 source, tests, and docs; commit as `feat: add previous UTC data-day close condition`.
+- [x] **Step 1: Run the complete test suite before commit.** The full Qt build and CTest passed 292/292 in 93.22 seconds using the clean vcpkg-configured `Output/Issue10Baseline` directory. The old `Output/qt-dev` cache lacks vcpkg manifest settings, so the isolated build directory preserved it. Exact-commit `./RunTest.sh` remains required in Step 4.
+- [x] **Step 2: Review the complete change before commit.** Reviewed the fixed range from merge-base `508d2d9e18befe2ebb1e80b9a6d8bf528c5c5def` through `HEAD` `22282d287a6c2dc27aadc77255c109aeec0e7058`, plus the ten modified documentation files. The review found and fixed the UI zero-threshold gap in `22282d2`; no unresolved P0–P2 findings remain. Parallel reviewers were unavailable due to account usage limits, so code, documentation, and test axes were reviewed sequentially. Focused UI and complete CTest passed; standards, format, links, and `git diff --check` passed, and no untracked build output exists.
+- [ ] **Step 3: Commit the reviewed documentation checkpoint.** The source and test slices are already committed separately as `5fe4505`, `2bcf948`, `ef66953`, `f5b939d`, `f5c61e8`, and `22282d2`. After review, stage only the Task 17 owning documentation and commit it with a conventional `docs:` message; do not rewrite the green slice commits.
 - [ ] **Step 4: Run exact-head project quality.** On that committed `HEAD`, run `./RunTest.sh` and `./RunQuality.sh --base 508d2d9e18befe2ebb1e80b9a6d8bf528c5c5def --head HEAD`; expect all tests, project standards, complete static analysis, and coverage thresholds to pass.
 - [ ] **Step 5: Run sanitizers on the exact commit.** Run the repository's ASan/UBSan/LSan and TSan configurations for affected C++ tests; expect no sanitizer reports.
 - [ ] **Step 6: Record remote acceptance.** Publish the branch and open/update the Task 17 PR only after exact-head local gates pass; require project CI and CodeQL to pass before merging.

@@ -7,7 +7,14 @@
 
 **Semantic approval:** Approved by the maintainer on 2026-10-20.
 
-**Implementation status:** In progress on `codex/issue10-remaining`; the bounded snapshot lookup and its contract tests are implemented locally. Strategy, Engine/Bindings, UI, full specification updates, and exact-head gates remain.
+**Implementation status (2026-10-20):** Task 17 is implemented locally on
+`codex/issue10-remaining` in commits `5fe4505`, `2bcf948`, `ef66953`,
+`f5b939d`, `f5c61e8`, and `22282d2`. Snapshot lookup, Strategy and v1/v2
+hashing, Engine/Replay propagation, and positive Down/Up UI behavior have
+focused test coverage. The complete Qt CTest suite passed 292/292 in the
+isolated vcpkg-configured build directory. Exact-commit `RunTest.sh`, full
+quality, sanitizer, remote CI/CodeQL, and native application acceptance remain
+pending; Task 18 is out of scope here.
 
 ## Problem
 
@@ -202,9 +209,11 @@ and Qt Backtest seams. Tests must establish:
 - `Src/Frontend/Backtest/BacktestTab.cpp` and its tests
 - Strategy, Snapshot, Engine, Backtest binding, Replay determinism, and Qt unit
   tests for the behavior above
-- `Docs/Specs/StrategyAuthoring.md`, `Docs/Specs/EngineReplayPnL.md`,
-  `Docs/Specs/BacktestReplayProduct.md`, and `Docs/Plans/Issue10RemainingWork.md`
-  to distinguish accepted behavior from implemented behavior
+- `Docs/Specs/StrategyAuthoring.md`, `Docs/Specs/DataLayer.md`,
+  `Docs/Specs/EngineReplayPnL.md`, `Docs/Specs/BacktestReplayProduct.md`,
+  `Docs/Decisions/ImportantDecisions.md`, and
+  `Docs/Plans/Issue10RemainingWork.md` to distinguish accepted behavior from
+  implemented behavior
 
 No strategy indicator, historical extrema, 30-day gain, Task 18 predicate,
 Python Strategy path, or external market-data source is included.

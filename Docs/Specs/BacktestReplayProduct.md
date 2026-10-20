@@ -13,6 +13,7 @@ in [`EngineReplayPnL.md`](EngineReplayPnL.md).
 | Persisted replay portfolio strip | **Implemented limited slice** | It presents stored post-slice cash, position, market value, equity, and P&L for the implemented single-symbol Backtest path. |
 | Legacy JSON replay summaries | **Removed** | No runtime or test path remains; transactional SQLite `.bteresult` storage is implemented. |
 | Starter Backtest page | **Implemented limited slice** | One symbol/range, fixed starter or limited Selectable Conditions, whole-share long-only market behavior, and next-actual-bar execution. |
+| Task 17 previous data-day close condition | **Implemented limited slice** | Backtest offers positive-magnitude Down/Up thresholds against the previous available UTC data day's last CSV source close, including extended hours; history comes from the same immutable snapshot and stays out of Result/Replay bars. |
 | Saved strategies and complete Results library | **Accepted design / partially implemented** | Backend Result storage and a limited Results management page exist, but saved Strategies and the complete Results library remain planned. |
 | Durable results and result replay | **Implemented limited slice** | The current Backtest records canonical warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar in a durable draft. Save publishes the same `.bteresult` artifact, which Replay can open without engine execution. Unsupported record families are declared in persisted capability metadata. The complete engine, canonical record families, and result migration remain planned. |
 | Python Strategy and Debug Run | **Accepted design / not implemented** | No shipped Python worker or Debug Run path exists yet. |
@@ -78,6 +79,17 @@ five rows and flat **ALL** or **ANY** logic. The V1 editor exposes only the
 current condition fields, comparisons, whole-share sizing, and long-entry/
 close-long actions. Nested groups, portfolio gates, generated Python, and
 **Edit as Python** are outside scope.
+
+The current editor exposes at most two rows per group, including the Task 17
+**Previous data-day close change %** metric. Its comparison choices are
+**Down at least** and **Up at least** with a positive percentage magnitude.
+The last source close from the previous available UTC date is the reference;
+the entire current UTC date is excluded, extended-hours rows are included, and
+missing history does not match. The metric uses UTC data days rather than the
+editable bar-period value. Task 18's gain, extrema and breakout conditions
+remain accepted but are not implemented; see the
+[`StrategyAuthoring.md`](StrategyAuthoring.md#csvutc-day-historical-conditions)
+contract.
 
 At widths of at least 1100 px, buy and sell groups appear side by side; at
 narrower widths they stack. Each group has a compact sticky header and Add

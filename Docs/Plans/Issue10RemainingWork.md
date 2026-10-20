@@ -1,6 +1,6 @@
 # Issue 10 Remaining Work
 
-**As of 2026-10-19: Needs changes.** This is a current delivery/acceptance
+**As of 2026-10-20: Needs changes.** This is a current delivery/acceptance
 summary, not a replacement for the full dated
 [implementation plan](../Issue10DeterministicReplayFixturePlan.md) or the
 [source inventory](Issue10IncrementalDeliveryInventory.md).
@@ -10,35 +10,53 @@ fixture. Its committed fixture and both named snapshot-determinism tests are
 present; this report tracks the broader Issue 10 delivery plan. The issue is
 left open for the maintainer to close.
 
-The maintainer requests merging independently completed work while repairing
-the broad checkpoint. Existing code, local verification, publication and merge
-are different states. A passing build does not clear a known data-loss defect.
+PR #76 is now merged, including R1–R3 persistence safety and the previously
+published Replay repairs. Merge completion does not close Issue #10: Task 18
+historical conditions, source provenance, real-data comparison, native
+acceptance, and final exact-head quality gates remain distinct requirements.
 
 ## Latest local continuation
 
-- PR #80, the completed snapshot-reuse and bounded-hash delivery, is merged to
-  `main` as `dbcbd39d0a23243cd8ff1b832a71b9ec62d02fe6`; all required remote
-  checks passed before merge.
-- The Issue #10 consolidation worktree now implements R1–R3: per-Result
+- PR #76 merged at `508d2d9e18befe2ebb1e80b9a6d8bf528c5c5def`; its required CI
+  and CodeQL checks passed on the submitted head before merge. PR #80 and the
+  earlier independent follow-ups remain included in `main`.
+- R1–R3 are now in `main`: per-Result
   cross-process SQLite leases, retention pins before artifact visibility,
   atomic completed-bar persistence, committed-prefix recovery, and typed
   preservation notices. The exact Daily fill timestamp defect and the
-  independent schema-2 hash oracle are also fixed in this local worktree.
-- After aligning R1–R3 with the latest `origin/main`, `RunTest.sh` passed
-  270/270, including real child-process recovery, cancellation after opening a
-  snapshot reader, and both exclusive-boundary Replay cases. Exact committed
-  HEAD `RunQuality.sh`, ASan/TSan, remote PR checks and the actual native
-  application flow remain pending.
+  independent schema-2 hash oracle are also fixed in `main`.
+- The synchronized `main` baseline at `508d2d9` built successfully with the
+  pinned vcpkg toolchain and passed CTest 277/277. Eight frontend, Replay,
+  Results, chart, and application-startup test suites were then repeated three
+  times each; all 24 repeated runs passed. The official `RunTest.sh` entrypoint
+  first encountered an old CMake cache without vcpkg manifest settings, so the
+  clean ignored build directory `Output/Issue10Baseline` was used for the
+  equivalent complete Qt build and CTest run. Exact-head `RunQuality.sh`,
+  ASan/TSan, and remote checks for the next code change remain required.
+- The user-requested branch reconciliation is complete: the workspace was
+  synchronized with `main`, previously merged local and remote branches were
+  removed, and remaining work continues on `codex/issue10-remaining`. Local
+  drafts and private documents remain preserved in a Git stash.
 
-The remaining Issue #10 acceptance items are: Task 17/18 historical
-predicates and warm-up; explicit source timeframe/provenance and trailing
-column compatibility for seven-column CSV; truthful unsupported capability
-display; a real-data source-to-snapshot-to-saved-result-to-visible-candle and
-fill comparison; visual Replay checks across window sizes, resize, playback,
-zoom, pan and long-range data; final full-branch review and exact-head local
-and remote gates; and delivered-checkout `Launch.sh` acceptance. The native
-application check has not run because the computer-use action was rejected by
-automatic review for a usage limit; no workaround was attempted.
+Task 17's previous UTC data-day close condition is implemented locally in
+commits `5fe4505`, `2bcf948`, `ef66953`, `f5b939d`, and `f5c61e8`, with focused
+Data, Strategy/hash, Engine/Replay, and UI tests; `22282d2` enforces the UI's
+strictly positive percentage magnitude. The current candidate also built and
+passed the complete Qt CTest suite, 292/292 in 93.22 seconds, using the clean
+vcpkg-configured `Output/Issue10Baseline` directory. Exact-commit `RunTest.sh`,
+`RunQuality.sh`, sanitizer, and remote gates remain pending. Remaining Issue
+#10 acceptance items are: Task 18 historical gain/extrema/breakout predicates
+and their bounded pre-range windows; explicit source timeframe/provenance and
+trailing column compatibility for seven-column CSV; truthful unsupported
+capability display; an end-to-end real-data comparison from source through the
+snapshot and saved Result to visible candles and fills; visual Replay checks
+across window sizes, resize, playback, zoom, pan and long-range data; final
+full-branch review and exact-head local and remote gates; and delivered-checkout
+`Launch.sh` acceptance. The native interactive application check has not run
+because the computer-use action was rejected by automatic review for a usage
+limit; no workaround was attempted. Automated Qt application and workflow
+tests are not a substitute for the requested hands-on viewport and Launch.sh
+acceptance.
 
 ## Already merged to main
 
@@ -57,7 +75,12 @@ from main or that any broader source checkpoint is fully accepted.
 | SQLite manifest-pin regression | PR #73 reopened and merged as `34b958d`; all exact-head required CI/CodeQL checks succeeded. No production dependency/version or runtime behavior changed |
 | Validated snapshot reuse and bounded hashing | PR #80; merged as `dbcbd39`; required remote checks passed. This is completed-work delivery, not whole Issue #10 acceptance |
 
-## Current publications and local repairs
+## Historical publications and local repairs
+
+The checkpoints below preserve what was true at the time they were recorded;
+they are not the current delivery state unless the latest summary above repeats
+the item. The broad PR #76 work later merged at `508d2d9` after its required
+checks passed.
 
 - PR #73's independent two-file delivery at main-aligned `9b1c492` is now
   merged. Exact local full tests/Quality and fresh focused tests passed;
@@ -152,7 +175,7 @@ from main or that any broader source checkpoint is fully accepted.
   predicate, capability, and native/real-data acceptance entries below remain
   open.
 
-## Required before the broad implementation can land
+## Historical gates and follow-up checkpoints
 
 Latest follow-up evidence (2026-10-15):
 
@@ -200,7 +223,7 @@ Latest follow-up evidence (2026-10-15):
 | R3: execution-time durability | Final exact-head, remote and native acceptance | Implemented with per-bar atomic commits, atomic terminal tail, and committed-prefix recovery; local Engine/Store/process tests pass |
 | Legacy staging compatibility | Final review and native workflow acceptance | Unleased Staging and sidecars stay byte-identical and produce typed English preservation notices; accessibility/refresh test passes |
 | CI / Results rename acceptance | Verify current exact head | Prior GCC wait/IWYU/rename fixes are present; current Results workflow test and full local CTest pass |
-| Exact-head CI readiness | Run exact submitted commit and obtain required PR checks | The current working tree passes 268/268 CTest tests; `RunTest.sh`, full Quality, sanitizers and remote checks for the final commit remain pending |
+| Exact-head CI readiness | Run exact submitted commit and obtain required PR checks | Clean main baseline at `508d2d9` passes CTest 277/277; `RunTest.sh`, full Quality, sanitizers and remote checks for the next implementation commit remain pending |
 | CI long-load responsiveness | Verify on current remote coverage runner | Snapshot reuse and bounded SHA work are present; previous local samples do not replace current exact-head remote coverage |
 | R8: long-range saved-data completeness | Compare selected range, exact saved spans, actual source rows and visible Hourly/Daily candles to explain the reported sparse chart | Final real-data correctness comparison remains open; a faster load or longer wait cannot close this finding |
 | T: exact Daily fill selection | Verify exact behavior against real saved data | Fixed locally by requiring exact selected timestamps; regression test covers an interior gap |
@@ -210,9 +233,12 @@ Latest follow-up evidence (2026-10-15):
 
 ## Requested features and final acceptance still unfinished
 
+Task 17's implementation is complete locally. Its exact-head gates and the
+branch's remote checks are tracked under Whole-branch review below; they do not
+leave Task 17's feature implementation unfinished.
+
 | Request / plan task | Remaining work |
 | --- | --- |
-| Previous data-day close change, Task 17 | Implement up/down percent from the previous available UTC date's final CSV close; this is not the existing previous-hour predicate |
 | Historical conditions, Task 18 | Implement 30 available UTC data-date close-to-close gain; prior 21 complete data-date highs/lows excluding the current date; persistent strict breakouts and chronology-safe pre-range warm-up |
 | Save Result / Save & Replay, Task 14 | R1–R3 and current local workflow tests are implemented; exact-head/remote checks and native restart/failure acceptance remain |
 | Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Current worker/error/refresh/restore tests pass; exercise the full native workflow and real saved data |
@@ -221,20 +247,23 @@ Latest follow-up evidence (2026-10-15):
 | Viewport / zoom / Follow latest / Max | Automated viewport coverage passes; complete native three-size, wheel/pan, resize-during-playback, full-range and readable-tail checks |
 | Exact real-data comparison / Tasks 10/11B/13 | Reconcile the actual CSV/snapshot/result/visible OHLCV and every raw fill/portfolio value; synthetic fixture coverage does not replace final real-data acceptance |
 | Delivered Launch.sh path / Tasks 19/20/27 | Verify the final merged checkout builds/launches the exact code, exposes Save/Replay, and runs the selected long-range multi-fill configuration |
-| Whole-branch review / Task 12 | Close remaining P0–P2, run every applicable exact-head gate and native acceptance; no universal “bug-free” claim from partial tests |
+| Whole-branch review / Task 12 | Run exact-head `RunTest.sh` and `RunQuality.sh`, sanitizers, required CI/CodeQL, close remaining P0–P2, and complete native acceptance; no universal “bug-free” claim from partial tests |
 | Workspace and branches / Tasks 27/29 | Reconcile every intended hunk, preserved root draft and stash; only remove confirmed non-main branches after all unique intended code is merged or explicitly retained |
 
 ## Preserved work, not omitted delivery
 
-- Original source `codex/issue10-replay-ux` remains pinned at `6ac45ea` with
-  its 82 commits and 64 changed paths. Consolidation used normal commits,
-  not a force-push or public-history rewrite.
-- The detailed persistence design and owning-document edits are now present in
-  the Issue #10 consolidation worktree; code is implemented, while exact-head
-  gates and native acceptance remain open.
+- The old user branches were audited and removed after confirming their
+  delivered changes are represented in `main`; only `main` and the requested
+  fresh `codex/issue10-remaining` branch remain. This branch starts at the
+  current `main` commit `508d2d9`.
+- R1–R3 persistence implementation and its owning documentation are merged in
+  PR #76. Exact-head gates for the next code change and native acceptance remain
+  open.
 - Separate CSV and trusted-Replay extraction stashes remain intact. Other
   pre-existing strategy/CI stashes and private root documents were not staged,
   deleted or published.
 - Source period disabling/normalization was deliberately excluded to preserve
   #74's accepted typed identity semantics; it is not a silently lost change.
-- No branch cleanup or broad result/market-data deletion has been performed.
+- Local Issue #10 drafts and private documents are preserved in `stash@{0}`;
+  earlier design and code stashes remain intact. Branch cleanup did not delete
+  Result or market-data artifacts.

@@ -31,7 +31,8 @@ multi-run concurrency are outside the accepted product scope.
 - C++20 Core, CSV-backed data loading, a basic bar-step replay, and Qt replay UI.
 - A limited C++ Engine and Backtest page with a fixed starter strategy and a
   Selectable Conditions strategy: flat ALL/ANY buy and sell groups over bar
-  fields, close-change percentage, and the implemented indicator catalog;
+  fields, prior-actual-bar and previous UTC data-day close change percentages,
+  and the implemented indicator catalog;
   whole-share market orders; next-actual-bar-open
   execution; fixed slippage; affordability rejection; final-close
   open-position marking; and a multi-fill trade log.

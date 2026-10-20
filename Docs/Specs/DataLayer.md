@@ -128,7 +128,26 @@ The planned reader accepts a snapshot ID, universe, timeframe, half-open date ra
 Project-owned `stockbt` receives chronology-safe current/past views without
 physical snapshot paths. There is no full-snapshot research API.
 
-### 4.1 Canonical Data Segment bytes
+### 4.1 Task 17 prior data-day close lookup
+
+The limited single-symbol Backtest path can request the last source row for a
+symbol strictly before a UTC-midnight boundary from its already-open immutable
+snapshot reader. The lookup returns at most one fixed-point close and its
+timestamp: the latest available row, even when the previous data day is many
+calendar dates earlier. A date with no rows does not count. A boundary that is
+not UTC midnight is rejected, so rows from the current UTC date cannot enter
+the reference. Missing history remains absent; runtime CSV and download
+fallbacks are not used.
+
+The persisted binding stores this value in the separate
+`SnapshotSelection::preRangeDataDayClose` field and forwards its converted
+price to Strategy. It never appends the history row to `SnapshotSelection::bars`
+or changes the selected Result span. The existing `snapshotId` in the selection
+identity identifies the immutable source for both execution bars and this
+lookup. Contract coverage includes boundary-date exclusion, long gaps,
+cancellation, empty history, and source-file mutation after snapshot creation.
+
+### 4.2 Canonical Data Segment bytes
 
 Data Segment schema `1.0` is one byte stream in this exact order. Every integer
 uses unsigned or two's-complement big-endian encoding as stated; strings are

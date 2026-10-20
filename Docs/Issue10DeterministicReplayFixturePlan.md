@@ -1,6 +1,18 @@
 # Backtest Result K-Line Replay Implementation Plan
 
-> **Current delivery status (2026-10-19):** PR #80's snapshot-reuse and bounded
+> **Task 17 implementation checkpoint (2026-10-20):** Task 17 is implemented
+> locally on `codex/issue10-remaining` in commits `5fe4505`, `2bcf948`,
+> `ef66953`, `f5b939d`, `f5c61e8`, and `22282d2`. Immutable snapshot lookup,
+> Strategy predicate and v1/v2 hashing, Engine/Replay propagation, and positive
+> Down/Up UI behavior have focused test coverage. The full Qt CTest suite
+> passed 292/292 in the isolated vcpkg-configured build directory.
+> Exact-head `RunTest.sh` and `RunQuality.sh`, sanitizer, remote CI/CodeQL, PR
+> publication, and native application acceptance remain pending. Task 18 and
+> the other Issue 10 items remain open. See the
+> [Issue 10 remaining work](Plans/Issue10RemainingWork.md)
+> summary.
+
+> **Prior delivery status (2026-10-19):** PR #80's snapshot-reuse and bounded
 > hashing changes are merged into `main` as `dbcbd39`. R1–R3 persistence safety
 > is aligned with that `main` and passes `RunTest.sh` 270/270, including
 > child-process and exclusive-boundary regressions. Exact committed-head
@@ -1388,23 +1400,33 @@ Strategy identity changes for a label-only correction.
 
 ### Task 17 — Up/down X% relative to previous UTC data-day close
 
-**Status:** CSV/UTC-day predicate semantics approved on 2026-10-12 / not
-implemented. The maintainer explicitly selected the existing CSV as the
-standard and confirmed UTC-date grouping consistent with Daily Replay.
+**Status (2026-10-20):** Implemented locally on `codex/issue10-remaining` in
+commits `5fe4505`, `2bcf948`, `ef66953`, `f5b939d`, `f5c61e8`, and `22282d2`;
+focused tests pass and the full Qt CTest suite passes 292/292. Exact-commit
+quality/sanitizer gates and remote CI/CodeQL remain pending. The maintainer
+explicitly selected the existing CSV as the standard and confirmed UTC-date
+grouping consistent with Daily Replay.
 Every UTC date containing actual source rows counts as one data day; its
 closing reference is the last chronological CSV close, including extended
 hours. This supersedes the earlier official-session-close requirement and
 removes the missing official-source blocker. It is not an exchange-calendar
 or official regular-session close. Runtime evaluation must read the same
 immutable CSV-derived snapshot, not fall back to mutable CSV or download data.
-Pre-range warm-up, versioned Strategy framing and required regression/
-integration evidence remain unimplemented; no Task 17 behavior is claimed.
-**Modify after definition approval:**
+The one-row pre-range value seeds only Strategy state and never enters executed
+or replayed bars. Existing v1 hashes remain frozen; plans using Task 17 use v2
+framing. Exact-head and broader delivery acceptance are not claimed complete.
+**Implemented surfaces:**
+`Src/Backend/Data/Include/Bte/Data/ReleaseSnapshot.h`,
+`Src/Backend/Data/Private/ReleaseSnapshot.cpp`,
 `Src/Backend/Strategy/Include/Bte/Strategy/SelectableStrategy.h`,
 `Src/Backend/Strategy/Private/SelectableStrategy.cpp`,
+`Src/Backend/Engine/Include/Bte/Engine/Backtest.h`,
+`Src/Backend/Engine/Private/Backtest.cpp`,
 `Src/Bindings/Backtest/BacktestSessionVm.cpp`,
 `Src/Frontend/Backtest/BacktestTab.cpp`,
+`Tests/Unit/Data/UnitTest_ReleaseSnapshot.cpp`,
 `Tests/Unit/Strategy/UnitTest_SelectableStrategy.cpp`,
+`Tests/Unit/Engine/UnitTest_Backtest.cpp`,
 `Tests/Unit/Replay/UnitTest_ReplayBacktestDeterminism.cpp`,
 `Tests/Unit/Frontend/UnitTest_BacktestTab.cpp`,
 `Docs/Specs/StrategyAuthoring.md`, `Docs/Specs/DataLayer.md`,
@@ -1422,35 +1444,37 @@ Preserve existing prior-bar Close change behavior as a distinct option.
   prior actual UTC data date's last immutable source close, compare
   the current bar close, and treat positive magnitude X as inclusive at-least
   down/up X percent. Include extended-hours rows under this explicit CSV policy.
-- [ ] Literal contract after approval: reference close 100 and current price 95
+- [x] Literal contract: reference close 100 and current price 95
   gives -5%; 105 gives +5%; 100 gives 0%. UI takes positive magnitude X with
-  separate **Down** / **Up** choices. Test exact threshold and immediately either
-  side according to the approved comparison, zero, invalid negative magnitude
-  and zero/absent reference.
-- [ ] Use a multi-row prior-date literal oracle: an earlier regular-hours close
+  separate **Down** / **Up** choices. Tests cover inclusive thresholds and
+  adjacent values, signed comparisons, zero change, and absent/invalid seeds.
+- [x] Use a multi-row prior-date literal oracle: an earlier regular-hours close
   is 100 but the later extended-hours close on the same UTC date is 110. On the
-  next available date, 104.5 is exactly 5% down and 115.5 exactly 5% up from 110.
-  Assert immediately adjacent threshold cases and multiple next-date bars with
-  the same reference. This must fail if regular-hours close or prior-hour close
-  is substituted. Include a UTC-midnight transition and a date with no rows.
-- [ ] RED for Friday→Monday, dates with no source rows, UTC midnight, year/leap
+  next available date, 104.5 is exactly 5% down and 115.5 exactly 5% up from
+  110. Data/Strategy tests cover the extended-hours winner, adjacent thresholds,
+  multiple bars using a stable prior-day reference, UTC midnight, and a missing
+  calendar date.
+- [x] Cover Friday→Monday, dates with no source rows, UTC midnight, year/leap
   boundaries and pre-range reference warm-up. Exchange DST does not change UTC
-  grouping. Multiple intraday bars keep the same previous-data-day reference;
-  they cannot substitute the previous hour or read the current day's future close.
-- [ ] Freeze an immutable snapshot, then change the original CSV: pre-range
+  grouping. Tests confirm multiple intraday bars keep the same reference and
+  current-date future closes do not become the prior-day reference.
+- [x] Freeze an immutable snapshot, then change the original CSV: pre-range
   references and signals must remain unchanged. If that snapshot lacks required
   history, fail absent/nonmatching with the specified reason even when mutable
   CSV contains older rows; no runtime source fallback is permitted. Warm-up
-  must not enter saved execution spans or add orders/fills/Replay candles.
-- [ ] Assert prior-day and N-day close metrics' UI labels and tooltips disclose
-  **CSV / UTC data days** and **last source close, including extended hours**.
-  Extrema and breakout metrics instead disclose all source-row highs/lows,
-  including extended hours. Percentage predicates disclose positive magnitudes
-  and their specified inclusive comparisons; breakouts disclose strict
-  comparisons. Do not call a CSV close an official exchange close.
-- [ ] GREEN real Engine saved/repeated results for buy and sell groups; Replay
-  remains read-only. Extend canonical Strategy framing for new fields with
-  explicit compatibility review; existing saved hashes must not be reinterpreted.
+  must not enter saved execution spans or add orders/fills/Replay candles. Data
+  contract tests freeze the lookup to the built snapshot; Engine/Replay
+  integration tests verify the pre-range row never enters Result or Replay.
+- [x] Assert the prior-day metric's UI labels and tooltips disclose **CSV / UTC
+  data days**, the **last source close including extended hours**, current-date
+  exclusion, inclusive positive magnitude, and absent history. Task 18 extrema
+  and breakout disclosures remain open in Task 18. No CSV close is described as
+  an official exchange close.
+- [x] GREEN Engine buy/sell round-trip execution; the persisted Result and
+  Replay integration covers the buy signal and confirms history stays outside
+  the selected timeline. Replay remains read-only. Strategy v1 hashes remain
+  frozen, Task 17 plans use v2 framing, and tests assert literal compatibility
+  digests. Exact-head and remote gates remain pending above.
 
 ### Task 18 — Historical extrema changes and one-month breakouts
 
