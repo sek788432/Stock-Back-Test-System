@@ -2,10 +2,11 @@
 
 > **Task 17 implementation checkpoint (2026-10-20):** Task 17 is implemented
 > locally on `codex/issue10-remaining` in commits `5fe4505`, `2bcf948`,
-> `ef66953`, `f5b939d`, `f5c61e8`, and `22282d2`. Immutable snapshot lookup,
-> Strategy predicate and v1/v2 hashing, Engine/Replay propagation, and positive
-> Down/Up UI behavior have focused test coverage. The full Qt CTest suite
-> passed 292/292 in the isolated vcpkg-configured build directory.
+> `ef66953`, `f5b939d`, `f5c61e8`, `22282d2`, and `6dbf1b3`. Immutable snapshot
+> lookup, Strategy predicate and v1/v2 hashing, Engine/Replay propagation, and
+> positive Down/Up UI behavior have focused test coverage. The full Qt CTest
+> suite passed 292/292 on `7b004dc`; Snapshot tests passed 23/23 after the
+> warning-cleanup follow-up.
 > Exact-head `RunTest.sh` and `RunQuality.sh`, sanitizer, remote CI/CodeQL, PR
 > publication, and native application acceptance remain pending. Task 18 and
 > the other Issue 10 items remain open. See the

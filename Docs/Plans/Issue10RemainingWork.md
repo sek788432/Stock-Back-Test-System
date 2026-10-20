@@ -41,10 +41,11 @@ acceptance, and final exact-head quality gates remain distinct requirements.
 Task 17's previous UTC data-day close condition is implemented locally in
 commits `5fe4505`, `2bcf948`, `ef66953`, `f5b939d`, and `f5c61e8`, with focused
 Data, Strategy/hash, Engine/Replay, and UI tests; `22282d2` enforces the UI's
-strictly positive percentage magnitude. The current candidate also built and
-passed the complete Qt CTest suite, 292/292 in 93.22 seconds, using the clean
-vcpkg-configured `Output/Issue10Baseline` directory. Exact-commit `RunTest.sh`,
-`RunQuality.sh`, sanitizer, and remote gates remain pending. Remaining Issue
+strictly positive percentage magnitude. `6dbf1b3` explicitly initializes the
+new snapshot-selection field to keep Clang 18 warning-clean. The complete Qt
+CTest suite passed 292/292 on `7b004dc`; after the initializer fix, the
+Snapshot suite passed 23/23. Exact-commit `RunTest.sh`, `RunQuality.sh`,
+sanitizer, and remote gates remain pending. Remaining Issue
 #10 acceptance items are: Task 18 historical gain/extrema/breakout predicates
 and their bounded pre-range windows; explicit source timeframe/provenance and
 trailing column compatibility for seven-column CSV; truthful unsupported

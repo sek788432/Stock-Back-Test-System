@@ -9,12 +9,12 @@
 
 **Implementation status (2026-10-20):** Task 17 is implemented locally on
 `codex/issue10-remaining` in commits `5fe4505`, `2bcf948`, `ef66953`,
-`f5b939d`, `f5c61e8`, and `22282d2`. Snapshot lookup, Strategy and v1/v2
-hashing, Engine/Replay propagation, and positive Down/Up UI behavior have
-focused test coverage. The complete Qt CTest suite passed 292/292 in the
-isolated vcpkg-configured build directory. Exact-commit `RunTest.sh`, full
-quality, sanitizer, remote CI/CodeQL, and native application acceptance remain
-pending; Task 18 is out of scope here.
+`f5b939d`, `f5c61e8`, `22282d2`, and `6dbf1b3`. Snapshot lookup, Strategy and
+v1/v2 hashing, Engine/Replay propagation, and positive Down/Up UI behavior have
+focused test coverage. The complete Qt CTest suite passed 292/292 on `7b004dc`;
+the focused Snapshot suite passed 23/23 after the warning-cleanup follow-up.
+Exact-commit `RunTest.sh`, full quality, sanitizer, remote CI/CodeQL, and native
+application acceptance remain pending; Task 18 is out of scope here.
 
 ## Problem
 
