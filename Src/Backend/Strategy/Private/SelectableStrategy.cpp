@@ -9,6 +9,7 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <compare>
 #include <exception>
 #include <functional> // IWYU pragma: keep
 #include <memory>
