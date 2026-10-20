@@ -83,10 +83,10 @@
 - `BacktestExecution::start()` forwards that value only to `SelectableStrategy::create()`; it does not enqueue or process it as a bar.
 - The persisted binding attaches `SnapshotHistoryClose` from the same reader and snapshot ID to `SnapshotSelection::preRangeDataDayClose`, converts the fixed-point close to dollars, and forwards it with the actual bars.
 
-- [ ] **Step 1: Write failing Engine and recorded Replay tests.** Add `selectableStrategyHistoryDoesNotAddExecutedBarsOrRecords` and `persistedDataDayPredicateReplaysOnlySelectedBars`. Assert `barsProcessed` equals the selected actual-bar count, the first signal creates its order on that actual timestamp, the fill uses the next actual bar's open, and Replay presents no pre-range candle or record.
-- [ ] **Step 2: Verify RED.** Run `cmake --build Output/Issue10Baseline --target bte_engine_tests bte_replay_backtest_determinism_tests`; expect compilation to fail only on the new missing request-history field.
-- [ ] **Step 3: Implement request forwarding and persisted history selection.** In the persisted binding, floor the first selected bar timestamp to the UTC date boundary, call `lastCloseBeforeUtcDate()` on the same open reader, populate the separate pre-range selection value, and pass the converted Strategy context. Keep `.bars`, Result spans, record timestamps, and Replay selections limited to the requested execution range.
-- [ ] **Step 4: Verify GREEN.** Run `ctest --test-dir Output/Issue10Baseline --output-on-failure -R 'BacktestTest|RecordedBacktestTest|ReplayBacktestDeterminism'`; expect all selected Engine and Replay tests to pass, including unchanged record/hash repetition checks.
+- [x] **Step 1: Write failing Engine and recorded Replay tests.** Added `selectableStrategyHistoryDoesNotAddExecutedBarsOrRecords` and `persistedDataDayPredicateReplaysOnlySelectedBars`. They assert actual selected-bar counts, first-signal order timing, next actual open fill, and no pre-range Replay candle or record.
+- [x] **Step 2: Verify RED.** The Engine and Replay test targets failed to compile only because `BacktestRequest::previousDataDayClose` was missing.
+- [x] **Step 3: Implement request forwarding and persisted history selection.** The persisted binding floors the first selected bar timestamp to UTC midnight, calls `lastCloseBeforeUtcDate()` on the same open reader, populates the separate pre-range selection value, and passes the converted Strategy context. `.bars`, Result spans, record timestamps, and Replay selections remain limited to the requested execution range.
+- [x] **Step 4: Verify GREEN.** The focused Engine, Recorded Backtest, and Replay CTest selection passed 64/64, including both new contracts and existing record/hash checks. The complete exact-head gates remain in Task 6.
 
 ### Task 4: Expose Positive Down/Up Controls and Honest UI Help
 

@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,55 @@ bte::core::Bar makeFlatBar(const int day, const double price) {
   };
 }
 
+void expectRequestedBarsWereProcessed(
+    const bte::engine::BacktestResult &result,
+    const bte::engine::BacktestRequest &request) {
+  EXPECT_EQ(result.barsProcessed, request.bars.size());
+  EXPECT_EQ(std::ranges::count_if(
+                result.canonicalRecords,
+                [](const auto &record) {
+                  return record.family == bte::results::RecordFamily::portfolio;
+                }),
+            request.bars.size());
+}
+
+void expectFillUsesNextActualOpen(const bte::engine::BacktestResult &result,
+                                  const bte::engine::BacktestRequest &request) {
+  ASSERT_EQ(result.fills.size(), 1U);
+  EXPECT_EQ(result.fills.front().timestamp, request.bars[1].ts);
+  EXPECT_EQ(result.fills.front().priceNanodollars, 97'009'700'000);
+}
+
+void expectOrderWasCreatedOnFirstActualBar(
+    const bte::engine::BacktestResult &result,
+    const bte::engine::BacktestRequest &request) {
+  const auto &records = result.canonicalRecords;
+  EXPECT_EQ(std::ranges::count_if(records,
+                                  [](const auto &record) {
+                                    return record.family ==
+                                           bte::results::RecordFamily::order;
+                                  }),
+            1);
+  EXPECT_EQ(std::ranges::count_if(records,
+                                  [](const auto &record) {
+                                    return record.family ==
+                                           bte::results::RecordFamily::fill;
+                                  }),
+            1);
+  const auto order = std::ranges::find_if(records, [](const auto &record) {
+    return record.family == bte::results::RecordFamily::order;
+  });
+  ASSERT_NE(order, records.end());
+  EXPECT_EQ(order->timestamp, request.bars.front().ts);
+}
+
+void expectNoPreRangeRecords(const bte::engine::BacktestResult &result,
+                             const bte::engine::BacktestRequest &request) {
+  for (const auto &record : result.canonicalRecords) {
+    EXPECT_GE(record.timestamp, request.bars.front().ts);
+  }
+}
+
 } // namespace
 
 TEST(BacktestTest, starterMarketBuyFillsAtNextBarOpenAndMarksFinalEquity) {
@@ -66,6 +116,45 @@ TEST(BacktestTest, starterMarketBuyFillsAtNextBarOpenAndMarksFinalEquity) {
   EXPECT_EQ(result.value().equityMicrodollars, 2'099'890'000);
   EXPECT_EQ(result.value().pnlMicrodollars, 99'890'000);
   EXPECT_EQ(result.value().barsProcessed, 2U);
+}
+
+TEST(BacktestTest, selectableStrategyHistoryDoesNotAddExecutedBarsOrRecords) {
+  using namespace std::chrono;
+  const auto request =
+      bte::engine::BacktestRequest{
+          .bars = {makeBar(2, 95.0, 95.0), makeBar(3, 97.0, 97.0)},
+          .symbol = "SYN",
+          .initialCapitalMicrodollars = 2'000'000'000,
+          .quantityShares = 10,
+          .selectableStrategy =
+              bte::strategy::SelectableStrategyPlan{
+                  .buy = {.conditions = {bte::strategy::Condition{
+                              .source = bte::strategy::ConditionSource::
+                                  previousDataDayCloseChangePercent,
+                              .comparison =
+                                  bte::strategy::Comparison::lessThanOrEqual,
+                              .threshold = -5.0,
+                              .thresholdDomain =
+                                  bte::indicators::NumericDomain::percent,
+                          }}},
+                  .sell = {},
+              },
+          .previousDataDayClose =
+              bte::strategy::PreviousDataDayClose{
+                  .timestamp =
+                      bte::core::Timestamp{sys_days{year{2024} / January / 1} +
+                                           hours{22}},
+                  .close = 100.0,
+              },
+      };
+
+  const auto result = bte::engine::runBacktest(request);
+
+  ASSERT_TRUE(result.ok()) << result.error().message;
+  expectRequestedBarsWereProcessed(result.value(), request);
+  expectFillUsesNextActualOpen(result.value(), request);
+  expectOrderWasCreatedOnFirstActualBar(result.value(), request);
+  expectNoPreRangeRecords(result.value(), request);
 }
 
 TEST(BacktestTest,

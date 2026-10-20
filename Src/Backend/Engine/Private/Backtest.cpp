@@ -672,8 +672,8 @@ BacktestExecution::start(BacktestRequest request) {
   }
   std::unique_ptr<strategy::SelectableStrategy> strategy;
   if (request.selectableStrategy.has_value()) {
-    auto created =
-        strategy::SelectableStrategy::create(*request.selectableStrategy);
+    auto created = strategy::SelectableStrategy::create(
+        *request.selectableStrategy, request.previousDataDayClose);
     if (!created.ok()) {
       return created.error();
     }

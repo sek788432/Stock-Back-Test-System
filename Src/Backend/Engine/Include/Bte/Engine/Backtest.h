@@ -34,6 +34,9 @@ struct BacktestRequest {
   std::int64_t quantityShares = 0;
   std::optional<strategy::SelectableStrategyPlan> selectableStrategy =
       std::nullopt;
+  /// Immutable snapshot context for Task 17; it is never processed as a bar.
+  std::optional<strategy::PreviousDataDayClose> previousDataDayClose =
+      std::nullopt;
   /// When supplied, a different last actual bar produces an Incomplete
   /// StaleFinalMark diagnostic instead of eligible final metrics.
   std::optional<core::Timestamp> requiredFinalMarkTimestamp = std::nullopt;
