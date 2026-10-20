@@ -295,6 +295,28 @@ TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateHonorsCancellation) {
   EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
 }
 
+TEST(ReleaseSnapshotTest,
+     lastCloseBeforeUtcDateHonorsCancellationDuringSegmentScan) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-scan-cancelled"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  auto request = fixture.buildRequest();
+  request.rowsPerSegment = 1;
+  const auto built = bte::data::buildReleaseSnapshot(request);
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::historyLookupCancellation);
+  const auto result = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-02 00:00:00+00:00"));
+  bte::data::testing::clearSnapshotFailure();
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
 TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateRejectsNonMidnightBoundary) {
   const ScopedSnapshotFixture fixture{"prior-data-day-invalid-boundary"};
   fixture.writeSymbol("SYN", threeHourlyRows);

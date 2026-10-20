@@ -405,7 +405,8 @@ if(BTE_BUILD_QT_APP)
   target_include_directories(
     bte_backtest_vm_tests
     PRIVATE
-      "${CMAKE_SOURCE_DIR}/Src/Bindings/Backtest")
+      "${CMAKE_SOURCE_DIR}/Src/Bindings/Backtest"
+      "${CMAKE_SOURCE_DIR}/Src/Backend/Data/Private")
 
   add_test(
     NAME bte_backtest_vm_tests

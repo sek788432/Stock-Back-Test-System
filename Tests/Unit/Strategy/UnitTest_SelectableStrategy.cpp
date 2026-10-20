@@ -350,6 +350,77 @@ TEST(SelectableStrategyTest,
 }
 
 TEST(SelectableStrategyTest,
+     dataDayCloseConditionIgnoresNonFiniteCalculatedChange) {
+  using namespace std::chrono;
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {previousDataDayCloseCondition(
+                  bte::strategy::Comparison::lessThanOrEqual, -5.0)}},
+      .sell = {},
+  };
+  auto created = bte::strategy::SelectableStrategy::create(
+      plan,
+      bte::strategy::PreviousDataDayClose{
+          .timestamp = bte::core::Timestamp{sys_days{year{2024} / January / 1}},
+          .close = std::numeric_limits<double>::min(),
+      });
+  ASSERT_TRUE(created.ok());
+  auto strategy = std::move(created).value();
+  const auto maximum = std::numeric_limits<double>::max();
+  const auto bar = bte::core::Bar{
+      .ts = bte::core::Timestamp{sys_days{year{2024} / January / 2}},
+      .open = maximum,
+      .high = maximum,
+      .low = maximum,
+      .close = maximum,
+      .volume = 100.0,
+  };
+
+  const auto signal = strategy->onBar(bar);
+
+  ASSERT_TRUE(signal.ok());
+  EXPECT_FALSE(signal.value().buy);
+}
+
+TEST(SelectableStrategyTest,
+     outOfOrderDataDayBarDoesNotChangeChronologicalCloseState) {
+  using namespace std::chrono;
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {previousDataDayCloseCondition(
+                  bte::strategy::Comparison::lessThanOrEqual, -5.0)}},
+      .sell = {},
+  };
+  auto created = bte::strategy::SelectableStrategy::create(
+      plan,
+      bte::strategy::PreviousDataDayClose{
+          .timestamp = bte::core::Timestamp{sys_days{year{2024} / January / 1}},
+          .close = 100.0,
+      });
+  ASSERT_TRUE(created.ok());
+  auto strategy = std::move(created).value();
+  const auto jan2 = sys_days{year{2024} / January / 2};
+  const auto jan3 = sys_days{year{2024} / January / 3};
+  const auto jan4 = sys_days{year{2024} / January / 4};
+
+  const auto firstDay =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{jan2}, 100.0));
+  const auto secondDay =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{jan3}, 90.0));
+  const auto outOfOrder =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{jan2 + hours{1}}, 70.0));
+  const auto nextDay =
+      strategy->onBar(makeBarAt(bte::core::Timestamp{jan4}, 80.0));
+
+  ASSERT_TRUE(firstDay.ok());
+  ASSERT_TRUE(secondDay.ok());
+  ASSERT_TRUE(outOfOrder.ok());
+  ASSERT_TRUE(nextDay.ok());
+  EXPECT_FALSE(firstDay.value().buy);
+  EXPECT_TRUE(secondDay.value().buy);
+  EXPECT_FALSE(outOfOrder.value().buy);
+  EXPECT_TRUE(nextDay.value().buy);
+}
+
+TEST(SelectableStrategyTest,
      dataDayCloseConditionRejectsInvalidDirectionAndDomain) {
   using namespace bte::strategy;
   const auto makePlan = [](const Condition condition) {

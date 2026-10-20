@@ -816,7 +816,9 @@ ReleaseSnapshotReader::lastCloseBeforeUtcDate(
 
   std::optional<SnapshotHistoryClose> result;
   for (const auto &segment : impl_->segments) {
-    if (cancellation.isCancellationRequested()) {
+    if (cancellationRequested(
+            cancellation,
+            testing::SnapshotFailurePoint::historyLookupCancellation)) {
       return core::makeError(core::ErrorCode::cancelled,
                              "Snapshot history lookup was cancelled");
     }

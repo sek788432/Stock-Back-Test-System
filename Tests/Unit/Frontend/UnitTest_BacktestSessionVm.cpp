@@ -2,8 +2,10 @@
 #include "Bte/Bindings/ResultCatalogSnapshot.h"
 
 #include "Bte/Core/Bar.h"
+#include "Bte/Data/ReleaseSnapshot.h"
 
 #include "BacktestSessionVmTestHooks.h"
+#include "ReleaseSnapshotTestHooks.h"
 
 #include <QTemporaryDir>
 #include <QTest>
@@ -45,6 +47,7 @@ private slots:
   void capitalImmediatelyBelowSafeIntegerLimitIsAccepted();
   void invalidQuantityAndEmptyBarsPreserveEngineErrors();
   void configuredRunPreservesDataSourceError();
+  void persistedRunPreservesHistoryLookupCancellation();
   void filledSnapshotPreservesNextBarTimestamp();
   void capitalUsesHalfEvenRoundingAtTheMinimumBoundary();
   void selectablePlanPresentsBothBuyAndSellFills();
@@ -178,6 +181,63 @@ void BacktestSessionVmTest::configuredRunPreservesDataSourceError() {
   QCOMPARE(result.error().code, bte::core::ErrorCode::notFound);
   QVERIFY(QString::fromStdString(result.error().message)
               .contains("NOT_A_TRACKED_SYMBOL"));
+}
+
+void BacktestSessionVmTest::persistedRunPreservesHistoryLookupCancellation() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto sourceDirectory = root / "Source";
+  std::filesystem::create_directories(sourceDirectory);
+  std::ofstream source{sourceDirectory / "SYN.csv"};
+  source << "symbol,ts,open,high,low,close,volume,schemaName\n"
+            "SYN,2024-01-01 23:00:00+00:00,100,102,99,101,1200,ohlcv-1h\n"
+            "SYN,2024-01-02 00:00:00+00:00,101,103,100,102,2300,ohlcv-1h\n";
+  source.close();
+  const auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = root / "Data",
+      .symbols = {"SYN"},
+      .rowsPerSegment = 1,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  QVERIFY2(built.ok(), built.error().message.c_str());
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore = root / "Results",
+      .dataStore = root / "Data",
+      .snapshotId = built.value().snapshotId,
+      .strategyHash = {},
+  };
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {bte::strategy::Condition{
+                  .source = bte::strategy::ConditionSource::
+                      previousDataDayCloseChangePercent,
+                  .comparison = bte::strategy::Comparison::lessThanOrEqual,
+                  .threshold = -5.0,
+                  .thresholdDomain = bte::indicators::NumericDomain::percent,
+              }}},
+      .sell = {},
+  };
+  const auto configuration = bte::bindings::BacktestConfiguration{
+      .symbol = "SYN",
+      .schema = "ohlcv-1h",
+      .startDate = QDate{2024, 1, 2},
+      .endDate = QDate{2024, 1, 2},
+      .initialCapital = 1'000.0,
+      .quantityShares = 1,
+      .selectableStrategy = plan,
+  };
+
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::historyLookupCancellation);
+  const auto result =
+      bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
+  bte::data::testing::clearSnapshotFailure();
+
+  QVERIFY(!result.ok());
+  QCOMPARE(result.error().code, bte::core::ErrorCode::cancelled);
+  QVERIFY(!std::filesystem::exists(storage.resultStore));
 }
 
 void BacktestSessionVmTest::filledSnapshotPreservesNextBarTimestamp() {

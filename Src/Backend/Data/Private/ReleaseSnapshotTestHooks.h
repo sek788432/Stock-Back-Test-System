@@ -12,6 +12,7 @@ enum class SnapshotFailurePoint : std::uint8_t {
   artifactRead,
   manifestWrite,
   openCancellation,
+  historyLookupCancellation,
 };
 
 void failSnapshotAt(SnapshotFailurePoint point) noexcept;
