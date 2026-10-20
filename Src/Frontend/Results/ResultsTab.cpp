@@ -20,12 +20,13 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QStandardPaths>
-#include <QStringList>
 #include <QTableWidget>
 #include <QTimeZone>
 #include <QVariant>
 #include <QtCore/Qt>
 #include <QtCore/qbytearray.h>
+#include <QtCore/qchar.h>
+#include <QtCore/qcontainerfwd.h>
 #include <QtCore/qtenvironmentvariables.h>
 #include <QtWidgets/qlineedit.h>
 
