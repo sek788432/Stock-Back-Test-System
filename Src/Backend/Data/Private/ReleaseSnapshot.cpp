@@ -800,6 +800,46 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::select(
   return selection;
 }
 
+core::Result<std::optional<SnapshotHistoryClose>>
+ReleaseSnapshotReader::lastCloseBeforeUtcDate(
+    const std::string_view symbol, const core::Timestamp utcDateStart,
+    const core::CancellationToken &cancellation) const {
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Snapshot history lookup was cancelled");
+  }
+  if (std::chrono::floor<std::chrono::days>(utcDateStart) != utcDateStart) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Snapshot history boundary must be midnight UTC");
+  }
+
+  std::optional<SnapshotHistoryClose> result;
+  for (const auto &segment : impl_->segments) {
+    if (cancellation.isCancellationRequested()) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "Snapshot history lookup was cancelled");
+    }
+    if (segment.metadata.symbol != symbol) {
+      continue;
+    }
+
+    const auto firstAtOrAfterBoundary = std::ranges::lower_bound(
+        segment.bars, utcDateStart, {}, &SnapshotBar::timestamp);
+    if (firstAtOrAfterBoundary == segment.bars.begin()) {
+      continue;
+    }
+
+    const auto &bar = *std::prev(firstAtOrAfterBoundary);
+    if (!result.has_value() || result->timestamp < bar.timestamp) {
+      result = SnapshotHistoryClose{
+          .timestamp = bar.timestamp,
+          .closeNanodollars = bar.closeNanodollars,
+      };
+    }
+  }
+  return result;
+}
+
 core::Result<SnapshotSelection> ReleaseSnapshotReader::readExact(
     const DataSelectionIdentity &identity,
     const core::CancellationToken &cancellation) const {

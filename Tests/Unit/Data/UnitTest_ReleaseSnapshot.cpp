@@ -17,6 +17,7 @@
 #include <future>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -191,6 +192,149 @@ TEST(ReleaseSnapshotTest,
   EXPECT_EQ(selected.value().identity.spans[1].firstRow, 0);
   EXPECT_EQ(selected.value().identity.spans[1].rowCount, 1);
   EXPECT_EQ(selected.value().identity.snapshotId, built.value().snapshotId);
+}
+
+TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateExcludesRowsFromBoundaryDate) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-boundary"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-05 20:00:00+00:00,99,101,98,100,100,ohlcv-1h\n"
+             "SYN,2024-01-05 22:00:00+00:00,100,111,99,110,100,ohlcv-1h\n"
+             "SYN,2024-01-08 00:00:00+00:00,110,121,109,120,100,ohlcv-1h\n"
+             "SYN,2024-01-08 01:00:00+00:00,120,122,119,121,100,ohlcv-1h\n");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto boundary = timestamp("2024-01-08 00:00:00+00:00");
+  const auto history = reader.value()->lastCloseBeforeUtcDate("SYN", boundary);
+  ASSERT_TRUE(history.ok()) << history.error().message;
+  const auto expected = std::optional{bte::data::SnapshotHistoryClose{
+      .timestamp = timestamp("2024-01-05 22:00:00+00:00"),
+      .closeNanodollars = 110'000'000'000,
+  }};
+  EXPECT_EQ(history.value(), expected);
+
+  const auto selection = reader.value()->select({
+      .symbols = {"SYN"},
+      .range = {.start = boundary,
+                .end = timestamp("2024-01-08 02:00:00+00:00")},
+      .timeframe = "ohlcv-1h",
+  });
+  ASSERT_TRUE(selection.ok()) << selection.error().message;
+  ASSERT_EQ(selection.value().bars.size(), 2U);
+  EXPECT_EQ(selection.value().bars.front().timestamp, boundary);
+  EXPECT_FALSE(selection.value().preRangeDataDayClose.has_value());
+}
+
+TEST(ReleaseSnapshotTest,
+     lastCloseBeforeUtcDateReturnsLastAvailableRowAcrossLongGap) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-long-gap"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-02 20:00:00+00:00,99,101,98,100,100,ohlcv-1h\n"
+             "SYN,2024-01-19 22:00:00+00:00,100,111,99,110,100,ohlcv-1h\n"
+             "SYN,2024-03-15 22:00:00+00:00,110,121,109,120,100,ohlcv-1h\n");
+  auto request = fixture.buildRequest();
+  request.rowsPerSegment = 1;
+  const auto built = bte::data::buildReleaseSnapshot(request);
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  ASSERT_EQ(built.value().segmentCount, 3U);
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto history = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-04-30 00:00:00+00:00"));
+
+  ASSERT_TRUE(history.ok()) << history.error().message;
+  const auto expected = std::optional{bte::data::SnapshotHistoryClose{
+      .timestamp = timestamp("2024-03-15 22:00:00+00:00"),
+      .closeNanodollars = 120'000'000'000,
+  }};
+  EXPECT_EQ(history.value(), expected);
+}
+
+TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateReturnsEmptyWithoutPriorRows) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-empty"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-08 00:00:00+00:00,110,121,109,120,100,ohlcv-1h\n"
+             "SYN,2024-01-08 01:00:00+00:00,120,122,119,121,100,ohlcv-1h\n");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto boundary = timestamp("2024-01-08 00:00:00+00:00");
+  const auto history = reader.value()->lastCloseBeforeUtcDate("SYN", boundary);
+  ASSERT_TRUE(history.ok()) << history.error().message;
+  EXPECT_FALSE(history.value().has_value());
+
+  const auto absentSymbol =
+      reader.value()->lastCloseBeforeUtcDate("MISSING", boundary);
+  ASSERT_TRUE(absentSymbol.ok()) << absentSymbol.error().message;
+  EXPECT_FALSE(absentSymbol.value().has_value());
+}
+
+TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateHonorsCancellation) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-cancelled"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+
+  const auto result = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-02 00:00:00+00:00"), cancellation.token());
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateRejectsNonMidnightBoundary) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-invalid-boundary"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto result = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-02 12:00:00+00:00"));
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(ReleaseSnapshotTest, preRangeDataDayCloseIsStableAfterSourceMutation) {
+  const ScopedSnapshotFixture fixture{"prior-data-day-source-mutation"};
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-05 20:00:00+00:00,99,101,98,100,100,ohlcv-1h\n"
+             "SYN,2024-01-05 22:00:00+00:00,100,111,99,110,100,ohlcv-1h\n"
+             "SYN,2024-01-08 00:00:00+00:00,110,121,109,120,100,ohlcv-1h\n");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  fixture.writeSymbol(
+      "SYN", "SYN,2024-01-05 20:00:00+00:00,99,101,98,999,100,ohlcv-1h\n"
+             "SYN,2024-01-08 00:00:00+00:00,110,121,109,120,100,ohlcv-1h\n");
+
+  const auto history = reader.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-08 00:00:00+00:00"));
+
+  ASSERT_TRUE(history.ok()) << history.error().message;
+  const auto expected = std::optional{bte::data::SnapshotHistoryClose{
+      .timestamp = timestamp("2024-01-05 22:00:00+00:00"),
+      .closeNanodollars = 110'000'000'000,
+  }};
+  EXPECT_EQ(history.value(), expected);
 }
 
 TEST(ReleaseSnapshotTest, buildAcceptsCanonicalSevenColumnExtractedHourlyCsv) {

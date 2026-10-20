@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace bte::data {
@@ -24,6 +26,13 @@ struct SnapshotBar {
   std::int64_t volumeMicroshares = 0;
 
   bool operator==(const SnapshotBar &) const = default;
+};
+
+struct SnapshotHistoryClose {
+  core::Timestamp timestamp;
+  std::int64_t closeNanodollars = 0;
+
+  bool operator==(const SnapshotHistoryClose &) const = default;
 };
 
 // Data-only aggregate initializers do not produce reliably attributable gcov
@@ -56,6 +65,7 @@ struct DataSelectionIdentity {
 struct SnapshotSelection {
   std::vector<SnapshotBar> bars;
   DataSelectionIdentity identity;
+  std::optional<SnapshotHistoryClose> preRangeDataDayClose;
 };
 
 struct SnapshotBuildRequest {
@@ -105,6 +115,13 @@ public:
   [[nodiscard]] core::Result<SnapshotSelection>
   select(const SnapshotSelectRequest &request,
          const core::CancellationToken &cancellation = {}) const;
+
+  /// Returns the latest source close before a UTC date boundary. The boundary
+  /// must be midnight UTC; no earlier row is represented by an empty value.
+  [[nodiscard]] core::Result<std::optional<SnapshotHistoryClose>>
+  lastCloseBeforeUtcDate(
+      std::string_view symbol, core::Timestamp utcDateStart,
+      const core::CancellationToken &cancellation = {}) const;
 
   /// Reopens the exact immutable rows previously selected. Every identity and
   /// span field is verified against the loaded snapshot; range reselection is
