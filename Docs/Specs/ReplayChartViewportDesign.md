@@ -1,10 +1,15 @@
 # Replay chart viewport and presentation design
 
-**Status:** Implemented in the Issue 10 worktree, pending final acceptance.
-The ordered-bar sliding viewport, chart-first Replay layout, linked price and
-volume coordinates, and Follow latest / Fit reached controls exist; final
-long-range desktop comparison and whole-plan quality gates remain open. The
-owning product and Qt specifications remain
+**Status:** Implemented and merged in the Issue 10 delivery. The ordered-bar
+sliding viewport, chart-first Replay layout, linked price and volume
+coordinates, and Follow latest / Fit reached controls passed the native
+multi-size workflow and automated long-range reconciliation. Geometry tests
+assert the eight-logical-pixel trade-marker clearance. Direct `Launch.sh`
+startup remains unavailable in the shell's display-restricted environment.
+Native 31,466-bar Hourly `max` playback reached its final frame; the initial
+automation request was delayed, so no throughput benchmark is claimed. See the
+[Issue 10 acceptance ledger](../Plans/Issue10RemainingWork.md). The owning
+product and Qt specifications remain
 [`BacktestReplayProduct.md`](BacktestReplayProduct.md) and
 [`FrontendQt.md`](FrontendQt.md); the delivery ledger is
 [`Issue10DeterministicReplayFixturePlan.md`](../Issue10DeterministicReplayFixturePlan.md).

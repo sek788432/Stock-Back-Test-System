@@ -16,11 +16,14 @@ coordinate supported processes. Immutable source references are pinned before
 Staging/import visibility. The recorded Engine commits each completed bar's
 canonical batch before advancing progress; a storage failure stops execution.
 Recovery preserves legacy unleased staging with a warning and exposes only a
-validated committed prefix as an **Interrupted Draft**. Final exact-head CI,
-Quality and sanitizer workflows passed locally on submitted head
-`1591427ee61d88a661f85ebd98d99c0aa10c6ef1`; PR #81's required remote CI and
-CodeQL also passed on that head. Native application acceptance remains; see
-the [safety design](ResultPersistenceSafetyDesign.md) and the
+validated committed prefix as an **Interrupted Draft**. The submitted PR #82
+head `f950286544895b820bc8b6d9de37a2ae6375c84a` passed exact-head local
+RunTest and Quality; the required remote CI, sanitizer, and CodeQL jobs passed
+on its merge candidate. Native Save/Replay/Results acceptance passed on
+2026-10-21. A 31,466-bar Hourly max-speed playback reached the final frame;
+the initial automation call was delayed, so no throughput benchmark is
+claimed. The direct launcher check is tracked in the
+[safety design](ResultPersistenceSafetyDesign.md) and the
 [Issue 10 remaining-work list](../Plans/Issue10RemainingWork.md).
 
 | Status | Scope |

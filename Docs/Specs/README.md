@@ -28,9 +28,10 @@ review before issue #53 can reach final acceptance.
 ## Active implementation design
 
 [`ResultPersistenceSafetyDesign.md`](ResultPersistenceSafetyDesign.md) records
-the approved Issue 10 R1–R3 design and the implementation now present in the
-consolidation branch. Final exact-head quality, remote CI, and native
-application acceptance remain open; see the status at the top of that spec.
+the approved Issue 10 R1–R3 design and the implementation merged in PR #76.
+Required CI and native saved-result lifecycle acceptance have passed; the
+display-launch limitation and max-speed timing caveat are recorded at the top
+of that spec and in the Issue 10 acceptance ledger.
 
 ## Accepted foundations
 
