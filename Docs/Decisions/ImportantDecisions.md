@@ -209,8 +209,11 @@ with a warning; opening a store must not infer that such a writer is dead or
 automatically clear its artifact. These R1–R3 repairs were implemented and
 merged in PR #76. The approved transaction/lifetime and compatibility design
 is recorded in [ResultPersistenceSafetyDesign.md](../Specs/ResultPersistenceSafetyDesign.md);
-automated tests cover crash recovery and concurrent processes. Native Results
-lifecycle and failure/restart acceptance remains open in
+automated tests cover crash recovery and concurrent processes. The visible
+Results controls and normal save/relaunch workflow were exercised on
+2026-10-21. Native legacy-artifact and fault-injection workflows remain
+untested through the visible UI; automated process/fault tests cover recovery
+and preservation, as tracked in
 [Issue10RemainingWork.md](../Plans/Issue10RemainingWork.md). Canonical
 schema/hash compatibility and the explicit Save gate remain unchanged.
 
