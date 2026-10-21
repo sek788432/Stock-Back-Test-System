@@ -20,6 +20,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -560,6 +561,178 @@ TEST(ReleaseSnapshotTest, buildAcceptsCanonicalSevenColumnExtractedHourlyCsv) {
   ASSERT_EQ(selected.value().bars.size(), 3U);
   EXPECT_EQ(selected.value().bars[1].openNanodollars, 101'250'000'000);
   EXPECT_EQ(selected.value().bars[2].closeNanodollars, 103'125'000'000);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildResolvesDottedSymbolsToExtractorSanitizedCsvFilenames) {
+  ScopedSnapshotFixture fixture{"dotted-symbol-extracted-input"};
+  constexpr auto symbol = "BRK.B";
+  constexpr auto rows =
+      "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200\n"
+      "BRK.B,2024-01-02 00:00:00+00:00,101,103,100,102,2300\n"
+      "BRK.B,2024-01-02 01:00:00+00:00,102,104,101,103,3400\n";
+  const auto sourcePath = fixture.source() / "BRK_B.csv";
+  writeFile(sourcePath,
+            "symbol,ts,open,high,low,close,volume\n" + std::string{rows});
+  const auto csvBytes = readFile(sourcePath);
+  writeSourceManifest(fixture.source(), "file=BRK_B.csv|ohlcv-1h|" +
+                                            bte::core::sha256(csvBytes) + "\n");
+
+  const auto built = bte::data::buildReleaseSnapshot(
+      fixture.buildRequest({std::string{symbol}}));
+
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 3U);
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  const auto selected = reader.value()->select({
+      .symbols = {symbol},
+      .range = {.start = timestamp("2024-01-01 23:00:00+00:00"),
+                .end = timestamp("2024-01-02 02:00:00+00:00")},
+      .timeframe = "ohlcv-1h",
+  });
+  ASSERT_TRUE(selected.ok()) << selected.error().message;
+  ASSERT_EQ(selected.value().bars.size(), 3U);
+  EXPECT_EQ(selected.value().bars.front().closeNanodollars, 101'000'000'000);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildRejectsSymbolsThatMapToTheSameExtractedCsvFilename) {
+  ScopedSnapshotFixture fixture{"colliding-extracted-symbol-filenames"};
+  const auto sourcePath = fixture.source() / "BRK_B.csv";
+  const auto csv = std::string{"symbol,ts,open,high,low,close,volume\n"} +
+                   "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200\n";
+  writeFile(sourcePath, csv);
+  writeSourceManifest(fixture.source(), "file=BRK_B.csv|ohlcv-1h|" +
+                                            bte::core::sha256(csv) + "\n");
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B", "BRK_B"}));
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(built.error().message,
+            "Snapshot symbols map to the same extracted CSV filename");
+}
+
+TEST(ReleaseSnapshotTest, buildKeepsExplicitDottedSymbolCsvFilenameCompatible) {
+  ScopedSnapshotFixture fixture{"explicit-dotted-symbol-filename"};
+  constexpr auto rows =
+      "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200,ohlcv-1h\n"
+      "BRK.B,2024-01-02 00:00:00+00:00,101,103,100,102,2300,ohlcv-1h\n"
+      "BRK.B,2024-01-02 01:00:00+00:00,102,104,101,103,3400,ohlcv-1h\n";
+  writeFile(fixture.source() / "BRK.B.csv",
+            "symbol,ts,open,high,low,close,volume,schemaName\n" +
+                std::string{rows});
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 3U);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildUsesManifestDeclaredCanonicalDottedSymbolFilename) {
+  ScopedSnapshotFixture fixture{"manifest-declared-dotted-symbol-filename"};
+  constexpr auto csv = "symbol,ts,open,high,low,close,volume\n"
+                       "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200\n";
+  writeFile(fixture.source() / "BRK.B.csv", csv);
+  writeSourceManifest(fixture.source(), "file=BRK.B.csv|ohlcv-1h|" +
+                                            bte::core::sha256(csv) + "\n");
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 1U);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildUsesExtractorFilenameFallbackForExplicitSchemaWithoutManifest) {
+  ScopedSnapshotFixture fixture{"sanitized-dotted-symbol-without-manifest"};
+  constexpr auto csv =
+      "symbol,ts,open,high,low,close,volume,schemaName\n"
+      "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200,ohlcv-1h\n";
+  writeFile(fixture.source() / "BRK_B.csv", csv);
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 1U);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildPrefersManifestDeclaredCanonicalDottedSymbolFilename) {
+  ScopedSnapshotFixture fixture{"both-dotted-symbol-filenames-declared"};
+  constexpr auto exactCsv =
+      "symbol,ts,open,high,low,close,volume\n"
+      "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200\n";
+  constexpr auto extractedCsv =
+      "symbol,ts,open,high,low,close,volume\n"
+      "BRK.B,2024-01-01 23:00:00+00:00,100,102,99,101,1200\n"
+      "BRK.B,2024-01-02 00:00:00+00:00,101,103,100,102,2300\n";
+  writeFile(fixture.source() / "BRK.B.csv", exactCsv);
+  writeFile(fixture.source() / "BRK_B.csv", extractedCsv);
+  writeSourceManifest(fixture.source(),
+                      "file=BRK.B.csv|ohlcv-1h|" + bte::core::sha256(exactCsv) +
+                          "\n" + "file=BRK_B.csv|ohlcv-1h|" +
+                          bte::core::sha256(extractedCsv) + "\n");
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().barCount, 1U);
+}
+
+TEST(ReleaseSnapshotTest,
+     buildReportsInspectionFailureForAnUnrepresentableExactFilename) {
+  ScopedSnapshotFixture fixture{"unrepresentable-dotted-symbol-filename"};
+  const auto symbol = std::string(260, 'A') + ".B";
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({symbol}));
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+  EXPECT_EQ(built.error().message,
+            "Unable to inspect snapshot source: " +
+                (fixture.source() / (symbol + ".csv")).string());
+}
+
+TEST(ReleaseSnapshotTest,
+     buildReportsInspectionFailureForAnUninspectableExtractedFilename) {
+  ScopedSnapshotFixture fixture{"uninspectable-extracted-symbol-filename"};
+  const auto extractedPath = fixture.source() / "BRK_B.csv";
+  auto filesystemError = std::error_code{};
+  std::filesystem::create_symlink(extractedPath.filename(), extractedPath,
+                                  filesystemError);
+  ASSERT_FALSE(filesystemError) << filesystemError.message();
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::schemaMismatch);
+  EXPECT_EQ(built.error().message,
+            "Unable to inspect snapshot source: " + extractedPath.string());
+}
+
+TEST(ReleaseSnapshotTest,
+     buildKeepsExactDottedFilenameAsMissingSourceFallback) {
+  ScopedSnapshotFixture fixture{"missing-dotted-symbol-source"};
+
+  const auto built =
+      bte::data::buildReleaseSnapshot(fixture.buildRequest({"BRK.B"}));
+
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::notFound);
+  EXPECT_EQ(built.error().message,
+            "Snapshot source not found: " +
+                (fixture.source() / "BRK.B.csv").string());
 }
 
 TEST(ReleaseSnapshotTest,

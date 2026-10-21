@@ -645,6 +645,79 @@ core::Result<std::vector<SegmentMetadata>> parseManifest(
   return segments;
 }
 
+std::string sourceCsvFilenameForSymbol(std::string symbol) {
+  std::ranges::replace(symbol, '.', '_');
+  symbol.append(".csv");
+  return symbol;
+}
+
+core::Result<std::filesystem::path>
+sourceCsvPathForSymbol(const std::filesystem::path &sourceDirectory,
+                       const std::string &symbol,
+                       const SourceManifest &sourceManifest) {
+  const auto exactFilename = symbol + ".csv";
+  const auto extractedFilename = sourceCsvFilenameForSymbol(symbol);
+  const auto exactPath = sourceDirectory / exactFilename;
+  const auto extractedPath = sourceDirectory / extractedFilename;
+  if (exactFilename == extractedFilename) {
+    return exactPath;
+  }
+
+  const auto exactIsDeclared = sourceManifest.files.contains(exactFilename);
+  const auto extractedIsDeclared =
+      sourceManifest.files.contains(extractedFilename);
+  if (sourceManifest.present && exactIsDeclared) {
+    return exactPath;
+  }
+  if (sourceManifest.present && extractedIsDeclared) {
+    return extractedPath;
+  }
+
+  auto filesystemError = std::error_code{};
+  if (std::filesystem::exists(exactPath, filesystemError)) {
+    return exactPath;
+  }
+  if (filesystemError) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Unable to inspect snapshot source: " +
+                               exactPath.string());
+  }
+  if (std::filesystem::exists(extractedPath, filesystemError)) {
+    return extractedPath;
+  }
+  if (filesystemError) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Unable to inspect snapshot source: " +
+                               extractedPath.string());
+  }
+  return exactPath;
+}
+
+core::Result<std::vector<std::pair<std::string, std::filesystem::path>>>
+resolveSourceCsvFiles(const std::filesystem::path &sourceDirectory,
+                      const std::vector<std::string> &symbols,
+                      const SourceManifest &sourceManifest) {
+  auto sourceFiles =
+      std::vector<std::pair<std::string, std::filesystem::path>>{};
+  sourceFiles.reserve(symbols.size());
+  auto sourceFilenames = std::unordered_set<std::string>{};
+  for (const auto &symbol : symbols) {
+    auto sourcePath =
+        sourceCsvPathForSymbol(sourceDirectory, symbol, sourceManifest);
+    if (!sourcePath.ok()) {
+      return sourcePath.error();
+    }
+    if (!sourceFilenames.emplace(sourcePath.value().filename().string())
+             .second) {
+      return core::makeError(
+          core::ErrorCode::invalidArgument,
+          "Snapshot symbols map to the same extracted CSV filename");
+    }
+    sourceFiles.emplace_back(symbol, std::move(sourcePath).value());
+  }
+  return sourceFiles;
+}
+
 bool validHash(const std::string &hash) {
   return hash.size() == 64 &&
          std::ranges::all_of(hash, [](const char character) {
@@ -779,15 +852,21 @@ buildReleaseSnapshot(const SnapshotBuildRequest &request,
     return sourceManifest.error();
   }
 
+  auto sourceFiles = resolveSourceCsvFiles(
+      request.sourceDirectory, symbols.value(), sourceManifest.value());
+  if (!sourceFiles.ok()) {
+    return sourceFiles.error();
+  }
+
   struct EncodedSegment {
     SegmentMetadata metadata;
     std::vector<std::byte> bytes;
   };
   std::vector<EncodedSegment> encodedSegments;
   std::size_t totalBars = 0;
-  for (const auto &symbol : symbols.value()) {
-    auto bars = readSourceBars(request.sourceDirectory / (symbol + ".csv"),
-                               symbol, sourceManifest.value(), cancellation);
+  for (const auto &[symbol, sourcePath] : sourceFiles.value()) {
+    auto bars = readSourceBars(sourcePath, symbol, sourceManifest.value(),
+                               cancellation);
     if (!bars.ok()) {
       return bars.error();
     }

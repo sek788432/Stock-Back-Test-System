@@ -277,6 +277,30 @@ TEST_F(ResultReplayTest,
   EXPECT_EQ(opened.value().result.descriptor.range.end, selectedRange.end);
   ASSERT_EQ(opened.value().selection.bars.size(), 31'466U);
   EXPECT_EQ(opened.value().selection.bars, expectedSelection.value().bars);
+  auto expectedFills = std::vector<bte::bindings::ResultReplayFill>{};
+  for (const auto &record : opened.value().result.records) {
+    if (record.family != bte::results::RecordFamily::fill) {
+      continue;
+    }
+    ASSERT_TRUE(record.quantityShares.has_value());
+    ASSERT_TRUE(record.priceNanodollars.has_value());
+    ASSERT_TRUE(record.amountMicrodollars.has_value());
+    ASSERT_TRUE(record.side == bte::results::OrderSide::buy ||
+                record.side == bte::results::OrderSide::sell);
+    EXPECT_GT(*record.quantityShares, 0);
+    EXPECT_GT(*record.priceNanodollars, 0);
+    EXPECT_GT(*record.amountMicrodollars, 0);
+    expectedFills.push_back(bte::bindings::ResultReplayFill{
+        .timestamp = record.timestamp,
+        .isBuy = record.side == bte::results::OrderSide::buy,
+        .quantityShares = *record.quantityShares,
+        .price =
+            static_cast<double>(*record.priceNanodollars) / 1'000'000'000.0,
+        .amount = static_cast<double>(*record.amountMicrodollars) / 1'000'000.0,
+    });
+  }
+  ASSERT_FALSE(expectedFills.empty())
+      << "The saved AAPL Backtest must contain at least one fill";
 
   auto hourly = bte::bindings::ResultReplay::open(
       resultStore, dataStore, run.value().resultId,
@@ -386,7 +410,8 @@ TEST_F(ResultReplayTest,
   }
   EXPECT_TRUE(sawMayFourth);
   EXPECT_TRUE(sawMayFifth);
-  EXPECT_EQ(dailyFills, hourlyFills);
+  EXPECT_EQ(hourlyFills, expectedFills);
+  EXPECT_EQ(dailyFills, expectedFills);
 }
 
 TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
