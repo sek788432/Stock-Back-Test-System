@@ -19,10 +19,10 @@ CI and CodeQL checks passed on the exact submitted head. Native application
 acceptance remains. The independent review of PR #81 found a dotted-ticker CSV
 filename mismatch and a weak non-empty-fill assertion; this follow-up branch
 contains fixes and regression coverage for both. Independent implementation,
-documentation, and test reviews found no further code or test issues. The
-GitHub connector successfully created draft PR #82 after authorization was
-restored. Its CI is running; merge remains pending native acceptance and
-reconciliation of this document with the active result-lifecycle decision.
+documentation, and test reviews found no further code or test issues. PR #82
+was squash-merged as `c6809d9` after every required remote CI job passed on
+submitted head `f950286`. Native application acceptance remains open and is
+tracked separately below.
 
 ## Latest merged delivery
 
@@ -34,6 +34,12 @@ reconciliation of this document with the active result-lifecycle decision.
   macOS tests, project standards, static analysis, changed-code coverage,
   ASan/UBSan, TSan, and CodeQL checks all completed successfully on that exact
   head.
+- PR #82 merged at `c6809d9397e0425b186fe05a45b2464695e592cc` from submitted
+  head `f950286544895b820bc8b6d9de37a2ae6375c84a`. Project standards, Ubuntu
+  and macOS tests, ASan/UBSan, TSan, changed-code coverage, static analysis, and
+  the required merge gate all passed. It fixes dotted-symbol source resolution,
+  strengthens saved-fill replay regression coverage, and reconciles the R1–R3
+  decision status; native application acceptance remains separate.
 - R1–R3 are now in `main`: per-Result
   cross-process SQLite leases, retention pins before artifact visibility,
   atomic completed-bar persistence, committed-prefix recovery, and typed
@@ -54,7 +60,9 @@ reconciliation of this document with the active result-lifecycle decision.
   against `origin/main`. The Task 18 branch's full tree matched merged main;
   the earlier `codex/issue10-remaining` commit was an ancestor of that branch.
   Both old personal branches were removed locally and from GitHub. Remaining
-  acceptance work is on `codex/issue10-final-acceptance`.
+  acceptance work now continues on `codex/issue10-native-acceptance`, created
+  from the verified merged `main` commit after deleting the merged personal
+  branch locally and remotely.
 - All six pre-existing Git stashes remain intact, including the private Issue
   10 drafts and the persistence, CSV, trusted-Replay, strategy, and CI work.
 
@@ -262,10 +270,9 @@ Latest follow-up evidence (2026-10-15):
 Task 17/18 and source provenance are merged in `main` as PR #81 (`c7e487e`).
 The submitted head passed local RunTest, Quality, ASan/UBSan, and TSan, as well
 as required remote CI and CodeQL. The remaining product work is hands-on native
-application acceptance. The fresh branch also closes the two independent
-review findings above; its exact-head local gates are complete. Draft PR #82
-now exists and its remote CI is running. It remains draft while native
-acceptance and the documentation reconciliation are completed.
+application acceptance. The two independent review findings were fixed and
+merged in PR #82 after all required remote CI jobs passed. The new local
+continuation branch is based on the verified merged `main` commit.
 
 On 2026-10-21, `Launch.sh` rebuilt the desktop application and created a real
 development snapshot, but the application exited before opening a window
@@ -276,14 +283,16 @@ targets passed three consecutive runs each (33/33 target runs). These repeated
 widget tests reduce regression risk but do not replace the pending native
 workflow checks below.
 
-Workspace reconciliation is complete: local `main` matches `origin/main`, both
-old personal branches were removed after verifying their contents were merged,
-and the six stashes remain intact.
+Workspace reconciliation is complete: local `main` was fast-forwarded to
+`origin/main` at `c6809d9`; the merged `codex/issue10-final-acceptance` branch
+was removed locally and remotely after its tree exactly matched merged main;
+the six stashes remain intact. The active local branch is
+`codex/issue10-native-acceptance`.
 
 | Request / plan task | Remaining work |
 | --- | --- |
 | Historical conditions, Task 18 | Implemented: 30 available UTC data-date close-to-close gain; prior 21 complete data-date highs/lows excluding the current date; persistent strict breakouts; bounded same-snapshot pre-range warm-up. Local and remote checks passed; confirm expected signals in the native workflow |
-| Post-merge review follow-up | Fix dotted ticker snapshot-source filename resolution while preserving exact-name compatibility; require the AAPL Hourly and Daily fill timelines to match non-empty persisted fill records. Implemented and independently reviewed on `codex/issue10-final-acceptance`; RunTest passed 333/333, full Quality passed with 100% changed-line and branch coverage, and ASan/UBSan plus TSan passed 285/285 each. Draft PR #82 is open with remote CI running; merge waits on native acceptance and the result-lifecycle documentation reconciliation |
+| Post-merge review follow-up | Complete — dotted-ticker source resolution and the non-empty Hourly/Daily persisted-fill regression merged in PR #82 (`c6809d9`). Exact-head RunTest passed 333/333, Quality passed with 100% changed-line and branch coverage, and every required remote CI job passed. Native acceptance remains listed separately |
 | Save Result / Save & Replay, Task 14 | Exercise save, save-and-replay, restart, and injected failure recovery in the native application |
 | Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Exercise the full native workflow against saved real data, including rename, trash, restore, and replay opening |
 | Progressive Hourly/Daily replay, Tasks 21/24 | Automated deterministic and full-range AAPL tests pass for exact bars, dates, fills and portfolio checkpoints; confirm native viewport behavior and readable long-range display |
@@ -295,9 +304,9 @@ and the six stashes remain intact.
 ## Preserved work, not omitted delivery
 
 - PR #81 delivered Task 17/18, source-manifest, R7 and R8 changes to `main`.
-  Both prior personal branches were removed after verifying the Task 18 tree
-  matched merged main and the earlier branch commit was in its ancestry. The
-  new acceptance branch is `codex/issue10-final-acceptance`.
+  PR #82 delivered the reviewed follow-up fixes. The merged follow-up branch was
+  removed locally and remotely after its tree matched merged main. The active
+  continuation branch is `codex/issue10-native-acceptance`.
 - R1–R3 persistence implementation and its owning documentation are merged in
   PR #76. PR #81's remote checks passed; native lifecycle acceptance remains
   in the table above.
