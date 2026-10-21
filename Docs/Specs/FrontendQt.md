@@ -202,14 +202,15 @@ Interactions:
   red downward triangles. A Buy glyph is placed below the containing candle's
   low; a Sell glyph is placed above its high. Both share that candle's x-position,
   so the visual mark remains adjacent to the correct K bar. The 16-pixel glyph
-  bounding box leaves eight logical pixels of clearance from the wick; its
-  triangle tip is slightly farther away. A fixed 25-pixel display reserve on
+  bounding box leaves sixteen logical pixels of clearance from the wick; its
+  triangle tip is slightly farther away. A fixed 33-pixel display reserve on
   each price edge prevents clipping at supported Replay sizes. The pixel-derived
   padding is capped at half the visible price span for very short plots; the
   existing one-USD display-padding floor still applies to flat/near-flat prices.
-  Plots under 100 logical pixels may not fit the full reserve. Height-only resize recalculates this
-  reserve. Price ticks may extend below zero as visual whitespace for a positive
-  low near zero; the stored OHLC and financial values are never changed.
+  Plots under 132 logical pixels may not fit the full reserve. Height-only
+  resize recalculates this reserve. Price ticks may extend below zero as visual
+  whitespace for a positive low near zero; the stored OHLC and financial values
+  are never changed.
   Buy fills sharing a displayed candle use one triangle without a leader. Its
   tooltip retains the first reached fill's details and, for multiple Buys,
   states the reached fill count and points to the complete trade log. Group by
