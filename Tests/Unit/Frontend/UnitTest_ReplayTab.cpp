@@ -4,6 +4,7 @@
 
 #include "WaitUntil.h"
 
+#include <QApplication>
 #include <QChart>
 #include <QChartView>
 #include <QComboBox>
@@ -13,6 +14,7 @@
 #include <QGroupBox>
 #include <QImage>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -52,6 +54,7 @@ private slots:
   void keyboardControlsStepAndTogglePlayback();
   void emptyAndCompletedPlaybackBoundariesRemainStable();
   void chartFirstLayoutIsCollapsibleAdjustableAndUsesMostOfTheViewport();
+  void chartAndDetailsCanBeResizedByDraggingSplitterHandle();
   void rendersNonBlankReplaySnapshot();
   void compactViewportCanScrollToTradeLog();
 };
@@ -588,6 +591,57 @@ void ReplayTabTest::
   QCoreApplication::processEvents();
   QCOMPARE(scrollArea->horizontalScrollBar()->maximum(), 0);
   verifyChartShare();
+}
+
+void ReplayTabTest::chartAndDetailsCanBeResizedByDraggingSplitterHandle() {
+  bte::frontend::ReplayTab tab;
+  auto *splitter = tab.findChild<QSplitter *>("replayChartTradeSplitter");
+  QVERIFY(splitter != nullptr);
+  tab.resize(1440, 1300);
+  tab.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&tab));
+  QCoreApplication::processEvents();
+
+  auto *handle = splitter->handle(1);
+  QVERIFY(handle != nullptr);
+  const auto sizesBefore = splitter->sizes();
+  QCOMPARE(sizesBefore.size(), 2);
+  const auto dragHandle = [handle](const QPoint &start, const QPoint &end) {
+    const auto globalStart = handle->mapToGlobal(start);
+    const auto globalEnd = handle->mapToGlobal(end);
+    QMouseEvent press{QEvent::MouseButtonPress, QPointF{start},
+                      QPointF{globalStart},     Qt::LeftButton,
+                      Qt::LeftButton,           Qt::NoModifier};
+    QApplication::sendEvent(handle, &press);
+    QMouseEvent move{QEvent::MouseMove, QPointF{end},   QPointF{globalEnd},
+                     Qt::NoButton,      Qt::LeftButton, Qt::NoModifier};
+    QApplication::sendEvent(handle, &move);
+    QMouseEvent release{QEvent::MouseButtonRelease,
+                        QPointF{end},
+                        QPointF{globalEnd},
+                        Qt::LeftButton,
+                        Qt::NoButton,
+                        Qt::NoModifier};
+    QApplication::sendEvent(handle, &release);
+  };
+
+  auto start = handle->rect().center();
+  dragHandle(start, start + QPoint{0, 80});
+  QCoreApplication::processEvents();
+
+  const auto sizesAfterExpand = splitter->sizes();
+  QVERIFY2(sizesAfterExpand[0] > sizesBefore[0],
+           qPrintable(QString{"chart size did not grow: before=%1 after=%2"}
+                          .arg(sizesBefore[0])
+                          .arg(sizesAfterExpand[0])));
+  QVERIFY(sizesAfterExpand[1] < sizesBefore[1]);
+
+  start = handle->rect().center();
+  dragHandle(start, start + QPoint{0, -40});
+  QCoreApplication::processEvents();
+  const auto sizesAfterShrink = splitter->sizes();
+  QVERIFY(sizesAfterShrink[0] < sizesAfterExpand[0]);
+  QVERIFY(sizesAfterShrink[1] > sizesAfterExpand[1]);
 }
 
 void ReplayTabTest::compactViewportCanScrollToTradeLog() {

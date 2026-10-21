@@ -2,20 +2,35 @@
 
 ## Scope and evidence
 
-## Continuation status — 2026-10-19
+## Current reconciliation — 2026-10-22 (pre-publication checkpoint)
 
-PR #80 has since merged to `main` as `dbcbd39d0a23243cd8ff1b832a71b9ec62d02fe6`.
-The current Issue #10 consolidation worktree implements R1–R3, exact Daily
-fill selection, and the independent schema-2 hash oracle. After normal merge
-alignment with the latest `origin/main`, `RunTest.sh` passes 270/270, including
-child-process crash/recovery and cancellation boundaries. Exact committed-head
-Quality/sanitizers, remote PR checks, workspace reconciliation, and
-native/real-data acceptance remain open. The dated checkpoints below record
-historical evidence and are not a current status report; see
-[remaining work](Issue10RemainingWork.md).
+PR #85 is merged; `main` and `origin/main` are at
+`2f6a831f91b952696dd99f0e3d520a6add49197b`. The historical source-branch
+inventory below records the extraction checkpoint and is not a current list
+of unpublished code. The completed Issue 10 source, tests, and owning
+documentation are represented in the merged tree. One post-merge Results
+keyboard-navigation repair and its regression are in the local
+`codex/issue10-final-acceptance` follow-up, based on this main revision. Its
+implementation gates passed before this documentation-only acceptance update;
+publication, remote CI, and merge are pending. The current acceptance status
+and native evidence are maintained in
+[Issue10RemainingWork.md](Issue10RemainingWork.md). The only release-level
+blocker still recorded by the owning Data Layer specification is verification
+of redistribution rights and a cleared split manifest; it does not block the
+local developer application workflow.
+
+## Historical continuation checkpoint — 2026-10-19
+
+At that checkpoint, PR #80 had merged as `dbcbd39d0a23243cd8ff1b832a71b9ec62d02fe6`.
+The consolidation worktree implemented R1–R3, exact Daily fill selection, and
+the independent schema-2 hash oracle. `RunTest.sh` passed 270/270 after normal
+main alignment. Quality/sanitizers, remaining PR checks, workspace
+reconciliation, and native/real-data acceptance were still pending then.
+These are checkpoint facts, not the current status; see the current
+[reconciliation](Issue10RemainingWork.md).
 
 This inventory tracks extraction and publication, not whole-plan acceptance.
-The preserved source branch is `codex/issue10-replay-ux` at
+At the extraction checkpoint, the source branch was `codex/issue10-replay-ux` at
 `6ac45eaeecfdf1f840a994b951957340bf78fafd`. Relative to fixed base
 `84e3a135b18bdddb8134713df0b6896be0cc1a37`, it contains 82 commits and
 64 changed paths (11,627 additions and 475 deletions). Those are the original
@@ -30,7 +45,7 @@ retained. Do not force-push or delete its history as part of extraction.
 
 ## Delivery groups
 
-### Current consolidation checkpoint
+### Historical consolidation checkpoint
 
 - Published #76 rotation repair `d50dabb` passed full exact local gates but
   Linux coverage still failed its five-second load wait in `38583994672`.

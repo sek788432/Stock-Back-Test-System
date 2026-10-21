@@ -311,6 +311,7 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   auto *rename = tab.findChild<QPushButton *>("resultsRenameButton");
   auto *restore = tab.findChild<QPushButton *>("resultsRestoreButton");
   auto *location = tab.findChild<QComboBox *>("resultsLocationCombo");
+  auto *refresh = tab.findChild<QPushButton *>("resultsRefreshButton");
   auto *details = tab.findChild<QLabel *>("resultsDetailsLabel");
   auto *status = tab.findChild<QLabel *>("resultsStatusLabel");
   QVERIFY(table != nullptr);
@@ -320,6 +321,7 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   QVERIFY(rename != nullptr);
   QVERIFY(restore != nullptr);
   QVERIFY(location != nullptr);
+  QVERIFY(refresh != nullptr);
   QVERIFY(details != nullptr);
   QVERIFY(status != nullptr);
   QVERIFY(bte::test::waitUntil([&] { return (table->rowCount()) == (1); }));
@@ -329,7 +331,36 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
   table->selectRow(0);
   QVERIFY(view->isEnabled());
   QVERIFY(open->isEnabled());
-  view->click();
+  tab.resize(1440, 900);
+  tab.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&tab));
+  table->setCurrentCell(0, 0);
+  table->setFocus();
+  const auto currentRow = table->currentRow();
+  const auto currentColumn = table->currentColumn();
+  QTest::keyClick(table, Qt::Key_Tab);
+  QCOMPARE(QApplication::focusWidget(), location);
+  QCOMPARE(table->currentRow(), currentRow);
+  QCOMPARE(table->currentColumn(), currentColumn);
+  QTest::keyClick(location, Qt::Key_Tab);
+  QCOMPARE(QApplication::focusWidget(), refresh);
+  QTest::keyClick(refresh, Qt::Key_Tab);
+  QCOMPARE(QApplication::focusWidget(), view);
+  QTest::keyClick(view, Qt::Key_Backtab);
+  QCOMPARE(QApplication::focusWidget(), refresh);
+  QTest::keyClick(refresh, Qt::Key_Backtab);
+  QCOMPARE(QApplication::focusWidget(), location);
+  QTest::keyClick(location, Qt::Key_Backtab);
+  QCOMPARE(QApplication::focusWidget(), table);
+  QTest::keyClick(table, Qt::Key_Backtab);
+  QCOMPARE(QApplication::focusWidget(), remove);
+  QTest::keyClick(remove, Qt::Key_Backtab);
+  QCOMPARE(QApplication::focusWidget(), rename);
+  QTest::keyClick(rename, Qt::Key_Backtab);
+  QCOMPARE(QApplication::focusWidget(), open);
+  QTest::keyClick(open, Qt::Key_Backtab);
+  QCOMPARE(QApplication::focusWidget(), view);
+  QTest::keyClick(view, Qt::Key_Space);
   QVERIFY(bte::test::waitUntil(
       [&] { return (details->text().contains("Symbol: SYN")); }));
   QCOMPARE(details->textFormat(), Qt::PlainText);
@@ -350,7 +381,9 @@ void ResultsTabTest::savedResultDetailsReplayTrashAndRestoreKeepExactId() {
       "dividendAccounting=excluded; price-return only"));
   QSignalSpy replayRequested{&tab,
                              &bte::frontend::ResultsTab::openResultInReplay};
-  open->click();
+  QTest::keyClick(view, Qt::Key_Tab);
+  QCOMPARE(QApplication::focusWidget(), open);
+  QTest::keyClick(open, Qt::Key_Space);
   QCOMPARE(replayRequested.size(), 1);
   QCOMPARE(replayRequested.first().first().toString(),
            QString::fromStdString(run.value().resultId));

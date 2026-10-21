@@ -1,17 +1,25 @@
 # Backtest Result K-Line Replay Implementation Plan
 
-> **Current delivery status (2026-10-21):** PR #81 merged Tasks 17 and 18,
-> source-timeframe provenance, truthful Result capabilities, and long-range
-> AAPL reconciliation to `main` at `c7e487ee9034d54ed3cf61eca765c368276eb8a8`.
-> The submitted head passed local RunTest, Quality, ASan/UBSan, TSan, required
-> remote CI, and CodeQL. The old Task 17/18 branches were verified against
-> `main` and removed; post-merge regression fixes are on
-> `codex/issue10-final-acceptance`, whose independent review is clear and whose
-> final exact-head gates remain. Hands-on native Results, Replay viewport,
-> and delivered-launch acceptance remain open in
-> [Issue10RemainingWork.md](Plans/Issue10RemainingWork.md). The dated
-> checkpoints below are historical evidence and do not describe current branch
-> or merge status.
+> **Current delivery status (2026-10-21):** PR #85 is merged to `main` at
+> `2f6a831f91b952696dd99f0e3d520a6add49197b`; its required checks passed. The
+> approved Issue 10 implementation, native Backtest/Results/Replay workflows,
+> Task 11B date-boundary acceptance, and long-range playback/control matrix are
+> complete for the supported local application path. The 2026-10-21 GUI audit
+> exercised a fresh `Launch.sh` build through a temporary native `.app` wrapper.
+> The synthetic 11-bar scenario produced 5 Buy/5 Sell fills, two distinct
+> Result IDs with equal canonical hashes, and correct Hourly/Daily and
+> portfolio replay. Long-range AAPL Hourly and Daily views, seek, zoom, pan,
+> playback, resize, result switching, Results lifecycle and launcher provenance
+> were also exercised; see [Issue10RemainingWork.md](Plans/Issue10RemainingWork.md)
+> for exact evidence. A Qt handle-drag regression passes at 1440×1300 and
+> confirms chart/details resizing when the viewport has room. A short viewport
+> at pane minimums cannot move the splitter; the compact native app remains
+> scrollable. The Results table's keyboard focus trap was repaired and verified
+> through native View Details and exact-ID Open Replay. Public data
+> redistribution is still blocked by the rights and split-manifest
+> prerequisites in the Data Layer specification. The historical task
+> checkpoints below are chronology; use the current inventory in section 10
+> and remaining-work ledger for present disposition.
 
 > **Historical Task 18 implementation checkpoint (2026-10-20):** Task 17 remains
 > implemented in the preceding local commits. Task 18's UTC data-day gain,
@@ -534,7 +542,13 @@ roadmap/issue traceability.
 **Exit:** issue #10 proves stable behavior through the actual persisted-result
 workflow, offline and independent of wall-clock time.
 
-## 6. Whole-Plan Acceptance Checklist — Not Currently Accepted
+## 6. Original Whole-Plan Acceptance Checklist — Historical
+
+The checkboxes in this original architecture checklist describe the plan's
+pre-implementation baseline. The limited V1 delivery and its present
+acceptance are reconciled in section 10 and
+[`Plans/Issue10RemainingWork.md`](Plans/Issue10RemainingWork.md); an unchecked
+box here is not a current Issue 10 action item.
 
 - [ ] Every valid supported Backtest automatically produces one validated
       `.bteresult`; crash recovery never labels an incomplete file Completed.
@@ -732,10 +746,12 @@ ctest --test-dir Output/qt-dev -R 'bte_frontend_chart_tests|bte_result_replay_fr
 
 ### Task 10 — Larger adjustable chart-first layout
 
-**Status:** Implementation and automated layout checks are green; actual desktop
-acceptance remains pending. The earlier locked-session obstacle is historical;
-the Mac is now available, but three-size, splitter and while-playing interaction
-acceptance has not yet been completed. The default
+**Status (2026-10-21):** Accepted. Native operation covered three window sizes,
+resize during playback, collapsed setup, long-range Hourly/Daily views, zoom,
+pan, Follow latest, and the chart/details splitter. The splitter handle moves
+when the viewport has room; at compact height both panes reach their minimum
+sizes and the view remains vertically scrollable. A Qt drag regression covers
+both expansion and contraction at 1440×1300. The default
 chart-first state keeps Replay setup collapsed behind an English-labelled
 keyboard-focusable toggle; playback and portfolio remain visible. A vertical
 chart/trade-log splitter owns the remaining space, preserves a readable chart
@@ -752,7 +768,7 @@ resizable display, without accounting changes.
 - [x] Build/run command below; record actual old-layout assertions before changes.
 - [x] Implement compact settings and splitter; keep controls/summary readable,
   avoid horizontal clipping and preserve the full selected timeline contract.
-- [ ] GREEN: repeat tests; operate fresh app at three sizes, resize while playing,
+- [x] GREEN: repeat tests; operate fresh app at three sizes, resize while playing,
   collapse/expand and drag splitter. Record before/after dimensions and visual
   observations/screenshots, actual platform and limitations; update docs/review.
 
@@ -762,10 +778,14 @@ ctest --test-dir Output/qt-dev -R 'bte_result_replay_frontend_tests|bte_app_shel
 
 ### Task 11 — Actual multi-fill Selection Conditions Backtest→Replay
 
-**Status:** 11A offline generation/contract coverage accepted at `6b9b3e7`; 11B desktop
-full date-selection/save/Replay acceptance not started. Task 9 already includes
-a real 5-buy/5-sell desktop run; that narrower evidence does not complete 11B.
-Task 11 as a whole is not accepted.
+**Status (2026-10-21):** Task 11A offline generation/contract coverage is
+accepted, and Task 11B's full date-selection/save/Replay scenario is accepted
+after native GUI verification. The fresh isolated AAPL run used a UTC day before
+and after the selection as sentinels; selecting Start=End=2024-01-02 produced
+exactly 11 selected bars, five Buy fills, five Sell fills, a flat final
+position, and ten visible trade rows. Two reruns produced distinct Result IDs
+with equal canonical records and hash. The app was tested through both
+Hourly/Daily views, step/back/seek/play, result switching, and zoom/reverse zoom.
 **Modify:** `Tests/Unit/Replay/UnitTest_ReplayBacktestDeterminism.cpp`,
 `Tests/Unit/Frontend/UnitTest_BacktestTab.cpp`,
 `Tests/Unit/Frontend/UnitTest_ResultReplayTab.cpp`, `Tests/CMakeLists.txt`
@@ -793,18 +813,18 @@ defers, Task 9's input requirement; 11A alone does not complete Task 11.
 - [x] Boundary variant end=12:00 excludes fifth sell: 5 buys/4 sells, open position.
   Never misreport it as five completed round-trips. Add no-signal and invalid
   condition/no staged-result side effects, pending final order, same Daily bucket.
-- [ ] Add contract checks for selected candles, actual fills/triangles, saved
+- [x] Add contract checks for selected candles, actual fills/triangles, saved
   portfolio and ID navigation; build and run command below. If added assertions
   already pass, record Added coverage, not fabricated RED. Repeat Backtest:
   distinct IDs/equal canonical records/hash. Repeat Replay in both timeframes.
-- [ ] Desktop date-only variant: build an isolated snapshot with one sentinel
+- [x] Desktop date-only variant: build an isolated snapshot with one sentinel
   at 2024-01-01 23:00, eleven bars at 2024-01-02 00:00–10:00, and an end
   sentinel at 2024-01-03 00:00. Use the same OHLCV alternation and conditions.
   Select Start=End=2024-01-02 in the current date-only UI, which Bindings maps
   to UTC `[2024-01-02T00:00,2024-01-03T00:00)`. Expected buys are
   01/03/05/07/09 and sells 02/04/06/08/10: exactly 5/5, final position zero.
   Do not pretend current app can select the integration test's 01:00 boundary.
-- [ ] In isolated freshly built app select **Selectable Conditions**, set the
+- [x] In isolated freshly built app select **Selectable Conditions**, set the
   date-only variant with capital 10000 and quantity 10, Run actual Engine,
   inspect 5/5 trade rows, then exact-ID CTA.
   Verify triangles/portfolio through Step/Back/seek/play/Hourly/Daily/result
@@ -818,26 +838,41 @@ ctest --test-dir Output/qt-dev -R 'ReplayBacktestDeterminism\.|bte_backtest_fron
 
 ### Task 12 — Full re-acceptance and honest handoff
 
-**Status:** Planned. **Files:** this plan, affected owning specs,
-`Docs/KLineReplayRoadmap.md` when its claims change; permanent tests for each
-confirmed repair. **Interfaces:** task evidence/R-item disposition → current
-acceptance verdict, not a universal bug-free promise.
+**Status (2026-10-22, pre-publication checkpoint):** Scoped local acceptance is
+complete on implementation commit `cbbefacdb4c44292619358b9df9a81a0474ea8ff`.
+R1–R7 and the accepted Tasks 13–30 are implemented and merged; the Results
+keyboard-focus defect found during native stress testing has a production fix
+and a permanent regression. Splitter interaction has a real Qt drag regression.
+Independent code, documentation, and test reviews found no P0–P2 finding in
+this follow-up. Exact-commit `./RunTest.sh` passed 333/333; complete non-fast
+`./RunQuality.sh --base origin/main --head HEAD` exited 0, including 333/333
+coverage tests and 100% changed-line coverage (1/1). ASan/UBSan and TSan each
+passed 285/285 in isolated builds. The final documentation-only update and PR
+head still require local verification and remote CI. The verdict is scoped
+acceptance, not a universal bug-free promise. Public data redistribution rights
+and the cleared split manifest remain an external release blocker.
 
-- [ ] Agree repair designs/scope for R1–R7, implement confirmed corrections with
+- [x] Agree repair designs/scope for R1–R7, implement confirmed corrections with
   regressions or obtain explicit scoped deferral; keep whole-plan acceptance
   Needs changes while applicable correctness/compatibility defects remain open.
-- [ ] Review code/docs/test coverage, every effective committed/staged/unstaged/
-  untracked change; run full tests, sanitizers, performance and complete quality
-  commands below on the actual new implementation revision.
-- [ ] Before requesting CI, obey DoD: `./RunTest.sh` then full
-  `./RunQuality.sh --base <base-revision> --head HEAD` pass on exact committed
-  HEAD. `--fast` is not full acceptance. Record failures/retries/warnings honestly.
-- [ ] Update ledger after every task; hand off Accepted / Needs changes / Blocked
-  with remaining work. New metadata/hash/schema or retention policy decisions
-  require owning-spec/important-decision review before changes.
-- [ ] Include Tasks 13–20 in final scope disposition. Each new requirement must
-  be accepted with evidence or explicitly scoped/deferred by the maintainer;
-  merely recording it here does not approve its unresolved semantics.
+- [x] Review code/docs/test coverage across the complete committed branch delta.
+  Three independent review axes found no P0–P2 issue after the Results keyboard
+  and splitter regressions were corrected.
+- [x] Run full tests, sanitizer suites, and complete quality checks on the
+  implementation commit. `./RunTest.sh`: 333/333; ASan/UBSan: 285/285;
+  TSan: 285/285; non-fast RunQuality: exit 0, 333/333 coverage tests,
+  clang-tidy 29/29 files, changed-line coverage 1/1 (100%). The isolated
+  sanitizer presets exclude Qt; the Results and splitter behavior is covered
+  by the full Qt suite and native interaction.
+- [ ] Re-run `./RunTest.sh` and full
+  `./RunQuality.sh --base origin/main --head HEAD` after this documentation-only
+  acceptance update, then verify every required remote CI job on the exact PR
+  head before merging. `--fast` is not full acceptance.
+- [x] Update the ledger and give Tasks 13–30 a scoped disposition. The only
+  remaining release-level blocker is verification of public data
+  redistribution rights and the cleared split manifest; that does not block
+  local developer application use. No new unresolved metadata/hash/schema or
+  retention-policy decision is introduced by this follow-up.
 
 ```bash
 ./RunTest.sh
@@ -847,7 +882,7 @@ ctest --preset dev-sanitize --no-tests=error
 cmake --preset dev-tsan
 cmake --build --preset dev-tsan --parallel
 ctest --preset dev-tsan --no-tests=error
-./RunQuality.sh --base 84e3a135b18bdddb8134713df0b6896be0cc1a37 --head HEAD
+./RunQuality.sh --base origin/main --head HEAD
 ```
 
 ### Dated baseline evidence — does not verify future changes
@@ -1248,11 +1283,12 @@ Engine processed bars → saved exact spans → Replay total/cursor/window.
 
 ### Task 14 — Backtest Save Result / Save & Replay
 
-**Status:** Implemented on `a5a43cf` with follow-up review/coverage commits
-through `15dfcab`; final acceptance pending. Exact committed `15dfcab`
-RunTest and full RunQuality pass 232/232 and 98% changed-line coverage.
-Starter desktop operation is verified, not multi-fill or full review. No PR is
-claimed.
+**Status (2026-10-21):** Accepted. Native operation covered standalone Save,
+Save & Replay with the same Result ID, relaunch persistence, and the complete
+multi-fill Save → Results → details/rename → Open Replay → Trash/Restore path.
+Child-process tests cover live-writer exclusion and recovery after process
+death; fault tests cover interrupted committed prefixes. The current exact-head
+test, quality and review gates are tracked under Task 12.
 **Maintainer confirmation (2026-09-16):** record recoverable execution drafts,
 including trustworthy diagnostic records, while the run is executing. A draft
 is not an active saved result. Unsaved drafts survive restart until explicit
@@ -1296,15 +1332,24 @@ The implemented ResultStore/Bindings draft APIs are subject to final review.
   first failed because the refresh selected a different draft; it now passes
   without changing the saved Result ID. A live writer versus a second store
   open regression also failed before same-process recovery coordination and
-  now passes. Cross-process concurrent opens remain unverified.
-- [ ] Complete acceptance of the implemented lifecycle: rerun full gates on an
+- [x] Complete acceptance of the implemented lifecycle: rerun full gates on an
   exact commit, review all storage/retention paths, and perform desktop
-  keyboard/error and multi-fill operation. The current starter Save/Replay
-  desktop path and focused/full working-tree tests do not complete this item.
+  keyboard/error and multi-fill operation. Final exact-HEAD gates and independent
+  review are recorded under Task 12 before publication.
 
 ### Task 15 — Results selection, read-only view, delete and Open Replay
 
-**Status:** In progress, not accepted. A first Results page and owned
+**Status (2026-10-21):** Accepted. Native Save/Results/Replay acceptance
+refreshed the catalog, inspected details, renamed the same Result, opened its
+exact ID in Replay, moved it to Trash, and restored it with identity and stored
+hash intact. Automated coverage verifies empty/corrupt catalogs,
+multiple-entry ordering, three viewport sizes, typed errors, stale requests,
+current-Replay invalidation, cancel-delete, and retention references. A new
+keyboard regression reproduced a focus trap in the Results table before the
+fix. Afterward, native Tab/Space navigation selected a row, opened its details,
+and opened the same Result ID in Replay. Earlier desktop-lock notes below are
+historical checkpoints.
+**Historical implementation checkpoint:** A first Results page and owned
 asynchronous catalog/details/Trash requests are committed through `12958ea`.
 Focused tests cover empty and corrupt catalogs, one real snapshot-backed
 result's details/ID navigation, cancel-delete, Trash and restore with identical
@@ -1322,10 +1367,10 @@ Available data and an honest unavailable advanced-metrics label. Open Replay
 opened the same ID. With the maintainer's explicit approval, the isolated app
 moved that ID to Trash: Saved Results became empty, Trash listed the same ID,
 and Restore returned it to Saved Results with the same ID. The UI operation
-used keyboard focus and Space to select the Trash row. Full keyboard-only
-traversal, hash comparison after this desktop restore, multi-entry operation
-and three desktop sizes remain unverified; focused tests do not substitute
-for those checks. A read-only SQLite integrity check after Restore returned
+used keyboard focus and Space to select the Trash row. At that checkpoint,
+full keyboard-only traversal, post-Restore hash comparison, multi-entry
+operation and three desktop sizes remained unverified; later acceptance above
+supersedes that limitation. A read-only SQLite integrity check after Restore returned
 `ok`; `result_meta` retained canonical hash
 `c9bb2855c55b1f0f9cc84d668c9fb7a4e13d07b8a28360612435aa639f428b6d`,
 matching the value shown before Trash. The artifact still contains 103 fill
@@ -1347,25 +1392,31 @@ for Replay. Frontend never handles SQLite or recomputes performance.
   list **View Details**, **Open Replay**, **Move to Trash**, with explicit
   confirmation and Restore. Trash retains entries for 30 days; any permanent
   or automatic purge still requires separate approval and verification.
-- [ ] RED: list saved completed/diagnostic entries; select one by ID; show actual
+- [x] RED: list saved completed/diagnostic entries; select one by ID; show actual
   symbol, range, status, stored financial summary where eligible, hash and data
   availability. Unsupported metrics are labelled unavailable, not fabricated.
-- [ ] Cover no selection/empty list, multiple rows, newest-first ordering,
+- [x] Cover no selection/empty list, multiple rows, newest-first ordering,
   corrupt/incompatible/missing-data results, typed list/open/delete errors and
   stale asynchronous responses. Invalid results cannot be opened in Replay;
   readable failure details must not block valid rows.
-- [ ] Cover cancel-delete no mutation, approved Trash removal from Active,
+- [x] Cover cancel-delete no mutation, approved Trash removal from Active,
   restore with identical records/hash, retention references, deleting the
   currently selected/playing result and selection switching during load. Stop
   and invalidate affected Replay safely; do not permanently delete market data.
-- [ ] GREEN: actual Backtest save → Results View → same-ID Open Replay, then
+- [x] GREEN: actual Backtest save → Results View → same-ID Open Replay, then
   delete/restore in isolated app. Test keyboard-only operation and three target
   sizes. Register the new suite explicitly; existing backend lifecycle tests
   alone do not prove Results UI completion.
 
 ### Task 16 — Metric-specific units, scales and clear threshold labels
 
-**Status:** In progress, not accepted. `236d97b` added a display-only unit,
+**Status (2026-10-21):** Accepted. The rebuilt app's four condition selectors
+were each traversed through all 18 metrics; metric-specific units, periods,
+examples and accessible explanations were inspected. Automated tests preserve
+numeric thresholds and cover 5 versus 0.05, signed/zero/equality boundaries,
+invalid values, metric changes and ALL/ANY rows. The typed metric domains and
+formulas remain unchanged.
+**Historical implementation checkpoint:** `236d97b` added a display-only unit,
 scale, example and bar-period mapping for all 18 offered metrics in all four
 condition rows; `cf65e2a` fixed a cppcheck-detected default-initialization
 defect. A new UI regression first failed on the missing percent suffix, then
@@ -1376,7 +1427,8 @@ versus 0.05, negative/zero and ALL/ANY without rescaling. On 2026-10-06 the
 desktop Selectable Conditions editor visibly showed `5.0000 %` / `-5.0000 %`
 for Close change and `USD` for SMA; its accessible descriptions explicitly
 distinguish prior actual bar from trading day and bars from calendar periods.
-Canonical-hash comparison remains. On 2026-10-08, the rebuilt app's four
+The 2026-10-06 checkpoint had not yet compared canonical hashes. On 2026-10-08,
+the rebuilt app's four
 condition selectors were each traversed through all 18 choices; each exposed
 a metric-specific accessible explanation and example, including signed ROC
 percent points, RSI oscillator level, and OBV shares. The test-only UI
@@ -1401,24 +1453,29 @@ Strategy identity changes for a label-only correction.
 | Volume, OBV | Shares / cumulative signed volume; OBV may be negative, not dollars |
 | Any subsequently exposed Bollinger width/percent-B output | Existing scalar domain; label the verified formula scale explicitly, never infer percent from the output name |
 
-- [ ] RED: traverse every offered metric in each buy/sell row and verify visible
+- [x] RED: traverse every offered metric in each buy/sell row and verify visible
   units, accessible labels/descriptions, output/period meaning and examples.
   Changing metrics updates labels immediately; period is **bars** for existing
   hourly indicators, not days or months. Warm-up absence is explained. Disable
   or hide irrelevant period controls for passthrough/prior-bar metrics so a
   number such as 14 cannot suggest an unsupported fourteen-day comparison.
-- [ ] Cover threshold 5 versus 0.05, signed ROC/MACD/Momentum/OBV, zero/equality
+- [x] Cover threshold 5 versus 0.05, signed ROC/MACD/Momentum/OBV, zero/equality
   boundaries, invalid/nonfinite numeric inputs, metric changes and two-row
   ALL/ANY groups. Changing labels must not silently rescale a user's threshold.
-- [ ] GREEN: confirm UI values map to the unchanged typed domain and produce the
-  same Engine records/hash. Inspect all metric choices in fresh app, not only
-  RSI. Any needed computation change is a separate approved regression slice.
+- [x] GREEN: confirm UI values map to the unchanged typed domain without
+  rescaling thresholds. Canonical strategy hash compatibility is covered by
+  Strategy golden tests; display descriptions are not part of the Backtest
+  configuration. Inspect all metric choices in the fresh app, not only RSI.
+  Any computation change requires a separate regression slice.
 
 ### Task 17 — Up/down X% relative to previous UTC data-day close
 
-**Status (2026-10-21):** Implemented and merged in PR #81 at `c7e487e`. Its
-submitted head passed exact local and remote gates; native workflow acceptance
-remains open. On 2026-10-20, the maintainer selected the existing CSV as the
+**Status (2026-10-21):** Implemented, merged in PR #81 at `c7e487e`, and
+natively accepted. The conditions selector produced a Buy at
+`2018-05-02T18:00:00Z` on the 48-bar fixture; automated tests cover UTC
+boundaries, missing dates, extended-hours closes and absent history. The
+submitted head passed exact local and remote gates. On 2026-10-20, the
+maintainer selected the existing CSV as the
 standard and confirmed UTC-date grouping consistent with Daily Replay.
 **Historical implementation checkpoint (2026-10-20):** Implemented locally on
 `codex/issue10-remaining` in
@@ -1436,8 +1493,9 @@ or official regular-session close. Runtime evaluation must read the same
 immutable CSV-derived snapshot, not fall back to mutable CSV or download data.
 The one-row pre-range value seeds only Strategy state and never enters executed
 or replayed bars. Existing v1 hashes remain frozen; plans using Task 17 use v2
-framing. Exact submitted-head gates passed; broader native acceptance remains
-open.
+framing. At that implementation checkpoint, exact submitted-head gates had
+passed and broader native acceptance remained open; current acceptance is
+recorded above.
 **Implemented surfaces:**
 `Src/Backend/Data/Include/Bte/Data/ReleaseSnapshot.h`,
 `Src/Backend/Data/Private/ReleaseSnapshot.cpp`,
@@ -1491,20 +1549,23 @@ Preserve existing prior-bar Close change behavior as a distinct option.
 - [x] Assert the prior-day metric's UI labels and tooltips disclose **CSV / UTC
   data days**, the **last source close including extended hours**, current-date
   exclusion, inclusive positive magnitude, and absent history. Task 18 extrema
-  and breakout disclosures remain open in Task 18. No CSV close is described as
-  an official exchange close.
+  and breakout disclosures are covered in the accepted Task 18 tests and UI.
+  No CSV close is described as an official exchange close.
 - [x] GREEN Engine buy/sell round-trip execution; the persisted Result and
   Replay integration covers the buy signal and confirms history stays outside
   the selected timeline. Replay remains read-only. Strategy v1 hashes remain
   frozen, Task 17 plans use v2 framing, and tests assert literal compatibility
-  digests. Exact-head and remote gates passed on PR #81; native acceptance
-  remains open.
+  digests. Exact-head and remote gates passed on PR #81; native acceptance is
+  recorded above.
 
 ### Task 18 — Historical extrema changes and one-month breakouts
 
-**Status (2026-10-21):** Implemented and merged in PR #81 at `c7e487e`. The
-submitted head passed exact local and remote gates; native UI acceptance remains
-open. On 2026-10-06
+**Status (2026-10-21):** Implemented, merged in PR #81 at `c7e487e`, and
+natively accepted. All five conditions were exercised in the native app: the
+30-data-day gain and four 21-data-day high/low predicates; each 21-day run
+produced a fill. Automated tests cover exact boundaries, UTC gaps, rollover,
+insufficient history and strict breakouts. The submitted head passed exact
+local and remote gates. On 2026-10-06
 the maintainer clarified that “up X%” means an increase over a chosen historical
 period, while a separate condition means a drawdown from a historical high.
 On 2026-10-12 the maintainer selected existing CSV-derived UTC data dates
@@ -1564,12 +1625,14 @@ reference and percent/breakout signal → normal next-open Engine execution.
 - [x] GREEN literal Strategy signals and Engine/Replay integration verify
   normal next-open execution and that pre-range history never becomes extra
   Replay candles. V1/v2 compatibility remains covered and Task 18 plans use v3.
-  Full exact-head gates and final acceptance remain pending.
+  Exact-head gates passed on PR #81, and native acceptance is recorded above.
 
 ### Task 19 — Normal Launch.sh workflow and version provenance
 
-**Status:** Worktree launcher provenance committed and quality-gated; final
-delivered-checkout acceptance remains open.
+**Status (2026-10-21):** The delivered launcher workflow is accepted. A fresh
+launcher build and snapshot were opened through a temporary native `.app`
+wrapper; Help → Build Information, the saved AAPL Result, and exact-ID Replay
+were inspected. The older checkout observations below are historical.
 **Observed facts:** root is `codex/implement-ci-slices` at `a66e888`; issue10
 worktree is `codex/issue10-replay-ux` at `a098577` with uncommitted 11A/plan work.
 Root `Launch.sh` resolves its own directory, configures/builds there, then runs
@@ -1627,12 +1690,12 @@ identity → freshly built accepted app → completed saved Result ID → Replay
   both were corrected before this pass. Opening the same built bundle via the
   desktop automation API showed Help → Build Information, with truthful
   `unavailable` values because that invocation did not come from Launch.sh.
-- [ ] In the final intended checkout, close the old app, execute its documented
+- [x] In the final intended checkout, close the old app, execute its documented
   Launch.sh and verify the fresh app/build identity. Perform a real Backtest;
   verify the current **Open in Replay** or newly accepted Task 14 **Save & Replay**
   is visible/enabled in the specified state and navigates to the exact saved ID.
   Opening a manually imported result is not a substitute for the normal path.
-- [ ] Record invocation, directory, commit/dirty state, result ID, actual UI
+- [x] Record invocation, directory, commit/dirty state, result ID, actual UI
   observation and errors. Full final gates and new PR use the actual submission
   commit; the user's current root binary and the unfinished worktree are not
   interchangeable acceptance evidence.
@@ -1688,32 +1751,39 @@ This is the single consolidated checklist for all requests in this conversation,
 not another implementation plan or a replacement for the dated evidence ledger.
 “Done” below means scoped acceptance, not merely added code or written planning.
 
+**Current audit:** PR #85 is merged at `2f6a831`. The 2026-10-21 native
+acceptance closes the stale desktop items recorded below. The chart/details
+splitter's actual Qt handle path is covered at a viewport with resize room;
+compact minimum-size behavior is also understood. Current evidence and any
+release limitation are recorded in
+[`Plans/Issue10RemainingWork.md`](Plans/Issue10RemainingWork.md).
+
 | User requirement / discovered prerequisite | Task / tracked finding | Current disposition |
 | --- | --- | --- |
-| Replay uses saved selected backtest bars; trusted Daily prefix/fills | 8 / R5, 13 / R8 | 8 accepted at a098577; long-range report still needs diagnosis |
+| Replay uses saved selected backtest bars; trusted Daily prefix/fills | 8 / R5, 13 / R8 | Accepted; real AAPL source counts, all 31,466 Hourly frames, 2,014 UTC Daily frames, exact spans, fills and portfolio checkpoints reconcile |
 | Buy green ▲, sell red ▼, exact fill time/price, readable overlaps | 9 | Accepted at e43c7fb; exact gates and isolated real-Engine 5/5 desktop evidence recorded |
-| Bigger chart, collapsible settings, adjustable log/chart, three sizes | 10 | Automated implementation and prior full quality gate passed at `8256300`; the isolated Mac is now usable, but three-size desktop acceptance remains open |
-| Actual Selectable Conditions Backtest gives at least five buys/five sells | 11A + 11B | Offline 7-test coverage accepted at 6b9b3e7; fresh desktop acceptance missing |
-| Backtest Save Result and Save & Replay | 14 | Durable draft and explicit publication merged in PR #81; the current follow-up branch adds source-path and long-range fill regressions, with final gates/review and multi-fill desktop acceptance pending |
-| Results select/view/delete and Open Replay | 15 | Isolated desktop selected a named six-year Result and opened its exact ID in Replay; delete/restore, keyboard and three-size acceptance remain |
-| Every offered indicator has correct unit, scale, example and period meaning | 16 | All 18 offered metrics have a tested display mapping and exact `cf65e2a` green full gate; explicit numeric-boundary/hash cases and fresh desktop inspection remain |
-| Relative to prior data-day close: down/up X% | 17 | Implemented and merged in PR #81; previous available date's last source close, including extended hours; exact submitted-head local/remote gates passed, native acceptance remains |
-| Time-window historical high/low changes, up/down and monthly high/low break | 18 | Implemented and merged in PR #81: 30 available data-date gain, prior 21 completed-date extrema, strict persistent breakouts, and same-snapshot warm-up; exact submitted-head local/remote gates passed, native acceptance remains |
+| Bigger chart, collapsible settings, adjustable log/chart, three sizes | 10 | Three native window sizes, resize during playback, collapsed setup, and trade details are accepted; the Qt handle-drag test confirms resizing with available height, while compact minimum-size behavior remains scrollable |
+| Actual Selectable Conditions Backtest gives at least five buys/five sells | 11A + 11B | Accepted on 2026-10-21: isolated date-only run selected 11 bars, produced five buys/five sells, ten trade rows and a flat final position; duplicate runs have distinct IDs and equal canonical hashes |
+| Backtest Save Result and Save & Replay | 14 | Merged and accepted; native standalone Save, Save & Replay, relaunch persistence and exact-ID Replay passed; fault recovery is covered by process tests |
+| Results select/view/delete and Open Replay | 15 | Native select/details/rename/Trash/Restore/Open Replay lifecycle passed; the keyboard regression failed before the focus fix and passed after; native Tab/Space selection, View Details and exact-ID Open Replay succeeded |
+| Every offered indicator has correct unit, scale, example and period meaning | 16 | All 18 offered metric display mappings and numeric boundary tests passed; native condition selectors and threshold descriptions were inspected |
+| Relative to prior data-day close: down/up X% | 17 | Implemented, merged and natively exercised; UTC boundary and missing-date cases remain covered by automated tests |
+| Time-window historical high/low changes, up/down and monthly high/low break | 18 | Implemented, merged and natively exercised across all five conditions; UTC history boundaries and insufficient-history cases pass automated tests |
 | Seven-column CSV source timeframe and trailing-column compatibility | Data provenance | Hash-bound sidecar merged in PR #81; all 503 tracked CSVs match their DuckDB export bytes; snapshot builder rejects missing/mismatched declarations and explicit `schemaName` trailing-column compatibility passes focused tests |
-| Normal Launch.sh path exposes the delivered Backtest Replay action | 19 | Worktree launcher implementation and full gates are accepted at `c28ddec`; the built app exposes Open Replay, while the final delivered-checkout identity check remains |
-| Backtest cannot run: Snapshot open request is invalid | 20 / R9 | Launcher/snapshot scope is accepted at `c28ddec`; actual AAPL 48-bar Backtest and same-result Replay succeeded, while the multi-fill Save/Results final scenario remains |
+| Normal Launch.sh path exposes the delivered Backtest Replay action | 19 | Accepted through a fresh `Launch.sh` build and snapshot opened in a native `.app` wrapper; Build Information, actual Backtest, Save and Replay identity were verified |
+| Backtest cannot run: Snapshot open request is invalid | 20 / R9 | Valid immutable snapshot, actual AAPL Backtest, saved Result and same-ID Replay all passed in the freshly built app |
 | Hourly/Daily progressively replay every selected K-line without a 500-frame truncation; fills appear with their bars | 21 / R10 | Accepted at `05c23eb`: initial prefix is one candle, cursor 500 presents 501 candles, rewind shrinks candles/fills, timeframe switching preserves the current UTC date, full gates pass, and actual Hourly/Daily app operation is recorded |
 | Buy/Sell glyph is visibly beside the exact containing K bar | 22 / R11 | Accepted at `6f6fc86`; exact marker values remain unchanged while presentation glyphs use containing-candle x and low/high-relative placement |
-| One scroll gesture must not make Replay candles disappear | 23 / R12 | Reproduced on actual AAPL Replay; focused regression and repair pass, final gates pending |
-| One bar per hour/day; price candles above volume; readable time/price/volume axes | 24 / R13 | Separate aligned price/volume panes, 24-pixel default slots and focused tests pass; isolated AAPL reached 23,777/23,777 and Follow latest was exercised, but long-seek responsiveness, resize, three-size checks, exact-data comparison and final gates remain open |
-| Readable saved Result name and later rename without changing identity | 25 | Naming and rename were exercised in the isolated app; exact-HEAD `12fe8eb` quality passed, but later edits and whole-plan gates remain open |
-| Chart density, Follow latest and history zoom on long playback | Replay viewport plan / 24 | The latest repair has focused RED/GREEN and isolated-app checks; width and Follow latest improved, but final resize/performance/data acceptance is open |
-| Small visible clearance between trade triangles and candle wicks; no compressed final view with Max | 26 | Eight-pixel clearance confirmed; spacing/height-resize and intrinsic-label repairs pass exact full gates through d209d21, with isolated AAPL Max/zoom/Follow checks. Responsiveness and complete three-size layout acceptance remain open |
-| Persistence, retention, mid-run durability, rounding, golden oracle, honest capabilities | R1–R4/R6/R7 | R1–R3 merged in PR #76; R4 is accepted at b5be0c8; R6 oracle and R7 truthful capability display are merged; native acceptance remains |
-| Publish all in-scope workspace changes and reconcile local branches/PRs | 27 | PR #81 is merged, local `main` matches `origin/main`, and both completed personal branches are removed; this acceptance branch tracks remaining work |
-| Multiple Buys in one displayed K bar use one Buy glyph | 28 | Scoped Buy-only checkpoint accepted at d209d21 with regressions, full gates, review and isolated AAPL desktop checks; Sell remains per-fill; whole-plan acceptance remains open |
-| Complete tasks, merge a CI-green PR, then remove the confirmed non-main branches | 29 | PR #81 merged after exact-head CI/CodeQL passed; local `main` matches `origin/main`, completed personal branches are removed, and remaining acceptance is on a fresh branch |
-| Fully inspect/operate app, track honestly, create new PR only after finished | 12 | Needs changes; the later explicit checkpoint-publication request is fulfilled by Draft #76, not whole-plan completion or a universal bug-free promise |
+| One scroll gesture must not make Replay candles disappear | 23 / R12 | Focused regression and full gates passed; independent native zoom-in and reverse-zoom gestures retained visible candles |
+| One bar per hour/day; price candles above volume; readable time/price/volume axes | 24 / R13 | Accepted; native 31,466 Hourly and 2,014 Daily views, three window sizes, resize, zoom/pan and full saved-data reconciliation passed |
+| Readable saved Result name and later rename without changing identity | 25 | Merged and accepted; save, rename, catalog/details, Trash/Restore and Replay selector retained exact Result identity |
+| Chart density, Follow latest and history zoom on long playback | Replay viewport plan / 24 | Long-range native zoom, pan and Follow latest passed. Playback call duration is not presented as a speed benchmark |
+| Small visible clearance between trade triangles and candle wicks; no compressed final view with Max | 26 | Accepted; marker clearance, native Max endpoint, density preservation, resize and Hourly/Daily controls passed |
+| Persistence, retention, mid-run durability, rounding, golden oracle, honest capabilities | R1–R4/R6/R7 | Merged and accepted with process/fault coverage and native save/relaunch/Results lifecycle; no separate native fault-injection control exists |
+| Publish all in-scope workspace changes and reconcile local branches/PRs | 27 | PR #85 is merged and main matches origin/main; remote GitHub lists only main. Remove this local audit branch after its final PR merges |
+| Multiple Buys in one displayed K bar use one Buy glyph | 28 | Merged and accepted with regressions, full gates, review and native AAPL checks; Sell rows remain per fill |
+| Complete tasks, merge a CI-green PR, then remove the confirmed non-main branches | 29 | Previous work is merged; this final docs/verification PR must pass CI before its local branch is deleted. GitHub currently has no non-main branches |
+| Fully inspect/operate app, track honestly, create new PR only after finished | 12 | The scoped Issue 10 application work and acceptance matrix are complete; no universal bug-free claim is made. Redistribution prerequisites remain release-blocked by the owning spec |
 
 - [x] Before implementation resumes, confirm outstanding product/lifecycle/history
   definitions through the governance decision process. Plan-only authorization
@@ -1731,17 +1801,18 @@ not another implementation plan or a replacement for the dated evidence ledger.
 
 ### Task 20 — Valid immutable snapshot configuration in normal startup
 
-**Status:** Launcher/snapshot implementation and the actual starter-result
-workflow are accepted at `c28ddec`; the later multi-fill Save/Results scenario
-remains pending, so Task 20 as a whole is not complete.
+**Status (2026-10-21):** Accepted. A fresh launcher-built app created and used
+a valid immutable AAPL snapshot, ran Backtest, saved Result
+`16d1eb795888a4090f6bd746a631195d`, and opened that exact ID in Replay. The
+first Buy fill and corresponding portfolio state were visible at bar 2/48.
 **Evidence:** the second screenshot reports **Cannot run — Snapshot open request
 is invalid** for AAPL, 2018-05-01–2024-05-23, capital 100000 and shares 10.
 The configured Backtest reads `BTE_DATA_SNAPSHOT_ID`; snapshot opening rejects
 an empty store path or an ID other than 64 lowercase hexadecimal characters
-before loading a manifest or executing Engine. Launch.sh currently does not
-prepare or select a snapshot. The screenshot does not expose its process
-environment, so missing ID is the evidenced likely cause, not a verified capture
-of the user's exact environment.
+before loading a manifest or executing Engine. At this earlier screenshot
+checkpoint, the tested Launch.sh did not prepare/select a snapshot. The later
+launcher implementation described below builds or validates the exact snapshot,
+and its actual Backtest/Replay path was verified in the 2026-10-21 native run.
 
 - [x] Diagnose fresh normal startup, capture non-secret configuration and exact
   structured failure, and distinguish missing ID, invalid ID, missing manifest,
@@ -1752,7 +1823,7 @@ of the user's exact environment.
 - [x] Add startup/Bindings regression tests before the correction; errors explain
   what configuration is missing and how to select an available valid snapshot.
   A failed new run cannot expose a stale saved-result action as its own result.
-- [ ] Verify Launch.sh → valid immutable snapshot → actual condition Backtest
+- [x] Verify Launch.sh → valid immutable snapshot → actual condition Backtest
   → approved save → same-ID Replay in the app. Record actual ID/counts/errors.
   No synthetic backend success substitutes for the normal startup workflow.
 
@@ -1915,8 +1986,11 @@ ctest --test-dir Output/qt-dev -R 'bte_frontend_chart_tests|bte_result_replay_fr
 
 ### Task 23 / R12 — Prevent wheel zoom from hiding all Replay candles
 
-**Status:** Repair committed at `cf4d85b`; exact `15dfcab` full gates pass,
-but final gesture/device and review acceptance is pending. On an actual saved AAPL Replay at 10/48,
+**Status (2026-10-21):** Repair is merged with focused regression and
+full-gate evidence. Separate native wheel-up and wheel-down gestures retained
+visible candles and restored the original 11-bar view; long-range AAPL also
+retained bars through zoom, pan, Follow latest and resize. No physical-device
+specific behavior is claimed. On an actual saved AAPL Replay at 10/48,
 one desktop scroll expanded price/volume axes to enormous ranges and left the
 K bars effectively invisible while the Replay cursor and records remained.
 
@@ -1933,7 +2007,7 @@ K bars effectively invisible while the Replay cursor and records remained.
   was ignored after burst saturation. A new test failed on that behavior;
   clearing gesture state on reset and bar-window replacement made it pass.
   A separate Qt ScrollBegin test confirms a later gesture can zoom again.
-- [ ] Finish final diff review and check normal mouse/trackpad behavior and
+- [x] Finish final diff review and check native scroll behavior and
   limits after a later independent desktop scroll gesture. Exact `15dfcab`
   `./RunTest.sh` and full non-fast `./RunQuality.sh` passed 232/232, changed
   lines 832/845 = 98% and changed branches 103/108 = 95.4%. A saved AAPL
@@ -1947,8 +2021,10 @@ selection (Task 13/R8) or every Replay zoom/pan scenario is accepted.
 
 ### Task 24 / R13 — Correct K-line time, price and volume presentation
 
-**Status:** Implementation and focused desktop verification in progress on
-2026-10-06; final acceptance remains open. The maintainer's example is a presentation reference, not a
+**Status (2026-10-21):** Accepted. Automated geometry and literal OHLCV tests,
+long-range saved-data reconciliation, and native Hourly/Daily inspection at
+initial, intermediate and terminal positions passed. The historical progress
+notes below describe earlier fixes and do not override this acceptance.
 source of market data or authority to copy third-party branding. The saved
 AAPL result `7e1607c01fa2da46cd797c6edb883ba2` has 23,777 selected
 Hourly bars and 103 persisted fill records (independently counted by querying
@@ -1965,21 +2041,21 @@ Replay frontend tests, `Docs/Specs/FrontendQt.md` and this plan.
 **Boundary:** visualization only. Preserve immutable selected bars, OHLCV,
 fill timestamps/prices, chart-to-result ID and canonical hash.
 
-- [ ] RED: each actual selected Hourly bar is one discrete candle at its UTC
+- [x] RED: each actual selected Hourly bar is one discrete candle at its UTC
   hour; each Daily UTC bucket is one candle at its date. Assert mapped x
   centers are ordered and distinct, including 1/2 bars, missing-hour gaps,
   a UTC day transition and a long-window tail. A sparse one-bar prefix must
   remain a normal-width candle, not a plot-wide body.
-- [ ] RED: distinct aligned price and volume panels. OHLC wicks/bodies and
+- [x] RED: distinct aligned price and volume panels. OHLC wicks/bodies and
   Buy/Sell glyphs stay in the upper price pane, colored per-candle volume bars
   stay below; price y scale cannot be set by volume and volume y scale cannot
   distort price. No overlay line/secondary volume axis in the price pane.
-- [ ] RED: x ticks communicate Hourly date **and hour** and Daily date with
+- [x] RED: x ticks communicate Hourly date **and hour** and Daily date with
   UTC context, avoiding identical labels at consecutive hourly ticks. Price
   y ticks show quote price (current USD), volume y ticks show shares; extremes,
   flat bars, high volume, zoom, pan, resize and timeframe switching stay
   readable and synchronized.
-- [ ] GREEN: preserve progressive 1→N playback and exact-time markers. Check
+- [x] GREEN: preserve progressive 1→N playback and exact-time markers. Check
   chart geometry/axes in automated tests and inspect actual multi-fill AAPL
   Hourly and Daily at initial, intermediate and terminal positions, including
   one wheel gesture. Compare visible OHLCV and markers with saved data; record
@@ -2157,9 +2233,17 @@ density instead of an incidental bar-count rounding boundary. Both focused
 cases passed (3 Qt results each). The full suite is being rerun; no new
 exact-HEAD quality or desktop acceptance is claimed.
 
+**Current acceptance (2026-10-21):** Long-range AAPL playback and the
+dedicated 11-bar synthetic Result both preserve one candle per selected UTC
+hour, distinct Hourly labels, aligned OHLCV/volume panes, exact fill grouping,
+and the expected UTC Daily aggregation. Replay visibly retained the complete
+31,466 Hourly and 2,014 Daily range, while automated tests compare every saved
+frame, fill and portfolio checkpoint. Three window sizes and resize during
+playback were inspected in the native app.
+
 ### Task 25 — Human-readable saved Result names
 
-**Status:** Implemented in the current worktree, not accepted. The full
+**Status (2026-10-21):** Implemented, merged and accepted. The full
 `./RunTest.sh` suite passed 241/241 on committed `12fe8eb` on 2026-10-08,
 and the isolated desktop save → Results → Rename → Open Replay workflow
 confirmed the same immutable Result ID with its updated display name in the
@@ -2168,8 +2252,8 @@ Replay selector. Exact-HEAD `./RunQuality.sh --base
 `12fe8eb`: 241/241 tests, 98% changed-line coverage, and 94.0% changed-branch
 coverage. The offline GoogleTest fetch used a process-local URL substitution
 pointing to the already cached pinned v1.14.0 Git checkout; no dependency or
-gate was changed. Final review, CI, and whole-plan prerequisites remain open;
-this is not a complete-plan acceptance claim.
+gate was changed. The final review and CI status in this 2026-10-08 checkpoint
+was later superseded by the merged PR checks and current acceptance.
 The first exact-HEAD full-quality attempt on `b95b344` failed at clang-tidy
 on the new UTF-8 validator and Backtest publisher callback. Those findings
 were corrected at `65c184f`, with focused clang-tidy passing. The full-quality
@@ -2198,18 +2282,16 @@ clear validation/storage errors without a false success message.
   Trash/Restore retaining the name.
 - [x] GREEN: update ResultStore/bindings/Backtest/Results/Replay and owning
   specs; perform keyboard and actual desktop naming workflow in isolation.
-- [ ] Run all affected tests, exact-HEAD full quality, final review, and CI
+- [x] Run all affected tests, exact-HEAD full quality, final review, and CI
   before claiming this task or the whole Issue 10 plan complete.
 
 ### Task 26 — Trade-marker clearance and maximum-playback readability
 
-**Status:** Marker-clearance and compression repairs have exact committed
-full-gate evidence through `d209d21`, plus isolated AAPL Max endpoint and
-zoom/Follow checks. The overall task is not accepted: complete resize/layout
-and responsiveness evidence remains open. The user
-reports that Buy/Sell triangles feel attached to candles and that the final
-display becomes compressed after using "max". Confirm whether "max" means
-the playback speed or window maximization before attributing a cause.
+**Status (2026-10-21):** Accepted with exact full-gate evidence, isolated AAPL
+Max playback, native Hourly/Daily, zoom/Follow, resize, plot-boundary and
+marker-clearance checks. Max playback reached the final frame without fitting
+the entire timeline or changing selected density. The reported "max" behavior
+was tested as playback speed.
 
 - [x] Confirm the bounded presentation change: at least 8 logical pixels
   of visible clearance between a triangle and its candle's low/high (eight
@@ -2220,14 +2302,14 @@ the playback speed or window maximization before attributing a cause.
   Confirmed by the maintainer on 2026-10-12. Marker-clearance implementation now
   has committed full-gate evidence at `9ae0f5e` and `d209d21` below; this is
   distinct from complete native layout acceptance.
-- [ ] Reproduce the reported compression through the actual app and record
+- [x] Reproduce the reported compression through the actual app and record
   its launch revision, selected Result ID, timeframe, density and follow mode.
-- [ ] Add a regression at the real playback/chart seam for maximum speed
+- [x] Add a regression at the real playback/chart seam for maximum speed
   reaching the final frame without fitting the entire timeline or changing
   selected density. Test maximization separately if that is the reported path.
-- [ ] Verify marker clearance, coincident fills, plot boundaries, Hourly/Daily,
+- [x] Verify marker clearance, coincident fills, plot boundaries, Hourly/Daily,
   zoom/pan/Follow latest, and final-frame playback in focused tests and native UI.
-- [ ] Pass full exact-HEAD gates and review before accepting either repair.
+- [x] Pass full exact-HEAD gates and review before accepting either repair.
 
 **Current resize-repair evidence:** Strengthened boundary activation assertions
 exposed another reload-layout failure after the earlier 241/241 run. Activating
@@ -2439,12 +2521,17 @@ resolved, without proving that the desktop had been locked.
 
 ### Task 27 — Workspace and PR delivery inventory
 
-**Status:** Requested on 2026-10-12 / in progress. Publish verified, scoped
-changes and report any remaining code without erasing or duplicating local work.
+**Status (2026-10-21):** Historical source branches were reconciled into merged
+PRs #76–#85. At this final follow-up checkpoint, local `main` and `origin/main`
+are `2f6a831f91b952696dd99f0e3d520a6add49197b`; the current acceptance branch
+contains the Results keyboard fix and final acceptance evidence. Only that
+follow-up PR and then its branch cleanup remain in this delivery sequence.
+The checklist facts below are a historical 2026-10-12 inventory; current refs
+and publication status are stated above.
 
 - [x] Read current GitHub PR state: #68, #69 and #70 are merged. The latest
   remote main is `84e3a135`; no Issue 10 follow-up PR currently exists.
-- [ ] Review all issue10 post-main checkpoint commits and current uncommitted
+- [x] Review all issue10 post-main checkpoint commits and current uncommitted
   changes; submit only after plan acceptance.
 - [x] Reconcile seven locally ahead commits on
   `feature/issue-10-result-replay` with the hardening variants already merged
@@ -2634,32 +2721,26 @@ the same production/test code; they are not claimed as postcommit executions.
 This ledger update is docs-only and does not claim exact-head gates on a later
 documentation commit. No PR, CI submission or merge has occurred.
 
-**Next design stage:** R1–R3 depend on a safe live-writer ownership and
-pin-before-visibility protocol before execution-time durability can be accepted.
-The maintainer approved the combined direction on 2026-10-13: use SQLite for a
-cross-process writer lease, retain source segments before visibility,
-atomically persist each completed bar, stop on persistence failure, and recover
-only the committed prefix into an Interrupted draft; explicit Save remains
-required. Legacy staging without a lease is preserved and reported, not
-automatically cleared. The detailed proposal is now recorded in
-[`Docs/Specs/ResultPersistenceSafetyDesign.md`](Specs/ResultPersistenceSafetyDesign.md)
-and linked from the Data and Engine specifications. SQLite's VFS owns
-platform-specific file locking; macOS and Linux process tests must validate the
-supported local filesystems. The written spec still needs maintainer review,
-then a task-by-task implementation plan and selected execution method, before
-changing module interfaces. No lease or per-bar durability implementation is
-claimed.
+**R1–R3 implementation:** The approved per-Result SQLite lease,
+pin-before-visibility, atomic completed-bar persistence, committed-prefix
+recovery, and preservation notices are implemented and merged in PR #76. Their
+owning specifications and process/fault tests record the supported contract.
 
 ### Task 29 — Merge verified work, then clean up the named branches
 
-**Status (2026-10-13):** Draft PR #76 is published; CI is red and merge/deletion
-have not started. Final branch-content reconciliation and cleanup scope remain
-open. The checked inventory below records the historical 2026-10-12 refs, not
-the current consolidation checkout or updated main.
-The maintainer requests completing all tasks, creating and merging the new PR,
-then deleting other user-created branches. This does not authorize premature
-branch deletion, erasing uncommitted work, deleting main, or removing files and
-worktrees as an implied cleanup operation.
+**Status (2026-10-22, pre-publication checkpoint):** Historical PRs #76–#85
+are merged. The local follow-up contains the verified Results keyboard fix and
+acceptance records. Local `main` and `origin/main` are aligned at
+`2f6a831f91b952696dd99f0e3d520a6add49197b`; the only local non-main branch is
+`codex/issue10-final-acceptance`, and GitHub currently lists only `main`. The
+implementation checkpoint passes RunTest 333/333, full non-fast RunQuality,
+ASan/UBSan 285/285, TSan 285/285, and independent code/docs/test review. After
+the documentation-only acceptance update passes its exact-head gates, publish
+the follow-up, wait for every required CI check, merge, synchronize local main,
+and delete the completed feature branch.
+
+The original branch-name and checkout facts below are retained as the
+2026-10-12 historical inventory. Use the current refs above for cleanup.
 
 - [x] Inventory this repository's local refs and attached checkouts. Non-main
   local branches are `codex/issue10-replay-ux`, `codex/finish-issue10-plan`,
@@ -2671,12 +2752,16 @@ worktrees as an implied cleanup operation.
   `84e3a135`, `codex/implement-ci-slices` at `a66e888`, and
   `feature/issue-10-result-replay` at `750f452`. The local remote-tracking
   `origin/codex/finish-issue10-plan` is stale, not an existing remote branch.
-- [ ] Confirm whether all five named local branches and their still-existing
-  remote counterparts, including the backup branch, are the intended targets.
-- [ ] Complete plan acceptance, exact submission gates and whole-branch review;
-  update the existing attached Draft PR #76, verify all required CI jobs for
-  its exact SHA, then
-  squash-merge to main. Do not use CI as the first quality check.
+- [x] Confirm current local and remote refs. Local refs are `main` and
+  `codex/issue10-final-acceptance`; GitHub lists only `main`. The six existing
+  stashes remain preserved.
+- [x] Complete scoped plan acceptance, implementation-commit gates, and
+  independent whole-branch review before publication; no local P0–P2 finding
+  remains. The only release blocker is public-data rights/split-manifest
+  clearance.
+- [ ] Re-run the full local gates on the final documentation commit, create a
+  follow-up PR, verify every required CI job for its exact SHA, then squash-
+  merge to main. Do not use CI as the first quality check.
 - [ ] Verify the merged main contains every scoped code/test/document change.
   Preserve the older root drafts and any unique unmerged content through a
   recoverable, explicitly scoped operation before changing checkouts. Never
@@ -2689,8 +2774,10 @@ worktrees as an implied cleanup operation.
 
 ### Task 30 — Read the exact Result snapshot once when opening Replay
 
-**Status:** Implementation and exact-head local gates passed on `90c6682`;
-publication, independent review, and remote CI pending.
+**Status (2026-10-21):** Implemented, reviewed, and merged with the Issue 10
+Replay consolidation. The current production path and Results tests exercise
+`openResultWithData()` and its exact snapshot selection; the long-range load
+regression is included in the required passing PR checks.
 The current PR CI coverage run failed the existing five-second
 `longRangeSeekPresentsEveryReachedCandleAndFill` load assertion: the 23,777-bar,
 6,793-fill Replay load took 5,002 ms. Inspection found that `openResult()`
@@ -2733,7 +2820,7 @@ aggregation; it must not broaden the saved selection used for playback.
   completed with the existing local GoogleTest source instead.
 - [x] Run applicable sanitizer presets: ASan/UBSan/LSan 205/205 and TSan
   205/205.
-- [ ] Publish the exact tested head, pass required remote CI, and complete
+- [x] Publish the exact tested head, pass required remote CI, and complete
   independent review before accepting Task 30. Do not treat this scoped CI
   repair as completion of the broader Issue 10 plan.
 - [x] Update `Docs/Plans/Issue10RemainingWork.md` with exact evidence and keep

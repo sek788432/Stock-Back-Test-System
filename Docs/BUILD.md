@@ -79,10 +79,15 @@ passes the resulting store and exact snapshot ID to the application. This is a
 local developer workflow, not release-data packaging; the empty calendar and
 split-manifest digests explicitly mean those release inputs are unavailable.
 
-The current seven-column builder path cannot verify source timeframe and can
-mislabel a same-layout daily export as hourly. This remains an integration
-blocker tracked in `Docs/Plans/Issue10IncrementalDeliveryInventory.md`; launcher
-execution alone is not evidence of trustworthy hourly data or full acceptance.
+Seven-column CSVs do not carry a timeframe in each row. `GetFromDb.py` therefore
+writes a hash-bound `SourceManifest.btesource` declaration for each exported
+file, and the snapshot builder rejects a missing declaration, unsupported
+timeframe, or exact-byte SHA-256 mismatch. The explicit `schemaName` CSV form
+remains supported, including when metadata columns follow the canonical OHLCV
+columns. See [Data Layer §2.1](Specs/DataLayer.md#21-seven-column-source-manifest)
+for the manifest contract. A successful local snapshot build establishes the
+declared input provenance; it does not make the developer snapshot suitable
+for redistribution.
 
 To use an already prepared snapshot, set both `BTE_DATA_STORE` and
 `BTE_DATA_SNAPSHOT_ID`. The launcher preserves that pair after validating the

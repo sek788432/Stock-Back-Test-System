@@ -266,6 +266,8 @@ ResultsTab::ResultsTab(std::filesystem::path resultStore,
   layout->addWidget(state_->recoveryNotices);
   state_->table = std::make_unique<QTableWidget>(0, 5, this).release();
   state_->table->setObjectName("resultsTable");
+  // Arrow keys navigate rows; Tab must remain available to reach actions.
+  state_->table->setTabKeyNavigation(false);
   state_->table->setHorizontalHeaderLabels({tr("Name"), tr("Saved (UTC)"),
                                             tr("Result ID"), tr("Status"),
                                             tr("Availability")});
