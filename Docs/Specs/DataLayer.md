@@ -265,8 +265,9 @@ A `.bteresult` stores snapshot/segment IDs and hashes, not duplicate OHLCV.
   become visible. Pins remain through Drafts, Results, and Trash. Recovery takes
   ownership before reading Staging and verifies references before exposing a
   recovered draft. This is implemented and covered by store and child-process
-  tests; the PR #81 submitted head passed exact local and remote gates. Native
-  application acceptance remains pending. See the
+  tests; PR #82 passed exact-head local RunTest/Quality and required remote
+  gates. Native save/relaunch and Results lifecycle acceptance passed on
+  2026-10-21. See the
   [safety design](ResultPersistenceSafetyDesign.md).
 - K-line Replay resolves those exact segments and validates their hashes.
 - Missing referenced data yields `DataSnapshotUnavailable`; it never silently substitutes newer data.

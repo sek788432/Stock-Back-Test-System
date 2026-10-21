@@ -72,8 +72,11 @@ Neither blocker may be softened into a warning for a public release.
    validates its canonical hash into a recoverable terminal draft. Explicit
    **Save Result** or **Save & Replay** publishes that same Result ID to the
    active library through no-clobber promotion; completing execution alone
-   does not publish it. Full live-writer ownership, pin-before-visibility and
-   per-slice durability acceptance remain open in the integration checkpoint.
+   does not publish it. Live-writer ownership, pin-before-visibility and
+   per-slice durability are implemented, covered by process/fault tests, and
+   were exercised through the saved-result application lifecycle; see the
+   [Issue 10 acceptance ledger](../Plans/Issue10RemainingWork.md) for the
+   display-launch limitation and the max-speed timing caveat.
 6. K-line Replay reads the result and its retained content-addressed Data Segments; it does not rerun a second engine.
 
 ## 4. Authority and constraints

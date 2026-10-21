@@ -1,8 +1,12 @@
 # Issue 10 Remaining Work
 
-**As of 2026-10-21: Native UI workflow results are recorded below; direct
-launcher, legacy-artifact, fault-injection, and exact visual-measurement checks
-remain.** This is a current
+**As of 2026-10-21: The saved-Result workflows and Replay controls have been
+exercised in the native application and are recorded below. A 31,466-bar
+Hourly `max` playback reached its final frame, and a subsequent native read
+showed the app Ready. The combined automation call took over 122 seconds, so
+it is not a playback timing benchmark. Direct `Launch.sh` startup remains
+unverified: the shell has no screen, and a temporary app-bundle launch did not
+return accessible window state.** This is a current
 delivery/acceptance summary, not a replacement for the full dated
 [implementation plan](../Issue10DeterministicReplayFixturePlan.md) or the
 [source inventory](Issue10IncrementalDeliveryInventory.md).
@@ -19,8 +23,8 @@ seven-column CSV timeframe provenance, truthful capability details, and
 long-range AAPL Result/Replay reconciliation are now in `main`. Its required
 CI and CodeQL checks passed on the exact submitted head. Native UI workflow
 checks were performed on 2026-10-21 through a temporary application wrapper,
-while direct `Launch.sh` GUI startup and native fault injection remain open as
-recorded below. The independent review of PR #81 found a dotted-ticker CSV
+while direct `Launch.sh` GUI startup remained unverified. The independent
+review of PR #81 found a dotted-ticker CSV
 filename mismatch and a weak non-empty-fill assertion; the follow-up branch
 contained fixes and regression coverage for both, which were squash-merged in
 PR #82 as `c6809d9` after every required remote check passed on GitHub's merge
@@ -49,7 +53,10 @@ and test reviews found no further code or test issues.
   strengthens saved-fill replay regression coverage, and reconciles the R1–R3
   decision status. Native UI workflow checks were subsequently performed in an
   isolated temporary application wrapper; direct launcher startup and fault
-  injection remain open as listed below.
+  injection coverage is automated as listed below.
+- PR #83 merged at `8738c4e873692acdc8169a81e8ae10f48176d984`. It records the
+  native acceptance results and remaining environment-bound checks in this
+  ledger; all required CI checks passed on the docs-only change.
 - R1–R3 are now in `main`: per-Result
   cross-process SQLite leases, retention pins before artifact visibility,
   atomic completed-bar persistence, committed-prefix recovery, and typed
@@ -66,13 +73,11 @@ and test reviews found no further code or test issues.
   passes with 98.0% diff line coverage and 96.9% changed-branch coverage;
   ASan/UBSan and TSan each pass 274/274. These local results complement the
   successful remote CI and CodeQL checks above.
-- After the merge, local `main` was fast-forwarded to `c7e487e` and verified
-  against `origin/main`. The Task 18 branch's full tree matched merged main;
-  the earlier `codex/issue10-remaining` commit was an ancestor of that branch.
-  Both old personal branches were removed locally and from GitHub. Remaining
-  acceptance work now continues on `codex/issue10-native-acceptance`, created
-  from the verified merged `main` commit after deleting the merged personal
-  branch locally and remotely.
+- At the post-PR #82 checkpoint, local `main` was fast-forwarded to `c6809d9`
+  and verified against `origin/main`; merged personal branches with no unique
+  work were removed locally and from GitHub. PR #83 later advanced `main` to
+  `8738c4e`. This final-audit branch was created from that synchronized
+  baseline; no earlier unmerged source changes were carried forward.
 - All six pre-existing Git stashes remain intact, including the private Issue
   10 drafts and the persistence, CSV, trusted-Replay, strategy, and CI work.
 
@@ -97,10 +102,12 @@ checkpoints are reconciled. The exact submitted head passed local RunTest
 ASan/UBSan 274/274, and TSan 274/274; required remote CI and CodeQL also passed.
 Visible Results controls, Replay viewport, playback, zoom/pan, and long-range
 data checks were completed in the isolated wrapper session recorded below.
-Direct delivered-checkout `Launch.sh` GUI startup remains unverified because
-the shell launch exits with `no screens available`; its build and snapshot
+Direct delivered-checkout `Launch.sh` GUI startup is blocked in the current
+display-restricted shell: launching exits with `no screens available`, though its build and snapshot
 generation succeeded. Automated Qt workflows and native observations are
-tracked separately.
+tracked separately. A temporary `.app` entry invoking the same script was
+registered as running, but desktop accessibility binding timed out after 895
+seconds; no launcher window or provenance could be verified.
 
 ## Already merged to main
 
@@ -263,12 +270,12 @@ Latest follow-up evidence (2026-10-15):
 
 | Priority / plan area | What remains | Current state |
 | --- | --- | --- |
-| R1: live writer ownership | Native fault-injection/concurrent-writer behavior remains automated-only | Implemented with per-Result SQLite leases; local child-process tests cover live empty writers, process death, committed prefixes and aliased paths; native save/relaunch lifecycle passed |
-| R2: retention before visibility | Native injected retention-failure behavior remains automated-only | Implemented with pin-before-visibility and conservative reference preservation; native Results refresh/details/rename/Trash/Restore/Open Replay passed; local Results/fault/process tests pass |
-| R3: execution-time durability | Native injected mid-run failure recovery remains automated-only | Implemented with per-bar atomic commits, atomic terminal tail, and committed-prefix recovery; native save/relaunch passed; local Engine/Store/process tests pass |
-| Legacy staging compatibility | Native legacy-artifact workflow remains untested | Unleased Staging and sidecars stay byte-identical and produce typed English preservation notices; automated accessibility/refresh test passes |
+| R1: live writer ownership | None; crash and concurrent-writer cases are exercised by child-process tests | Implemented with per-Result SQLite leases; local child-process tests cover live empty writers, process death, committed prefixes and aliased paths; native save/relaunch lifecycle passed |
+| R2: retention before visibility | None; failure behavior is covered by Results/fault/process tests | Implemented with pin-before-visibility and conservative reference preservation; native Results refresh/details/rename/Trash/Restore/Open Replay passed |
+| R3: execution-time durability | None; mid-run failure recovery is covered by Engine/Store/process tests | Implemented with per-bar atomic commits, atomic terminal tail, and committed-prefix recovery; native save/relaunch passed |
+| Legacy staging compatibility | None for the accepted behavior; a separate native fault-injection flow is not exposed | The registered Replay widget test preserves exact legacy Staging bytes and shows the typed notice beside a valid Result; sidecar preservation is covered by persistence tests |
 | CI / Results rename acceptance | None for the exercised native workflow | Results rename and surrounding lifecycle controls passed; prior GCC wait/IWYU/rename fixes are present and the local workflow tests pass |
-| Exact-head CI readiness | None | PR #81's required CI and CodeQL passed on submitted head `1591427`; merged main is `c7e487e` |
+| Exact-head CI readiness | None | PR #82's required CI and CodeQL passed on its merge candidate; PR #83's required CI passed; local `main` is `8738c4e` |
 | CI long-load responsiveness | None for the submitted revision | Snapshot reuse and bounded SHA work are present; required remote coverage passed on PR #81's exact head |
 | R8: long-range saved-data completeness | None for tested views | Native long-range replay reached the exact saved tail; automated AAPL acceptance checks all 31,466 Hourly bars and 2,014 UTC Daily candles, exact spans, 2026-05-04/05 OHLCV, fills, and daily portfolio checkpoints |
 | T: exact Daily fill selection | None | Fixed by requiring exact selected timestamps; regression test covers an interior gap and real saved data |
@@ -279,9 +286,10 @@ Latest follow-up evidence (2026-10-15):
 ## Native acceptance status and remaining items
 
 Task 17/18 and source provenance are merged in `main` as PR #81 (`c7e487e`).
-PR #82 (`c6809d9`) contains the independent review follow-ups. Exact-head
-local checks passed, and the required remote checks passed on GitHub's merge
-candidate. On 2026-10-21, I exercised the delivered
+PR #82 (`c6809d9`) contains the independent review follow-ups, and PR #83
+(`8738c4e`) records their native acceptance. Exact-head local checks passed,
+and the required remote checks passed on GitHub's merge candidate. On
+2026-10-21, I exercised the delivered
 application through macOS native UI using a temporary `.app` wrapper around
 the freshly built application and an isolated `BTE_DATA_STORE`. The direct
 `Launch.sh` build completed and produced a real development snapshot, but its
@@ -309,35 +317,46 @@ condition was previous data-day close down at least 1%. Two older incomplete
 Results whose release manifests are unavailable were left intact; their status
 remained Incomplete/Unavailable.
 
-The repeated widget matrix recorded earlier remains 33/33 target runs; it is
-automated evidence, separate from the native observations above.
+The repeated widget matrix recorded earlier remains 33/33 target runs. In this
+audit, the focused max-batch test passed 3/3 QtTest cases, and the 23,777-bar
+long-range seek test passed 3/3 cases (Replay load 553 ms; seek/presentation
+2,321 ms on this machine). These are automated widget results, separate from
+the native observations above.
 
-Workspace reconciliation is complete: local `main` was fast-forwarded to
-`origin/main` at `c6809d9`; the merged `codex/issue10-final-acceptance` branch
-was removed locally and remotely after its tree exactly matched merged main;
-the six stashes remain intact. The active local branch is
-`codex/issue10-native-acceptance`.
+A follow-up native automation request selected `max`, sought the 31,466-bar
+Hourly Result to its first frame, and clicked Play. The combined request did
+not return after 122 seconds. A later app binding showed the same Result at
+bar 31,466/31,466 with status Ready, and a fresh accessibility read succeeded.
+This verifies that playback reached the final frame and the app responded
+afterward; the initial delay has no timing instrumentation, so it is not a
+throughput benchmark and does not identify whether the delay came from playback
+load or the accessibility bridge. No product-code fix is claimed.
+
+Workspace reconciliation is current at PR #83's merge: local `main` is
+`8738c4e`, matching the local `origin/main` tracking reference; the merged
+work branch was removed locally and remotely after its tree matched `main`.
+The six pre-existing stashes remain intact. This audit uses a fresh branch from
+that synchronized baseline.
 
 | Request / plan task | Native evidence | Remaining work |
 | --- | --- | --- |
 | Historical conditions, Tasks 17/18 | Task 17 prior-data-day close generated a Buy; all five Task 18 predicates were run natively, with the four 21-day conditions tested over 31,466 bars; the 30-day gain run completed with no match. UTC semantics/defaults inspected | None for tested predicates; automated boundary/signal tests also pass |
 | Post-merge review follow-up | Dotted-ticker source resolution and persisted-fill regression are merged in PR #82 (`c6809d9`); exact-head local RunTest passed 333/333 and RunQuality had 100% changed-line plus 22/22 changed-branch coverage; required remote checks passed on the merge candidate | None |
-| Save Result / Save & Replay, Task 14 | Standalone Save and Save & Replay succeeded; saved long Result survived relaunch and opened Replay | Injected persistence failure/restart recovery remains covered by automated process/fault tests, not a native UI injection |
+| Save Result / Save & Replay, Task 14 | Standalone Save and Save & Replay succeeded; saved long Result survived relaunch and opened Replay | None; injected persistence failure and restart recovery are covered by automated process/fault tests, not a user-facing UI control |
 | Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Refreshed, inspected, renamed, opened Replay, trashed and restored a saved Result; old incomplete/unavailable Results remained intact | None for visible lifecycle controls |
-| Legacy staging compatibility | Existing incomplete Results were preserved; automated tests cover byte-identical legacy staging/sidecars and typed notices | Native legacy-artifact workflow was not exercised |
+| Legacy staging compatibility | Existing incomplete Results were preserved; the registered Replay widget test exercises a valid Result beside byte-identical legacy Staging and a typed notice; sidecar retention is covered by persistence tests | None for the specified behavior; no separate native fault-injection UI is available |
 | Progressive Hourly/Daily replay, Tasks 21/24 | Native Replay displayed 31,466 Hourly bars and 2,014 Daily bars; seek/tail and final portfolio values matched | None for tested long-range views; automated checks cover every saved bar |
-| Trade glyphs, Tasks 22/26/28 | Buy/Sell markers were visually distinct from candle wicks and readable in Replay | Exact 8-pixel clearance was not manually pixel-measured; chart tests cover marker geometry. Sell grouping remains unapproved |
-| Viewport / zoom / Follow latest / Max | Tested at 2310×1416, 2602×1552 and 3420×2018; wheel zoom, drag pan, Follow latest, 5x resize and max-speed Daily playback to end | None for exercised controls; high-speed Hourly playback observation incurred a long UI automation call, so that observation is not treated as a responsiveness benchmark |
-| Exact real-data comparison / Tasks 10/11B/13 | Native initial/fill/tail states and final values matched; full saved-data reconciliation covers all Hourly and Daily bars | None for the audited AAPL data. Exact native pixel-by-pixel candle comparison was not performed |
-| Delivered Launch.sh path / Tasks 19/20/27 | Fresh build and snapshot succeeded; built application was exercised with a temporary native `.app` wrapper | Direct shell launch still exits with `no screens available`; verify the delivered Launch.sh GUI startup in a display-capable environment |
-| R1–R3 failure recovery | Native save/restart lifecycle succeeded; incomplete Results were preserved | Native fault injection is unavailable through visible controls; automated cross-process and fault tests cover leases, atomic commits, and committed-prefix recovery |
+| Trade glyphs, Tasks 22/26/28 | Buy/Sell markers were visually distinct from candle wicks; chart geometry tests assert the 8.0 logical-pixel Buy/Sell clearance and resize boundary | None. Buy grouping and ungrouped Sell leader behavior match the accepted chart design |
+| Viewport / zoom / Follow latest / Max | Tested at 2310×1416, 2602×1552 and 3420×2018; wheel zoom, drag pan, Follow latest, resize during 5x playback, max-speed Daily playback to end, and 31,466-bar Hourly max playback to its final frame | None for control behavior. The initial combined automation request exceeded 122 seconds, so no playback throughput benchmark is claimed |
+| Exact real-data comparison / Tasks 10/11B/13 | Native initial/fill/tail states and final values matched; automated saved-data reconciliation covers every Hourly and Daily frame, OHLCV, fills, and portfolio checkpoints | None for the audited AAPL data; native visual inspection was performed at several positions and sizes |
+| Delivered Launch.sh path / Tasks 19/20/27 | Fresh build and snapshot succeeded; the built application was exercised with a temporary native `.app` wrapper | Direct shell launch exits with `no screens available`; the `.app` launch attempt returned no accessible window state. Verify the delivered Launch.sh GUI startup in a display-capable environment |
+| R1–R3 failure recovery | Native save/restart lifecycle succeeded; automated cross-process fault tests cover leases, atomic commits, and committed-prefix recovery | None for the specified recovery contracts; native failure injection is not an application control |
 
 ## Preserved work, not omitted delivery
 
 - PR #81 delivered Task 17/18, source-manifest, R7 and R8 changes to `main`.
-  PR #82 delivered the reviewed follow-up fixes. The merged follow-up branch was
-  removed locally and remotely after its tree matched merged main. The active
-  continuation branch is `codex/issue10-native-acceptance`.
+  PR #82 delivered the reviewed follow-up fixes; PR #83 recorded the native
+  acceptance results and workspace reconciliation.
 - R1–R3 persistence implementation and its owning documentation are merged in
   PR #76. PR #81's remote checks passed, and native save/restart and preservation
   behavior was exercised; native fault injection remains automated-only as
