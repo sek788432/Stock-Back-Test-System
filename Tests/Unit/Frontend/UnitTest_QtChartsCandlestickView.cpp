@@ -1418,7 +1418,7 @@ void QtChartsCandlestickViewTest::
   QCOMPARE(view.candleCount(), 1U);
   QCOMPARE(view.markerCount(), 2U);
   auto *viewport = chartViewport(view);
-  const auto clearAndVisible = [&] {
+  const auto clearAndVisible = [&](const bool requireExactClearance = false) {
     auto count = 0;
     for (auto *item : viewport->scene()->items()) {
       if (item->data(0).toString() != "replayTradeGlyph") {
@@ -1435,6 +1435,7 @@ void QtChartsCandlestickViewTest::
       const auto gap =
           buy ? bounds.top() - edge.y() : edge.y() - bounds.bottom();
       if (gap < 16.0 - 0.000001 ||
+          (requireExactClearance && gap > 17.0 + 0.000001) ||
           !viewport->chart()->plotArea().contains(bounds)) {
         return false;
       }
@@ -1442,11 +1443,47 @@ void QtChartsCandlestickViewTest::
     }
     return count == 2;
   };
-  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (clearAndVisible(/*requireExactClearance=*/true)); }));
   view.resize(900, 360);
-  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (clearAndVisible(/*requireExactClearance=*/true)); }));
   view.setDailyTimeframe(true);
-  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (clearAndVisible(/*requireExactClearance=*/true)); }));
+
+  const auto waitForPlotAreaToSettle = [&] {
+    auto previousHeight = viewport->chart()->plotArea().height();
+    auto stableSamples = 0;
+    return bte::test::waitUntil([&] {
+      const auto currentHeight = viewport->chart()->plotArea().height();
+      stableSamples = std::abs(currentHeight - previousHeight) < 0.01
+                          ? stableSamples + 1
+                          : 0;
+      previousHeight = currentHeight;
+      return stableSamples >= 2;
+    });
+  };
+  auto reachedBoundary = false;
+  for (auto widgetHeight = view.height() - 1; widgetHeight >= 150;
+       --widgetHeight) {
+    view.resize(900, widgetHeight);
+    QVERIFY(waitForPlotAreaToSettle());
+    const auto plotHeight = viewport->chart()->plotArea().height();
+    if (plotHeight < 132.0) {
+      view.resize(900, widgetHeight + 1);
+      QVERIFY(waitForPlotAreaToSettle());
+      reachedBoundary = true;
+      break;
+    }
+  }
+  QVERIFY(reachedBoundary);
+  QVERIFY2(viewport->chart()->plotArea().height() >= 132.0,
+           qPrintable(QString{"plot height=%1"}.arg(
+               viewport->chart()->plotArea().height())));
+  QVERIFY(viewport->chart()->plotArea().height() < 134.0);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (clearAndVisible(/*requireExactClearance=*/true)); }));
   QCOMPARE(view.markerCount(), 2U);
   QCOMPARE(view.candleCount(), 1U);
 }
