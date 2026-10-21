@@ -4,7 +4,7 @@
 sliding viewport, chart-first Replay layout, linked price and volume
 coordinates, and Follow latest / Fit reached controls passed the native
 multi-size workflow and automated long-range reconciliation. Geometry tests
-assert the eight-logical-pixel trade-marker clearance. Direct `Launch.sh`
+assert the 16-logical-pixel trade-marker clearance. Direct `Launch.sh`
 startup remains unavailable in the shell's display-restricted environment.
 Native 31,466-bar Hourly `max` playback reached its final frame; the initial
 automation request was delayed, so no throughput benchmark is claimed. See the
@@ -124,12 +124,12 @@ bar; it must never cap that prefix at 500 or mutate source OHLCV/fills.
   clamps to reached bars. Neither action may produce an empty chart when a
   reached bar exists.
 - Buy ▲ and Sell ▼ remain anchored to the containing candle's x slot and
-  below its low/above its high, with eight logical pixels between the glyph
-  bounding box and the wick, independent of horizontal zoom. The triangle tip
-  has slightly greater clearance. Reserve a fixed 25-pixel visual margin per
-  price edge at supported Replay sizes. Cap the pixel-derived padding at half
-  the visible price span for short plots; retain the one-USD base padding floor
-  for flat/near-flat prices. Plots under 100 logical pixels may not fit the full
+  below its low/above its high, with 16 logical pixels between the glyph
+  bounding box and the wick, independent of horizontal zoom. Reserve a 33-pixel
+  visual margin per price edge at plot heights of at least 132 logical pixels.
+  Cap the pixel-derived padding at half the visible price span for shorter
+  plots; retain the one-USD base padding floor for flat/near-flat prices. Plots
+  under 132 logical pixels may not fit the full
   reserve. This visual padding operates without
   using fill prices or volume in autoscale. Recompute on height-only resize.
   They appear only after their persisted fill

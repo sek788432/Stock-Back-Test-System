@@ -185,6 +185,12 @@ qreal toEpochMilliseconds(const core::Timestamp timestamp) {
 }
 
 constexpr qreal slotIntervalMilliseconds = 60.0 * 60.0 * 1000.0;
+constexpr qreal tradeGlyphHalfSize = 8.0;
+constexpr qreal tradeGlyphWickClearance = 16.0;
+constexpr qreal tradeGlyphCenterOffset =
+    tradeGlyphHalfSize + tradeGlyphWickClearance;
+constexpr qreal tradeGlyphEdgeReserve =
+    tradeGlyphCenterOffset + tradeGlyphHalfSize + 1.0;
 
 qreal toSlotCoordinate(const std::size_t index) {
   return static_cast<qreal>(index) * slotIntervalMilliseconds;
@@ -310,15 +316,23 @@ public:
       const auto columns = std::min(totals[key], capacity);
       const auto row = ordinal / columns;
       const auto width = static_cast<qreal>(columns - 1) * 18.0;
-      const auto left = std::clamp(anchor.x() - width / 2.0, plot.left() + 8.0,
-                                   plot.right() - 8.0 - width);
+      const auto left =
+          std::clamp(anchor.x() - width / 2.0, plot.left() + tradeGlyphHalfSize,
+                     plot.right() - tradeGlyphHalfSize - width);
       const auto direction = entry.isBuy ? 1.0 : -1.0;
-      const QPointF center{
-          left + static_cast<qreal>(ordinal % columns) * 18.0,
-          std::clamp(anchor.y() +
-                         direction * (16.0 + static_cast<qreal>(row) * 18.0),
-                     plot.top() + 8.0, plot.bottom() - 8.0)};
-      entry.glyph->setPos(center - QPointF{8.0, 8.0});
+      const auto minimumCenterY = plot.top() + tradeGlyphHalfSize;
+      const auto maximumCenterY = plot.bottom() - tradeGlyphHalfSize;
+      auto centerY = anchor.y() + direction * (tradeGlyphCenterOffset +
+                                               static_cast<qreal>(row) * 18.0);
+      if (centerY < minimumCenterY) {
+        centerY = minimumCenterY;
+      } else if (centerY > maximumCenterY) {
+        centerY = maximumCenterY;
+      }
+      const QPointF center{left + static_cast<qreal>(ordinal % columns) * 18.0,
+                           centerY};
+      entry.glyph->setPos(center -
+                          QPointF{tradeGlyphHalfSize, tradeGlyphHalfSize});
       entry.glyph->show();
       entry.leader->setLine(QLineF{anchor, center});
       entry.leader->setVisible(totals[key] > 1);
@@ -852,11 +866,18 @@ void QtChartsCandlestickView::resetAxes() {
       maxVolume = std::max(maxVolume, bar.volume);
     }
 
-    // Reserve a bounded pixel margin for a 16-pixel glyph plus its wick gap.
-    // Only visible candle prices determine this display range, never fills.
+    // Reserve the glyph, its wick gap, and one pixel for rounding. Only visible
+    // candle prices determine this display range, never fills.
     const auto priceSpan = maxPrice - minPrice;
-    const auto pixelPadding =
-        priceSpan * 25.0 / std::max(50.0, chart_->plotArea().height() - 50.0);
+    const auto maximumPixelPadding = priceSpan * 0.5;
+    const auto availablePixelHeight = std::max(
+        50.0, chart_->plotArea().height() - 2.0 * tradeGlyphEdgeReserve);
+    auto pixelPadding = maximumPixelPadding;
+    const auto pixelPaddingForClearance =
+        priceSpan * tradeGlyphEdgeReserve / availablePixelHeight;
+    if (pixelPaddingForClearance < pixelPadding) {
+      pixelPadding = pixelPaddingForClearance;
+    }
     const auto padding = std::max({priceSpan * 0.08, 1.0, pixelPadding});
     axisX_->setRange(QDateTime::fromMSecsSinceEpoch(
                          static_cast<qint64>(minTimestamp), QTimeZone::UTC),

@@ -132,7 +132,7 @@ private slots:
   void invalidBarIsIgnoredAndMarkersCanBeCleared();
   void rendersSynchronizedVolumeAndTradeMarkers();
   void appendingMarkersKeepsEarlierFillsWithoutRebuildingThem();
-  void tradeGlyphsAreAdjacentToTheirContainingCandles();
+  void tradeGlyphsHaveIncreasedClearanceFromTheirContainingCandles();
   void tradeGlyphClearanceSurvivesHeightOnlyResizeAtPriceExtrema();
   void onlyCoincidentSellFillsShowLeaders();
   void coincidentBuysShareOneGlyphWithoutChangingFinancialPoints();
@@ -1289,7 +1289,7 @@ void QtChartsCandlestickViewTest::
 }
 
 void QtChartsCandlestickViewTest::
-    tradeGlyphsAreAdjacentToTheirContainingCandles() {
+    tradeGlyphsHaveIncreasedClearanceFromTheirContainingCandles() {
   bte::frontend::QtChartsCandlestickView view;
   view.resize(900, 520);
   const std::array bars{makeBar(2, 100.0, 104.0), makeBar(3, 112.0, 106.0),
@@ -1349,12 +1349,12 @@ void QtChartsCandlestickViewTest::
   const auto sellCenter = sellGlyph->pos() + QPointF{8.0, 8.0};
   const auto buyBounds = buyGlyph->mapRectToParent(buyGlyph->boundingRect());
   const auto sellBounds = sellGlyph->mapRectToParent(sellGlyph->boundingRect());
-  QVERIFY2(buyBounds.top() >= buyCandleLow.y() + 8.0,
-           "Buy triangle must leave eight logical pixels below its wick");
-  QVERIFY2(sellBounds.bottom() <= sellCandleHigh.y() - 8.0,
-           "Sell triangle must leave eight logical pixels above its wick");
-  QVERIFY(buyBounds.top() <= buyCandleLow.y() + 9.0);
-  QVERIFY(sellBounds.bottom() >= sellCandleHigh.y() - 9.0);
+  QVERIFY2(buyBounds.top() >= buyCandleLow.y() + 16.0,
+           "Buy triangle must leave sixteen logical pixels below its wick");
+  QVERIFY2(sellBounds.bottom() <= sellCandleHigh.y() - 16.0,
+           "Sell triangle must leave sixteen logical pixels above its wick");
+  QVERIFY(buyBounds.top() <= buyCandleLow.y() + 17.0);
+  QVERIFY(sellBounds.bottom() >= sellCandleHigh.y() - 17.0);
   QVERIFY(
       std::ranges::none_of(viewport->scene()->items(), [](const auto *item) {
         return item->data(0).toString() == "replayTradeLeader" &&
@@ -1362,12 +1362,12 @@ void QtChartsCandlestickViewTest::
       }));
 
   QVERIFY(std::abs(buyCenter.x() - buyCandleLow.x()) <= 1.0);
-  QVERIFY2(buyCenter.y() >= buyCandleLow.y() + 8.0,
+  QVERIFY2(buyCenter.y() >= buyCandleLow.y() + 24.0,
            qPrintable(QString{"buy center=%1 low=%2"}
                           .arg(buyCenter.y())
                           .arg(buyCandleLow.y())));
   QVERIFY(std::abs(sellCenter.x() - sellCandleHigh.x()) <= 1.0);
-  QVERIFY2(sellCenter.y() <= sellCandleHigh.y() - 8.0,
+  QVERIFY2(sellCenter.y() <= sellCandleHigh.y() - 24.0,
            qPrintable(QString{"sell center=%1 high=%2"}
                           .arg(sellCenter.y())
                           .arg(sellCandleHigh.y())));
@@ -1381,7 +1381,7 @@ void QtChartsCandlestickViewTest::
                     ->mapToPosition({sets.at(1)->timestamp(), bars[1].low},
                                     buySeries)
                     .y() +
-                8.0);
+                16.0);
   }));
   QVERIFY(bte::test::waitUntil([&] {
     return (sellGlyph->mapRectToParent(sellGlyph->boundingRect()).bottom() <=
@@ -1389,7 +1389,7 @@ void QtChartsCandlestickViewTest::
                     ->mapToPosition({sets.at(2)->timestamp(), bars[2].high},
                                     sellSeries)
                     .y() -
-                8.0);
+                16.0);
   }));
   QVERIFY(viewport->chart()->plotArea().contains(
       buyGlyph->mapRectToParent(buyGlyph->boundingRect())));
@@ -1418,7 +1418,8 @@ void QtChartsCandlestickViewTest::
   QCOMPARE(view.candleCount(), 1U);
   QCOMPARE(view.markerCount(), 2U);
   auto *viewport = chartViewport(view);
-  const auto clearAndVisible = [&] {
+  const auto clearAndVisible = [&](const bool requireExactClearance = false,
+                                   const bool expectReducedClearance = false) {
     auto count = 0;
     for (auto *item : viewport->scene()->items()) {
       if (item->data(0).toString() != "replayTradeGlyph") {
@@ -1434,7 +1435,9 @@ void QtChartsCandlestickViewTest::
       const auto bounds = glyph->mapRectToParent(glyph->boundingRect());
       const auto gap =
           buy ? bounds.top() - edge.y() : edge.y() - bounds.bottom();
-      if (gap < 8.0 - 0.000001 ||
+      if (gap < (expectReducedClearance ? 0.0 : 16.0) - 0.000001 ||
+          (requireExactClearance && gap > 17.0 + 0.000001) ||
+          (expectReducedClearance && gap >= 16.0) ||
           !viewport->chart()->plotArea().contains(bounds)) {
         return false;
       }
@@ -1442,11 +1445,65 @@ void QtChartsCandlestickViewTest::
     }
     return count == 2;
   };
-  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (clearAndVisible(/*requireExactClearance=*/true)); }));
   view.resize(900, 360);
-  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (clearAndVisible(/*requireExactClearance=*/true)); }));
   view.setDailyTimeframe(true);
-  QVERIFY(bte::test::waitUntil([&] { return (clearAndVisible()); }));
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (clearAndVisible(/*requireExactClearance=*/true)); }));
+
+  const auto waitForPlotAreaToSettle = [&] {
+    auto previousHeight = viewport->chart()->plotArea().height();
+    auto stableSamples = 0;
+    return bte::test::waitUntil([&] {
+      const auto currentHeight = viewport->chart()->plotArea().height();
+      stableSamples = std::abs(currentHeight - previousHeight) < 0.01
+                          ? stableSamples + 1
+                          : 0;
+      previousHeight = currentHeight;
+      return stableSamples >= 2;
+    });
+  };
+  auto reachedBoundary = false;
+  for (auto widgetHeight = view.height() - 1; widgetHeight >= 150;
+       --widgetHeight) {
+    view.resize(900, widgetHeight);
+    QVERIFY(waitForPlotAreaToSettle());
+    const auto plotHeight = viewport->chart()->plotArea().height();
+    if (plotHeight < 132.0) {
+      view.resize(900, widgetHeight + 1);
+      QVERIFY(waitForPlotAreaToSettle());
+      reachedBoundary = true;
+      break;
+    }
+  }
+  QVERIFY(reachedBoundary);
+  QVERIFY2(viewport->chart()->plotArea().height() >= 132.0,
+           qPrintable(QString{"plot height=%1"}.arg(
+               viewport->chart()->plotArea().height())));
+  QVERIFY(viewport->chart()->plotArea().height() < 134.0);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return (clearAndVisible(/*requireExactClearance=*/true)); }));
+
+  auto reachedShortPlot = false;
+  for (auto widgetHeight = view.height() - 1; widgetHeight >= 150;
+       --widgetHeight) {
+    view.resize(900, widgetHeight);
+    QVERIFY(waitForPlotAreaToSettle());
+    if (viewport->chart()->plotArea().height() < 128.0) {
+      reachedShortPlot = true;
+      break;
+    }
+  }
+  QVERIFY(reachedShortPlot);
+  QVERIFY(viewport->chart()->plotArea().height() >= 126.0);
+  QVERIFY(viewport->chart()->plotArea().height() < 128.0);
+  QVERIFY(bte::test::waitUntil([&] {
+    return (clearAndVisible(/*requireExactClearance=*/false,
+                            /*expectReducedClearance=*/true));
+  }));
   QCOMPARE(view.markerCount(), 2U);
   QCOMPARE(view.candleCount(), 1U);
 }
