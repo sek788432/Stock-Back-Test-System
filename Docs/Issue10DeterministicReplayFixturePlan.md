@@ -838,29 +838,41 @@ ctest --test-dir Output/qt-dev -R 'ReplayBacktestDeterminism\.|bte_backtest_fron
 
 ### Task 12 — Full re-acceptance and honest handoff
 
-**Status (2026-10-21):** Final acceptance is in progress on the follow-up branch.
-R1–R7 and the accepted Tasks 13–30 are implemented and merged; the final
-Results keyboard-focus defect found during native stress testing now has a
-permanent regression and a production fix. Splitter interaction has a real Qt
-drag regression. Remaining acceptance steps are independent whole-branch
-review, exact-HEAD full tests/quality/sanitizers, and required remote CI. The
-verdict is scoped acceptance, not a universal bug-free promise.
+**Status (2026-10-22, pre-publication checkpoint):** Scoped local acceptance is
+complete on implementation commit `cbbefacdb4c44292619358b9df9a81a0474ea8ff`.
+R1–R7 and the accepted Tasks 13–30 are implemented and merged; the Results
+keyboard-focus defect found during native stress testing has a production fix
+and a permanent regression. Splitter interaction has a real Qt drag regression.
+Independent code, documentation, and test reviews found no P0–P2 finding in
+this follow-up. Exact-commit `./RunTest.sh` passed 333/333; complete non-fast
+`./RunQuality.sh --base origin/main --head HEAD` exited 0, including 333/333
+coverage tests and 100% changed-line coverage (1/1). ASan/UBSan and TSan each
+passed 285/285 in isolated builds. The final documentation-only update and PR
+head still require local verification and remote CI. The verdict is scoped
+acceptance, not a universal bug-free promise. Public data redistribution rights
+and the cleared split manifest remain an external release blocker.
 
 - [x] Agree repair designs/scope for R1–R7, implement confirmed corrections with
   regressions or obtain explicit scoped deferral; keep whole-plan acceptance
   Needs changes while applicable correctness/compatibility defects remain open.
-- [ ] Review code/docs/test coverage, every effective committed/staged/unstaged/
-  untracked change; run full tests, sanitizers, performance and complete quality
-  commands below on the actual new implementation revision.
-- [ ] Before requesting CI, obey DoD: `./RunTest.sh` then full
-  `./RunQuality.sh --base <base-revision> --head HEAD` pass on exact committed
-  HEAD. `--fast` is not full acceptance. Record failures/retries/warnings honestly.
-- [ ] Update ledger after every task; hand off Accepted / Needs changes / Blocked
-  with remaining work. New metadata/hash/schema or retention policy decisions
-  require owning-spec/important-decision review before changes.
-- [ ] Include Tasks 13–20 in final scope disposition. Each new requirement must
-  be accepted with evidence or explicitly scoped/deferred by the maintainer;
-  merely recording it here does not approve its unresolved semantics.
+- [x] Review code/docs/test coverage across the complete committed branch delta.
+  Three independent review axes found no P0–P2 issue after the Results keyboard
+  and splitter regressions were corrected.
+- [x] Run full tests, sanitizer suites, and complete quality checks on the
+  implementation commit. `./RunTest.sh`: 333/333; ASan/UBSan: 285/285;
+  TSan: 285/285; non-fast RunQuality: exit 0, 333/333 coverage tests,
+  clang-tidy 29/29 files, changed-line coverage 1/1 (100%). The isolated
+  sanitizer presets exclude Qt; the Results and splitter behavior is covered
+  by the full Qt suite and native interaction.
+- [ ] Re-run `./RunTest.sh` and full
+  `./RunQuality.sh --base origin/main --head HEAD` after this documentation-only
+  acceptance update, then verify every required remote CI job on the exact PR
+  head before merging. `--fast` is not full acceptance.
+- [x] Update the ledger and give Tasks 13–30 a scoped disposition. The only
+  remaining release-level blocker is verification of public data
+  redistribution rights and the cleared split manifest; that does not block
+  local developer application use. No new unresolved metadata/hash/schema or
+  retention-policy decision is introduced by this follow-up.
 
 ```bash
 ./RunTest.sh
@@ -2716,12 +2728,16 @@ owning specifications and process/fault tests record the supported contract.
 
 ### Task 29 — Merge verified work, then clean up the named branches
 
-**Status (2026-10-21):** Historical PRs #76–#85 are merged. The current
-follow-up contains the verified Results keyboard fix and acceptance-record
-updates. The only local non-main branch is
-`codex/issue10-final-acceptance`; the remote branch inventory currently lists
-only `main`. Merge this follow-up after all required checks pass, update local
-`main` to the merged remote head, then delete the local follow-up branch.
+**Status (2026-10-22, pre-publication checkpoint):** Historical PRs #76–#85
+are merged. The local follow-up contains the verified Results keyboard fix and
+acceptance records. Local `main` and `origin/main` are aligned at
+`2f6a831f91b952696dd99f0e3d520a6add49197b`; the only local non-main branch is
+`codex/issue10-final-acceptance`, and GitHub currently lists only `main`. The
+implementation checkpoint passes RunTest 333/333, full non-fast RunQuality,
+ASan/UBSan 285/285, TSan 285/285, and independent code/docs/test review. After
+the documentation-only acceptance update passes its exact-head gates, publish
+the follow-up, wait for every required CI check, merge, synchronize local main,
+and delete the completed feature branch.
 
 The original branch-name and checkout facts below are retained as the
 2026-10-12 historical inventory. Use the current refs above for cleanup.
@@ -2739,9 +2755,13 @@ The original branch-name and checkout facts below are retained as the
 - [x] Confirm current local and remote refs. Local refs are `main` and
   `codex/issue10-final-acceptance`; GitHub lists only `main`. The six existing
   stashes remain preserved.
-- [ ] Complete plan acceptance, exact submission gates and whole-branch review;
-  create a follow-up PR, verify all required CI jobs for its exact SHA, then
-  squash-merge to main. Do not use CI as the first quality check.
+- [x] Complete scoped plan acceptance, implementation-commit gates, and
+  independent whole-branch review before publication; no local P0–P2 finding
+  remains. The only release blocker is public-data rights/split-manifest
+  clearance.
+- [ ] Re-run the full local gates on the final documentation commit, create a
+  follow-up PR, verify every required CI job for its exact SHA, then squash-
+  merge to main. Do not use CI as the first quality check.
 - [ ] Verify the merged main contains every scoped code/test/document change.
   Preserve the older root drafts and any unique unmerged content through a
   recoverable, explicitly scoped operation before changing checkouts. Never

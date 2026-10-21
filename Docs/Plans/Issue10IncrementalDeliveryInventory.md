@@ -2,14 +2,18 @@
 
 ## Scope and evidence
 
-## Current reconciliation — 2026-10-21
+## Current reconciliation — 2026-10-22 (pre-publication checkpoint)
 
 PR #85 is merged; `main` and `origin/main` are at
 `2f6a831f91b952696dd99f0e3d520a6add49197b`. The historical source-branch
 inventory below records the extraction checkpoint and is not a current list
 of unpublished code. The completed Issue 10 source, tests, and owning
-documentation are represented in the merged tree. The current acceptance
-status and native evidence are maintained in
+documentation are represented in the merged tree. One post-merge Results
+keyboard-navigation repair and its regression are in the local
+`codex/issue10-final-acceptance` follow-up, based on this main revision. Its
+implementation gates passed before this documentation-only acceptance update;
+publication, remote CI, and merge are pending. The current acceptance status
+and native evidence are maintained in
 [Issue10RemainingWork.md](Issue10RemainingWork.md). The only release-level
 blocker still recorded by the owning Data Layer specification is verification
 of redistribution rights and a cleared split manifest; it does not block the

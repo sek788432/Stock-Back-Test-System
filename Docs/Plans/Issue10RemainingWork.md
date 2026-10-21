@@ -1,6 +1,7 @@
 # Issue 10 Remaining Work
 
-**Current status as of 2026-10-21:** PR #85 is merged to `main` at
+**Current status as of 2026-10-22 (pre-publication checkpoint):** PR #85 is
+merged to `main` at
 `2f6a831f91b952696dd99f0e3d520a6add49197b`. The accepted Issue 10 application
 workflows and Replay controls have now been exercised in the native
 application, including Task 11B's synthetic date-only run and the normal
@@ -30,6 +31,17 @@ actions while arrow keys move through rows. The rebuilt app was operated with
 the keyboard from the table to View Details and Open Replay; the exact Result
 ID and first replay frame were visible. A focused regression failed before the
 fix and passes afterward.
+
+The final local verification checkpoint is commit
+`cbbefacdb4c44292619358b9df9a81a0474ea8ff`, based directly on the merged
+baseline above. `./RunTest.sh` passed 333/333. The full non-fast
+`./RunQuality.sh --base origin/main --head HEAD` exited 0: project standards,
+clang-format, clang-tidy (29/29 files), cppcheck, IWYU, scan-build, and all
+333 coverage tests passed; changed-line coverage was 1/1 (100%). The isolated
+ASan/UBSan and TSan suites each passed 285/285. Independent code, documentation,
+and test reviews found no remaining P0–P2 issue in this follow-up. These gates
+are on the implementation commit; the documentation-only acceptance update
+and exact PR head still require their own final verification and remote CI.
 
 GitHub Issue #10 itself is narrowly scoped to the offline deterministic Replay
 fixture. Its committed fixture and both named snapshot-determinism tests are
