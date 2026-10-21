@@ -17,13 +17,12 @@ seven-column CSV timeframe provenance, truthful capability details, and
 long-range AAPL Result/Replay reconciliation are now in `main`. Its required
 CI and CodeQL checks passed on the exact submitted head. Native application
 acceptance remains. The independent review of PR #81 found a dotted-ticker CSV
-filename mismatch and a weak non-empty-fill assertion; this fresh branch now
+filename mismatch and a weak non-empty-fill assertion; this follow-up branch
 contains fixes and regression coverage for both. Independent implementation,
-documentation, and test reviews found no further actionable issues. Commits
-`3e406ab` and `03524bd` pass exact-head RunTest 333/333 and RunQuality with
-100% changed-line and changed-branch coverage. The branch is pushed, but the
-GitHub connector returns 403 when creating its PR, so remote CI and merge are
-pending.
+documentation, and test reviews found no further code or test issues. The
+GitHub connector successfully created draft PR #82 after authorization was
+restored. Its CI is running; merge remains pending native acceptance and
+reconciliation of this document with the active result-lifecycle decision.
 
 ## Latest merged delivery
 
@@ -261,12 +260,21 @@ Latest follow-up evidence (2026-10-15):
 ## Requested features and final acceptance still unfinished
 
 Task 17/18 and source provenance are merged in `main` as PR #81 (`c7e487e`).
-The submitted head passed local RunTest, Quality, ASan/UBSan, TSan, required
-remote CI, and CodeQL. The remaining product work is hands-on native
+The submitted head passed local RunTest, Quality, ASan/UBSan, and TSan, as well
+as required remote CI and CodeQL. The remaining product work is hands-on native
 application acceptance. The fresh branch also closes the two independent
-review findings above; independent review and exact-head local gates are
-complete, while remote CI and merge await PR creation. The GitHub connector
-currently rejects PR creation (HTTP 403: Resource not accessible by integration).
+review findings above; its exact-head local gates are complete. Draft PR #82
+now exists and its remote CI is running. It remains draft while native
+acceptance and the documentation reconciliation are completed.
+
+On 2026-10-21, `Launch.sh` rebuilt the desktop application and created a real
+development snapshot, but the application exited before opening a window
+because this execution environment reported `no screens available`. No manual
+native acceptance is claimed. As an automated substitute, the 11 frontend,
+viewport, Replay, Results, Backtest, chart, data-loader, and startup test
+targets passed three consecutive runs each (33/33 target runs). These repeated
+widget tests reduce regression risk but do not replace the pending native
+workflow checks below.
 
 Workspace reconciliation is complete: local `main` matches `origin/main`, both
 old personal branches were removed after verifying their contents were merged,
@@ -275,7 +283,7 @@ and the six stashes remain intact.
 | Request / plan task | Remaining work |
 | --- | --- |
 | Historical conditions, Task 18 | Implemented: 30 available UTC data-date close-to-close gain; prior 21 complete data-date highs/lows excluding the current date; persistent strict breakouts; bounded same-snapshot pre-range warm-up. Local and remote checks passed; confirm expected signals in the native workflow |
-| Post-merge review follow-up | Fix dotted ticker snapshot-source filename resolution while preserving exact-name compatibility; require the AAPL Hourly and Daily fill timelines to match non-empty persisted fill records. Implemented and independently reviewed on pushed branch `codex/issue10-final-acceptance`; exact-head RunTest passed 333/333 and RunQuality passed with 100% changed-line and branch coverage. PR creation is blocked by GitHub connector 403, so remote CI and merge remain |
+| Post-merge review follow-up | Fix dotted ticker snapshot-source filename resolution while preserving exact-name compatibility; require the AAPL Hourly and Daily fill timelines to match non-empty persisted fill records. Implemented and independently reviewed on `codex/issue10-final-acceptance`; RunTest passed 333/333, full Quality passed with 100% changed-line and branch coverage, and ASan/UBSan plus TSan passed 285/285 each. Draft PR #82 is open with remote CI running; merge waits on native acceptance and the result-lifecycle documentation reconciliation |
 | Save Result / Save & Replay, Task 14 | Exercise save, save-and-replay, restart, and injected failure recovery in the native application |
 | Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Exercise the full native workflow against saved real data, including rename, trash, restore, and replay opening |
 | Progressive Hourly/Daily replay, Tasks 21/24 | Automated deterministic and full-range AAPL tests pass for exact bars, dates, fills and portfolio checkpoints; confirm native viewport behavior and readable long-range display |

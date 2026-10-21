@@ -206,10 +206,13 @@ visibility, atomically persist every completed Engine bar, and recover only
 the committed prefix as an Interrupted Draft after a crash. A persistence
 failure stops execution. Legacy staging without lease metadata remains intact
 with a warning; opening a store must not infer that such a writer is dead or
-automatically clear its artifact. This is an accepted architectural constraint,
-not an implementation claim. Detailed transaction/lifetime and compatibility
-design review and crash/concurrent-process tests remain required; canonical
-schema/hash compatibility and the explicit Save gate are not waived.
+automatically clear its artifact. These R1–R3 repairs were implemented and
+merged in PR #76. The approved transaction/lifetime and compatibility design
+is recorded in [ResultPersistenceSafetyDesign.md](../Specs/ResultPersistenceSafetyDesign.md);
+automated tests cover crash recovery and concurrent processes. Native Results
+lifecycle and failure/restart acceptance remains open in
+[Issue10RemainingWork.md](../Plans/Issue10RemainingWork.md). Canonical
+schema/hash compatibility and the explicit Save gate remain unchanged.
 
 **Consequences.** Public Results APIs expose typed identities, records, and
 lifecycle operations rather than SQLite handles. Promotion and recovery require
