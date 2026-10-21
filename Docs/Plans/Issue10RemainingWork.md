@@ -1,10 +1,11 @@
 # Issue 10 Remaining Work
 
-**Current status as of 2026-10-22 (pre-publication checkpoint):** PR #85 is
-merged to `main` at
-`2f6a831f91b952696dd99f0e3d520a6add49197b`. The accepted Issue 10 application
-workflows and Replay controls have now been exercised in the native
-application, including Task 11B's synthetic date-only run and the normal
+**Current status as of 2026-10-22 (post-merge):** PR #87 is merged to `main` at
+`e8ac99fc6002e1e54ac44eb46f1a3760f87d87c8`. At the PR #87 merge-cleanup
+checkpoint, local `main` matched `origin/main`, and only `main` remained as a
+local or remote branch. The accepted
+Issue 10 application workflows and Replay controls have been exercised in the
+native application, including Task 11B's synthetic date-only run and the normal
 `Launch.sh`-built application path. A 31,466-bar Hourly `max` playback reached
 its final frame, and a subsequent native read showed the app Ready. The
 combined automation call took over 122 seconds, so it is not a playback timing
@@ -24,6 +25,12 @@ move the handle. The native drag was unchanged at the available display size,
 consistent with that minimum-size constraint; the compact view remains
 vertically scrollable.
 
+Buy/Sell arrows now keep a 16–17 logical-pixel wick gap when the plot can
+provide it. The chart reserves 33 px at each price edge when its plot is at
+least 132 px high; below that boundary, a real Qt test verifies that both
+markers remain visible and inside a 126–<128 px plot with a reduced positive
+gap.
+
 The native Results workflow exposed and then verified a keyboard navigation
 repair. Previously, Tab/Shift+Tab wrapped within the table cells and trapped
 focus there. The Results table now leaves Tab navigation to the surrounding
@@ -32,16 +39,15 @@ the keyboard from the table to View Details and Open Replay; the exact Result
 ID and first replay frame were visible. A focused regression failed before the
 fix and passes afterward.
 
-The final local verification checkpoint is commit
-`cbbefacdb4c44292619358b9df9a81a0474ea8ff`, based directly on the merged
-baseline above. `./RunTest.sh` passed 333/333. The full non-fast
-`./RunQuality.sh --base origin/main --head HEAD` exited 0: project standards,
-clang-format, clang-tidy (29/29 files), cppcheck, IWYU, scan-build, and all
-333 coverage tests passed; changed-line coverage was 1/1 (100%). The isolated
-ASan/UBSan and TSan suites each passed 285/285. Independent code, documentation,
-and test reviews found no remaining P0–P2 issue in this follow-up. These gates
-are on the implementation commit; the documentation-only acceptance update
-and exact PR head still require their own final verification and remote CI.
+PR #87's submitted head `c30be93008054b234386c1f49c410b10ce24ba73` passed
+`./RunTest.sh` (333/333) and the complete non-fast `RunQuality.sh`: standards,
+clang-format, clang-tidy (29/29 files), cppcheck, IWYU, scan-build, and coverage
+all passed with 100% changed-line and 6/6 changed-branch coverage. GitHub CI run
+198 passed all seven jobs, including Linux/macOS test suites, both sanitizer
+jobs, static analysis, project standards, and changed-code coverage. PR #87
+was squash-merged as `e8ac99f`; local `main` was fast-forwarded and verified
+equal to `origin/main`. The chart/detail splitter regression and marker spacing
+boundaries are included in that verified delivery.
 
 GitHub Issue #10 itself is narrowly scoped to the offline deterministic Replay
 fixture. Its committed fixture and both named snapshot-determinism tests are
@@ -54,7 +60,8 @@ published Replay repairs. PR #81 is also merged as `c7e487e`; Task 17/18,
 seven-column CSV timeframe provenance, truthful capability details, and
 long-range AAPL Result/Replay reconciliation are now in `main`. Its required
 CI and CodeQL checks passed on the exact submitted head. PRs #82–#85 then
-merged the review repairs and acceptance records. Native UI workflow checks
+merged the review repairs and acceptance records; PR #87 subsequently delivered
+the tested chart marker spacing and splitter regression. Native UI workflow checks
 were performed on 2026-10-21 through a temporary application wrapper around
 the actual `Launch.sh`-built app. The independent
 review of PR #81 found a dotted-ticker CSV
@@ -68,8 +75,9 @@ and test reviews found no further code or test issues.
 
 ## Latest merged delivery
 
-The current merged baseline is PR #85 at `2f6a831`; PR #85's required checks
-passed. The following PR entries preserve their individual delivery history.
+The current merged baseline is PR #87 at `e8ac99f`; all seven required CI jobs
+passed on its submitted head. The following PR entries preserve their
+individual delivery history.
 
 - PR #76 merged at `508d2d9e18befe2ebb1e80b9a6d8bf528c5c5def`; its required CI
   and CodeQL checks passed on the submitted head before merge. PR #80 and the
@@ -93,6 +101,11 @@ passed. The following PR entries preserve their individual delivery history.
 - PR #83 merged at `8738c4e873692acdc8169a81e8ae10f48176d984`. It records the
   native acceptance results and remaining environment-bound checks in this
   ledger; all required CI checks passed on the docs-only change.
+- PR #87 merged at `e8ac99fc6002e1e54ac44eb46f1a3760f87d87c8` from submitted
+  head `c30be93008054b234386c1f49c410b10ce24ba73`. Its seven required CI jobs
+  passed. Buy/Sell arrows retain 16–17 px wick clearance where the viewport
+  allows it, with a tested visible/contained fallback below 132 px; the Qt
+  splitter-drag regression is also in the merged test suite.
 - R1–R3 are now in `main`: per-Result
   cross-process SQLite leases, retention pins before artifact visibility,
   atomic completed-bar persistence, committed-prefix recovery, and typed
@@ -367,7 +380,7 @@ merged. The six pre-existing stashes remain intact.
 | Results view, naming, Trash/Restore and Open Replay, Tasks 15/25 | Refreshed, inspected, renamed, opened Replay, trashed and restored a saved Result; old incomplete/unavailable Results remained intact. Native keyboard-only traversal selected a row, reached View Details, and opened the exact ID in Replay | None for the tested lifecycle and keyboard path |
 | Legacy staging compatibility | Existing incomplete Results were preserved; the registered Replay widget test exercises a valid Result beside byte-identical legacy Staging and a typed notice; sidecar retention is covered by persistence tests | None for the specified behavior; no separate native fault-injection UI is available |
 | Progressive Hourly/Daily replay, Tasks 21/24 | Native Replay displayed 31,466 Hourly bars and 2,014 Daily bars; seek/tail and final portfolio values matched | None for tested long-range views; automated checks cover every saved bar |
-| Trade glyphs, Tasks 22/26/28 | Buy/Sell markers were visually distinct from candle wicks; chart geometry tests assert the 16.0 logical-pixel Buy/Sell clearance, including the 132-pixel plot-height boundary | None. Buy grouping and ungrouped Sell leader behavior match the accepted chart design |
+| Trade glyphs, Tasks 22/26/28 | Buy/Sell markers were visually distinct from candle wicks; Qt geometry tests assert a 16–17 logical-pixel clearance at supported heights, the 132-pixel plot boundary, and visible containment with reduced positive clearance at 126–<128 px | None. Buy grouping and ungrouped Sell leader behavior match the accepted chart design |
 | Viewport / zoom / Follow latest / Max | Tested at 2310×1416, 2602×1552 and 3420×2018; wheel zoom, drag pan, Follow latest, resize during 5x playback, max-speed Daily playback to end, and 31,466-bar Hourly max playback to its final frame | None for control behavior. The initial combined automation request exceeded 122 seconds, so no playback throughput benchmark is claimed |
 | Chart/details splitter / Tasks 10/24 | The Qt handle press/move/release regression passes at 1440×1300 and confirms the chart grows while the details pane shrinks. At compact height, both children are at minimum size and the handle correctly cannot move; the native app remains vertically scrollable | None; resize is accepted when the viewport has room, and the minimum-size behavior is covered |
 | Exact real-data comparison / Tasks 10/11B/13 | Native initial/fill/tail states and final values matched; automated saved-data reconciliation covers every Hourly and Daily frame, OHLCV, fills, and portfolio checkpoints | None for the audited AAPL data; native visual inspection was performed at several positions and sizes |
