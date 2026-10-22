@@ -350,6 +350,42 @@ the owning specification, focused tests, and review.
 
 **Owning specification.** [`CiDevFlow.md`](../Specs/CiDevFlow.md).
 
+## Canonical documentation boundaries
+
+**Current decision.** `Tools/DocumentationPolicy.json` is the exact allowlist
+of approved documentation paths, grouped by owner, purpose, and canonical
+index. `CheckProjectStandards.py` compares every documentation addition, edit,
+or move destination with the inventory from the PR base branch. Deletions are
+allowed. For the initial rollout only, the submitted inventory is intersected
+with paths that already exist on the target branch, so the rollout can update
+existing documents but cannot add new ones. Register a new path or category in
+a separate maintainer-reviewed change, merge it, and add the document in a
+later PR. A registry edit in a PR cannot authorize an otherwise unregistered
+document added or edited by that same PR.
+
+**Why.** Issue-resolution plans and temporary design notes are useful while
+work is active, but keeping each one as a tracked file scatters the durable
+record and makes obsolete drafts appear authoritative. The owning specification
+and the living decision record provide stable locations for lasting behavior
+and rationale.
+
+**Important rejected alternatives.** Broad directory or suffix globs were
+rejected because they allow arbitrary documents within a category. Allowing a
+PR to register and add its own document was rejected because it removes an
+independent review point. Keeping completed issue plans was rejected because
+they duplicate or outlive canonical specifications.
+
+**Consequences.** Temporary plans stay in issue/PR discussion or ignored local
+workspace. Durable outcomes are folded into the owning specification and, for
+hard-to-reverse cross-project choices, this living record. A new category
+requires a canonical index and a separate maintainer-reviewed inventory update.
+Repository branch-protection and reviewer settings are External / unverified;
+the standards gate enforces path registration and separation, while GitHub
+review settings must enforce the maintainer-review requirement.
+
+**Owning specification.** [`CiDevFlow.md`](../Specs/CiDevFlow.md) and
+[`Docs/Governance/AGENTS.md`](../Governance/AGENTS.md).
+
 ## Maintenance rules
 
 - Update the applicable entry in place with its owning specification.

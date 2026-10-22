@@ -18,6 +18,11 @@ that does not apply; never claim that an unrun or nonexistent check passed.
 - [ ] **Traceability:** the PR references its issue and any affected entry in
   the living important-decisions document, or explains why an entry is
   unnecessary.
+- [ ] **Documentation policy:** every tracked documentation addition, edit, or
+  move is registered on the PR's base branch. During the initial policy
+  rollout, only already-existing paths in the submitted inventory may be
+  edited; durable issue outcomes are folded into the owning spec and temporary
+  plans are not retained.
 - [ ] **History:** the branch and commit messages follow the repository's PR
   conventions when a branch or commit is part of the task.
 

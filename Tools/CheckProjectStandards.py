@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -42,6 +43,45 @@ CONVENTIONAL_FILE_NAMES = {
 PASCAL_CASE_NAME = re.compile(r"[A-Z][A-Za-z0-9]*")
 NUMBERED_PASCAL_CASE_NAME = re.compile(r"\d{2}[A-Z][A-Za-z0-9]*")
 UNIT_TEST_FILE_NAME = re.compile(r"UnitTest_[A-Z][A-Za-z0-9]*\.(?:cpp|py)")
+DOCUMENTATION_POLICY_PATH = Path("Tools/DocumentationPolicy.json")
+DOCUMENTATION_SUFFIXES = {
+    ".adoc",
+    ".docx",
+    ".htm",
+    ".html",
+    ".markdown",
+    ".md",
+    ".pdf",
+    ".rst",
+    ".rtf",
+    ".txt",
+}
+NON_DOCUMENTATION_TEXT_PATHS = {
+    Path("DataFetcher/requirements.txt"),
+    Path("StockData/Symbols.txt"),
+    Path("Tools/CoverageRequirements.txt"),
+}
+NON_DOCUMENTATION_NAMES = {
+    "Brewfile",
+    "CODEOWNERS",
+    "CMakeLists.txt",
+    "Containerfile",
+    "Dockerfile",
+    "Gemfile",
+    "Justfile",
+    "Makefile",
+    "Procfile",
+    "requirements.txt",
+    ".clang-format",
+    ".clang-tidy",
+    ".dockerignore",
+    ".editorconfig",
+    ".env",
+    ".env.example",
+    ".gitattributes",
+    ".gitignore",
+    ".gitmodules",
+}
 
 
 @dataclass(frozen=True)
@@ -743,6 +783,112 @@ def git_diff(base: str, head: str | None) -> str:
     return result.stdout
 
 
+def is_documentation_path(path: Path) -> bool:
+    """Return whether a tracked path contains authored documentation."""
+    if not path.parts:
+        return False
+    if path.parts[0] in {".agents", "Docs"}:
+        return True
+    if path == Path("LICENSE") or path.is_relative_to(Path(".github/ISSUE_TEMPLATE")):
+        return True
+    if path in NON_DOCUMENTATION_TEXT_PATHS or path.name in NON_DOCUMENTATION_NAMES:
+        return False
+    return path.suffix.lower() in DOCUMENTATION_SUFFIXES or not path.suffix
+
+
+def parse_documentation_policy(content: str) -> set[Path]:
+    """Parse the exact, grouped documentation allowlist."""
+    try:
+        policy = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid documentation policy JSON: {error}") from error
+
+    if (
+        not isinstance(policy, dict)
+        or type(policy.get("version")) is not int
+        or policy.get("version") != 1
+    ):
+        raise ValueError("documentation policy must be a version 1 object")
+    groups = policy.get("groups")
+    if not isinstance(groups, list) or not groups:
+        raise ValueError("documentation policy must contain at least one group")
+
+    allowed_paths: set[Path] = set()
+    index_paths: set[Path] = set()
+    for group in groups:
+        if not isinstance(group, dict):
+            raise ValueError("documentation policy groups must be objects")
+        for field in ("owner", "purpose"):
+            value = group.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"documentation policy group requires a non-empty {field}")
+
+        paths = group.get("paths")
+        if not isinstance(paths, list) or not paths:
+            raise ValueError("documentation policy groups must list exact paths")
+        group_paths = {_exact_documentation_path(value) for value in paths}
+        if len(group_paths) != len(paths):
+            raise ValueError("documentation policy paths must be unique")
+        if allowed_paths.intersection(group_paths):
+            raise ValueError("documentation policy paths must not appear in multiple groups")
+
+        index = _exact_documentation_path(group.get("index"))
+        index_paths.add(index)
+        allowed_paths.update(group_paths)
+
+    if not index_paths.issubset(allowed_paths):
+        raise ValueError("each documentation policy index must be an approved path")
+    return allowed_paths
+
+
+def _exact_documentation_path(value: object) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError("documentation policy paths and indexes must be non-empty strings")
+    if "\\" in value or any(character in value for character in "*?[]"):
+        raise ValueError(f"documentation policy path is not exact: {value}")
+    path = Path(value)
+    if path.is_absolute() or path.as_posix() != value or ".." in path.parts:
+        raise ValueError(f"documentation policy path is not repository-relative: {value}")
+    if not is_documentation_path(path):
+        raise ValueError(f"documentation policy path is not recognized as documentation: {value}")
+    return path
+
+
+def audit_documentation_changes(
+    changes: list[tuple[str, Path]], allowed_paths: set[Path]
+) -> list[Violation]:
+    """Reject changed documentation paths absent from the base-branch allowlist."""
+    violations: list[Violation] = []
+    for status, path in changes:
+        if status == "D" or not is_documentation_path(path) or path in allowed_paths:
+            continue
+        violations.append(
+            Violation(
+                path,
+                1,
+                "DOC002",
+                "documentation path is not registered on the base branch; register it "
+                "in a separate reviewed change before adding or editing it",
+            )
+        )
+    return violations
+
+
+def git_changed_paths(base: str, head: str | None) -> list[tuple[str, Path]]:
+    command = ["git", "diff", "--no-renames", "--name-status", base]
+    if head is not None:
+        command.append(head)
+    command.append("--")
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    changes: list[tuple[str, Path]] = []
+    for line in result.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 2:
+            raise ValueError(f"unexpected git name-status output: {line}")
+        changes.append((fields[0], Path(fields[1])))
+    return changes
+
+
 def git_tree_paths(revision: str) -> set[Path]:
     result = subprocess.run(
         ["git", "ls-tree", "-r", "--name-only", revision],
@@ -751,6 +897,47 @@ def git_tree_paths(revision: str) -> set[Path]:
         text=True,
     )
     return {Path(line) for line in result.stdout.splitlines() if line}
+
+
+def git_documentation_policy_paths(revision: str) -> set[Path] | None:
+    result = subprocess.run(
+        ["git", "show", f"{revision}:{DOCUMENTATION_POLICY_PATH.as_posix()}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return parse_documentation_policy(result.stdout)
+
+
+def documentation_allowlist_for_revisions(
+    base: str, head: str | None, base_paths: set[Path]
+) -> set[Path]:
+    """Use the target branch's policy, with a safe first-policy bootstrap."""
+    base_policy = git_documentation_policy_paths(base)
+    if head is None:
+        candidate_policy = (
+            parse_documentation_policy(
+                DOCUMENTATION_POLICY_PATH.read_text(encoding="utf-8")
+            )
+            if DOCUMENTATION_POLICY_PATH.is_file()
+            else None
+        )
+    else:
+        candidate_policy = git_documentation_policy_paths(head)
+
+    if candidate_policy is None:
+        if base_policy is not None:
+            raise ValueError("documentation policy cannot be removed")
+        raise ValueError("documentation policy is missing from both base and head")
+
+    if base_policy is not None:
+        return base_policy
+
+    # The initial policy may approve edits to existing documents, but cannot
+    # use its first revision to authorize a newly added document.
+    return candidate_policy.intersection(base_paths)
 
 
 def git_cmake_sources(revision: str, paths: set[Path]) -> dict[Path, str]:
@@ -896,17 +1083,23 @@ def main() -> int:
             raise ValueError("--full-tree requires --head")
         if args.clang_format and not args.full_tree:
             raise ValueError("--clang-format requires --full-tree")
+        base_paths = git_tree_paths(args.base)
+        head_paths = git_tree_paths(args.head) if args.head is not None else None
+        allowed_documentation_paths = documentation_allowlist_for_revisions(
+            args.base, args.head, base_paths
+        )
+        violations = audit_documentation_changes(
+            git_changed_paths(args.base, args.head), allowed_documentation_paths
+        )
         if args.full_tree:
-            head_paths = git_tree_paths(args.head)
             formatter = find_clang_format() if args.clang_format else None
-            violations, audited_line_count, audited_file_count = audit_git_tree(
+            tree_violations, audited_line_count, audited_file_count = audit_git_tree(
                 args.head, head_paths, formatter
             )
+            violations.extend(tree_violations)
         else:
-            violations = audit_added_lines(added_lines)
+            violations.extend(audit_added_lines(added_lines))
         if args.head is not None:
-            base_paths = git_tree_paths(args.base)
-            head_paths = git_tree_paths(args.head)
             cmake_sources = git_cmake_sources(args.head, head_paths)
             violations.extend(audit_new_modules(base_paths, head_paths, cmake_sources))
             violations.extend(audit_test_registration(head_paths, cmake_sources))

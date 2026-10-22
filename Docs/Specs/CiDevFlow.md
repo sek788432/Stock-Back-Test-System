@@ -83,7 +83,40 @@ It currently checks:
 - literal/identical assertion patterns that its regular expressions recognize;
 - registration of tracked `UnitTest_*.cpp` and `UnitTest_*.py` files in CMake;
 - a registered unit-test file for each newly introduced top-level source
-  module.
+  module;
+- exact documentation-path enforcement against
+  [`../../Tools/DocumentationPolicy.json`](../../Tools/DocumentationPolicy.json).
+
+The documentation policy classifies all files below `Docs/` and `.agents/`,
+recognized authored-document suffixes (`.md`, `.markdown`, `.rst`, `.adoc`,
+`.html`, `.htm`, `.pdf`, `.docx`, `.rtf`, and `.txt`), extensionless files,
+the root `LICENSE`, and GitHub issue-template files as documentation. Recognized
+repository dotfiles, common build/config filenames, and the existing
+data/dependency text files `StockData/Symbols.txt`,
+`DataFetcher/requirements.txt`, and `Tools/CoverageRequirements.txt` are
+excluded outside `Docs/` and `.agents/`.
+The manifest is an exact allowlist of approved paths grouped by owner, purpose,
+and canonical index; globs, duplicate paths, and missing indexes are invalid.
+The checker validates the submitted manifest on every run and rejects a missing
+or invalid policy so a change cannot leave later PRs without an authoritative
+allowlist.
+
+For a PR, the checker reads the manifest from `--base`. Added, modified, and
+moved documentation paths must already be listed there; a path added to the
+manifest in the same PR cannot authorize its own addition or edit. Deletions
+are allowed so obsolete documents can be removed. During the initial rollout,
+when the target branch has no manifest, the checker uses the submitted
+manifest intersected with paths already present on the target branch. This
+permits edits to the explicit existing-document inventory but cannot authorize
+new documentation in the rollout PR. The rule is reported as `DOC002` and is
+merge-blocking through the existing `project-standards` job and `merge-gate`.
+
+To add a permanent document or category, first submit a separate maintainer-
+reviewed registration change that updates the exact inventory and canonical
+index. Add the document in a later PR after the registration has merged.
+Temporary plans stay in issue/PR discussion or ignored local workspace, and
+durable behavior is recorded in its owning specification. GitHub branch-
+protection and reviewer requirements remain External / unverified.
 
 The five `cpp-*` skill families have the following enforcement boundary:
 
