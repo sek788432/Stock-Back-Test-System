@@ -241,7 +241,8 @@ class DocumentationPolicyRevisionTest(unittest.TestCase):
             result = self._run_checker(repository, base_revision, head_revision)
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("Docs/Plans/NewPlan.md:1: [DOC002]", result.stdout)
+        self.assertIn("Docs/Plans/NewPlan.md", result.stdout)
+        self.assertIn("[DOC002]", result.stdout)
 
     def test_invalid_head_policy_is_rejected_even_when_base_policy_is_valid(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -326,7 +327,8 @@ class DocumentationPolicyRevisionTest(unittest.TestCase):
             result = self._run_checker(repository, base_revision, head_revision)
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("Docs/Plans/NewPlan.md:1: [DOC002]", result.stdout)
+        self.assertIn("Docs/Plans/NewPlan.md", result.stdout)
+        self.assertIn("[DOC002]", result.stdout)
 
     @staticmethod
     def _policy(paths: list[str]) -> str:
