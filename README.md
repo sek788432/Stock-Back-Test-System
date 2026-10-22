@@ -26,7 +26,7 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 | AI coding agent | [`AGENTS.md`](AGENTS.md) → [`Docs/Governance/AGENTS.md`](Docs/Governance/AGENTS.md) |
 | Human contributor | [`Docs/Governance/CONTRIBUTING.md`](Docs/Governance/CONTRIBUTING.md) → [`Docs/Onboarding.md`](Docs/Onboarding.md) |
 | Reading the design | [`Docs/Specs/`](Docs/Specs/README.md) |
-| Tracking persisted K-line Replay | [`Docs/KLineReplayRoadmap.md`](Docs/KLineReplayRoadmap.md) |
+| Reading the Backtest and Replay contract | [`Docs/Specs/EngineReplayPnL.md`](Docs/Specs/EngineReplayPnL.md) |
 | Building the C++ tree | [`Docs/BUILD.md`](Docs/BUILD.md) (`./RunTest.sh` builds and runs unit tests) |
 | Reviewing a PR | [`Docs/ReviewPlaybook.md`](Docs/ReviewPlaybook.md) |
 | Cutting a release | [`Docs/ReleaseProcess.md`](Docs/ReleaseProcess.md) |
@@ -44,5 +44,6 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 | [`Docs/Decisions/`](Docs/Decisions/) | Living important decisions and the dependency inventory. |
 | [`.agents/skills/`](.agents/skills/README.md) | The canonical project skills for AI agents, including repository-specific C++ rules. |
 | [`.github/`](.github/) | PR/issue templates and the implemented CI workflow. |
+| [`Tools/DocumentationPolicy.json`](Tools/DocumentationPolicy.json) | Exact documentation paths and ownership groups enforced by the project standards checker. |
 
 Module-specific docs live next to their code (e.g. [`DataFetcher/README.md`](DataFetcher/README.md)). The architectural specs live under [`Docs/Specs/`](Docs/Specs/README.md).

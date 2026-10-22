@@ -39,8 +39,9 @@ multi-run concurrency are outside the accepted product scope.
 - `DataFetcher/` developer pipeline for Databento ingestion into DuckDB and tracked CSV extraction.
 - Limited immutable snapshot/segment support and transactional SQLite
   `.bteresult` storage for the single-symbol Backtest path, with persisted
-  order/fill/post-slice portfolio presentation in Replay. Remaining acceptance
-  work is tracked in the [Replay roadmap](../KLineReplayRoadmap.md).
+  order/fill/post-slice portfolio presentation in Replay. The owning
+  [Engine, Replay, P&L, and Results specification](EngineReplayPnL.md) records
+  the supported contract and remaining product scope.
 
 ### Planned
 
@@ -73,10 +74,8 @@ Neither blocker may be softened into a warning for a public release.
    **Save Result** or **Save & Replay** publishes that same Result ID to the
    active library through no-clobber promotion; completing execution alone
    does not publish it. Live-writer ownership, pin-before-visibility and
-   per-slice durability are implemented, covered by process/fault tests, and
-   were exercised through the saved-result application lifecycle; see the
-   [Issue 10 acceptance ledger](../Plans/Issue10RemainingWork.md) for the
-   display-launch limitation and the max-speed timing caveat.
+   per-slice durability and conservative recovery are implemented. Their
+   detailed contract is in [Result Persistence Safety Design](ResultPersistenceSafetyDesign.md).
 6. K-line Replay reads the result and its retained content-addressed Data Segments; it does not rerun a second engine.
 
 ## 4. Authority and constraints

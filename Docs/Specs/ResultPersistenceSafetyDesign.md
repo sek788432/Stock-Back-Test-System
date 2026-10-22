@@ -1,14 +1,6 @@
 # Result Persistence Safety Design
 
-**Status:** R1–R3 are merged in PR #76. The native Save, Save & Replay,
-relaunch, Results lifecycle, and Replay workflows passed on 2026-10-21; local
-process/fault tests cover recovery and preservation paths. The maintainer
-approved the detailed design and R1–R3 implementation on 2026-10-18.
-Historical predicates, hash-bound CSV timeframe provenance, and long-range
-real-data reconciliation are implemented in PR #81, with review follow-ups in
-PR #82. Direct launcher verification and the Hourly max-speed timing caveat
-are tracked in the
-[Issue 10 remaining-work list](../Plans/Issue10RemainingWork.md).
+**Status:** R1–R3 are implemented; see §9 for verification status.
 
 **Owners:** [Engine/Results](EngineReplayPnL.md), [Data](DataLayer.md),
 [Frontend](FrontendQt.md), and the
@@ -21,15 +13,10 @@ opens Results or because execution crashes before Save. Save Result and Save &
 Replay still publish the same completed or diagnostic draft, without rerunning
 Engine. A recovered interrupted run is never presented as Completed.
 
-At checkpoint `b7e27a9`, Results tracked writers only in process memory,
-published Staging before pinning source data, and recorded the Engine timeline
-after execution. The current implementation replaces those paths with a
-per-Result SQLite lease, retention before visibility, an atomic write for each
-completed bar, and recovery limited to the committed prefix. These operational
-fields do not change schema-2 canonical identity. Automated delivery gates and
-native Save/Replay/Results workflows have passed; the direct launcher remains
-unverified and the Hourly max-speed timing caveat is recorded in the acceptance
-ledger.
+The implemented protocol uses a per-Result SQLite lease, retention before
+visibility, an atomic write for each completed bar, and recovery limited to
+the committed prefix. These operational fields do not change schema-2
+canonical identity.
 
 ## 2. Scope and unchanged contracts
 
@@ -320,21 +307,9 @@ deleted or terminated as a test fixture.
 
 ## 9. Implementation and acceptance status
 
-The lease layout, additive Engine/Results seams, typed catalog notices and
-conservative orphan policy above were approved before implementation. The
-local implementation includes real child-process tests for live-writer
-isolation, zero/one/multiple committed bars, alias paths, and recovery after
-process death, plus Results/Engine/Bindings/UI fault and lifecycle tests.
-R1–R3 code and local automated-test coverage are implemented and merged. PR
-#82's submitted head passed local RunTest 333/333 and complete Quality; the
-required remote checks passed on GitHub's merge candidate. On 2026-10-21 the
-actual application flow exercised Save, Save & Replay, relaunch, Results
-refresh/details/rename/Trash/Restore/Open Replay, and long-range Hourly/Daily
-presentation against a saved Result. The registered Replay widget test verifies
-that legacy unleased Staging remains byte-identical and is reported beside a
-usable Result; child
-process and fault tests exercise lease, atomic-commit, and committed-prefix
-recovery. No separate native failure-injection control exists. Direct
-display-launch verification and the Hourly max-speed timing caveat are tracked
-in the [acceptance ledger](../Plans/Issue10RemainingWork.md); they do not leave the
-R1–R3 persistence contracts unverified.
+The implementation includes child-process tests for live-writer isolation,
+zero/one/multiple committed bars, alias paths, and recovery after process
+death, plus Results/Engine/Bindings/UI fault and lifecycle tests. Native
+application use covers Save, Save & Replay, relaunch, Results lifecycle, and
+long-range Hourly/Daily presentation. Automated fault tests cover recovery and
+preservation paths.

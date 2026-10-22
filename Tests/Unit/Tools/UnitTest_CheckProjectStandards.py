@@ -1,6 +1,8 @@
+import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,8 +12,10 @@ sys.path.insert(0, os.fspath(REPOSITORY_ROOT / "Tools"))
 
 from CheckProjectStandards import (  # noqa: E402
     AddedLine,
+    DOCUMENTATION_SUFFIXES,
     audit_added_line,
     audit_clang_format_source,
+    audit_documentation_changes,
     audit_git_tree,
     audit_module_include,
     audit_new_modules,
@@ -20,6 +24,8 @@ from CheckProjectStandards import (  # noqa: E402
     audit_test_registration,
     audit_suppression,
     find_clang_format,
+    is_documentation_path,
+    parse_documentation_policy,
     parse_unified_diff,
 )
 
@@ -38,6 +44,429 @@ class ParseUnifiedDiffTest(unittest.TestCase):
             parse_unified_diff(diff),
             [AddedLine(Path("Foo.cpp"), 3, "first"), AddedLine(Path("Foo.cpp"), 4, "second")],
         )
+
+
+class ParseDocumentationPolicyTest(unittest.TestCase):
+    def test_returns_exact_paths_from_owned_document_groups(self) -> None:
+        policy = json.dumps(
+            {
+                "version": 1,
+                "groups": [
+                    {
+                        "owner": "Product specifications",
+                        "purpose": "Define accepted product behavior.",
+                        "index": "Docs/Specs/README.md",
+                        "paths": [
+                            "Docs/Specs/README.md",
+                            "Docs/Specs/Overview.md",
+                            "Docs/Specs/DataLayer.md",
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(
+            parse_documentation_policy(policy),
+            {
+                Path("Docs/Specs/README.md"),
+                Path("Docs/Specs/Overview.md"),
+                Path("Docs/Specs/DataLayer.md"),
+            },
+        )
+
+    def test_rejects_missing_metadata_duplicate_paths_and_globs(self) -> None:
+        invalid_policies = (
+            {
+                "version": 1,
+                "groups": [{"purpose": "Missing owner.", "paths": ["Docs/Specs/Overview.md"]}],
+            },
+            {
+                "version": 1,
+                "groups": [
+                    {
+                        "owner": "Product specifications",
+                        "purpose": "Duplicate path.",
+                        "index": "Docs/Specs/README.md",
+                        "paths": ["Docs/Specs/Overview.md", "Docs/Specs/Overview.md"],
+                    }
+                ],
+            },
+            {
+                "version": 1,
+                "groups": [
+                    {
+                        "owner": "Product specifications",
+                        "purpose": "A glob is not an exact path.",
+                        "index": "Docs/Specs/README.md",
+                        "paths": ["Docs/Specs/*.md"],
+                    }
+                ],
+            },
+            {
+                "version": 1,
+                "groups": [
+                    {
+                        "owner": "Product specifications",
+                        "purpose": "A repository root is not a document.",
+                        "index": ".",
+                        "paths": ["."],
+                    }
+                ],
+            },
+            {
+                "version": 1,
+                "groups": [
+                    {
+                        "owner": "Product specifications",
+                        "purpose": "The index must be approved.",
+                        "index": "Docs/Specs/README.md",
+                        "paths": ["Docs/Specs/Overview.md"],
+                    }
+                ],
+            },
+        )
+
+        for policy in invalid_policies:
+            with self.subTest(policy=policy):
+                with self.assertRaises(ValueError):
+                    parse_documentation_policy(json.dumps(policy))
+
+
+class AuditDocumentationChangesTest(unittest.TestCase):
+    def test_allows_registered_edits_and_unregistered_deletions(self) -> None:
+        violations = audit_documentation_changes(
+            [
+                ("M", Path("Docs/Specs/Overview.md")),
+                ("D", Path("Docs/Plans/CompletedPlan.md")),
+            ],
+            {Path("Docs/Specs/Overview.md")},
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_rejects_unregistered_additions_edits_and_move_destinations(self) -> None:
+        violations = audit_documentation_changes(
+            [
+                ("A", Path("Docs/Plans/NewPlan.md")),
+                ("M", Path("Docs/Research/Notes.md")),
+                ("D", Path("Docs/Plans/OldPlan.md")),
+                ("A", Path("Docs/Specs/NewCategory/Proposal.md")),
+            ],
+            {Path("Docs/Specs/Overview.md")},
+        )
+
+        self.assertEqual(
+            [(violation.rule, violation.path) for violation in violations],
+            [
+                ("DOC002", Path("Docs/Plans/NewPlan.md")),
+                ("DOC002", Path("Docs/Research/Notes.md")),
+                ("DOC002", Path("Docs/Specs/NewCategory/Proposal.md")),
+            ],
+        )
+
+    def test_allows_adding_a_path_registered_on_the_base_branch(self) -> None:
+        violations = audit_documentation_changes(
+            [("A", Path("Docs/Specs/NewCategory/ApprovedSpec.md"))],
+            {Path("Docs/Specs/NewCategory/ApprovedSpec.md")},
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_recognizes_documentation_forms_and_preserves_code_and_data_paths(self) -> None:
+        changes = [
+            ("A", Path("NewCategory/Overview.md")),
+            ("A", Path("Docs/Specs/StockScreening/ScreenerV2.html")),
+            ("A", Path(".github/ISSUE_TEMPLATE/new.yml")),
+            ("A", Path("ImplementationPlan.txt")),
+            ("A", Path("ImplementationPlan")),
+            ("M", Path("StockData/Symbols.txt")),
+            ("M", Path("DataFetcher/requirements.txt")),
+            ("M", Path("Tools/CoverageRequirements.txt")),
+            ("M", Path("Src/Backend/Core/CMakeLists.txt")),
+            ("M", Path(".gitignore")),
+        ]
+
+        violations = audit_documentation_changes(changes, set())
+
+        self.assertEqual(
+            [violation.path for violation in violations],
+            [
+                Path("NewCategory/Overview.md"),
+                Path("Docs/Specs/StockScreening/ScreenerV2.html"),
+                Path(".github/ISSUE_TEMPLATE/new.yml"),
+                Path("ImplementationPlan.txt"),
+                Path("ImplementationPlan"),
+            ],
+        )
+
+    def test_recognizes_extensionless_docs_but_not_common_build_files(self) -> None:
+        self.assertTrue(is_documentation_path(Path("Docs/Specs/Overview")))
+        self.assertTrue(is_documentation_path(Path("ImplementationPlan")))
+        self.assertTrue(is_documentation_path(Path(".implementation-notes")))
+        self.assertFalse(is_documentation_path(Path("Makefile")))
+        self.assertFalse(is_documentation_path(Path(".gitignore")))
+        self.assertFalse(is_documentation_path(Path(".clang-format")))
+        for config_path in (
+            ".java-version",
+            ".node-version",
+            ".nvmrc",
+            ".python-version",
+            ".ruby-version",
+            ".tool-versions",
+            ".agents/.nvmrc",
+        ):
+            with self.subTest(path=config_path):
+                self.assertFalse(is_documentation_path(Path(config_path)))
+
+    def test_recognizes_documentation_suffixes_and_excludes_skill_metadata(self) -> None:
+        for suffix in DOCUMENTATION_SUFFIXES:
+            with self.subTest(suffix=suffix):
+                self.assertTrue(is_documentation_path(Path(f"Docs/Specs/Proposal{suffix}")))
+
+        self.assertTrue(is_documentation_path(Path(".agents/skills/review/SKILL.md")))
+        self.assertTrue(is_documentation_path(Path(".agents/skills/LICENSE.mattpocock-skills")))
+        self.assertFalse(
+            is_documentation_path(Path(".agents/skills/review/agents/openai.yaml"))
+        )
+
+    def test_skill_metadata_changes_do_not_require_documentation_registration(self) -> None:
+        changes = [
+            ("M", Path(".agents/skills/review/agents/openai.yaml")),
+            ("M", Path(".agents/skills/review/SKILL.md")),
+        ]
+
+        self.assertEqual(
+            [violation.path for violation in audit_documentation_changes(changes, set())],
+            [Path(".agents/skills/review/SKILL.md")],
+        )
+
+    def test_toolchain_version_files_do_not_require_documentation_registration(self) -> None:
+        changes = [
+            ("A", Path(".python-version")),
+            ("M", Path(".ruby-version")),
+            ("A", Path(".agents/.tool-versions")),
+        ]
+
+        self.assertEqual(audit_documentation_changes(changes, set()), [])
+
+
+class DocumentationPolicyRevisionTest(unittest.TestCase):
+    def test_allows_adding_a_document_registered_on_the_base_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository = Path(temporary_directory)
+            subprocess.run(["git", "init", "-q", os.fspath(repository)], check=True)
+            subprocess.run(["git", "-C", os.fspath(repository), "config", "user.name", "Unit Test"], check=True)
+            subprocess.run(
+                ["git", "-C", os.fspath(repository), "config", "user.email", "unit-test@example.invalid"],
+                check=True,
+            )
+
+            overview = repository / "Docs/Specs/Overview.md"
+            overview.parent.mkdir(parents=True)
+            overview.write_text("# Overview\n", encoding="utf-8")
+            policy_path = repository / "Tools/DocumentationPolicy.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_path.write_text(
+                self._policy(
+                    ["Docs/Specs/Overview.md", "Docs/Specs/NewCategory/ApprovedSpec.md"]
+                ),
+                encoding="utf-8",
+            )
+            base_revision = self._commit(repository, "register a future specification")
+
+            approved_spec = repository / "Docs/Specs/NewCategory/ApprovedSpec.md"
+            approved_spec.parent.mkdir(parents=True)
+            approved_spec.write_text("# Approved specification\n", encoding="utf-8")
+            head_revision = self._commit(repository, "add registered specification")
+
+            result = self._run_checker(repository, base_revision, head_revision)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_policy_change_cannot_authorize_a_document_in_the_same_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository = Path(temporary_directory)
+            subprocess.run(["git", "init", "-q", os.fspath(repository)], check=True)
+            subprocess.run(["git", "-C", os.fspath(repository), "config", "user.name", "Unit Test"], check=True)
+            subprocess.run(
+                ["git", "-C", os.fspath(repository), "config", "user.email", "unit-test@example.invalid"],
+                check=True,
+            )
+
+            overview = repository / "Docs/Specs/Overview.md"
+            overview.parent.mkdir(parents=True)
+            overview.write_text("# Overview\n", encoding="utf-8")
+            policy_path = repository / "Tools/DocumentationPolicy.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_path.write_text(
+                self._policy(["Docs/Specs/Overview.md"]), encoding="utf-8"
+            )
+            base_revision = self._commit(repository, "add initial policy")
+
+            policy_path.write_text(
+                self._policy(["Docs/Specs/Overview.md", "Docs/Plans/NewPlan.md"]),
+                encoding="utf-8",
+            )
+            new_plan = repository / "Docs/Plans/NewPlan.md"
+            new_plan.parent.mkdir(parents=True)
+            new_plan.write_text("# New plan\n", encoding="utf-8")
+            head_revision = self._commit(repository, "register and add a document")
+
+            result = self._run_checker(repository, base_revision, head_revision)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Docs/Plans/NewPlan.md", result.stdout)
+        self.assertIn("[DOC002]", result.stdout)
+
+    def test_invalid_head_policy_is_rejected_even_when_base_policy_is_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository = Path(temporary_directory)
+            subprocess.run(["git", "init", "-q", os.fspath(repository)], check=True)
+            subprocess.run(["git", "-C", os.fspath(repository), "config", "user.name", "Unit Test"], check=True)
+            subprocess.run(
+                ["git", "-C", os.fspath(repository), "config", "user.email", "unit-test@example.invalid"],
+                check=True,
+            )
+
+            overview = repository / "Docs/Specs/Overview.md"
+            overview.parent.mkdir(parents=True)
+            overview.write_text("# Overview\n", encoding="utf-8")
+            policy_path = repository / "Tools/DocumentationPolicy.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_path.write_text(
+                self._policy(["Docs/Specs/Overview.md"]), encoding="utf-8"
+            )
+            base_revision = self._commit(repository, "add valid policy")
+
+            policy_path.write_text("{\"version\": 2}\n", encoding="utf-8")
+            head_revision = self._commit(repository, "break policy")
+            result = self._run_checker(repository, base_revision, head_revision)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("documentation policy must be a version 1 object", result.stderr)
+
+    def test_removing_existing_policy_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository = Path(temporary_directory)
+            subprocess.run(["git", "init", "-q", os.fspath(repository)], check=True)
+            subprocess.run(["git", "-C", os.fspath(repository), "config", "user.name", "Unit Test"], check=True)
+            subprocess.run(
+                ["git", "-C", os.fspath(repository), "config", "user.email", "unit-test@example.invalid"],
+                check=True,
+            )
+
+            overview = repository / "Docs/Specs/Overview.md"
+            overview.parent.mkdir(parents=True)
+            overview.write_text("# Overview\n", encoding="utf-8")
+            policy_path = repository / "Tools/DocumentationPolicy.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_path.write_text(
+                self._policy(["Docs/Specs/Overview.md"]), encoding="utf-8"
+            )
+            base_revision = self._commit(repository, "add valid policy")
+
+            policy_path.unlink()
+            head_revision = self._commit(repository, "remove policy")
+            result = self._run_checker(repository, base_revision, head_revision)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("documentation policy cannot be removed", result.stderr)
+
+    def test_initial_policy_does_not_authorize_new_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository = Path(temporary_directory)
+            subprocess.run(["git", "init", "-q", os.fspath(repository)], check=True)
+            subprocess.run(["git", "-C", os.fspath(repository), "config", "user.name", "Unit Test"], check=True)
+            subprocess.run(
+                ["git", "-C", os.fspath(repository), "config", "user.email", "unit-test@example.invalid"],
+                check=True,
+            )
+
+            overview = repository / "Docs/Specs/Overview.md"
+            overview.parent.mkdir(parents=True)
+            overview.write_text("# Overview\n", encoding="utf-8")
+            base_revision = self._commit(repository, "add existing documentation")
+
+            policy_path = repository / "Tools/DocumentationPolicy.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_path.write_text(
+                self._policy(["Docs/Specs/Overview.md", "Docs/Plans/NewPlan.md"]),
+                encoding="utf-8",
+            )
+            new_plan = repository / "Docs/Plans/NewPlan.md"
+            new_plan.parent.mkdir(parents=True)
+            new_plan.write_text("# New plan\n", encoding="utf-8")
+            head_revision = self._commit(repository, "add initial policy and new document")
+
+            result = self._run_checker(repository, base_revision, head_revision)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Docs/Plans/NewPlan.md", result.stdout)
+        self.assertIn("[DOC002]", result.stdout)
+
+    @staticmethod
+    def _policy(paths: list[str]) -> str:
+        return json.dumps(
+            {
+                "version": 1,
+                "groups": [
+                    {
+                        "owner": "Product specifications",
+                        "purpose": "Define accepted product behavior.",
+                        "index": "Docs/Specs/Overview.md",
+                        "paths": paths,
+                    }
+                ],
+            }
+        )
+
+    @staticmethod
+    def _run_checker(
+        repository: Path, base_revision: str, head_revision: str
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                os.fspath(REPOSITORY_ROOT / "Tools/CheckProjectStandards.py"),
+                "--base",
+                base_revision,
+                "--head",
+                head_revision,
+            ],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    @staticmethod
+    def _commit(repository: Path, message: str) -> str:
+        subprocess.run(["git", "-C", os.fspath(repository), "add", "."], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                os.fspath(repository),
+                "-c",
+                "user.name=Unit Test",
+                "-c",
+                "user.email=unit-test@example.invalid",
+                "commit",
+                "-m",
+                message,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = subprocess.run(
+            ["git", "-C", os.fspath(repository), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
 
 
 class AuditAddedLineTest(unittest.TestCase):

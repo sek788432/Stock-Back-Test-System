@@ -155,7 +155,7 @@ protected:
 
 TEST_F(ResultStoreFixture, schemaTwoHashMatchesIndependentLiteralOracle) {
   // Python struct.pack/hashlib independently encode the normative frames;
-  // the complete worked input is recorded in Issue10CanonicalHashEvidence.md.
+  // the framing contract is specified in Docs/Specs/EngineReplayPnL.md §8.1.
   ASSERT_EQ(selection_.snapshotId,
             "bf5e2533584d2e65312e8d15c03c11c10a4118bfca341ef806a04b38e9596ec6");
   auto canonical = records();

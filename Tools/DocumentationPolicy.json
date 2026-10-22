@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "owner": "Repository maintainers",
+      "purpose": "Permanent project entry points and verified developer workflows. Temporary issue plans, research, reviews, and unapproved proposals are not registered.",
+      "index": "README.md",
+      "paths": [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "DataFetcher/README.md",
+        "Docs/BUILD.md",
+        "Docs/Onboarding.md",
+        "Docs/ReleaseProcess.md",
+        "Docs/ReviewPlaybook.md",
+        "LICENSE",
+        "README.md"
+      ]
+    },
+    {
+      "owner": "Docs/Governance/AGENTS.md",
+      "purpose": "Repository governance, contributor rules, completion criteria, and active decisions.",
+      "index": "Docs/Governance/AGENTS.md",
+      "paths": [
+        "Docs/Decisions/Dependencies.md",
+        "Docs/Decisions/ImportantDecisions.md",
+        "Docs/Decisions/README.md",
+        "Docs/DefinitionOfDone.md",
+        "Docs/Governance/AGENTS.md",
+        "Docs/Governance/CHANGELOG.md",
+        "Docs/Governance/CONTRIBUTING.md"
+      ]
+    },
+    {
+      "owner": "Docs/Specs/README.md",
+      "purpose": "Canonical product, architecture, implementation, and CI contracts. The protected StockScreening proposal subtree is intentionally excluded.",
+      "index": "Docs/Specs/README.md",
+      "paths": [
+        "Docs/Specs/Architecture.md",
+        "Docs/Specs/BackendCore.md",
+        "Docs/Specs/BacktestReplayProduct.md",
+        "Docs/Specs/BuildDistribution.md",
+        "Docs/Specs/CiDevFlow.md",
+        "Docs/Specs/DataLayer.md",
+        "Docs/Specs/EngineReplayPnL.md",
+        "Docs/Specs/FrontendQt.md",
+        "Docs/Specs/Indicators.md",
+        "Docs/Specs/Overview.md",
+        "Docs/Specs/README.md",
+        "Docs/Specs/ResultPersistenceSafetyDesign.md",
+        "Docs/Specs/StrategyAuthoring.md"
+      ]
+    },
+    {
+      "owner": ".agents/skills/README.md",
+      "purpose": "Maintained project skills and their supporting references.",
+      "index": ".agents/skills/README.md",
+      "paths": [
+        ".agents/skills/LICENSE.mattpocock-skills",
+        ".agents/skills/code-review/SKILL.md",
+        ".agents/skills/codebase-design/DEEPENING.md",
+        ".agents/skills/codebase-design/DESIGN-IT-TWICE.md",
+        ".agents/skills/codebase-design/SKILL.md",
+        ".agents/skills/cpp-modern-style/SKILL.md",
+        ".agents/skills/cpp-oop-design/SKILL.md",
+        ".agents/skills/cpp-performance/SKILL.md",
+        ".agents/skills/cpp-static-analysis/SKILL.md",
+        ".agents/skills/cpp-thread-safety/SKILL.md",
+        ".agents/skills/diagnosing-bugs/SKILL.md",
+        ".agents/skills/domain-modeling/CONTEXT-FORMAT.md",
+        ".agents/skills/domain-modeling/IMPORTANT-DECISION-FORMAT.md",
+        ".agents/skills/domain-modeling/SKILL.md",
+        ".agents/skills/grill-me/SKILL.md",
+        ".agents/skills/grill-with-docs/SKILL.md",
+        ".agents/skills/grilling/SKILL.md",
+        ".agents/skills/implement/SKILL.md",
+        ".agents/skills/improve-codebase-architecture/HTML-REPORT.md",
+        ".agents/skills/improve-codebase-architecture/SKILL.md",
+        ".agents/skills/prototype/LOGIC.md",
+        ".agents/skills/prototype/SKILL.md",
+        ".agents/skills/prototype/UI.md",
+        ".agents/skills/research/SKILL.md",
+        ".agents/skills/resolving-merge-conflicts/SKILL.md",
+        ".agents/skills/review/SKILL.md",
+        ".agents/skills/tdd/SKILL.md",
+        ".agents/skills/tdd/mocking.md",
+        ".agents/skills/tdd/tests.md",
+        ".agents/skills/teach/GLOSSARY-FORMAT.md",
+        ".agents/skills/teach/LEARNING-RECORD-FORMAT.md",
+        ".agents/skills/teach/MISSION-FORMAT.md",
+        ".agents/skills/teach/RESOURCES-FORMAT.md",
+        ".agents/skills/teach/SKILL.md",
+        ".agents/skills/to-spec/SKILL.md",
+        ".agents/skills/writing-great-skills/GLOSSARY.md",
+        ".agents/skills/writing-great-skills/SKILL.md",
+        ".agents/skills/README.md"
+      ]
+    },
+    {
+      "owner": "Repository maintainers",
+      "purpose": "GitHub issue and pull request forms and agent instructions.",
+      "index": "README.md",
+      "paths": [
+        ".github/ISSUE_TEMPLATE/bug.yml",
+        ".github/ISSUE_TEMPLATE/config.yml",
+        ".github/ISSUE_TEMPLATE/feature.yml",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/copilot-instructions.md"
+      ]
+    }
+  ]
+}

@@ -59,6 +59,7 @@ practical; do not rely on skill activation alone.
 | H16 | Static-analysis and sanitizer suppressions must be narrow, name the exact check, include a reason, and have maintainer approval. Never blanket-disable a check or suppress a sanitizer finding merely to make a gate pass.                                                                                       |
 | H17 | Project-owned directory names and file stems use PascalCase. Exact external-tool conventions, `UnitTest_<Thing>` files, entrypoints, and domain-data identifiers are the documented exceptions; the rationale is recorded in the [living decision](../Decisions/ImportantDecisions.md#agent-authority-and-repository-layout). Every unit-test suite lives under `Tests/Unit/<Module>/`. |
 | H18 | Before pushing or otherwise requesting CI for a change that touches C++ code, build wiring, C++ tests, or C++ quality tooling, run `./RunTest.sh` and then `./RunQuality.sh --base <base-revision> --head HEAD`. Both must pass on the exact committed `HEAD` being submitted. Do not use a CI run as the first quality check. |
+| H19 | Add, edit, or move tracked documentation only at exact paths registered in [`Tools/DocumentationPolicy.json`](../../Tools/DocumentationPolicy.json) on the PR's base branch. Keep temporary plans in issue/PR discussion or ignored local workspace; fold durable contracts into the owning spec. Register a new permanent document or category, its owner, and its index in a separate maintainer-reviewed change before adding the document. Deletions remain allowed. |
 
 ---
 
@@ -288,6 +289,11 @@ Use repository-visible records so decisions and failures remain discoverable:
 
 An important decision is not durable until the owning spec and, when the §5
 threshold applies, the living decision record are updated through review.
+
+Temporary issue plans, design notes, and progress records belong in the issue
+or PR discussion, or in ignored local workspace. Do not retain them as tracked
+documents after the work is complete; fold durable contracts into the owning
+specification.
 
 ---
 
