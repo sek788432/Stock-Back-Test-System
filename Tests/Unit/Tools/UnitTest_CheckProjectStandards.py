@@ -12,6 +12,7 @@ sys.path.insert(0, os.fspath(REPOSITORY_ROOT / "Tools"))
 
 from CheckProjectStandards import (  # noqa: E402
     AddedLine,
+    DOCUMENTATION_SUFFIXES,
     audit_added_line,
     audit_clang_format_source,
     audit_documentation_changes,
@@ -218,6 +219,28 @@ class AuditDocumentationChangesTest(unittest.TestCase):
             with self.subTest(path=config_path):
                 self.assertFalse(is_documentation_path(Path(config_path)))
 
+    def test_recognizes_documentation_suffixes_and_excludes_skill_metadata(self) -> None:
+        for suffix in DOCUMENTATION_SUFFIXES:
+            with self.subTest(suffix=suffix):
+                self.assertTrue(is_documentation_path(Path(f"Docs/Specs/Proposal{suffix}")))
+
+        self.assertTrue(is_documentation_path(Path(".agents/skills/review/SKILL.md")))
+        self.assertTrue(is_documentation_path(Path(".agents/skills/LICENSE.mattpocock-skills")))
+        self.assertFalse(
+            is_documentation_path(Path(".agents/skills/review/agents/openai.yaml"))
+        )
+
+    def test_skill_metadata_changes_do_not_require_documentation_registration(self) -> None:
+        changes = [
+            ("M", Path(".agents/skills/review/agents/openai.yaml")),
+            ("M", Path(".agents/skills/review/SKILL.md")),
+        ]
+
+        self.assertEqual(
+            [violation.path for violation in audit_documentation_changes(changes, set())],
+            [Path(".agents/skills/review/SKILL.md")],
+        )
+
     def test_toolchain_version_files_do_not_require_documentation_registration(self) -> None:
         changes = [
             ("A", Path(".python-version")),
@@ -229,6 +252,38 @@ class AuditDocumentationChangesTest(unittest.TestCase):
 
 
 class DocumentationPolicyRevisionTest(unittest.TestCase):
+    def test_allows_adding_a_document_registered_on_the_base_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository = Path(temporary_directory)
+            subprocess.run(["git", "init", "-q", os.fspath(repository)], check=True)
+            subprocess.run(["git", "-C", os.fspath(repository), "config", "user.name", "Unit Test"], check=True)
+            subprocess.run(
+                ["git", "-C", os.fspath(repository), "config", "user.email", "unit-test@example.invalid"],
+                check=True,
+            )
+
+            overview = repository / "Docs/Specs/Overview.md"
+            overview.parent.mkdir(parents=True)
+            overview.write_text("# Overview\n", encoding="utf-8")
+            policy_path = repository / "Tools/DocumentationPolicy.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_path.write_text(
+                self._policy(
+                    ["Docs/Specs/Overview.md", "Docs/Specs/NewCategory/ApprovedSpec.md"]
+                ),
+                encoding="utf-8",
+            )
+            base_revision = self._commit(repository, "register a future specification")
+
+            approved_spec = repository / "Docs/Specs/NewCategory/ApprovedSpec.md"
+            approved_spec.parent.mkdir(parents=True)
+            approved_spec.write_text("# Approved specification\n", encoding="utf-8")
+            head_revision = self._commit(repository, "add registered specification")
+
+            result = self._run_checker(repository, base_revision, head_revision)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_policy_change_cannot_authorize_a_document_in_the_same_revision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             repository = Path(temporary_directory)

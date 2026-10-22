@@ -56,7 +56,7 @@
       "purpose": "Maintained project skills and their supporting references.",
       "index": ".agents/skills/README.md",
       "paths": [
-        ".agents/skills/README.md",
+        ".agents/skills/LICENSE.mattpocock-skills",
         ".agents/skills/code-review/SKILL.md",
         ".agents/skills/codebase-design/DEEPENING.md",
         ".agents/skills/codebase-design/DESIGN-IT-TWICE.md",
@@ -92,7 +92,8 @@
         ".agents/skills/teach/SKILL.md",
         ".agents/skills/to-spec/SKILL.md",
         ".agents/skills/writing-great-skills/GLOSSARY.md",
-        ".agents/skills/writing-great-skills/SKILL.md"
+        ".agents/skills/writing-great-skills/SKILL.md",
+        ".agents/skills/README.md"
       ]
     },
     {

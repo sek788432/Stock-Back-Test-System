@@ -795,9 +795,13 @@ def is_documentation_path(path: Path) -> bool:
         return False
     if path in NON_DOCUMENTATION_TEXT_PATHS or path.name in NON_DOCUMENTATION_NAMES:
         return False
-    if path.parts[0] in {".agents", "Docs"}:
+    if path.parts[0] == "Docs":
         return True
-    if path == Path("LICENSE") or path.is_relative_to(Path(".github/ISSUE_TEMPLATE")):
+    if (
+        path == Path("LICENSE")
+        or path.name.startswith("LICENSE.")
+        or path.is_relative_to(Path(".github/ISSUE_TEMPLATE"))
+    ):
         return True
     return path.suffix.lower() in DOCUMENTATION_SUFFIXES or not path.suffix
 
