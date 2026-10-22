@@ -318,6 +318,15 @@ uses only visible volume and includes zero. Flat prices, high-volume extremes,
 sparse prefixes, and zero-volume series retain finite, readable scales. Trade
 markers may reserve visual padding beyond the candle range, but they do not
 change the price data range.
+`ResultReplay` owns the validated immutable timeline and replay cursor.
+`ReplayTab` coordinates playback and viewport controls; the chart widget owns
+`ReplayBarViewport`, the visual transform, slot mapping, autoscaling, and
+drawing. One slot mapping drives candles, volume, markers, and UTC axes so
+their coordinates cannot drift. Empty timelines make viewport operations
+no-ops; wheel zoom is bounded, and pan, zoom, and resize remain clamped to
+reached bars. When a candle has been reached, the viewport keeps at least one
+candle visible. Result and data failures retain their structured errors rather
+than being presented as fabricated or apparently successful replay data.
 Price and volume use automatic plot layout with shared left insets so rendered
 grids and series agree. Geometry updates are queued to avoid reentering Qt's
 axis-range notifications. Insets retain their largest intrinsic label width,
