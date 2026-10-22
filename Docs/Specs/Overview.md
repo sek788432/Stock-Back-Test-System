@@ -55,12 +55,20 @@ multi-run concurrency are outside the accepted product scope.
 - Complete fixed-point accounting and the remaining canonical result families.
 - Complete K-line result replay, packaging, and release-profile retention.
 
-### Blocked
+### Public data publication status
 
-- **Public data distribution:** no recorded right currently permits redistribution of the Databento-derived tracked extracts.
-- **Split correctness:** no verified, redistribution-cleared split manifest currently accompanies the bars.
+- **Raw CSV updates:** narrowly scoped data-only pull requests may update
+  extracted CSVs, their SourceManifest, and Symbols.txt when needed, with
+  related documentation-only policy changes. They require repository-owner
+  redistribution-rights confirmation for each dataset and the exact manifest
+  hash. They may not include application code, product packages or release
+  artifacts, or split data. See [Data Layer](DataLayer.md) §7.
+- **Public product data release:** blocked until evidence records rights for
+  each included dataset, a verified redistribution-cleared split manifest with
+  its source and terms, and the exact snapshot hashes.
 
-Neither blocker may be softened into a warning for a public release.
+The raw CSV publication evidence does not satisfy or remove the separate
+product-release requirements.
 
 ## 3. Canonical flow
 

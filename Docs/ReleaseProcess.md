@@ -16,7 +16,9 @@
 - The public-behavior test inventory has positive, negative, and meaningful boundary coverage for changed behavior.
 - Every bug fix or behavior change has a regression test.
 - Dependency licenses and notices are complete.
-- Managed-data redistribution rights and split provenance are approved.
+- Product-release evidence records redistribution rights for every included
+  dataset, the source and terms for a verified, redistribution-cleared split
+  manifest, and the exact snapshot hashes.
 - The data snapshot has a validated, content-addressed manifest.
 - The bundled Python runtime and packages pass compatibility tests.
 - Install, launch, sample backtest, saved result, replay, and uninstall pass on each supported platform.

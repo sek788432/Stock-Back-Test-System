@@ -24,7 +24,7 @@ preservation of legacy artifacts.
 | --- | --- |
 | **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar. Task 17 and Task 18 UTC data-day conditions use bounded history from the same immutable snapshot without adding warm-up bars to Engine or Replay. |
 | **Planned** | Synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, the complete Results-management UI and migration workflow, and the remaining canonical record families. |
-| **Blocked** | Public release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
+| **Blocked** | Public product release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
 
 The current starter and selectable slices are intentionally single-symbol; the
 selectable path supports only a flat position and whole-quantity long entry or
