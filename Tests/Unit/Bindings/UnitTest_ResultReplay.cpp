@@ -297,6 +297,11 @@ TEST_F(ResultReplayTest,
         .price =
             static_cast<double>(*record.priceNanodollars) / 1'000'000'000.0,
         .amount = static_cast<double>(*record.amountMicrodollars) / 1'000'000.0,
+        .barIndex = static_cast<std::size_t>(std::ranges::distance(
+            expectedSelection.value().bars.begin(),
+            std::ranges::lower_bound(expectedSelection.value().bars,
+                                     record.timestamp, {},
+                                     &bte::data::SnapshotBar::timestamp))),
     });
   }
   ASSERT_FALSE(expectedFills.empty())
@@ -1112,7 +1117,8 @@ TEST_F(ResultReplayTest,
        .isBuy = false,
        .quantityShares = 10,
        .price = 104,
-       .amount = 1040}};
+       .amount = 1040,
+       .barIndex = 2}};
   for (const auto timeframe :
        {bte::bindings::ResultReplayTimeframe::hourly,
         bte::bindings::ResultReplayTimeframe::dailyUtc}) {
@@ -1126,7 +1132,130 @@ TEST_F(ResultReplayTest,
     EXPECT_EQ(replay.value()->current()->fills, expected);
     EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.cash, 2030);
     EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 30);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl, 30);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.unrealizedPnl, 0);
+    EXPECT_EQ(replay.value()->current()->barIndex, 2U);
+    EXPECT_EQ(replay.value()->current()->fills.front().barIndex, 2U);
   }
+}
+
+TEST_F(ResultReplayTest, replayRejectsSellWithoutAnOpenLongPosition) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  auto persisted = persist({{.sequence = 0,
+                             .timestamp = firstTimestamp,
+                             .symbol = "SYN",
+                             .family = bte::results::RecordFamily::portfolio,
+                             .cashMicrodollars = 2'000'000'000,
+                             .marketValueMicrodollars = 0,
+                             .equityMicrodollars = 2'000'000'000,
+                             .pnlMicrodollars = 0,
+                             .positionShares = 0},
+                            {.sequence = 1,
+                             .timestamp = firstTimestamp,
+                             .symbol = "SYN",
+                             .family = bte::results::RecordFamily::fill,
+                             .side = bte::results::OrderSide::sell,
+                             .quantityShares = 1,
+                             .priceNanodollars = 100'000'000'000,
+                             .amountMicrodollars = 100'000'000}},
+                           bte::results::RunStatus::completed);
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_FALSE(replay.ok());
+  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest, partialLongCloseSplitsPnlByAverageCost) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  const auto thirdTimestamp = timestamp("2024-01-02 01:00:00+00:00");
+  auto store =
+      bte::results::ResultStore::open(root_ / "CustomStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin({
+      .universe = {"SYN"},
+      .range = {.start = firstTimestamp,
+                .end = timestamp("2024-01-02 02:00:00+00:00")},
+      .initialCapitalMicrodollars = 2'000'000'000,
+      .strategyId = "average-cost-partial-close",
+      .strategyHash = std::string(64, 'c'),
+      .dataSelection = selection_,
+  });
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  const std::vector<bte::results::CanonicalRecord> records{
+      {.sequence = 0,
+       .timestamp = firstTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::fill,
+       .side = bte::results::OrderSide::buy,
+       .quantityShares = 1,
+       .priceNanodollars = 100'000'000'000,
+       .amountMicrodollars = 100'000'000},
+      {.sequence = 1,
+       .timestamp = firstTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::portfolio,
+       .cashMicrodollars = 1'900'000'000,
+       .marketValueMicrodollars = 101'000'000,
+       .equityMicrodollars = 2'001'000'000,
+       .pnlMicrodollars = 1'000'000,
+       .positionShares = 1},
+      {.sequence = 2,
+       .timestamp = secondTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::fill,
+       .side = bte::results::OrderSide::buy,
+       .quantityShares = 2,
+       .priceNanodollars = 110'000'000'000,
+       .amountMicrodollars = 220'000'000},
+      {.sequence = 3,
+       .timestamp = secondTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::portfolio,
+       .cashMicrodollars = 1'680'000'000,
+       .marketValueMicrodollars = 309'000'000,
+       .equityMicrodollars = 1'989'000'000,
+       .pnlMicrodollars = -11'000'000,
+       .positionShares = 3},
+      {.sequence = 4,
+       .timestamp = thirdTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::fill,
+       .side = bte::results::OrderSide::sell,
+       .quantityShares = 1,
+       .priceNanodollars = 120'000'000'000,
+       .amountMicrodollars = 120'000'000},
+      {.sequence = 5,
+       .timestamp = thirdTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::portfolio,
+       .cashMicrodollars = 1'800'000'000,
+       .marketValueMicrodollars = 208'000'000,
+       .equityMicrodollars = 2'008'000'000,
+       .pnlMicrodollars = 8'000'000,
+       .positionShares = 2},
+  };
+  ASSERT_TRUE(writer.value()->append(records).ok());
+  auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 2'008'000'000, .pnlMicrodollars = 8'000'000});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_TRUE(replay.value()->seek(2));
+  ASSERT_NE(replay.value()->current(), nullptr);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 8);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl, 13.333334);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.unrealizedPnl,
+                   -5.333334);
+  ASSERT_EQ(replay.value()->current()->fills.size(), 1U);
+  EXPECT_EQ(replay.value()->current()->fills.front().barIndex, 2U);
 }
 
 TEST_F(ResultReplayTest,
@@ -1239,17 +1368,20 @@ TEST_F(ResultReplayTest,
          .isBuy = true,
          .quantityShares = 1,
          .price = 100,
-         .amount = 100},
+         .amount = 100,
+         .barIndex = 0},
         {.timestamp = range.start + std::chrono::hours{2},
          .isBuy = true,
          .quantityShares = 2,
          .price = 110,
-         .amount = 220},
+         .amount = 220,
+         .barIndex = sparse ? 1U : 2U},
         {.timestamp = range.start + std::chrono::hours{2},
          .isBuy = false,
          .quantityShares = 2,
          .price = 110,
-         .amount = 220}};
+         .amount = 220,
+         .barIndex = sparse ? 1U : 2U}};
     if (sparse) {
       EXPECT_EQ(frame.fills, expected);
     } else {

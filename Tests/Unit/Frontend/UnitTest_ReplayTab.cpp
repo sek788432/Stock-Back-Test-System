@@ -218,6 +218,8 @@ void ReplayTabTest::exposesChartAndPortfolioPlaceholders() {
   QVERIFY(tab.findChild<QLabel *>("replayMarketValueLabel") != nullptr);
   QVERIFY(tab.findChild<QLabel *>("replayEquityLabel") != nullptr);
   QVERIFY(tab.findChild<QLabel *>("replayPnlLabel") != nullptr);
+  QVERIFY(tab.findChild<QLabel *>("replayRealizedPnlLabel") != nullptr);
+  QVERIFY(tab.findChild<QLabel *>("replayUnrealizedPnlLabel") != nullptr);
   QVERIFY(tab.findChild<QLabel *>("replayLastPriceLabel") != nullptr);
   QVERIFY(tab.findChild<QLabel *>("replayBarIndexLabel") != nullptr);
   QVERIFY(tab.findChild<QLabel *>("replayTradeLogTitle") != nullptr);
@@ -260,6 +262,9 @@ void ReplayTabTest::stepForwardUpdatesPortfolioSnapshot() {
   auto *marketValueLabel = tab.findChild<QLabel *>("replayMarketValueLabel");
   auto *equityLabel = tab.findChild<QLabel *>("replayEquityLabel");
   auto *pnlLabel = tab.findChild<QLabel *>("replayPnlLabel");
+  auto *realizedPnlLabel = tab.findChild<QLabel *>("replayRealizedPnlLabel");
+  auto *unrealizedPnlLabel =
+      tab.findChild<QLabel *>("replayUnrealizedPnlLabel");
   auto *lastPriceLabel = tab.findChild<QLabel *>("replayLastPriceLabel");
   auto *barIndexLabel = tab.findChild<QLabel *>("replayBarIndexLabel");
   QVERIFY(stepForwardButton != nullptr);
@@ -268,6 +273,8 @@ void ReplayTabTest::stepForwardUpdatesPortfolioSnapshot() {
   QVERIFY(marketValueLabel != nullptr);
   QVERIFY(equityLabel != nullptr);
   QVERIFY(pnlLabel != nullptr);
+  QVERIFY(realizedPnlLabel != nullptr);
+  QVERIFY(unrealizedPnlLabel != nullptr);
   QVERIFY(lastPriceLabel != nullptr);
   QVERIFY(barIndexLabel != nullptr);
 
@@ -276,6 +283,8 @@ void ReplayTabTest::stepForwardUpdatesPortfolioSnapshot() {
   QCOMPARE(marketValueLabel->text(), QString{"Market: $0.00"});
   QVERIFY(equityLabel->text().contains("$100,000.00"));
   QCOMPARE(pnlLabel->text(), QString{"PnL: $0.00"});
+  QCOMPARE(realizedPnlLabel->text(), QString{"Realized P/L: $0.00"});
+  QCOMPARE(unrealizedPnlLabel->text(), QString{"Unrealized P/L: $0.00"});
   QCOMPARE(lastPriceLabel->text(), QString{"Last: --"});
   QVERIFY(barIndexLabel->text().startsWith("Bar: 0/"));
 

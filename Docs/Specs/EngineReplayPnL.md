@@ -204,7 +204,12 @@ warnings, logs, and data-segment references.
 
 Schema 2 also persists one validated capability-declaration row. The current
 limited Engine declares warnings, orders, fills, post-slice portfolio,
-slippage-cost, and terminal-diagnostic records as supported. Trades, metrics,
+slippage-cost, and terminal-diagnostic records as supported. Replay derives
+realized P&L from persisted long-only fill amounts using average cost and derives
+unrealized P&L as total recorded P&L less realized P&L. These presentation values
+cover the current full-fill path; they do not add persisted P&L record families,
+short positions, partial fills, or fee models. Replay also exposes the zero-based
+selected source-bar index for each fill marker. Trades, metrics,
 strategy logs, indicator snapshots, corporate actions, and margin records are
 explicitly unsupported; readers expose these flags and the limited Engine never
 fabricates those families. Because this declaration is invariant for schema 2

@@ -84,6 +84,7 @@ private slots:
   void cleanupTestCase();
   void rapidSwitchRejectsStaleCompletionAndPresentsExactFirstFrame();
   void resultControlsAndPersistedFillDetailsAreAccessible();
+  void portfolioDisplaysRealizedAndUnrealizedPnlDuringReplay();
   void dailyMarkersAnchorToTheirCandleAndKeepActualFillTime();
   void externalOpenDefersCatalogRefreshUntilOpenCompletes();
   void resultKeyboardShortcutsRestartAndSpeedMapping();
@@ -1016,6 +1017,29 @@ void ResultReplayTabTest::
     }
   }
   QCOMPARE(buyGlyphs, 1);
+}
+
+void ResultReplayTabTest::
+    portfolioDisplaysRealizedAndUnrealizedPnlDuringReplay() {
+  bte::frontend::ReplayTab tab{root_ / "Store", root_ / "Data"};
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  auto *seek = tab.findChild<QSlider *>("replaySeekSlider");
+  auto *realized = tab.findChild<QLabel *>("replayRealizedPnlLabel");
+  auto *unrealized = tab.findChild<QLabel *>("replayUnrealizedPnlLabel");
+  QVERIFY(status != nullptr);
+  QVERIFY(seek != nullptr);
+  QVERIFY(realized != nullptr);
+  QVERIFY(unrealized != nullptr);
+
+  tab.openResult(QString::fromStdString(multiDayMultiFillResultId_));
+  QVERIFY(bte::test::waitUntil([&] {
+    return status->text().startsWith("Result ") && seek->maximum() == 519;
+  }));
+  QCOMPARE(realized->text(), QString{"Realized P/L: $0.00"});
+
+  seek->setValue(12);
+  QVERIFY(realized->text() != QString{"Realized P/L: $0.00"});
+  QCOMPARE(unrealized->text(), QString{"Unrealized P/L: $0.00"});
 }
 
 void ResultReplayTabTest::longRangeSeekPresentsEveryReachedCandleAndFill() {

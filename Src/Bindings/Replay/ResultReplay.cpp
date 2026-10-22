@@ -54,7 +54,8 @@ validateReplayRecords(const std::vector<results::CanonicalRecord> &records,
         (record.side == results::OrderSide::none ||
          !record.quantityShares.has_value() || *record.quantityShares <= 0 ||
          !record.priceNanodollars.has_value() ||
-         !record.amountMicrodollars.has_value())) {
+         !record.amountMicrodollars.has_value() ||
+         *record.amountMicrodollars <= 0)) {
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "Canonical fill payload is invalid");
     }
@@ -151,7 +152,8 @@ makeHourlyFrames(const results::OpenedResult &result,
   const ReplayRecordIndex records{result};
   std::vector<ResultReplayFrame> frames;
   frames.reserve(bars.size());
-  for (const auto &bar : bars) {
+  for (std::size_t barIndex = 0; barIndex < bars.size(); ++barIndex) {
+    const auto &bar = bars[barIndex];
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
                              "Result Replay open was cancelled");
@@ -165,6 +167,7 @@ makeHourlyFrames(const results::OpenedResult &result,
         .fills = records.fillsAt(bar.timestamp,
                                  bar.timestamp + std::chrono::milliseconds{1}),
         .portfolio = *portfolio,
+        .barIndex = barIndex,
         .partialUtcDay = false,
     });
   }
@@ -246,12 +249,167 @@ makeDailyFrames(const results::OpenedResult &result,
                          static_cast<double>(volume) / microsharesPerShare},
           .fills = std::move(fills),
           .portfolio = *portfolio,
+          .barIndex = end - 1,
           .partialUtcDay = !completeSourceDay || rangeCutsUtcDay,
       });
     }
     begin = end;
   }
   return frames;
+}
+
+class ReplayPortfolioPnlTracker final {
+public:
+  ReplayPortfolioPnlTracker(
+      const std::span<const data::SnapshotBar> selectedBars,
+      const results::OpenedResult &result)
+      : selectedBars_{selectedBars} {
+    fills_.reserve(result.records.size());
+    for (const auto &record : result.records) {
+      if (record.family == results::RecordFamily::fill &&
+          record.quantityShares.has_value() &&
+          record.amountMicrodollars.has_value()) {
+        fills_.push_back(&record);
+      }
+    }
+  }
+
+  [[nodiscard]] core::Result<void>
+  advanceThrough(const core::Timestamp timestamp) {
+    while (nextFill_ < fills_.size() &&
+           fills_[nextFill_]->timestamp <= timestamp) {
+      const auto &fill = *fills_[nextFill_++];
+      if (!selectedBarIndex(fill.timestamp).has_value()) {
+        continue;
+      }
+      auto applied = applyFill(fill);
+      if (!applied.ok()) {
+        return applied.error();
+      }
+    }
+    return {};
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
+  selectedBarIndex(const core::Timestamp timestamp) const {
+    const auto sourceBar = std::ranges::lower_bound(
+        selectedBars_, timestamp, {}, &data::SnapshotBar::timestamp);
+    if (sourceBar == selectedBars_.end() || sourceBar->timestamp != timestamp) {
+      return std::nullopt;
+    }
+    return static_cast<std::size_t>(
+        std::distance(selectedBars_.begin(), sourceBar));
+  }
+
+  [[nodiscard]] double realizedPnl() const {
+    return money(realizedPnlMicrodollars_);
+  }
+
+private:
+  struct FillAmounts final {
+    std::int64_t quantityShares;
+    std::int64_t amountMicrodollars;
+  };
+
+  [[nodiscard]] core::Result<void>
+  applyFill(const results::CanonicalRecord &fill) {
+    const auto amounts = FillAmounts{
+        .quantityShares = fill.quantityShares.value_or(0),
+        .amountMicrodollars = fill.amountMicrodollars.value_or(0),
+    };
+    if (amounts.quantityShares <= 0 || amounts.amountMicrodollars <= 0) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay fill payload is invalid");
+    }
+    if (fill.side == results::OrderSide::buy) {
+      return addLongPosition(amounts);
+    }
+    if (fill.side == results::OrderSide::sell) {
+      return closeLongPosition(amounts);
+    }
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Replay fill side is unsupported");
+  }
+
+  [[nodiscard]] core::Result<void> addLongPosition(const FillAmounts amounts) {
+    if (amounts.quantityShares >
+            std::numeric_limits<std::int64_t>::max() - positionShares_ ||
+        amounts.amountMicrodollars > std::numeric_limits<std::int64_t>::max() -
+                                         openCostBasisMicrodollars_) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay position exceeds supported range");
+    }
+    positionShares_ += amounts.quantityShares;
+    openCostBasisMicrodollars_ += amounts.amountMicrodollars;
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  closeLongPosition(const FillAmounts amounts) {
+    if (positionShares_ <= 0 || amounts.quantityShares > positionShares_) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay sell fill exceeds the open position");
+    }
+    const auto closedShares = amounts.quantityShares;
+    const auto closedCostBasis =
+        closedShares == positionShares_
+            ? openCostBasisMicrodollars_
+            : (openCostBasisMicrodollars_ / positionShares_) * closedShares;
+    const auto realizedDelta = amounts.amountMicrodollars - closedCostBasis;
+    auto recorded = addRealizedPnl(realizedDelta);
+    if (!recorded.ok()) {
+      return recorded.error();
+    }
+    openCostBasisMicrodollars_ -= closedCostBasis;
+    positionShares_ -= closedShares;
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void> addRealizedPnl(const std::int64_t delta) {
+    if ((delta > 0 && realizedPnlMicrodollars_ >
+                          std::numeric_limits<std::int64_t>::max() - delta) ||
+        (delta < 0 && realizedPnlMicrodollars_ <
+                          std::numeric_limits<std::int64_t>::min() - delta)) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay realized P&L exceeds supported range");
+    }
+    realizedPnlMicrodollars_ += delta;
+    return {};
+  }
+
+  std::span<const data::SnapshotBar> selectedBars_;
+  std::vector<const results::CanonicalRecord *> fills_;
+  std::int64_t positionShares_ = 0;
+  std::int64_t openCostBasisMicrodollars_ = 0;
+  std::int64_t realizedPnlMicrodollars_ = 0;
+  std::size_t nextFill_ = 0;
+};
+
+core::Result<void> completeReplayPortfolioSnapshots(
+    std::vector<ResultReplayFrame> &frames,
+    const std::span<const data::SnapshotBar> selectedBars,
+    const results::OpenedResult &result) {
+  auto pnlTracker = ReplayPortfolioPnlTracker{selectedBars, result};
+  for (auto &frame : frames) {
+    if (frame.barIndex >= selectedBars.size()) {
+      continue;
+    }
+    auto advanced =
+        pnlTracker.advanceThrough(selectedBars[frame.barIndex].timestamp);
+    if (!advanced.ok()) {
+      return advanced.error();
+    }
+    for (auto &fill : frame.fills) {
+      if (const auto barIndex = pnlTracker.selectedBarIndex(fill.timestamp);
+          barIndex.has_value()) {
+        fill.barIndex = *barIndex;
+      }
+    }
+    frame.portfolio.realizedPnl = pnlTracker.realizedPnl();
+    frame.portfolio.unrealizedPnl =
+        frame.portfolio.pnl - frame.portfolio.realizedPnl;
+  }
+  return {};
 }
 
 } // namespace
@@ -347,8 +505,13 @@ ResultReplay::open(const std::filesystem::path &resultStore,
   if (!frames.ok()) {
     return frames.error();
   }
+  auto replayFrames = std::move(frames).value();
+  auto completed = completeReplayPortfolioSnapshots(replayFrames, bars, result);
+  if (!completed.ok()) {
+    return completed.error();
+  }
   return std::make_unique<ResultReplay>(ConstructionKey{}, resultId,
-                                        std::move(frames).value(),
+                                        std::move(replayFrames),
                                         result.terminalReason);
 }
 
