@@ -87,14 +87,15 @@ It currently checks:
 - exact documentation-path enforcement against
   [`../../Tools/DocumentationPolicy.json`](../../Tools/DocumentationPolicy.json).
 
-The documentation policy classifies all files below `Docs/` and `.agents/`,
+The documentation policy classifies files below `Docs/` and `.agents/`,
 recognized authored-document suffixes (`.md`, `.markdown`, `.rst`, `.adoc`,
 `.html`, `.htm`, `.pdf`, `.docx`, `.rtf`, and `.txt`), extensionless files,
-the root `LICENSE`, and GitHub issue-template files as documentation. Recognized
-repository dotfiles, common build/config filenames, and the existing
-data/dependency text files `StockData/Symbols.txt`,
-`DataFetcher/requirements.txt`, and `Tools/CoverageRequirements.txt` are
-excluded outside `Docs/` and `.agents/`.
+the root `LICENSE`, and GitHub issue-template files as documentation. Explicit
+non-documentation names and paths take precedence in every directory. They
+include repository dotfiles, common build/config filenames, toolchain version
+files such as `.nvmrc` and `.tool-versions`, and the existing data/dependency
+text files `StockData/Symbols.txt`, `DataFetcher/requirements.txt`, and
+`Tools/CoverageRequirements.txt`.
 The manifest is an exact allowlist of approved paths grouped by owner, purpose,
 and canonical index; globs, duplicate paths, and missing indexes are invalid.
 The checker validates the submitted manifest on every run and rejects a missing
