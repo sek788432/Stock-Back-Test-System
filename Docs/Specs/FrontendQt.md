@@ -306,8 +306,12 @@ replace or append bars and set or clear persisted fill markers.
 persisted Buy/Sell markers, crosshair, pan, and zoom. Its Hourly time labels
 include date and hour, Daily labels include date, and the time axis declares
 UTC. Price and volume use separate y axes, so shares cannot rescale quote
-prices. The default sliding viewport targets roughly 24 pixels per selected
-bar slot and a 16–20-pixel candle body; zoom adjusts density and body width.
+prices. Both use ordered actual-bar slots and one bottom UTC-label row in a
+visually continuous, vertically stacked chart surface; the plot reserves
+approximately 80–85% of its
+height for price and 15–20% for volume. The default sliding viewport targets
+roughly 24 pixels per selected bar slot and a 16–20-pixel candle body; zoom
+adjusts density and body width.
 Price and volume use automatic plot layout with shared left insets so rendered
 grids and series agree. Geometry updates are queued to avoid reentering Qt's
 axis-range notifications. Insets retain their largest intrinsic label width,
@@ -317,8 +321,15 @@ timeline to avoid visible-boundary feedback, and reset on timeline replacement
 or timeframe change. Volume batches replace hidden-series points once; newly
 reached trade rows emit one insertion and one bounded cell-update notification.
 When zoom temporarily hides the newest reached candle, Follow latest can
-recenter immediately even before another replay frame arrives. The accepted
-release adapter is project-owned
+recenter immediately even before another replay frame arrives. Horizontal pan
+enters Review history without changing the replay cursor, and playback does
+not move the reviewed range. Wheel zoom anchors near the pointer;
+button zoom anchors at the viewport center. Reset restores default density and
+Follow latest. Fit reached bars is available only when each candle remains
+legible. Timeframe changes rebuild the displayed series and reset viewport
+state; resizing preserves the visible anchor as far as the new width allows.
+Viewport navigation never changes the immutable result timeline or reveals
+bars beyond the replay cursor. The accepted release adapter is project-owned
 `QPainter`; it must not leak rendering types into the backend or alter
 persisted ordering.
 

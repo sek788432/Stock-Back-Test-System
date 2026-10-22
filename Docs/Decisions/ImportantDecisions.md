@@ -196,26 +196,15 @@ Results without sacrificing execution-time recovery. Keeping automatic catalog
 publication with navigation-only buttons labelled Save was rejected because
 those buttons would not perform the promised storage transition. Deferring all
 recording until Save was rejected because a crash would discard the execution
-timeline. The approved flow therefore requires durable draft ownership and
-retention in addition to safe promotion; it does not waive existing recovery
-or segment-reference defects.
-
-On 2026-10-13 the maintainer approved the repair direction for those defects:
-use SQLite-backed cross-process writer leases, pin immutable data before
-visibility, atomically persist every completed Engine bar, and recover only
-the committed prefix as an Interrupted Draft after a crash. A persistence
-failure stops execution. Legacy staging without lease metadata remains intact
-with a warning; opening a store must not infer that such a writer is dead or
-automatically clear its artifact. These R1–R3 repairs were implemented and
-merged in PR #76. The approved transaction/lifetime and compatibility design
-is recorded in [ResultPersistenceSafetyDesign.md](../Specs/ResultPersistenceSafetyDesign.md);
-automated tests cover crash recovery and concurrent processes. The visible
-Results controls and normal save/relaunch workflow were exercised on
-2026-10-21. Native legacy-artifact and fault-injection workflows remain
-untested through the visible UI; automated process/fault tests cover recovery
-and preservation, as tracked in
-[Issue10RemainingWork.md](../Plans/Issue10RemainingWork.md). Canonical
-schema/hash compatibility and the explicit Save gate remain unchanged.
+timeline. Cross-process SQLite leases, retention before visibility, committed
+bar batches, and committed-prefix recovery complete the durability contract.
+Legacy staging without lease metadata remains intact with a warning; opening a
+store must not infer that such a writer is dead or automatically clear its
+artifact. These guarantees are implemented and covered by automated
+process/fault tests. The detailed transaction and compatibility design is in
+[ResultPersistenceSafetyDesign.md](../Specs/ResultPersistenceSafetyDesign.md).
+Canonical schema/hash compatibility and the explicit Save gate remain
+unchanged.
 
 **Consequences.** Public Results APIs expose typed identities, records, and
 lifecycle operations rather than SQLite handles. Promotion and recovery require

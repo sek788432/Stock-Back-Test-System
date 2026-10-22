@@ -26,7 +26,7 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 | AI coding agent | [`AGENTS.md`](AGENTS.md) → [`Docs/Governance/AGENTS.md`](Docs/Governance/AGENTS.md) |
 | Human contributor | [`Docs/Governance/CONTRIBUTING.md`](Docs/Governance/CONTRIBUTING.md) → [`Docs/Onboarding.md`](Docs/Onboarding.md) |
 | Reading the design | [`Docs/Specs/`](Docs/Specs/README.md) |
-| Tracking persisted K-line Replay | [`Docs/KLineReplayRoadmap.md`](Docs/KLineReplayRoadmap.md) |
+| Reading the Backtest and Replay contract | [`Docs/Specs/EngineReplayPnL.md`](Docs/Specs/EngineReplayPnL.md) |
 | Building the C++ tree | [`Docs/BUILD.md`](Docs/BUILD.md) (`./RunTest.sh` builds and runs unit tests) |
 | Reviewing a PR | [`Docs/ReviewPlaybook.md`](Docs/ReviewPlaybook.md) |
 | Cutting a release | [`Docs/ReleaseProcess.md`](Docs/ReleaseProcess.md) |

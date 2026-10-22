@@ -21,17 +21,14 @@ Start with the overview, then read the owning subsystem specification.
 | [`BacktestReplayProduct.md`](BacktestReplayProduct.md) | User workflows for strategy storage, backtests, results, and replay |
 
 The [`StockScreening/`](StockScreening/README.md) subtree is a temporarily
-protected, non-canonical proposal area. It is excluded from this cleanup phase,
-does not override a canonical specification, and requires a separate maintainer
-review before issue #53 can reach final acceptance.
+protected, non-canonical proposal area. It does not override a canonical
+specification, and changes to it require a separate maintainer review.
 
-## Active implementation design
+## Detailed persistence contract
 
 [`ResultPersistenceSafetyDesign.md`](ResultPersistenceSafetyDesign.md) records
-the approved Issue 10 R1–R3 design and the implementation merged in PR #76.
-Required CI and native saved-result lifecycle acceptance have passed; the
-display-launch limitation and max-speed timing caveat are recorded at the top
-of that spec and in the Issue 10 acceptance ledger.
+the implemented transaction, writer-ownership, recovery, and compatibility
+contracts for durable Backtest Results.
 
 ## Accepted foundations
 
