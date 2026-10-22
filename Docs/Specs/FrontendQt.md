@@ -312,6 +312,12 @@ approximately 80–85% of its
 height for price and 15–20% for volume. The default sliding viewport targets
 roughly 24 pixels per selected bar slot and a 16–20-pixel candle body; zoom
 adjusts density and body width.
+Price auto-range uses only the high and low of candles in the visible viewport;
+reached candles outside the viewport do not affect its scale. Volume auto-range
+uses only visible volume and includes zero. Flat prices, high-volume extremes,
+sparse prefixes, and zero-volume series retain finite, readable scales. Trade
+markers may reserve visual padding beyond the candle range, but they do not
+change the price data range.
 Price and volume use automatic plot layout with shared left insets so rendered
 grids and series agree. Geometry updates are queued to avoid reentering Qt's
 axis-range notifications. Insets retain their largest intrinsic label width,

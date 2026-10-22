@@ -70,6 +70,12 @@ NON_DOCUMENTATION_NAMES = {
     "Gemfile",
     "Justfile",
     "Makefile",
+    ".java-version",
+    ".node-version",
+    ".nvmrc",
+    ".python-version",
+    ".ruby-version",
+    ".tool-versions",
     "Procfile",
     "requirements.txt",
     ".clang-format",
@@ -787,12 +793,12 @@ def is_documentation_path(path: Path) -> bool:
     """Return whether a tracked path contains authored documentation."""
     if not path.parts:
         return False
+    if path in NON_DOCUMENTATION_TEXT_PATHS or path.name in NON_DOCUMENTATION_NAMES:
+        return False
     if path.parts[0] in {".agents", "Docs"}:
         return True
     if path == Path("LICENSE") or path.is_relative_to(Path(".github/ISSUE_TEMPLATE")):
         return True
-    if path in NON_DOCUMENTATION_TEXT_PATHS or path.name in NON_DOCUMENTATION_NAMES:
-        return False
     return path.suffix.lower() in DOCUMENTATION_SUFFIXES or not path.suffix
 
 

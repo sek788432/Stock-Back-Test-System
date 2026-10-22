@@ -206,6 +206,26 @@ class AuditDocumentationChangesTest(unittest.TestCase):
         self.assertFalse(is_documentation_path(Path("Makefile")))
         self.assertFalse(is_documentation_path(Path(".gitignore")))
         self.assertFalse(is_documentation_path(Path(".clang-format")))
+        for config_path in (
+            ".java-version",
+            ".node-version",
+            ".nvmrc",
+            ".python-version",
+            ".ruby-version",
+            ".tool-versions",
+            ".agents/.nvmrc",
+        ):
+            with self.subTest(path=config_path):
+                self.assertFalse(is_documentation_path(Path(config_path)))
+
+    def test_toolchain_version_files_do_not_require_documentation_registration(self) -> None:
+        changes = [
+            ("A", Path(".python-version")),
+            ("M", Path(".ruby-version")),
+            ("A", Path(".agents/.tool-versions")),
+        ]
+
+        self.assertEqual(audit_documentation_changes(changes, set()), [])
 
 
 class DocumentationPolicyRevisionTest(unittest.TestCase):
