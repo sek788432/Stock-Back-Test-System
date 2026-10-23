@@ -147,7 +147,7 @@ V1 supports market, limit, stop, DAY, GTC, explicit OCO, and bracket orders. Sto
 - There is one net position per symbol. An order may reduce or close the opposite position but may not cross zero; reversal requires an explicit close and a later opposite entry.
 - Long purchases use unrestricted cash only. V1 has no long leverage, debit balance, or margin interest.
 - Long-sale proceeds are reusable immediately under `instantSettlementV1`.
-- Average-cost accounting applies to long and short positions. Partial close leaves remaining average cost unchanged; realized P&L uses the average cost and proportionally attributed entry/exit costs. It is not tax-lot accounting.
+- Average-cost accounting applies to long and short positions. Partial close leaves remaining average cost unchanged; realized P&L uses the average cost and proportionally attributed entry/exit costs. The allocated open basis is rounded to the nearest microdollar using half-even; unallocated microdollars remain in the open basis, and a full close consumes that exact remainder. It is not tax-lot accounting.
 - Exposure-increasing orders reserve estimated buying power. Buy limits reserve the limit-price cost; market/stops use latest price plus costs; shorts also reserve initial margin.
 - If the actual gap price makes a full fill unaffordable, reject it as `InsufficientBuyingPowerAtExecution`, release the reservation, and never resize or create negative unrestricted cash.
 - Default `retailUsEquityV1` is zero commission and 1 basis point adverse slippage. Per-run overrides are allowed and persisted. Forced covers use market slippage; limits still cannot violate their price.
@@ -178,6 +178,7 @@ Authoritative accounting uses checked fixed-point strong types:
 
 - Overflow and invalid precision are errors.
 - General monetary conversion rounds half-even once at the domain seam; intermediate arithmetic retains checked higher precision.
+- A partial close allocates `openCostBasis × closedShares / openShares` to the closed shares, rounded once to the nearest microdollar using half-even. Compute the quotient and remainder without overflowing an intermediate product, subtract the allocated integer basis from the remaining basis, and use the exact remaining basis on a full close.
 - Half-even tie parity applies to the complete integer monetary amount, not
   just a fractional-product component. For example, one share marked at
   $1.0000015 becomes 1,000,002 microdollars; three shares become 3,000,004.
@@ -204,7 +205,14 @@ warnings, logs, and data-segment references.
 
 Schema 2 also persists one validated capability-declaration row. The current
 limited Engine declares warnings, orders, fills, post-slice portfolio,
-slippage-cost, and terminal-diagnostic records as supported. Trades, metrics,
+slippage-cost, and terminal-diagnostic records as supported. Replay derives
+realized P&L from persisted long-only fill amounts using average cost and derives
+unrealized P&L as total recorded P&L less realized P&L. A valid positive-price
+fill may round to zero microdollars and remains replayable. Partial-close basis
+allocation follows the half-even rule in §7. These presentation values
+cover the current full-fill path; they do not add persisted P&L record families,
+short positions, partial fills, or fee models. Replay also exposes the zero-based
+selected source-bar index for each fill marker. Trades, metrics,
 strategy logs, indicator snapshots, corporate actions, and margin records are
 explicitly unsupported; readers expose these flags and the limited Engine never
 fabricates those families. Because this declaration is invariant for schema 2

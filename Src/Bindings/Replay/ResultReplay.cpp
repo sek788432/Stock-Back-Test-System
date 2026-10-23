@@ -5,7 +5,12 @@
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
 
+#if defined(BTE_ENABLE_TEST_HOOKS)
+#include "ResultReplayTestHooks.h"
+#endif
+
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <compare>
 #include <cstddef>
@@ -21,9 +26,42 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#if defined(BTE_ENABLE_TEST_HOOKS)
+#include <atomic>
+#endif
 
 namespace bte::bindings {
 namespace {
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+std::atomic<core::CancellationSource *> &
+nextPortfolioSnapshotCancellationSource() {
+  static std::atomic<core::CancellationSource *> source{nullptr};
+  return source;
+}
+
+std::atomic<testing::PortfolioCompletionCancellationPoint> &
+nextPortfolioSnapshotCancellationPoint() {
+  static std::atomic<testing::PortfolioCompletionCancellationPoint> point{
+      testing::PortfolioCompletionCancellationPoint::trackerCreation};
+  return point;
+}
+
+void requestPortfolioSnapshotCancellationAt(
+    const testing::PortfolioCompletionCancellationPoint point) {
+  auto expected = point;
+  if (!nextPortfolioSnapshotCancellationPoint().compare_exchange_strong(
+          expected,
+          testing::PortfolioCompletionCancellationPoint::trackerCreation)) {
+    return;
+  }
+  if (const auto source =
+          nextPortfolioSnapshotCancellationSource().exchange(nullptr);
+      source != nullptr) {
+    source->requestCancellation();
+  }
+}
+#endif
 
 constexpr auto nanodollarsPerDollar = 1'000'000'000.0;
 constexpr auto microdollarsPerDollar = 1'000'000.0;
@@ -54,7 +92,8 @@ validateReplayRecords(const std::vector<results::CanonicalRecord> &records,
         (record.side == results::OrderSide::none ||
          !record.quantityShares.has_value() || *record.quantityShares <= 0 ||
          !record.priceNanodollars.has_value() ||
-         !record.amountMicrodollars.has_value())) {
+         !record.amountMicrodollars.has_value() ||
+         *record.amountMicrodollars < 0)) {
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "Canonical fill payload is invalid");
     }
@@ -151,7 +190,8 @@ makeHourlyFrames(const results::OpenedResult &result,
   const ReplayRecordIndex records{result};
   std::vector<ResultReplayFrame> frames;
   frames.reserve(bars.size());
-  for (const auto &bar : bars) {
+  for (std::size_t barIndex = 0; barIndex < bars.size(); ++barIndex) {
+    const auto &bar = bars[barIndex];
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
                              "Result Replay open was cancelled");
@@ -165,6 +205,7 @@ makeHourlyFrames(const results::OpenedResult &result,
         .fills = records.fillsAt(bar.timestamp,
                                  bar.timestamp + std::chrono::milliseconds{1}),
         .portfolio = *portfolio,
+        .barIndex = barIndex,
         .partialUtcDay = false,
     });
   }
@@ -246,6 +287,7 @@ makeDailyFrames(const results::OpenedResult &result,
                          static_cast<double>(volume) / microsharesPerShare},
           .fills = std::move(fills),
           .portfolio = *portfolio,
+          .barIndex = end - 1,
           .partialUtcDay = !completeSourceDay || rangeCutsUtcDay,
       });
     }
@@ -254,7 +296,307 @@ makeDailyFrames(const results::OpenedResult &result,
   return frames;
 }
 
+class ReplayPortfolioPnlTracker final {
+public:
+  [[nodiscard]] static core::Result<ReplayPortfolioPnlTracker>
+  create(const std::span<const data::SnapshotBar> selectedBars,
+         const results::OpenedResult &result,
+         const core::CancellationToken &cancellation) {
+    std::vector<const results::CanonicalRecord *> fills;
+    fills.reserve(result.records.size());
+    for (const auto &record : result.records) {
+      if (cancellation.isCancellationRequested()) {
+        return core::makeError(core::ErrorCode::cancelled,
+                               "Result Replay open was cancelled");
+      }
+      if (record.family == results::RecordFamily::fill &&
+          record.quantityShares.has_value() &&
+          record.amountMicrodollars.has_value()) {
+        fills.push_back(&record);
+      }
+    }
+    return ReplayPortfolioPnlTracker{selectedBars, std::move(fills)};
+  }
+
+  [[nodiscard]] core::Result<void>
+  advanceThrough(const core::Timestamp timestamp,
+                 const core::CancellationToken &cancellation) {
+    while (nextFill_ < fills_.size() &&
+           fills_[nextFill_]->timestamp <= timestamp) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+      requestPortfolioSnapshotCancellationAt(
+          testing::PortfolioCompletionCancellationPoint::fillAdvance);
+#endif
+      if (cancellation.isCancellationRequested()) {
+        return core::makeError(core::ErrorCode::cancelled,
+                               "Result Replay open was cancelled");
+      }
+      const auto &fill = *fills_[nextFill_++];
+      if (!selectedBarIndex(fill.timestamp).has_value()) {
+        continue;
+      }
+      auto applied = applyFill(fill);
+      if (!applied.ok()) {
+        return applied.error();
+      }
+    }
+    return {};
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
+  selectedBarIndex(const core::Timestamp timestamp) const {
+    const auto sourceBar = std::ranges::lower_bound(
+        selectedBars_, timestamp, {}, &data::SnapshotBar::timestamp);
+    if (sourceBar == selectedBars_.end() || sourceBar->timestamp != timestamp) {
+      return std::nullopt;
+    }
+    return static_cast<std::size_t>(
+        std::distance(selectedBars_.begin(), sourceBar));
+  }
+
+  [[nodiscard]] double realizedPnl() const {
+    return money(realizedPnlMicrodollars_);
+  }
+
+private:
+  ReplayPortfolioPnlTracker(
+      const std::span<const data::SnapshotBar> selectedBars,
+      std::vector<const results::CanonicalRecord *> fills)
+      : selectedBars_{selectedBars}, fills_{std::move(fills)} {}
+
+  struct FillAmounts final {
+    std::int64_t quantityShares;
+    std::int64_t amountMicrodollars;
+  };
+
+  struct ProductDivision final {
+    std::int64_t quotient;
+    std::int64_t remainder;
+  };
+
+  struct ProductDivisionInput final {
+    std::int64_t numeratorFactor;
+    std::int64_t multiplier;
+    std::int64_t denominator;
+  };
+
+  struct CostBasisAllocationInput final {
+    std::int64_t openCostBasis;
+    std::int64_t closedShares;
+    std::int64_t openShares;
+  };
+
+  // Preconditions: numeratorFactor < denominator and multiplier <= denominator.
+  // Scan multiplier bits while carrying quotient and remainder so the
+  // potentially overflowing product never has to fit in int64.
+  [[nodiscard]] static ProductDivision
+  multiplyDivide(const ProductDivisionInput &input) {
+    auto quotient = std::int64_t{0};
+    auto remainder = std::int64_t{0};
+    const auto unsignedMultiplier =
+        static_cast<std::uint64_t>(input.multiplier);
+    for (auto bit = std::bit_floor(unsignedMultiplier); bit != 0; bit >>= 1) {
+      auto carry = std::int64_t{0};
+      if (remainder >= input.denominator - remainder) {
+        remainder -= input.denominator - remainder;
+        ++carry;
+      } else {
+        remainder += remainder;
+      }
+      if ((unsignedMultiplier & bit) != 0) {
+        if (remainder >= input.denominator - input.numeratorFactor) {
+          remainder -= input.denominator - input.numeratorFactor;
+          ++carry;
+        } else {
+          remainder += input.numeratorFactor;
+        }
+      }
+      quotient = quotient * 2 + carry;
+    }
+    return {.quotient = quotient, .remainder = remainder};
+  }
+
+  [[nodiscard]] static std::int64_t
+  proportionalCostBasis(const CostBasisAllocationInput &input) {
+    const auto wholeShares = input.openCostBasis / input.openShares;
+    const auto fractionalBasis = input.openCostBasis % input.openShares;
+    const auto fractionalAllocation =
+        multiplyDivide({.numeratorFactor = fractionalBasis,
+                        .multiplier = input.closedShares,
+                        .denominator = input.openShares});
+    auto allocatedBasis =
+        wholeShares * input.closedShares + fractionalAllocation.quotient;
+    const auto distanceToRoundUp =
+        input.openShares - fractionalAllocation.remainder;
+    if (fractionalAllocation.remainder > distanceToRoundUp ||
+        (fractionalAllocation.remainder == distanceToRoundUp &&
+         allocatedBasis % 2 != 0)) {
+      ++allocatedBasis;
+    }
+    return allocatedBasis;
+  }
+
+  [[nodiscard]] core::Result<void>
+  applyFill(const results::CanonicalRecord &fill) {
+    const auto amounts = FillAmounts{
+        .quantityShares = fill.quantityShares.value_or(0),
+        .amountMicrodollars = fill.amountMicrodollars.value_or(0),
+    };
+    // Open replay records have already passed validateReplayRecords. Preserve
+    // a defensive check for invalid in-memory payloads. GCOVR_EXCL_START
+    if (amounts.quantityShares <= 0 || amounts.amountMicrodollars < 0) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay fill payload is invalid");
+    }
+    // GCOVR_EXCL_STOP
+    if (fill.side == results::OrderSide::buy) {
+      return addLongPosition(amounts);
+    }
+    if (fill.side == results::OrderSide::sell) {
+      return closeLongPosition(amounts);
+    }
+    // ResultStore accepts only buy or sell sides for validated fills. Keep a
+    // defensive error for corrupted in-memory records. GCOVR_EXCL_START
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Replay fill side is unsupported");
+    // GCOVR_EXCL_STOP
+  }
+
+  [[nodiscard]] core::Result<void> addLongPosition(const FillAmounts amounts) {
+    if (amounts.quantityShares >
+            std::numeric_limits<std::int64_t>::max() - positionShares_ ||
+        amounts.amountMicrodollars > std::numeric_limits<std::int64_t>::max() -
+                                         openCostBasisMicrodollars_) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay position exceeds supported range");
+    }
+    positionShares_ += amounts.quantityShares;
+    openCostBasisMicrodollars_ += amounts.amountMicrodollars;
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  closeLongPosition(const FillAmounts amounts) {
+    if (positionShares_ <= 0 || amounts.quantityShares > positionShares_) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay sell fill exceeds the open position");
+    }
+    const auto closedShares = amounts.quantityShares;
+    const auto closedCostBasis =
+        closedShares == positionShares_
+            ? openCostBasisMicrodollars_
+            : proportionalCostBasis(
+                  {.openCostBasis = openCostBasisMicrodollars_,
+                   .closedShares = closedShares,
+                   .openShares = positionShares_});
+    const auto realizedDelta = amounts.amountMicrodollars - closedCostBasis;
+    auto recorded = addRealizedPnl(realizedDelta);
+    if (!recorded.ok()) {
+      return recorded.error();
+    }
+    openCostBasisMicrodollars_ -= closedCostBasis;
+    positionShares_ -= closedShares;
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void> addRealizedPnl(const std::int64_t delta) {
+    if ((delta > 0 && realizedPnlMicrodollars_ >
+                          std::numeric_limits<std::int64_t>::max() - delta) ||
+        (delta < 0 && realizedPnlMicrodollars_ <
+                          std::numeric_limits<std::int64_t>::min() - delta)) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay realized P&L exceeds supported range");
+    }
+    realizedPnlMicrodollars_ += delta;
+    return {};
+  }
+
+  std::span<const data::SnapshotBar> selectedBars_;
+  std::vector<const results::CanonicalRecord *> fills_;
+  std::int64_t positionShares_ = 0;
+  std::int64_t openCostBasisMicrodollars_ = 0;
+  std::int64_t realizedPnlMicrodollars_ = 0;
+  std::size_t nextFill_ = 0;
+};
+
+core::Result<void> completeReplayPortfolioSnapshots(
+    std::vector<ResultReplayFrame> &frames,
+    const std::span<const data::SnapshotBar> selectedBars,
+    const results::OpenedResult &result,
+    const core::CancellationToken &cancellation) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  requestPortfolioSnapshotCancellationAt(
+      testing::PortfolioCompletionCancellationPoint::trackerCreation);
+#endif
+  auto tracker =
+      ReplayPortfolioPnlTracker::create(selectedBars, result, cancellation);
+  if (!tracker.ok()) {
+    return tracker.error();
+  }
+  auto pnlTracker = std::move(tracker).value();
+  for (auto &frame : frames) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    requestPortfolioSnapshotCancellationAt(
+        testing::PortfolioCompletionCancellationPoint::frame);
+#endif
+    if (cancellation.isCancellationRequested()) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "Result Replay open was cancelled");
+    }
+    // Replay frames are built directly from the selected bar list. This guard
+    // protects against an invalid internal frame index. GCOVR_EXCL_START
+    if (frame.barIndex >= selectedBars.size()) {
+      continue;
+    }
+    // GCOVR_EXCL_STOP
+    auto advanced = pnlTracker.advanceThrough(
+        selectedBars[frame.barIndex].timestamp, cancellation);
+    if (!advanced.ok()) {
+      return advanced.error();
+    }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (!frame.fills.empty()) {
+      requestPortfolioSnapshotCancellationAt(
+          testing::PortfolioCompletionCancellationPoint::frameFill);
+    }
+#endif
+    for (auto &fill : frame.fills) {
+      if (cancellation.isCancellationRequested()) {
+        return core::makeError(core::ErrorCode::cancelled,
+                               "Result Replay open was cancelled");
+      }
+      if (const auto barIndex = pnlTracker.selectedBarIndex(fill.timestamp);
+          barIndex.has_value()) {
+        fill.barIndex = *barIndex;
+      }
+    }
+    frame.portfolio.realizedPnl = pnlTracker.realizedPnl();
+    frame.portfolio.unrealizedPnl =
+        frame.portfolio.pnl - frame.portfolio.realizedPnl;
+  }
+  return {};
+}
+
 } // namespace
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+namespace testing {
+
+void cancelNextResultReplayPortfolioCompletion(
+    core::CancellationSource *source,
+    const PortfolioCompletionCancellationPoint point) noexcept {
+  nextPortfolioSnapshotCancellationSource().store(source);
+  nextPortfolioSnapshotCancellationPoint().store(point);
+}
+
+void clearResultReplayTestHooks() noexcept {
+  nextPortfolioSnapshotCancellationSource().store(nullptr);
+  nextPortfolioSnapshotCancellationPoint().store(
+      PortfolioCompletionCancellationPoint::trackerCreation);
+}
+
+} // namespace testing
+#endif
 
 ResultReplay::ResultReplay(ConstructionKey, std::string resultId,
                            std::vector<ResultReplayFrame> frames,
@@ -347,8 +689,14 @@ ResultReplay::open(const std::filesystem::path &resultStore,
   if (!frames.ok()) {
     return frames.error();
   }
+  auto replayFrames = std::move(frames).value();
+  auto completed = completeReplayPortfolioSnapshots(replayFrames, bars, result,
+                                                    cancellation);
+  if (!completed.ok()) {
+    return completed.error();
+  }
   return std::make_unique<ResultReplay>(ConstructionKey{}, resultId,
-                                        std::move(frames).value(),
+                                        std::move(replayFrames),
                                         result.terminalReason);
 }
 

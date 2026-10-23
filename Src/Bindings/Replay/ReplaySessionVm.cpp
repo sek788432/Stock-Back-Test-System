@@ -127,6 +127,8 @@ ReplaySessionVm::makePortfolioSnapshot() const noexcept {
       .marketValue = marketValue,
       .equity = equity,
       .pnl = equity - initialCapital_,
+      .realizedPnl = 0.0,
+      .unrealizedPnl = equity - initialCapital_,
       .lastPrice = lastPrice,
       .hasLastPrice = hasLastPrice,
   };
