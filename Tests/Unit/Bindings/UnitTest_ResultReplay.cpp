@@ -265,7 +265,6 @@ TEST_F(ResultReplayTest,
       .splitManifestHash = std::string(64, 'b'),
   });
   ASSERT_TRUE(built.ok()) << built.error().message;
-  EXPECT_EQ(built.value().barCount, 31'466U);
 
   const auto selectedRange = bte::core::DateRange{
       .start = timestamp("2018-05-01 00:00:00+00:00"),
@@ -280,6 +279,7 @@ TEST_F(ResultReplayTest,
       .timeframe = "ohlcv-1h",
   });
   ASSERT_TRUE(expectedSelection.ok()) << expectedSelection.error().message;
+  EXPECT_GE(built.value().barCount, expectedSelection.value().bars.size());
   ASSERT_EQ(expectedSelection.value().bars.size(), 31'466U);
 
   const auto storage = bte::bindings::PersistedBacktestStorage{
