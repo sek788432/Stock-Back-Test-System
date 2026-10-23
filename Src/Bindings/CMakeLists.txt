@@ -7,6 +7,7 @@ add_library(
     Include/Bte/Bindings/ResultReplayRequests.h
     Replay/ResultCatalogSnapshot.cpp
     Replay/ResultReplay.cpp
+    Replay/ResultReplayTestHooks.h
     Replay/ResultLibraryRequests.cpp
     Replay/ResultLibraryRequestsTestHooks.h
     Replay/ResultReplayRequests.cpp

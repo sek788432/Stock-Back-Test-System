@@ -18,6 +18,8 @@ struct ReplayPortfolioSnapshot {
   double marketValue = 0.0;
   double equity = 0.0;
   double pnl = 0.0;
+  double realizedPnl = 0.0;
+  double unrealizedPnl = 0.0;
   double lastPrice = 0.0;
   bool hasLastPrice = false;
 };

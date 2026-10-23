@@ -8,6 +8,7 @@
 #include "Bte/Results/ResultStore.h"
 
 #include "ResultReplayRequestsTestHooks.h"
+#include "ResultReplayTestHooks.h"
 #include "ResultStoreTestHooks.h"
 
 #include <gtest/gtest.h>
@@ -27,6 +28,7 @@
 #include <limits>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -130,12 +132,44 @@ protected:
 
   void TearDown() override {
     bte::bindings::testing::clearResultReplayRequestHooks();
+    bte::bindings::testing::clearResultReplayTestHooks();
     bte::results::testing::clearFailure();
     std::filesystem::remove_all(root_);
   }
 
   static bte::core::Timestamp timestamp(const std::string &text) {
     return bte::core::time::parseIso8601(text).value();
+  }
+
+  static bte::results::CanonicalRecord
+  replayFill(const std::uint64_t sequence, const bte::core::Timestamp at,
+             const bte::results::OrderSide side,
+             const std::int64_t quantityShares,
+             const std::int64_t amountMicrodollars,
+             const std::int64_t priceNanodollars = 1'000'000'000) {
+    return {.sequence = sequence,
+            .timestamp = at,
+            .symbol = "SYN",
+            .family = bte::results::RecordFamily::fill,
+            .side = side,
+            .quantityShares = quantityShares,
+            .priceNanodollars = priceNanodollars,
+            .amountMicrodollars = amountMicrodollars};
+  }
+
+  static bte::results::CanonicalRecord
+  replayPortfolio(const std::uint64_t sequence, const bte::core::Timestamp at,
+                  const std::int64_t positionShares,
+                  const std::int64_t pnlMicrodollars = 0) {
+    return {.sequence = sequence,
+            .timestamp = at,
+            .symbol = "SYN",
+            .family = bte::results::RecordFamily::portfolio,
+            .cashMicrodollars = 2'000'000'000,
+            .marketValueMicrodollars = 0,
+            .equityMicrodollars = 2'000'000'000 + pnlMicrodollars,
+            .pnlMicrodollars = pnlMicrodollars,
+            .positionShares = positionShares};
   }
 
   bte::core::Result<bte::results::FinalizedResult>
@@ -297,6 +331,11 @@ TEST_F(ResultReplayTest,
         .price =
             static_cast<double>(*record.priceNanodollars) / 1'000'000'000.0,
         .amount = static_cast<double>(*record.amountMicrodollars) / 1'000'000.0,
+        .barIndex = static_cast<std::size_t>(std::ranges::distance(
+            expectedSelection.value().bars.begin(),
+            std::ranges::lower_bound(expectedSelection.value().bars,
+                                     record.timestamp, {},
+                                     &bte::data::SnapshotBar::timestamp))),
     });
   }
   ASSERT_FALSE(expectedFills.empty())
@@ -679,6 +718,28 @@ TEST_F(ResultReplayTest, cancellationAndMissingImmutableDataFailClosed) {
   ASSERT_FALSE(missingManifest.ok());
   EXPECT_EQ(missingManifest.error().code,
             bte::core::ErrorCode::dataSnapshotUnavailable);
+}
+
+TEST_F(ResultReplayTest, cancellationDuringPortfolioCompletionIsPropagated) {
+  using CancellationPoint =
+      bte::bindings::testing::PortfolioCompletionCancellationPoint;
+  constexpr std::array cancellationPoints{
+      CancellationPoint::trackerCreation,
+      CancellationPoint::frame,
+      CancellationPoint::fillAdvance,
+      CancellationPoint::frameFill,
+  };
+  for (const auto point : cancellationPoints) {
+    SCOPED_TRACE(static_cast<int>(point));
+    bte::core::CancellationSource cancellation;
+    bte::bindings::testing::cancelNextResultReplayPortfolioCompletion(
+        &cancellation, point);
+    const auto replay = bte::bindings::ResultReplay::open(
+        root_ / "Store", root_ / "Data", resultId_,
+        bte::bindings::ResultReplayTimeframe::hourly, cancellation.token());
+    ASSERT_FALSE(replay.ok());
+    EXPECT_EQ(replay.error().code, bte::core::ErrorCode::cancelled);
+  }
 }
 
 TEST_F(ResultReplayTest, multiSymbolResultsAreRejectedBeforeReplay) {
@@ -1112,7 +1173,8 @@ TEST_F(ResultReplayTest,
        .isBuy = false,
        .quantityShares = 10,
        .price = 104,
-       .amount = 1040}};
+       .amount = 1040,
+       .barIndex = 2}};
   for (const auto timeframe :
        {bte::bindings::ResultReplayTimeframe::hourly,
         bte::bindings::ResultReplayTimeframe::dailyUtc}) {
@@ -1126,7 +1188,516 @@ TEST_F(ResultReplayTest,
     EXPECT_EQ(replay.value()->current()->fills, expected);
     EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.cash, 2030);
     EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 30);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl, 30);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.unrealizedPnl, 0);
+    EXPECT_EQ(replay.value()->current()->barIndex, 2U);
+    EXPECT_EQ(replay.value()->current()->fills.front().barIndex, 2U);
   }
+}
+
+TEST_F(ResultReplayTest, replayRejectsSellWithoutAnOpenLongPosition) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  auto persisted = persist({{.sequence = 0,
+                             .timestamp = firstTimestamp,
+                             .symbol = "SYN",
+                             .family = bte::results::RecordFamily::portfolio,
+                             .cashMicrodollars = 2'000'000'000,
+                             .marketValueMicrodollars = 0,
+                             .equityMicrodollars = 2'000'000'000,
+                             .pnlMicrodollars = 0,
+                             .positionShares = 0},
+                            {.sequence = 1,
+                             .timestamp = firstTimestamp,
+                             .symbol = "SYN",
+                             .family = bte::results::RecordFamily::fill,
+                             .side = bte::results::OrderSide::sell,
+                             .quantityShares = 1,
+                             .priceNanodollars = 100'000'000'000,
+                             .amountMicrodollars = 100'000'000}},
+                           bte::results::RunStatus::completed);
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_FALSE(replay.ok());
+  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest, replayRejectsSellThatExceedsTheOpenLongPosition) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  auto persisted = persist(
+      {replayFill(0, firstTimestamp, bte::results::OrderSide::buy, 1, 100),
+       replayPortfolio(1, firstTimestamp, 1),
+       replayFill(2, secondTimestamp, bte::results::OrderSide::sell, 2, 200),
+       replayPortfolio(3, secondTimestamp, 0)},
+      bte::results::RunStatus::failed, "sell exceeds the open long position");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  const auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_FALSE(replay.ok());
+  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest, replayAcceptsFillRoundedToZeroMicrodollars) {
+  const auto at = timestamp("2024-01-01 23:00:00+00:00");
+  auto persisted =
+      persist({replayFill(0, at, bte::results::OrderSide::buy, 1, 0, 400),
+               replayPortfolio(1, at, 1)},
+              bte::results::RunStatus::failed,
+              "positive fill rounded to zero microdollars");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  const auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_NE(replay.value()->current(), nullptr);
+  ASSERT_EQ(replay.value()->current()->fills.size(), 1U);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->fills.front().price, 0.0000004);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->fills.front().amount, 0);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl, 0);
+}
+
+TEST_F(ResultReplayTest, replayRejectsPositionQuantityOverflow) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  auto persisted =
+      persist({{.sequence = 0,
+                .timestamp = firstTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::buy,
+                .quantityShares = std::numeric_limits<std::int64_t>::max(),
+                .priceNanodollars = 1,
+                .amountMicrodollars = 1},
+               {.sequence = 1,
+                .timestamp = firstTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .pnlMicrodollars = 0,
+                .positionShares = std::numeric_limits<std::int64_t>::max()},
+               {.sequence = 2,
+                .timestamp = secondTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::buy,
+                .quantityShares = 1,
+                .priceNanodollars = 1,
+                .amountMicrodollars = 1},
+               {.sequence = 3,
+                .timestamp = secondTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .pnlMicrodollars = 0,
+                .positionShares = std::numeric_limits<std::int64_t>::max()}},
+              bte::results::RunStatus::failed, "position quantity overflow");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  const auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_FALSE(replay.ok());
+  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest, replayAcceptsExactMaximumPositionAndCostBasis) {
+  const auto at = timestamp("2024-01-01 23:00:00+00:00");
+  const auto maximum = std::numeric_limits<std::int64_t>::max();
+  auto persisted =
+      persist({replayFill(0, at, bte::results::OrderSide::buy, maximum, maximum,
+                          maximum),
+               replayPortfolio(1, at, maximum)},
+              bte::results::RunStatus::failed, "exact supported replay limits");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  const auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_NE(replay.value()->current(), nullptr);
+  EXPECT_EQ(replay.value()->current()->portfolio.positionShares, maximum);
+  ASSERT_EQ(replay.value()->current()->fills.size(), 1U);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->fills.front().amount,
+                   static_cast<double>(maximum) / 1'000'000.0);
+}
+
+TEST_F(ResultReplayTest, replayRejectsOpenCostBasisOverflow) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  auto persisted =
+      persist({{.sequence = 0,
+                .timestamp = firstTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::buy,
+                .quantityShares = 1,
+                .priceNanodollars = 1,
+                .amountMicrodollars = std::numeric_limits<std::int64_t>::max()},
+               {.sequence = 1,
+                .timestamp = firstTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .pnlMicrodollars = 0,
+                .positionShares = 1},
+               {.sequence = 2,
+                .timestamp = secondTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::buy,
+                .quantityShares = 1,
+                .priceNanodollars = 1,
+                .amountMicrodollars = 1},
+               {.sequence = 3,
+                .timestamp = secondTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .pnlMicrodollars = 0,
+                .positionShares = 2}},
+              bte::results::RunStatus::failed, "open cost basis overflow");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  const auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_FALSE(replay.ok());
+  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest, replayRejectsRealizedPnlOverflow) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  const auto thirdTimestamp = timestamp("2024-01-02 01:00:00+00:00");
+  auto persisted =
+      persist({{.sequence = 0,
+                .timestamp = firstTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::buy,
+                .quantityShares = 1,
+                .priceNanodollars = 1,
+                .amountMicrodollars = 1},
+               {.sequence = 1,
+                .timestamp = firstTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .pnlMicrodollars = 0,
+                .positionShares = 1},
+               {.sequence = 2,
+                .timestamp = secondTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::sell,
+                .quantityShares = 1,
+                .priceNanodollars = 1,
+                .amountMicrodollars = std::numeric_limits<std::int64_t>::max()},
+               {.sequence = 3,
+                .timestamp = secondTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .pnlMicrodollars = 0,
+                .positionShares = 0},
+               {.sequence = 4,
+                .timestamp = thirdTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::buy,
+                .quantityShares = 1,
+                .priceNanodollars = 1,
+                .amountMicrodollars = 1},
+               {.sequence = 5,
+                .timestamp = thirdTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::fill,
+                .side = bte::results::OrderSide::sell,
+                .quantityShares = 1,
+                .priceNanodollars = 3,
+                .amountMicrodollars = 3},
+               {.sequence = 6,
+                .timestamp = thirdTimestamp,
+                .symbol = "SYN",
+                .family = bte::results::RecordFamily::portfolio,
+                .cashMicrodollars = 2'000'000'000,
+                .marketValueMicrodollars = 0,
+                .equityMicrodollars = 2'000'000'000,
+                .pnlMicrodollars = 0,
+                .positionShares = 0}},
+              bte::results::RunStatus::failed, "realized P&L overflow");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  const auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_FALSE(replay.ok());
+  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest, replayAcceptsExactMaximumRealizedPnl) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  const auto maximum = std::numeric_limits<std::int64_t>::max();
+  auto finalPortfolio = replayPortfolio(3, secondTimestamp, 0);
+  finalPortfolio.cashMicrodollars = maximum;
+  finalPortfolio.equityMicrodollars = maximum;
+  finalPortfolio.pnlMicrodollars = maximum;
+  auto persisted = persist(
+      {replayFill(0, firstTimestamp, bte::results::OrderSide::buy, 1, 0),
+       replayPortfolio(1, firstTimestamp, 1),
+       replayFill(2, secondTimestamp, bte::results::OrderSide::sell, 1,
+                  maximum),
+       finalPortfolio},
+      bte::results::RunStatus::failed, "exact maximum realized P&L");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_TRUE(replay.value()->seek(1));
+  ASSERT_NE(replay.value()->current(), nullptr);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl,
+                   static_cast<double>(maximum) / 1'000'000.0);
+}
+
+TEST_F(ResultReplayTest, replayAcceptsExactMinimumRealizedPnl) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  const auto thirdTimestamp = timestamp("2024-01-02 01:00:00+00:00");
+  const auto minimum = std::numeric_limits<std::int64_t>::min();
+  auto finalPortfolio = replayPortfolio(6, thirdTimestamp, 0);
+  finalPortfolio.cashMicrodollars = minimum;
+  finalPortfolio.equityMicrodollars = minimum;
+  finalPortfolio.pnlMicrodollars = minimum;
+  auto persisted = persist(
+      {replayFill(0, firstTimestamp, bte::results::OrderSide::buy, 1,
+                  std::numeric_limits<std::int64_t>::max()),
+       replayPortfolio(1, firstTimestamp, 1),
+       replayFill(2, secondTimestamp, bte::results::OrderSide::sell, 1, 0),
+       replayPortfolio(3, secondTimestamp, 0,
+                       -std::numeric_limits<std::int64_t>::max()),
+       replayFill(4, thirdTimestamp, bte::results::OrderSide::buy, 1, 1),
+       replayFill(5, thirdTimestamp, bte::results::OrderSide::sell, 1, 0),
+       finalPortfolio},
+      bte::results::RunStatus::failed, "exact minimum realized P&L");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_TRUE(replay.value()->seek(2));
+  ASSERT_NE(replay.value()->current(), nullptr);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl,
+                   static_cast<double>(minimum) / 1'000'000.0);
+}
+
+TEST_F(ResultReplayTest, replayReportsLossOnLongClose) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  auto persisted =
+      persist({replayFill(0, firstTimestamp, bte::results::OrderSide::buy, 1,
+                          100'000'000),
+               replayPortfolio(1, firstTimestamp, 1),
+               replayFill(2, secondTimestamp, bte::results::OrderSide::sell, 1,
+                          90'000'000),
+               replayPortfolio(3, secondTimestamp, 0, -10'000'000)},
+              bte::results::RunStatus::failed, "loss-making long close");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_TRUE(replay.value()->seek(1));
+  ASSERT_NE(replay.value()->current(), nullptr);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl, -10);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.unrealizedPnl, 0);
+}
+
+TEST_F(ResultReplayTest, replayRejectsRealizedPnlUnderflow) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  const auto thirdTimestamp = timestamp("2024-01-02 01:00:00+00:00");
+  const auto maximum = std::numeric_limits<std::int64_t>::max();
+  auto persisted = persist(
+      {replayFill(0, firstTimestamp, bte::results::OrderSide::buy, 1, maximum),
+       replayPortfolio(1, firstTimestamp, 1),
+       replayFill(2, secondTimestamp, bte::results::OrderSide::sell, 1, 1),
+       replayPortfolio(3, secondTimestamp, 0),
+       replayFill(4, thirdTimestamp, bte::results::OrderSide::buy, 1, maximum),
+       replayFill(5, thirdTimestamp, bte::results::OrderSide::sell, 1, 1),
+       replayPortfolio(6, thirdTimestamp, 0)},
+      bte::results::RunStatus::failed, "realized P&L underflow");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  const auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_FALSE(replay.ok());
+  EXPECT_EQ(replay.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultReplayTest, partialLongCloseSplitsPnlByAverageCost) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  const auto thirdTimestamp = timestamp("2024-01-02 01:00:00+00:00");
+  auto store =
+      bte::results::ResultStore::open(root_ / "CustomStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin({
+      .universe = {"SYN"},
+      .range = {.start = firstTimestamp,
+                .end = timestamp("2024-01-02 02:00:00+00:00")},
+      .initialCapitalMicrodollars = 2'000'000'000,
+      .strategyId = "average-cost-partial-close",
+      .strategyHash = std::string(64, 'c'),
+      .dataSelection = selection_,
+  });
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  const std::vector<bte::results::CanonicalRecord> records{
+      {.sequence = 0,
+       .timestamp = firstTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::fill,
+       .side = bte::results::OrderSide::buy,
+       .quantityShares = 1,
+       .priceNanodollars = 100'000'000'000,
+       .amountMicrodollars = 100'000'000},
+      {.sequence = 1,
+       .timestamp = firstTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::portfolio,
+       .cashMicrodollars = 1'900'000'000,
+       .marketValueMicrodollars = 101'000'000,
+       .equityMicrodollars = 2'001'000'000,
+       .pnlMicrodollars = 1'000'000,
+       .positionShares = 1},
+      {.sequence = 2,
+       .timestamp = secondTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::fill,
+       .side = bte::results::OrderSide::buy,
+       .quantityShares = 2,
+       .priceNanodollars = 110'000'000'000,
+       .amountMicrodollars = 220'000'000},
+      {.sequence = 3,
+       .timestamp = secondTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::portfolio,
+       .cashMicrodollars = 1'680'000'000,
+       .marketValueMicrodollars = 309'000'000,
+       .equityMicrodollars = 1'989'000'000,
+       .pnlMicrodollars = -11'000'000,
+       .positionShares = 3},
+      {.sequence = 4,
+       .timestamp = thirdTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::fill,
+       .side = bte::results::OrderSide::sell,
+       .quantityShares = 1,
+       .priceNanodollars = 120'000'000'000,
+       .amountMicrodollars = 120'000'000},
+      {.sequence = 5,
+       .timestamp = thirdTimestamp,
+       .symbol = "SYN",
+       .family = bte::results::RecordFamily::portfolio,
+       .cashMicrodollars = 1'800'000'000,
+       .marketValueMicrodollars = 208'000'000,
+       .equityMicrodollars = 2'008'000'000,
+       .pnlMicrodollars = 8'000'000,
+       .positionShares = 2},
+  };
+  ASSERT_TRUE(writer.value()->append(records).ok());
+  auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 2'008'000'000, .pnlMicrodollars = 8'000'000});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", finalized.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_TRUE(replay.value()->seek(2));
+  ASSERT_NE(replay.value()->current(), nullptr);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.pnl, 8);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl, 13.333333);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.unrealizedPnl,
+                   -5.333333);
+  ASSERT_EQ(replay.value()->current()->fills.size(), 1U);
+  EXPECT_EQ(replay.value()->current()->fills.front().barIndex, 2U);
+}
+
+TEST_F(ResultReplayTest, partialCloseRoundsAllocatedCostBasisHalfEven) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  const auto tieCases =
+      std::array<std::pair<std::int64_t, std::int64_t>, 2>{{{10, 8}, {14, 6}}};
+  for (const auto &[openCostBasis, expectedRealizedPnl] : tieCases) {
+    SCOPED_TRACE(openCostBasis);
+    auto persisted = persist(
+        {replayFill(0, firstTimestamp, bte::results::OrderSide::buy, 4,
+                    openCostBasis),
+         replayPortfolio(1, firstTimestamp, 4),
+         replayFill(2, secondTimestamp, bte::results::OrderSide::sell, 1, 10),
+         replayPortfolio(3, secondTimestamp, 3, expectedRealizedPnl)},
+        bte::results::RunStatus::failed, "half-even average-cost tie");
+    ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+    auto replay = bte::bindings::ResultReplay::open(
+        root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+        bte::bindings::ResultReplayTimeframe::hourly);
+    ASSERT_TRUE(replay.ok()) << replay.error().message;
+    ASSERT_TRUE(replay.value()->seek(1));
+    ASSERT_NE(replay.value()->current(), nullptr);
+    EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl,
+                     static_cast<double>(expectedRealizedPnl) / 1'000'000.0);
+  }
+}
+
+TEST_F(ResultReplayTest, partialCloseAvoidsIntermediateCostBasisOverflow) {
+  const auto firstTimestamp = timestamp("2024-01-01 23:00:00+00:00");
+  const auto secondTimestamp = timestamp("2024-01-02 00:00:00+00:00");
+  const auto maximum = std::numeric_limits<std::int64_t>::max();
+  auto persisted =
+      persist({replayFill(0, firstTimestamp, bte::results::OrderSide::buy,
+                          maximum, maximum - 1),
+               replayPortfolio(1, firstTimestamp, maximum),
+               replayFill(2, secondTimestamp, bte::results::OrderSide::sell,
+                          maximum - 1, maximum),
+               replayPortfolio(3, secondTimestamp, 1, 2)},
+              bte::results::RunStatus::failed,
+              "partial close near the fixed-point limit");
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+
+  auto replay = bte::bindings::ResultReplay::open(
+      root_ / "CustomStore", root_ / "Data", persisted.value().resultId,
+      bte::bindings::ResultReplayTimeframe::hourly);
+  ASSERT_TRUE(replay.ok()) << replay.error().message;
+  ASSERT_TRUE(replay.value()->seek(1));
+  ASSERT_NE(replay.value()->current(), nullptr);
+  EXPECT_DOUBLE_EQ(replay.value()->current()->portfolio.realizedPnl, 0.000002);
+  EXPECT_EQ(replay.value()->current()->portfolio.positionShares, 1);
 }
 
 TEST_F(ResultReplayTest,
@@ -1239,17 +1810,20 @@ TEST_F(ResultReplayTest,
          .isBuy = true,
          .quantityShares = 1,
          .price = 100,
-         .amount = 100},
+         .amount = 100,
+         .barIndex = 0},
         {.timestamp = range.start + std::chrono::hours{2},
          .isBuy = true,
          .quantityShares = 2,
          .price = 110,
-         .amount = 220},
+         .amount = 220,
+         .barIndex = sparse ? 1U : 2U},
         {.timestamp = range.start + std::chrono::hours{2},
          .isBuy = false,
          .quantityShares = 2,
          .price = 110,
-         .amount = 220}};
+         .amount = 220,
+         .barIndex = sparse ? 1U : 2U}};
     if (sparse) {
       EXPECT_EQ(frame.fills, expected);
     } else {

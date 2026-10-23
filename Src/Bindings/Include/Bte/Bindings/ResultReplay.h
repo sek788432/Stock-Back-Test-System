@@ -24,6 +24,7 @@ struct ResultReplayFill {
   std::int64_t quantityShares = 0;
   double price = 0.0;
   double amount = 0.0;
+  std::size_t barIndex = 0;
 
   bool operator==(const ResultReplayFill &) const = default;
 };
@@ -34,6 +35,8 @@ struct ResultReplayPortfolio {
   double marketValue = 0.0;
   double equity = 0.0;
   double pnl = 0.0;
+  double realizedPnl = 0.0;
+  double unrealizedPnl = 0.0;
 
   bool operator==(const ResultReplayPortfolio &) const = default;
 };
@@ -42,6 +45,7 @@ struct ResultReplayFrame {
   core::Bar candle;
   std::vector<ResultReplayFill> fills;
   ResultReplayPortfolio portfolio;
+  std::size_t barIndex = 0;
   bool partialUtcDay = false;
 
   bool operator==(const ResultReplayFrame &) const = default;

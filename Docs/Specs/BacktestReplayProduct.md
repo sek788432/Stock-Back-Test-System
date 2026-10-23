@@ -168,7 +168,8 @@ persisted row spans from retained Data Segments; it never reselects by the
 broader Run date range. An owned Bindings request object performs cancellable
 catalog/open work and publishes only the newest generation as a queued immutable
 value. Replay shows Hourly or UTC Daily candles, synchronized
-volume, persisted fills/markers, post-slice cash/position/market-value/equity/P&L,
+volume, persisted fills/markers with selected source-bar indexes, post-slice
+cash/position/market-value/equity/total P&L plus realized and unrealized P&L,
 partial UTC-day state, and terminal reason. It uses indexed frames, progressively
 displays every selected bar through the current cursor without a fixed frame cap,
 and never reruns Python, indicators, order evaluation, or
