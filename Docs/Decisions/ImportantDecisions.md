@@ -92,11 +92,24 @@ to the same engine. Release execution reads an immutable versioned snapshot,
 uses checked fixed-point accounting, exposes `bte::core::Result<T>` at fallible
 public C++ seams, and persists one transactional SQLite `.bteresult` container
 whose deterministic identity is its canonical functional records and hash.
+Public raw-CSV refresh pull requests may publish only when limited to extracted
+CSV files, their `SourceManifest.btesource`, `StockData/Symbols.txt` when
+needed, and related documentation-only publication-policy changes. Their
+evidence must record the repository owner's redistribution-rights attestation
+for each included derived dataset and the exact SourceManifest SHA-256. These
+pull requests must not include application code, product packages or release
+artifacts, or split data. Public product releases remain blocked until
+redistribution rights, a verified redistribution-cleared split manifest, and
+the exact snapshot hashes are recorded.
 
 **Why.** One execution authority prevents semantic drift between authoring
 modes and makes replay reproducible. Immutable data and content-addressed
 references keep stored results portable without duplicating OHLCV. Fixed-point
 values make accounting and persistence deterministic across platforms.
+Separating narrowly scoped raw CSV maintenance from product release also lets
+validated source history be updated independently; the owner attestation and
+source-manifest hash keep each public CSV update rights-reviewed and
+byte-identifiable.
 
 **Important rejected alternatives.** Embedding a second Python backtest engine
 or the former Lua runtime was rejected because execution semantics would split.
@@ -104,15 +117,21 @@ Reading mutable DuckDB state in the release application was rejected because a
 saved run could not identify immutable input. Copying all bars into every
 result was rejected because it duplicates retained data. Treating physical
 SQLite bytes as the determinism contract was rejected because storage layout is
-non-functional.
+non-functional. Blocking every eligible raw CSV refresh until split metadata
+exists was rejected because a narrowly scoped update distributes no split data
+and claims no split-adjusted bars; extending that exception to application or
+release artifacts was rejected because those require product-release evidence.
+Omitting owner rights attestation or source hashes was rejected because the
+public data still requires traceable rights and bytes.
 
 **Consequences.** DuckDB and DataFetcher remain developer ingestion tools.
 Python isolation protects application stability but is not a security sandbox.
 Existing floating-point bars remain an incremental baseline. The former legacy
 JSON replay summaries were removed rather than retained as a competing result
-contract. A public data-bearing release stays
-blocked until redistribution rights and a verified split manifest exist. A
-separate updater is not a V1 dependency.
+contract. A public product release stays blocked until rights, a verified
+redistribution-cleared split manifest, and snapshot hashes are recorded. The
+narrow raw CSV refresh exception follows the owner-attestation and source-hash
+evidence described above. A separate updater is not a V1 dependency.
 
 Seven-column extracted CSVs use a hash-bound `SourceManifest.btesource` sidecar
 to state each file's source timeframe. `GetFromDb.py` writes a sorted V1

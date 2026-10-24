@@ -17,7 +17,7 @@ constraints.
 - **Planned:** the complete module graph below, general Strategy/`MarketSlice`
   seam, Python worker, complete release snapshot pipeline,
   broker/accounting/metrics, and remaining canonical result families.
-- **Blocked for public release:** redistribution rights and a verified redistribution-cleared split manifest.
+- **Blocked for public product release:** redistribution rights and a verified redistribution-cleared split manifest.
 
 Planned modules are contracts, not claims about current code.
 

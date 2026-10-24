@@ -21,7 +21,18 @@ This spec owns market-data provenance, release snapshots, chronology-safe access
 - **Planned:** complete release snapshot pipeline,
   streaming/prefetch, synchronized multi-symbol slices, calendar/split
   manifests, and full release-profile retention.
-- **Blocked for public release:** redistribution rights for derived market data and a verified redistribution-cleared split manifest are not recorded.
+- **Public CSV updates:** a data-only pull request may update raw
+  `StockData/Extracted/*.csv`, the accompanying
+  `StockData/Extracted/SourceManifest.btesource`, and, when needed,
+  `StockData/Symbols.txt`. Supporting documentation-only changes that define
+  or record this publication policy may accompany the data. The pull request
+  must record repository-owner confirmation of redistribution rights for every
+  included derived dataset and the exact SourceManifest SHA-256. It must not
+  include application code, product packages or release artifacts, or split
+  data; those changes use the product-release gate.
+- **Blocked for public product release:** release snapshots remain blocked
+  until redistribution rights for every included dataset and a verified,
+  redistribution-cleared split manifest are recorded.
 
 The existing CSV reader is a development baseline. It is not yet the release snapshot implementation and currently materializes a complete file.
 
@@ -280,15 +291,39 @@ A `.bteresult` stores snapshot/segment IDs and hashes, not duplicate OHLCV.
   an unreferenced Data Segment moves to Data Trash and becomes permanently
   removable after its own 30-day recovery period.
 
-## 7. Legal release gates
+## 7. Public data publication gates
 
-Before any public artifact includes market data, release evidence must record:
+### Raw extracted CSV updates
+
+A public data-only pull request may update raw
+`StockData/Extracted/*.csv`, `StockData/Extracted/SourceManifest.btesource`,
+and, when needed, `StockData/Symbols.txt`. It may also include documentation-
+only changes that define or record this publication policy. It must not include
+application code, product packages or release artifacts, or split data; those
+changes use the product-release gate. Its evidence must record:
+
+- repository-owner confirmation of the right to publicly redistribute every
+  included derived dataset, naming the upstream source and permitted use;
+- the exact SHA-256 of `SourceManifest.btesource`, whose entries bind every CSV
+  to its timeframe and exact-byte SHA-256.
+
+A data-only update that contains no split data does not need to establish
+split-manifest rights. The pull request must not describe those raw bars as
+split-adjusted or as a release snapshot.
+
+### Public product releases
+
+Before a public product artifact includes a Release Snapshot, its evidence must
+record:
 
 - the right to redistribute every included derived dataset;
-- the source and redistribution terms for the split manifest;
+- the verified, redistribution-cleared split manifest, including its source
+  and redistribution terms;
 - the exact snapshot hashes covered by that evidence.
 
-Until then, snapshot tooling may be developed and tested with repository fixtures, but a public data-bearing release is **Blocked**.
+Until all product-release evidence exists, snapshot tooling may be developed
+and tested with repository fixtures, but a public data-bearing product release
+is **Blocked**.
 
 ## 8. Verification requirements
 

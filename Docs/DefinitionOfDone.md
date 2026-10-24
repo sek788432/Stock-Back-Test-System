@@ -160,7 +160,22 @@ For the complete pre-CI C++ quality workflow, run:
 - [ ] Third-party package versions, hashes, licenses, and the release SBOM are
   recorded.
 - [ ] Market-data redistribution rights and the verified split manifest are
-  present before a public release containing project-managed data.
+  present before a public product release containing project-managed data.
+
+## Public raw-data pull requests
+
+- [ ] The pull request is limited to raw extracted CSVs, their
+  `SourceManifest.btesource`, `StockData/Symbols.txt` when needed, and related
+  documentation-only publication-policy changes. It contains no application
+  code, product package or release artifact, or split data; otherwise the
+  public product-release gate applies.
+- [ ] Repository-owner confirmation covers redistribution of every included
+  derived dataset and names its upstream source and permitted use.
+- [ ] The pull request records the exact SHA-256 of
+  `StockData/Extracted/SourceManifest.btesource`.
+- [ ] Split-manifest evidence is not required only when the pull request
+  contains no split data and makes no split-adjustment claim, as defined in
+  [`Specs/DataLayer.md`](Specs/DataLayer.md) §7.
 
 ## When an item cannot be completed
 

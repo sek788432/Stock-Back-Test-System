@@ -18,7 +18,7 @@ in [`EngineReplayPnL.md`](EngineReplayPnL.md).
 | Saved strategies and complete Results library | **Accepted design / partially implemented** | Backend Result storage and a limited Results management page exist, but saved Strategies and the complete Results library remain planned. |
 | Durable results and result replay | **Implemented limited slice** | The current Backtest records canonical warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar in a durable draft. Save publishes the same `.bteresult` artifact, which Replay can open without engine execution. Unsupported record families are declared in persisted capability metadata. The complete engine, canonical record families, and result migration remain planned. |
 | Python Strategy and Debug Run | **Accepted design / not implemented** | No shipped Python worker or Debug Run path exists yet. |
-| Public data-bearing release | **Blocked** | Redistribution rights and verified split metadata are missing. |
+| Public product release containing market data | **Blocked** | Redistribution rights for every included dataset, a verified redistribution-cleared split manifest, and exact snapshot hashes are required. |
 
 The UI, README, release notes, and screenshots must preserve these distinctions.
 

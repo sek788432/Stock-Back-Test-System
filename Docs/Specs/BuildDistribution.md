@@ -10,8 +10,9 @@ belong to [`../BUILD.md`](../BUILD.md) and [`CiDevFlow.md`](CiDevFlow.md).
   platforms.
 - **Accepted design / not implemented:** the signed full-install packages and
   immutable runtime/data manifests below.
-- **Blocked:** no public data-bearing release may ship without documented
-  redistribution rights and a verified redistribution-cleared split manifest.
+- **Blocked:** no public product release containing market data may ship
+  without documented redistribution rights and a verified
+  redistribution-cleared split manifest.
   Qt Charts also cannot ship in the Apache-2.0 application distribution.
 
 ## Supported release artifacts
@@ -81,4 +82,4 @@ Before publication:
   the exact split manifest.
 
 Until all applicable checks exist and pass, packaging remains **Planned** and a
-public data-bearing release remains **Blocked**.
+public data-bearing product release remains **Blocked**.
