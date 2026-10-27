@@ -4,7 +4,8 @@
 #include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
-#include "Bte/Results/ReproducibilityStore.h"
+
+// IWYU pragma: no_include "Bte/Results/ReproducibilityStore.h"
 
 #include <QObject>
 #include <QString>

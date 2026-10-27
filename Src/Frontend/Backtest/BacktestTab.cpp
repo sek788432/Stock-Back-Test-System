@@ -5,8 +5,9 @@
 #include "Bte/Bindings/BacktestSessionVm.h"
 #include "Bte/Core/Digest.h"
 #include "Bte/Indicators/StreamingIndicator.h"
-#include "Bte/Results/ResultStore.h"
 #include "Bte/Strategy/SelectableStrategy.h"
+
+// IWYU pragma: no_include "Bte/Results/ResultStore.h"
 
 #include <QAbstractItemView>
 #include <QCalendarWidget>
