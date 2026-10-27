@@ -1342,8 +1342,11 @@ BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
     return invalidArgument("recorded execution cannot switch Result writers");
   }
   const auto completed = impl_->result.status == results::RunStatus::completed;
-  results::FinalSummary summary{.diagnosticsComplete =
-                                    impl_->result.diagnosticsComplete};
+  results::FinalSummary summary{
+      .finalEquityMicrodollars = std::nullopt,
+      .pnlMicrodollars = std::nullopt,
+      .diagnosticsComplete = impl_->result.diagnosticsComplete,
+  };
   if (completed) {
     summary.finalEquityMicrodollars = impl_->result.equityMicrodollars;
     summary.pnlMicrodollars = impl_->result.pnlMicrodollars;

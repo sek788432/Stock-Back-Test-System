@@ -1642,6 +1642,8 @@ parseStoredProvenanceScalars(const nlohmann::json &value) {
       .sourceHash = *sourceHash,
       .canonicalPlanJson = *plan,
       .planHash = *planHash,
+      .runtime = std::nullopt,
+      .provenanceAvailability = {},
   };
 }
 
@@ -4192,7 +4194,14 @@ prepareSchemaThreeMigration(const OpenedResult &source) {
       .slippageRatePartsPerBillion = std::nullopt,
       .seed = std::nullopt,
       .strategyMode = StrategyMode::legacyUnrecorded,
+      .apiVersion = {},
+      .templateVersion = {},
       .canonicalParametersJson = "null",
+      .sourceUtf8 = {},
+      .sourceHash = {},
+      .canonicalPlanJson = {},
+      .planHash = {},
+      .runtime = std::nullopt,
       .provenanceAvailability =
           {{"aggregationPolicy", ProvenanceAvailabilityState::recorded},
            {"costs", ProvenanceAvailabilityState::legacyUnrecorded},
