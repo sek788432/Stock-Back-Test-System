@@ -25,6 +25,10 @@ Optional:
   Ubuntu. `RunQuality.sh` installs the CI-compatible LLVM 18 analyzer toolchain,
   the remaining analyzers, and Python 3.12, then owns a hash-locked Python
   environment under `Output/QualityVenv/` automatically.
+- **Bundled Python Strategy runtime:** macOS Apple Silicon, Python 3.12+ as a
+  build-time profile assembler, and the six exact artifacts in
+  `Output/PythonRuntimeArtifacts/`. The built `.app` includes CPython and all
+  locked Python packages, so users do not install Python separately.
 
 ### Pinned SQLite setup
 
@@ -109,6 +113,30 @@ Both scripts use `qt-dev`, so Qt 6.8+ is required. `RunTest.sh` matches the
 implemented all-tests workflow and fails if no tests are registered. Other
 `*.sh` files remain ignored unless explicitly added to `.gitignore`.
 
+### Bundled Python Strategy runtime (macOS Apple Silicon)
+
+The default developer build does not enable Python Strategy. To build an app
+that carries its own locked CPython runtime, prepare the exact upstream files
+once, then configure, build, and run the bundle and worker integration tests:
+
+```bash
+python3 Tools/BuildPythonRuntime.py \
+  --download-artifacts \
+  --artifacts-dir Output/PythonRuntimeArtifacts
+cmake --preset qt-dev -DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON
+cmake --build --preset qt-dev
+ctest --preset qt-dev --output-on-failure
+```
+
+The download command verifies every SHA-256 from
+[`Specs/BuildDistribution.md`](Specs/BuildDistribution.md) before it stores an
+artifact. Configuration and profile assembly then work offline and fail on a
+missing or changed artifact. The app embeds the runtime under
+`Contents/Resources/RuntimeProfiles/`; CTest verifies the complete bundle and
+starts a strategy worker using the assembled profile. This build option is
+limited to macOS Apple Silicon and does not by itself create a signed or
+redistributable installer.
+
 ## Quick start (macOS / Linux)
 
 ```bash
@@ -161,6 +189,8 @@ cd Output && ctest --output-on-failure
 | `BTE_SANITIZERS`   | `OFF`   | ASan/UBSan on Clang/GNU when set to `ON`     |
 | `BTE_THREAD_SANITIZER` | `OFF` | TSan on Clang/GNU; mutually exclusive with `BTE_SANITIZERS` |
 | `BTE_BUILD_QT_APP` | `OFF`   | Build the optional Qt desktop app shell and frontend smoke tests |
+| `BTE_BUNDLE_MANAGED_PYTHON_RUNTIME` | `OFF` | Build the locked macOS Apple Silicon Python profile into the app bundle; requires `BTE_BUILD_QT_APP=ON` |
+| `BTE_PYTHON_RUNTIME_ARTIFACTS_DIR` | `Output/PythonRuntimeArtifacts` | Offline cache of the exact CPython archive and package wheels |
 | `BTE_COVERAGE`     | `OFF`   | Add gcov-compatible test coverage instrumentation |
 
 The `analysis` and `coverage` presets back the merge-blocking quality jobs.

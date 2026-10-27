@@ -1,5 +1,6 @@
 #include "Bte/Results/ResultStore.h"
 
+#include "Bte/Core/CanonicalJson.h"
 #include "Bte/Core/Digest.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
@@ -11,6 +12,8 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include <atomic>
 #include <mutex>
@@ -26,6 +29,7 @@
 #include <optional>
 #include <random>
 #include <ranges> // IWYU pragma: keep
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -35,12 +39,31 @@
 namespace bte::results {
 namespace {
 
-constexpr auto schemaVersion = 2;
+using core::parseCanonicalJson;
+using core::serializeCanonicalJson;
+
+constexpr std::int64_t schemaTwoVersion = 2;
+constexpr std::int64_t schemaThreeVersion = 3;
+constexpr std::int64_t schemaVersion = schemaTwoVersion;
 constexpr std::string_view numericPolicy = "fixed-point-v1";
 constexpr std::string_view aggregationPolicy = "utcCalendarDayV1";
 
 enum class DataValidationPolicy : std::uint8_t { deferToCaller, validateExact };
 enum class ResultStatusPolicy : std::uint8_t { terminalOnly, allowRunning };
+
+std::string_view strategyModeName(StrategyMode mode);
+std::optional<std::string_view>
+availabilityName(ProvenanceAvailabilityState state);
+
+[[nodiscard]] ResultCapabilities
+capabilitiesFor(const RunDescriptor &descriptor) {
+  auto capabilities = ResultCapabilities{};
+  if (descriptor.schemaVersion == schemaThreeVersion &&
+      descriptor.provenance.strategyMode == StrategyMode::python) {
+    capabilities.strategyLogs = true;
+  }
+  return capabilities;
+}
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
 std::atomic<testing::FailurePoint> &configuredFailurePoint() {
@@ -473,6 +496,185 @@ bool validRunStatus(const RunStatus status) {
   return status >= RunStatus::running && status <= RunStatus::incomplete;
 }
 
+bool validStrategyMode(const StrategyMode mode) {
+  return mode == StrategyMode::starter ||
+         mode == StrategyMode::selectableConditions ||
+         mode == StrategyMode::python || mode == StrategyMode::legacyUnrecorded;
+}
+
+bool validProvenanceAvailability(
+    const std::map<std::string, ProvenanceAvailabilityState> &availability) {
+  static constexpr std::array<std::string_view, 13> requiredKeys{
+      "aggregationPolicy", "costs",         "dataSelection",
+      "engineBuild",       "numericPolicy", "runtimeProfile",
+      "runtimePackages",   "seed",          "strategyApi",
+      "strategyArtifact",  "strategyMode",  "strategyTemplate",
+      "timeframe",
+  };
+  if (availability.size() != requiredKeys.size()) {
+    return false;
+  }
+  return std::ranges::all_of(requiredKeys, [&availability](const auto key) {
+    const auto entry = availability.find(std::string{key});
+    return entry != availability.end() &&
+           (entry->second == ProvenanceAvailabilityState::recorded ||
+            entry->second == ProvenanceAvailabilityState::legacyUnrecorded);
+  });
+}
+
+core::Result<void>
+validateRuntimeProvenance(const RuntimeProfileProvenance &runtime) {
+  constexpr std::size_t maximumManifestBytes = 1024U * 1024U;
+  if (runtime.canonicalManifestJson.size() > maximumManifestBytes) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Runtime profile manifest exceeds 1 MiB");
+  }
+  auto manifest = parseCanonicalJson(runtime.canonicalManifestJson);
+  if (!manifest.ok() || !manifest.value().is_object()) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Runtime profile manifest is invalid");
+  }
+  const auto canonicalManifest = serializeCanonicalJson(manifest.value());
+  if (!canonicalManifest.ok() ||
+      canonicalManifest.value() != runtime.canonicalManifestJson ||
+      !validHash(runtime.manifestHash) ||
+      runtime.manifestHash != core::sha256(runtime.canonicalManifestJson) ||
+      runtime.profileId.empty() || runtime.pythonVersion.empty() ||
+      runtime.pythonAbi.empty() || !validHash(runtime.stockbtSourceHash)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Runtime profile provenance is inconsistent");
+  }
+
+  const auto &value = manifest.value();
+  static const std::set<std::string> manifestKeys{"architecture",
+                                                  "components",
+                                                  "installedFiles",
+                                                  "platform",
+                                                  "profileBuilderVersion",
+                                                  "profileId",
+                                                  "pythonAbi",
+                                                  "pythonExecutable",
+                                                  "pythonVersion",
+                                                  "schemaVersion",
+                                                  "stockbtApiVersion",
+                                                  "stockbtSourceSha256"};
+  constexpr auto stringFieldMatches = [](const nlohmann::json &object,
+                                         const std::string_view key,
+                                         const std::string_view expected) {
+    const auto entry = object.find(std::string{key});
+    return entry != object.end() && entry->is_string() &&
+           entry->get_ref<const std::string &>() == expected;
+  };
+  const auto components = value.find("components");
+  const auto schema = value.find("schemaVersion");
+  const auto installedFiles = value.find("installedFiles");
+  const auto builder = value.find("profileBuilderVersion");
+  const auto pythonExecutable = value.find("pythonExecutable");
+  if (value.size() != manifestKeys.size() ||
+      !std::ranges::all_of(
+          manifestKeys,
+          [&value](const auto &key) { return value.contains(key); }) ||
+      schema == value.end() || !schema->is_number_unsigned() ||
+      schema->get<std::uint64_t>() != 1 ||
+      !stringFieldMatches(value, "platform", "macos") ||
+      !stringFieldMatches(value, "architecture", "arm64") ||
+      !stringFieldMatches(value, "stockbtApiVersion", "1") ||
+      builder == value.end() || !builder->is_string() ||
+      builder->get_ref<const std::string &>().empty() ||
+      pythonExecutable == value.end() || !pythonExecutable->is_string() ||
+      pythonExecutable->get_ref<const std::string &>().empty() ||
+      installedFiles == value.end() || !installedFiles->is_array() ||
+      installedFiles->empty() ||
+      !stringFieldMatches(value, "profileId", runtime.profileId) ||
+      !stringFieldMatches(value, "pythonVersion", runtime.pythonVersion) ||
+      !stringFieldMatches(value, "pythonAbi", runtime.pythonAbi) ||
+      !stringFieldMatches(value, "stockbtSourceSha256",
+                          runtime.stockbtSourceHash) ||
+      components == value.end() || !components->is_array() ||
+      components->size() != runtime.packages.size()) {
+    return core::makeError(
+        core::ErrorCode::invalidArgument,
+        "Runtime profile identity does not match its manifest");
+  }
+
+  static const std::set<std::string> installedFileKeys{"path", "sha256"};
+  std::set<std::string> installedFilePaths;
+  for (const auto &file : *installedFiles) {
+    if (!file.is_object() || file.size() != installedFileKeys.size() ||
+        !std::ranges::all_of(
+            installedFileKeys,
+            [&file](const auto &key) { return file.contains(key); }) ||
+        !file.at("path").is_string() || !file.at("sha256").is_string()) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Runtime installed-file metadata is invalid");
+    }
+    const auto path = file.at("path").get<std::string>();
+    const auto hash = file.at("sha256").get<std::string>();
+    if (path.empty() || !validHash(hash) ||
+        !installedFilePaths.insert(path).second) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Runtime installed-file metadata is invalid");
+    }
+  }
+
+  auto packages = runtime.packages;
+  std::ranges::sort(packages, {}, &RuntimePackageIdentity::name);
+  if (std::ranges::adjacent_find(packages, {}, &RuntimePackageIdentity::name) !=
+      packages.end()) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Runtime package identities are duplicated");
+  }
+  std::vector<RuntimePackageIdentity> manifestPackages;
+  manifestPackages.reserve(components->size());
+  for (const auto &component : *components) {
+    if (!component.is_object()) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Runtime package manifest entry is invalid");
+    }
+    const auto name = component.find("name");
+    const auto version = component.find("version");
+    const auto hash = component.find("artifactSha256");
+    static const std::set<std::string> packageKeys{
+        "artifactSha256", "licenses", "name", "upstreamUrl", "version"};
+    if (component.size() != packageKeys.size() ||
+        !std::ranges::all_of(packageKeys,
+                             [&component](const auto &key) {
+                               return component.contains(key);
+                             }) ||
+        name == component.end() || !name->is_string() ||
+        version == component.end() || !version->is_string() ||
+        hash == component.end() || !hash->is_string() ||
+        !component.at("licenses").is_array() ||
+        component.at("licenses").empty() ||
+        !component.at("upstreamUrl").is_string()) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Runtime package manifest entry is invalid");
+    }
+    manifestPackages.push_back({
+        .name = name->get<std::string>(),
+        .version = version->get<std::string>(),
+        .artifactHash = hash->get<std::string>(),
+    });
+  }
+  std::ranges::sort(manifestPackages, {}, &RuntimePackageIdentity::name);
+  if (manifestPackages != packages ||
+      std::ranges::any_of(packages, [](const auto &package) {
+        return package.name.empty() || package.version.empty() ||
+               !validHash(package.artifactHash);
+      })) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Runtime package set does not match its manifest");
+  }
+  const auto stockbt = std::ranges::find(packages, std::string{"stockbt"},
+                                         &RuntimePackageIdentity::name);
+  if (stockbt == packages.end() ||
+      stockbt->artifactHash != runtime.stockbtSourceHash) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Runtime stockbt source hash is inconsistent");
+  }
+  return {};
+}
+
 core::Result<void> validateCanonicalRecord(const CanonicalRecord &record,
                                            const RunDescriptor &descriptor,
                                            const core::ErrorCode errorCode) {
@@ -535,11 +737,13 @@ core::Result<void> validateCanonicalRecord(const CanonicalRecord &record,
 }
 
 core::Result<void> validateDescriptor(const RunDescriptor &descriptor) {
+  const auto supportedSchema = descriptor.schemaVersion == schemaTwoVersion ||
+                               descriptor.schemaVersion == schemaThreeVersion;
   if (descriptor.universe.empty() ||
       descriptor.range.start >= descriptor.range.end ||
       descriptor.initialCapitalMicrodollars <= 0 ||
       descriptor.strategyId.empty() || !validHash(descriptor.strategyHash) ||
-      !validHash(descriptor.dataSelection.snapshotId) ||
+      !supportedSchema || !validHash(descriptor.dataSelection.snapshotId) ||
       descriptor.dataSelection.timeframe != "ohlcv-1h" ||
       descriptor.dataSelection.profile.empty() ||
       descriptor.dataSelection.spans.empty()) {
@@ -563,6 +767,129 @@ core::Result<void> validateDescriptor(const RunDescriptor &descriptor) {
                              "Data Selection span is invalid");
     }
     previousOrdinal = span.segmentOrdinal;
+  }
+
+  if (descriptor.schemaVersion == schemaThreeVersion) {
+    const auto &provenance = descriptor.provenance;
+    constexpr std::size_t maximumStrategySourceBytes = 1024U * 1024U;
+    constexpr std::size_t maximumCanonicalParametersBytes = 64U * 1024U;
+    const auto isRecorded = [&provenance](const std::string_view key) {
+      const auto entry =
+          provenance.provenanceAvailability.find(std::string{key});
+      return entry != provenance.provenanceAvailability.end() &&
+             entry->second == ProvenanceAvailabilityState::recorded;
+    };
+    const auto costsRecorded = isRecorded("costs");
+    if (provenance.timeframe != descriptor.dataSelection.timeframe ||
+        (provenance.engineBuild.has_value() != isRecorded("engineBuild")) ||
+        (provenance.engineBuild.has_value() &&
+         provenance.engineBuild->empty()) ||
+        (provenance.seed.has_value() != isRecorded("seed")) ||
+        (provenance.costProfile.has_value() != costsRecorded) ||
+        (provenance.commissionRatePartsPerBillion.has_value() !=
+         costsRecorded) ||
+        (provenance.slippageRatePartsPerBillion.has_value() != costsRecorded) ||
+        (provenance.costProfile.has_value() &&
+         provenance.costProfile->empty()) ||
+        provenance.canonicalParametersJson.size() >
+            maximumCanonicalParametersBytes ||
+        (provenance.commissionRatePartsPerBillion.has_value() &&
+         *provenance.commissionRatePartsPerBillion < 0) ||
+        (provenance.slippageRatePartsPerBillion.has_value() &&
+         *provenance.slippageRatePartsPerBillion < 0) ||
+        !validStrategyMode(provenance.strategyMode) ||
+        !validProvenanceAvailability(provenance.provenanceAvailability)) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Schema-3 Result provenance is invalid");
+    }
+    auto parameters = parseCanonicalJson(provenance.canonicalParametersJson);
+    if (!parameters.ok() ||
+        (provenance.strategyMode == StrategyMode::legacyUnrecorded
+             ? !parameters.value().is_null()
+             : !parameters.value().is_object())) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Schema-3 strategy parameters are invalid");
+    }
+    const auto canonicalParameters = serializeCanonicalJson(parameters.value());
+    if (!canonicalParameters.ok() ||
+        canonicalParameters.value() != provenance.canonicalParametersJson) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Schema-3 strategy parameters are not canonical");
+    }
+
+    switch (provenance.strategyMode) {
+    case StrategyMode::python: {
+      if (provenance.sourceUtf8.empty() || provenance.sourceHash.empty() ||
+          provenance.sourceUtf8.size() > maximumStrategySourceBytes ||
+          provenance.sourceUtf8.find('\0') != std::string::npos ||
+          provenance.sourceUtf8.find('\r') != std::string::npos ||
+          provenance.sourceUtf8.starts_with("\xef\xbb\xbf") ||
+          provenance.sourceHash != core::sha256(provenance.sourceUtf8) ||
+          !validHash(provenance.sourceHash) || provenance.apiVersion.empty() ||
+          provenance.templateVersion.empty() ||
+          !provenance.canonicalPlanJson.empty() ||
+          !provenance.planHash.empty() || !provenance.runtime.has_value()) {
+        return core::makeError(core::ErrorCode::invalidArgument,
+                               "Python Strategy provenance is incomplete");
+      }
+      if (!std::ranges::all_of(
+              provenance.provenanceAvailability, [](const auto &entry) {
+                return entry.second == ProvenanceAvailabilityState::recorded;
+              })) {
+        return core::makeError(
+            core::ErrorCode::invalidArgument,
+            "New Python provenance cannot be legacy-unrecorded");
+      }
+      const auto sourceJson =
+          serializeCanonicalJson(nlohmann::json(provenance.sourceUtf8));
+      if (!sourceJson.ok()) {
+        return core::makeError(core::ErrorCode::invalidArgument,
+                               "Python Strategy source is not valid UTF-8");
+      }
+      auto runtime = validateRuntimeProvenance(*provenance.runtime);
+      if (!runtime.ok()) {
+        return runtime.error();
+      }
+      break;
+    }
+    case StrategyMode::selectableConditions: {
+      if (!provenance.sourceUtf8.empty() || !provenance.sourceHash.empty() ||
+          provenance.apiVersion.empty() || provenance.templateVersion.empty() ||
+          provenance.canonicalPlanJson.empty() ||
+          !validHash(provenance.planHash) || provenance.runtime.has_value()) {
+        return core::makeError(core::ErrorCode::invalidArgument,
+                               "Selectable Strategy provenance is incomplete");
+      }
+      auto plan = parseCanonicalJson(provenance.canonicalPlanJson);
+      if (!plan.ok() || !plan.value().is_object()) {
+        return core::makeError(core::ErrorCode::invalidArgument,
+                               "Selectable Strategy plan is invalid");
+      }
+      const auto canonicalPlan = serializeCanonicalJson(plan.value());
+      if (!canonicalPlan.ok() ||
+          canonicalPlan.value() != provenance.canonicalPlanJson) {
+        return core::makeError(core::ErrorCode::invalidArgument,
+                               "Selectable Strategy plan is not canonical");
+      }
+      break;
+    }
+    case StrategyMode::starter:
+    case StrategyMode::legacyUnrecorded:
+      if (provenance.runtime.has_value()) {
+        return core::makeError(
+            core::ErrorCode::invalidArgument,
+            "Non-Python Result cannot contain a runtime profile");
+      }
+      if (provenance.strategyMode == StrategyMode::legacyUnrecorded &&
+          (isRecorded("strategyApi") || isRecorded("strategyArtifact") ||
+           isRecorded("strategyMode") || isRecorded("strategyTemplate") ||
+           isRecorded("runtimeProfile") || isRecorded("runtimePackages"))) {
+        return core::makeError(
+            core::ErrorCode::invalidArgument,
+            "Legacy Strategy provenance cannot claim unrecorded values");
+      }
+      break;
+    }
   }
   return {};
 }
@@ -657,12 +984,11 @@ void appendOptionalInteger(std::string &bytes, const char tag,
   appendInteger(bytes, tag, *value);
 }
 
-std::string
-canonicalHash(const RunDescriptor &descriptor,
-              const std::vector<CanonicalRecord> &records,
-              const RunStatus status, const std::string_view terminalReason,
-              const FinalSummary &summary,
-              const std::span<const CanonicalRecord> terminalTail = {}) {
+std::string canonicalHashSchemaTwo(
+    const RunDescriptor &descriptor,
+    const std::vector<CanonicalRecord> &records, const RunStatus status,
+    const std::string_view terminalReason, const FinalSummary &summary,
+    const std::span<const CanonicalRecord> terminalTail = {}) {
   std::string bytes{"BTE-CANONICAL-RESULT"};
   bytes.push_back('\0');
   appendInteger(bytes, 'v', schemaVersion);
@@ -717,6 +1043,301 @@ canonicalHash(const RunDescriptor &descriptor,
   return core::sha256(bytes);
 }
 
+std::string familyName(const RecordFamily family) {
+  switch (family) {
+  case RecordFamily::order:
+    return "order";
+  case RecordFamily::fill:
+    return "fill";
+  case RecordFamily::portfolio:
+    return "portfolio";
+  case RecordFamily::cost:
+    return "cost";
+  case RecordFamily::warning:
+    return "warning";
+  case RecordFamily::log:
+    return "log";
+  case RecordFamily::terminalDiagnostic:
+    return "terminal-diagnostic";
+  }
+  return {};
+}
+
+std::string sideName(const OrderSide side) {
+  switch (side) {
+  case OrderSide::none:
+    return "none";
+  case OrderSide::buy:
+    return "buy";
+  case OrderSide::sell:
+    return "sell";
+  }
+  return {};
+}
+
+std::string runStatusName(const RunStatus status) {
+  switch (status) {
+  case RunStatus::running:
+    return "running";
+  case RunStatus::completed:
+    return "completed";
+  case RunStatus::failed:
+    return "failed";
+  case RunStatus::canceled:
+    return "canceled";
+  case RunStatus::interrupted:
+    return "interrupted";
+  case RunStatus::incomplete:
+    return "incomplete";
+  }
+  return {};
+}
+
+nlohmann::json optionalDomainValue(const std::optional<std::int64_t> value) {
+  return value.has_value() ? nlohmann::json(std::to_string(*value))
+                           : nlohmann::json(nullptr);
+}
+
+nlohmann::json provenanceAvailabilityJson(const ResultProvenance &provenance) {
+  nlohmann::json result = nlohmann::json::object();
+  for (const auto &[key, state] : provenance.provenanceAvailability) {
+    const auto name = availabilityName(state);
+    result[key] = name.has_value() ? nlohmann::json(std::string{*name})
+                                   : nlohmann::json(nullptr);
+  }
+  return result;
+}
+
+core::Result<void> updateCanonicalJsonFrame(core::Sha256Accumulator &digest,
+                                            const char tag,
+                                            const nlohmann::json &value) {
+  const auto payload = serializeCanonicalJson(value);
+  if (!payload.ok()) {
+    return payload.error();
+  }
+  const auto length = static_cast<std::uint64_t>(payload.value().size());
+  std::array<std::byte, 9> frameHeader{};
+  frameHeader[0] = static_cast<std::byte>(static_cast<unsigned char>(tag));
+  for (std::size_t index = 0; index < sizeof(length); ++index) {
+    frameHeader[index + 1] = static_cast<std::byte>(
+        (length >> (56U - static_cast<unsigned int>(index) * 8U)) & 0xffU);
+  }
+  digest.update(frameHeader);
+  digest.update(
+      std::as_bytes(std::span{payload.value().data(), payload.value().size()}));
+  return {};
+}
+
+core::Result<std::string> canonicalHashSchemaThree(
+    const RunDescriptor &descriptor,
+    const std::vector<CanonicalRecord> &records, const RunStatus status,
+    const std::string_view terminalReason, const FinalSummary &summary,
+    const std::span<const CanonicalRecord> terminalTail) {
+  const auto &provenance = descriptor.provenance;
+  core::Sha256Accumulator digest;
+  constexpr std::string_view domain = "BTE-CANONICAL-RESULT-V3";
+  digest.update(std::as_bytes(std::span{domain.data(), domain.size()}));
+  constexpr std::array<std::byte, 1> separator{std::byte{0}};
+  digest.update(separator);
+  const auto optionalIntegerText =
+      [](const std::optional<std::int64_t> value) -> nlohmann::json {
+    return value.has_value() ? nlohmann::json(std::to_string(*value))
+                             : nlohmann::json(nullptr);
+  };
+  const auto optionalString =
+      [](const std::optional<std::string> &value) -> nlohmann::json {
+    return value.has_value() ? nlohmann::json(*value) : nlohmann::json(nullptr);
+  };
+
+  nlohmann::json header{
+      {"aggregationPolicy", aggregationPolicy},
+      {"commissionRatePartsPerBillion",
+       optionalIntegerText(provenance.commissionRatePartsPerBillion)},
+      {"costProfile", optionalString(provenance.costProfile)},
+      {"engineBuild", optionalString(provenance.engineBuild)},
+      {"hashFrameVersion", 3},
+      {"initialCapitalMicrodollars",
+       std::to_string(descriptor.initialCapitalMicrodollars)},
+      {"numericPolicy", numericPolicy},
+      {"provenanceAvailability", provenanceAvailabilityJson(provenance)},
+      {"rangeEndUnixMillis",
+       std::to_string(core::time::toUnixMillis(descriptor.range.end))},
+      {"rangeStartUnixMillis",
+       std::to_string(core::time::toUnixMillis(descriptor.range.start))},
+      {"schemaVersion", 3},
+      {"seed", optionalIntegerText(provenance.seed)},
+      {"slippageRatePartsPerBillion",
+       optionalIntegerText(provenance.slippageRatePartsPerBillion)},
+      {"strategyHash", descriptor.strategyHash},
+      {"strategyId", descriptor.strategyId},
+      {"strategyMode", std::string{strategyModeName(provenance.strategyMode)}},
+      {"timeframe", provenance.timeframe},
+      {"universe", descriptor.universe},
+  };
+  auto updated = updateCanonicalJsonFrame(digest, 'h', header);
+  if (!updated.ok()) {
+    return updated.error();
+  }
+
+  const auto parameters =
+      parseCanonicalJson(provenance.canonicalParametersJson);
+  if (!parameters.ok()) {
+    return parameters.error();
+  }
+  nlohmann::json canonicalPlan = nullptr;
+  if (!provenance.canonicalPlanJson.empty()) {
+    auto parsedPlan = parseCanonicalJson(provenance.canonicalPlanJson);
+    if (!parsedPlan.ok()) {
+      return parsedPlan.error();
+    }
+    canonicalPlan = std::move(parsedPlan).value();
+  }
+  const nlohmann::json strategy{
+      {"apiVersion", provenance.apiVersion.empty()
+                         ? nlohmann::json(nullptr)
+                         : nlohmann::json(provenance.apiVersion)},
+      {"canonicalParameters", parameters.value()},
+      {"canonicalPlan", std::move(canonicalPlan)},
+      {"planHash", provenance.planHash.empty()
+                       ? nlohmann::json(nullptr)
+                       : nlohmann::json(provenance.planHash)},
+      {"sourceHash", provenance.sourceHash.empty()
+                         ? nlohmann::json(nullptr)
+                         : nlohmann::json(provenance.sourceHash)},
+      {"sourceUtf8", provenance.sourceUtf8.empty()
+                         ? nlohmann::json(nullptr)
+                         : nlohmann::json(provenance.sourceUtf8)},
+      {"templateVersion", provenance.templateVersion.empty()
+                              ? nlohmann::json(nullptr)
+                              : nlohmann::json(provenance.templateVersion)},
+  };
+  updated = updateCanonicalJsonFrame(digest, 's', strategy);
+  if (!updated.ok()) {
+    return updated.error();
+  }
+
+  nlohmann::json runtime = nullptr;
+  if (provenance.runtime.has_value()) {
+    const auto &profile = *provenance.runtime;
+    const auto manifest = parseCanonicalJson(profile.canonicalManifestJson);
+    if (!manifest.ok()) {
+      return manifest.error();
+    }
+    nlohmann::json packages = nlohmann::json::array();
+    auto orderedPackages = profile.packages;
+    std::ranges::sort(orderedPackages, {}, &RuntimePackageIdentity::name);
+    for (const auto &package : orderedPackages) {
+      packages.push_back({{"artifactHash", package.artifactHash},
+                          {"name", package.name},
+                          {"version", package.version}});
+    }
+    runtime = {{"abi", profile.pythonAbi},
+               {"manifest", manifest.value()},
+               {"manifestHash", profile.manifestHash},
+               {"packages", std::move(packages)},
+               {"profileId", profile.profileId},
+               {"pythonVersion", profile.pythonVersion},
+               {"stockbtSourceHash", profile.stockbtSourceHash}};
+  }
+  updated = updateCanonicalJsonFrame(digest, 'r', runtime);
+  if (!updated.ok()) {
+    return updated.error();
+  }
+
+  const auto &identity = descriptor.dataSelection;
+  const nlohmann::json dataSelection{
+      {"aggregationProfile", identity.profile},
+      {"calendarHash", identity.calendarHash},
+      {"snapshotId", identity.snapshotId},
+      {"sourceTimeframe", identity.timeframe},
+      {"splitManifestHash", identity.splitManifestHash},
+  };
+  updated = updateCanonicalJsonFrame(digest, 'd', dataSelection);
+  if (!updated.ok()) {
+    return updated.error();
+  }
+  for (const auto &span : identity.spans) {
+    const nlohmann::json spanValue{
+        {"firstRow", std::to_string(span.firstRow)},
+        {"firstTimestampUnixMillis",
+         std::to_string(core::time::toUnixMillis(span.firstTimestamp))},
+        {"lastTimestampUnixMillis",
+         std::to_string(core::time::toUnixMillis(span.lastTimestamp))},
+        {"manifestOrdinal", std::to_string(span.segmentOrdinal)},
+        {"rowCount", std::to_string(span.rowCount)},
+        {"segmentHash", span.segmentHash},
+        {"segmentId", span.segmentId},
+        {"symbol", span.symbol},
+    };
+    updated = updateCanonicalJsonFrame(digest, 'p', spanValue);
+    if (!updated.ok()) {
+      return updated.error();
+    }
+  }
+
+  for (const auto part :
+       {std::span<const CanonicalRecord>{records}, terminalTail}) {
+    for (const auto &record : part) {
+      const nlohmann::json event{
+          {"amountMicrodollars",
+           optionalDomainValue(record.amountMicrodollars)},
+          {"cashMicrodollars", optionalDomainValue(record.cashMicrodollars)},
+          {"diagnosticPayload", record.text},
+          {"equityMicrodollars",
+           optionalDomainValue(record.equityMicrodollars)},
+          {"family", familyName(record.family)},
+          {"marketValueMicrodollars",
+           optionalDomainValue(record.marketValueMicrodollars)},
+          {"pnlMicrodollars", optionalDomainValue(record.pnlMicrodollars)},
+          {"positionShares", optionalDomainValue(record.positionShares)},
+          {"priceNanodollars", optionalDomainValue(record.priceNanodollars)},
+          {"quantityShares", optionalDomainValue(record.quantityShares)},
+          {"sequence", std::to_string(record.sequence)},
+          {"side", sideName(record.side)},
+          {"symbol", record.symbol},
+          {"timestampUnixMillis",
+           std::to_string(core::time::toUnixMillis(record.timestamp))},
+      };
+      updated = updateCanonicalJsonFrame(digest, 'e', event);
+      if (!updated.ok()) {
+        return updated.error();
+      }
+    }
+  }
+
+  const nlohmann::json terminal{
+      {"diagnosticComplete", summary.diagnosticsComplete},
+      {"finalEquityMicrodollars",
+       optionalDomainValue(summary.finalEquityMicrodollars)},
+      {"pnlMicrodollars", optionalDomainValue(summary.pnlMicrodollars)},
+      {"status", runStatusName(status)},
+      {"terminalReason", terminalReason},
+  };
+  updated = updateCanonicalJsonFrame(digest, 't', terminal);
+  if (!updated.ok()) {
+    return updated.error();
+  }
+  return digest.finalize();
+}
+
+core::Result<std::string>
+canonicalHash(const RunDescriptor &descriptor,
+              const std::vector<CanonicalRecord> &records,
+              const RunStatus status, const std::string_view terminalReason,
+              const FinalSummary &summary,
+              const std::span<const CanonicalRecord> terminalTail = {}) {
+  if (descriptor.schemaVersion == schemaTwoVersion) {
+    return canonicalHashSchemaTwo(descriptor, records, status, terminalReason,
+                                  summary, terminalTail);
+  }
+  if (descriptor.schemaVersion == schemaThreeVersion) {
+    return canonicalHashSchemaThree(descriptor, records, status, terminalReason,
+                                    summary, terminalTail);
+  }
+  return core::makeError(core::ErrorCode::schemaMismatch,
+                         "Result schema version is unsupported");
+}
+
 std::string allocateResultId() {
 #if defined(BTE_ENABLE_TEST_HOOKS)
   if (auto forced = consumeForcedResultId(); forced.has_value()) {
@@ -736,6 +1357,332 @@ std::int64_t nowUtcMillis() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
+}
+
+std::string_view strategyModeName(const StrategyMode mode) {
+  switch (mode) {
+  case StrategyMode::starter:
+    return "starter";
+  case StrategyMode::selectableConditions:
+    return "selectable-conditions";
+  case StrategyMode::python:
+    return "python";
+  case StrategyMode::legacyUnrecorded:
+    return "legacy-unrecorded";
+  }
+  return {};
+}
+
+std::optional<StrategyMode> parseStrategyMode(const std::string_view value) {
+  if (value == "starter") {
+    return StrategyMode::starter;
+  }
+  if (value == "selectable-conditions") {
+    return StrategyMode::selectableConditions;
+  }
+  if (value == "python") {
+    return StrategyMode::python;
+  }
+  if (value == "legacy-unrecorded") {
+    return StrategyMode::legacyUnrecorded;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string_view>
+availabilityName(const ProvenanceAvailabilityState state) {
+  switch (state) {
+  case ProvenanceAvailabilityState::recorded:
+    return "recorded";
+  case ProvenanceAvailabilityState::legacyUnrecorded:
+    return "legacy-unrecorded";
+  }
+  return std::nullopt;
+}
+
+core::Result<std::string>
+serializeStoredProvenance(const ResultProvenance &provenance) {
+  nlohmann::json availability = nlohmann::json::object();
+  for (const auto &[key, state] : provenance.provenanceAvailability) {
+    const auto value = availabilityName(state);
+    if (!value.has_value()) {
+      return core::makeError(core::ErrorCode::invalidArgument,
+                             "Provenance availability state is invalid");
+    }
+    availability[key] = *value;
+  }
+
+  nlohmann::json runtime = nullptr;
+  if (provenance.runtime.has_value()) {
+    const auto &profile = *provenance.runtime;
+    nlohmann::json packages = nlohmann::json::array();
+    for (const auto &package : profile.packages) {
+      packages.push_back({{"artifactHash", package.artifactHash},
+                          {"name", package.name},
+                          {"version", package.version}});
+    }
+    runtime = {{"abi", profile.pythonAbi},
+               {"manifest", profile.canonicalManifestJson},
+               {"manifestHash", profile.manifestHash},
+               {"packages", std::move(packages)},
+               {"profileId", profile.profileId},
+               {"pythonVersion", profile.pythonVersion},
+               {"stockbtSourceHash", profile.stockbtSourceHash}};
+  }
+  const auto optionalText =
+      [](const std::optional<std::string> &value) -> nlohmann::json {
+    return value.has_value() ? nlohmann::json(*value) : nlohmann::json(nullptr);
+  };
+  const auto optionalIntegerText =
+      [](const std::optional<std::int64_t> value) -> nlohmann::json {
+    return value.has_value() ? nlohmann::json(std::to_string(*value))
+                             : nlohmann::json(nullptr);
+  };
+  const nlohmann::json value{
+      {"apiVersion", provenance.apiVersion},
+      {"canonicalParametersJson", provenance.canonicalParametersJson},
+      {"canonicalPlanJson", provenance.canonicalPlanJson},
+      {"costProfile", optionalText(provenance.costProfile)},
+      {"engineBuild", optionalText(provenance.engineBuild)},
+      {"provenanceAvailability", std::move(availability)},
+      {"runtime", std::move(runtime)},
+      {"seed", optionalIntegerText(provenance.seed)},
+      {"slippageRatePartsPerBillion",
+       optionalIntegerText(provenance.slippageRatePartsPerBillion)},
+      {"commissionRatePartsPerBillion",
+       optionalIntegerText(provenance.commissionRatePartsPerBillion)},
+      {"sourceHash", provenance.sourceHash},
+      {"sourceUtf8", provenance.sourceUtf8},
+      {"strategyMode", std::string{strategyModeName(provenance.strategyMode)}},
+      {"templateVersion", provenance.templateVersion},
+      {"timeframe", provenance.timeframe},
+      {"planHash", provenance.planHash},
+  };
+  return serializeCanonicalJson(value);
+}
+
+core::Result<ResultProvenance>
+parseStoredProvenance(const std::string_view bytes) {
+  const auto invalid = [] {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Schema-3 Result provenance is malformed");
+  };
+  auto parsed = parseCanonicalJson(bytes);
+  if (!parsed.ok() || !parsed.value().is_object()) {
+    return invalid();
+  }
+  const auto canonical = serializeCanonicalJson(parsed.value());
+  if (!canonical.ok() || canonical.value() != bytes) {
+    return invalid();
+  }
+  const auto &value = parsed.value();
+  static const std::set<std::string> keys{"apiVersion",
+                                          "canonicalParametersJson",
+                                          "canonicalPlanJson",
+                                          "commissionRatePartsPerBillion",
+                                          "costProfile",
+                                          "engineBuild",
+                                          "planHash",
+                                          "provenanceAvailability",
+                                          "runtime",
+                                          "seed",
+                                          "slippageRatePartsPerBillion",
+                                          "sourceHash",
+                                          "sourceUtf8",
+                                          "strategyMode",
+                                          "templateVersion",
+                                          "timeframe"};
+  if (value.size() != keys.size() ||
+      !std::ranges::all_of(
+          keys, [&value](const auto &key) { return value.contains(key); })) {
+    return invalid();
+  }
+  const auto stringValue =
+      [&value](const std::string_view key) -> std::optional<std::string> {
+    const auto entry = value.find(std::string{key});
+    if (entry == value.end() || !entry->is_string()) {
+      return std::nullopt;
+    }
+    return entry->get<std::string>();
+  };
+  const auto optionalStringValue =
+      [&value](const std::string_view key, std::optional<std::string> &output) {
+        const auto entry = value.find(std::string{key});
+        if (entry == value.end()) {
+          return false;
+        }
+        if (entry->is_null()) {
+          output.reset();
+          return true;
+        }
+        if (!entry->is_string()) {
+          return false;
+        }
+        output = entry->get<std::string>();
+        return true;
+      };
+  const auto apiVersion = stringValue("apiVersion");
+  const auto parameters = stringValue("canonicalParametersJson");
+  const auto plan = stringValue("canonicalPlanJson");
+  const auto planHash = stringValue("planHash");
+  const auto sourceHash = stringValue("sourceHash");
+  const auto source = stringValue("sourceUtf8");
+  const auto modeText = stringValue("strategyMode");
+  const auto templateVersion = stringValue("templateVersion");
+  const auto timeframe = stringValue("timeframe");
+  std::optional<std::string> costProfile;
+  std::optional<std::string> engineBuild;
+  std::optional<std::string> commission;
+  std::optional<std::string> seed;
+  std::optional<std::string> slippage;
+  if (!apiVersion || !parameters || !plan || !planHash || !sourceHash ||
+      !source || !modeText || !templateVersion || !timeframe ||
+      !optionalStringValue("costProfile", costProfile) ||
+      !optionalStringValue("engineBuild", engineBuild) ||
+      !optionalStringValue("commissionRatePartsPerBillion", commission) ||
+      !optionalStringValue("seed", seed) ||
+      !optionalStringValue("slippageRatePartsPerBillion", slippage)) {
+    return invalid();
+  }
+  const auto mode = parseStrategyMode(*modeText);
+  if (!mode.has_value()) {
+    return invalid();
+  }
+  const auto parseInteger =
+      [](const std::string &text) -> std::optional<std::int64_t> {
+    std::int64_t result = 0;
+    const auto parsedInteger =
+        std::from_chars(text.data(), text.data() + text.size(), result, 10);
+    if (parsedInteger.ec != std::errc{} ||
+        parsedInteger.ptr != text.data() + text.size() ||
+        std::to_string(result) != text) {
+      return std::nullopt;
+    }
+    return result;
+  };
+  const auto parseOptionalInteger =
+      [&parseInteger](const std::optional<std::string> &text)
+      -> std::optional<std::optional<std::int64_t>> {
+    if (!text.has_value()) {
+      return std::optional<std::int64_t>{};
+    }
+    const auto value = parseInteger(*text);
+    if (!value.has_value()) {
+      return std::nullopt;
+    }
+    return std::optional<std::int64_t>{value.value()};
+  };
+  const auto commissionValue = parseOptionalInteger(commission);
+  const auto seedValue = parseOptionalInteger(seed);
+  const auto slippageValue = parseOptionalInteger(slippage);
+  if (!commissionValue || !seedValue || !slippageValue) {
+    return invalid();
+  }
+  ResultProvenance result{
+      .engineBuild = std::move(engineBuild),
+      .timeframe = *timeframe,
+      .costProfile = std::move(costProfile),
+      .commissionRatePartsPerBillion = commissionValue.value(),
+      .slippageRatePartsPerBillion = slippageValue.value(),
+      .seed = seedValue.value(),
+      .strategyMode = *mode,
+      .apiVersion = *apiVersion,
+      .templateVersion = *templateVersion,
+      .canonicalParametersJson = *parameters,
+      .sourceUtf8 = *source,
+      .sourceHash = *sourceHash,
+      .canonicalPlanJson = *plan,
+      .planHash = *planHash,
+  };
+
+  const auto availability = value.find("provenanceAvailability");
+  if (availability == value.end() || !availability->is_object()) {
+    return invalid();
+  }
+  for (auto entry = availability->begin(); entry != availability->end();
+       ++entry) {
+    if (!entry.value().is_string()) {
+      return invalid();
+    }
+    const auto state = entry.value().get_ref<const std::string &>();
+    if (state == "recorded") {
+      result.provenanceAvailability.emplace(
+          entry.key(), ProvenanceAvailabilityState::recorded);
+    } else if (state == "legacy-unrecorded") {
+      result.provenanceAvailability.emplace(
+          entry.key(), ProvenanceAvailabilityState::legacyUnrecorded);
+    } else {
+      return invalid();
+    }
+  }
+
+  const auto runtime = value.find("runtime");
+  if (runtime == value.end()) {
+    return invalid();
+  }
+  if (!runtime->is_null()) {
+    static const std::set<std::string> runtimeKeys{
+        "abi",       "manifest",      "manifestHash",     "packages",
+        "profileId", "pythonVersion", "stockbtSourceHash"};
+    if (!runtime->is_object() || runtime->size() != runtimeKeys.size() ||
+        !std::ranges::all_of(runtimeKeys, [&runtime](const auto &key) {
+          return runtime->contains(key);
+        })) {
+      return invalid();
+    }
+    const auto getString =
+        [&runtime](const std::string_view key) -> std::optional<std::string> {
+      const auto entry = runtime->find(std::string{key});
+      if (entry == runtime->end() || !entry->is_string()) {
+        return std::nullopt;
+      }
+      return entry->get<std::string>();
+    };
+    const auto abi = getString("abi");
+    const auto manifest = getString("manifest");
+    const auto manifestHash = getString("manifestHash");
+    const auto profileId = getString("profileId");
+    const auto pythonVersion = getString("pythonVersion");
+    const auto stockbtHash = getString("stockbtSourceHash");
+    const auto packages = runtime->find("packages");
+    if (!abi || !manifest || !manifestHash || !profileId || !pythonVersion ||
+        !stockbtHash || packages == runtime->end() || !packages->is_array()) {
+      return invalid();
+    }
+    RuntimeProfileProvenance profile{
+        .profileId = *profileId,
+        .canonicalManifestJson = *manifest,
+        .manifestHash = *manifestHash,
+        .pythonVersion = *pythonVersion,
+        .pythonAbi = *abi,
+        .stockbtSourceHash = *stockbtHash,
+    };
+    for (const auto &package : *packages) {
+      static const std::set<std::string> packageKeys{"artifactHash", "name",
+                                                     "version"};
+      if (!package.is_object() || package.size() != packageKeys.size() ||
+          !std::ranges::all_of(packageKeys, [&package](const auto &key) {
+            return package.contains(key);
+          })) {
+        return invalid();
+      }
+      const auto name = package.find("name");
+      const auto version = package.find("version");
+      const auto hash = package.find("artifactHash");
+      if (name == package.end() || !name->is_string() ||
+          version == package.end() || !version->is_string() ||
+          hash == package.end() || !hash->is_string()) {
+        return invalid();
+      }
+      profile.packages.push_back({
+          .name = name->get<std::string>(),
+          .version = version->get<std::string>(),
+          .artifactHash = hash->get<std::string>(),
+      });
+    }
+    result.runtime = std::move(profile);
+  }
+  return result;
 }
 
 // SQLite is the cross-process authority, including for aliased store paths.
@@ -963,11 +1910,30 @@ core::Result<void> createResultSchema(Database &database,
       return executed.error();
     }
   }
+  if (descriptor.schemaVersion == schemaThreeVersion) {
+    auto executed = database.execute(
+        "CREATE TABLE schema3_provenance(canonical_json TEXT NOT NULL)");
+    if (!executed.ok()) {
+      return executed.error();
+    }
+    executed = database.execute(
+        "CREATE TABLE schema3_terminal_state(diagnostics_complete INTEGER "
+        "NOT NULL)");
+    if (!executed.ok()) {
+      return executed.error();
+    }
+    executed = database.execute(
+        "CREATE TABLE schema3_migration_origin(source_result_id TEXT NOT NULL, "
+        "source_canonical_hash TEXT NOT NULL)");
+    if (!executed.ok()) {
+      return executed.error();
+    }
+  }
 
   Statement meta;
   auto prepared = meta.prepare(
       database, "INSERT INTO result_meta VALUES(?1,?2,?3,'','',?4,?5,?6,0)");
-  if (!prepared.ok() || !meta.integer(1, schemaVersion).ok() ||
+  if (!prepared.ok() || !meta.integer(1, descriptor.schemaVersion).ok() ||
       !meta.text(2, resultId).ok() ||
       !meta.integer(3, static_cast<std::int64_t>(RunStatus::running)).ok() ||
       !meta.text(4, numericPolicy).ok() ||
@@ -1016,7 +1982,7 @@ core::Result<void> createResultSchema(Database &database,
   prepared =
       capabilities.prepare(database, "INSERT INTO result_capabilities VALUES("
                                      "?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)");
-  const auto declared = ResultCapabilities{};
+  const auto declared = capabilitiesFor(descriptor);
   const auto flag = [](const bool enabled) -> std::int64_t {
     return enabled ? 1 : 0;
   };
@@ -1037,6 +2003,23 @@ core::Result<void> createResultSchema(Database &database,
   inserted = capabilities.done();
   if (!inserted.ok()) {
     return inserted.error();
+  }
+
+  if (descriptor.schemaVersion == schemaThreeVersion) {
+    const auto provenance = serializeStoredProvenance(descriptor.provenance);
+    if (!provenance.ok()) {
+      return provenance.error();
+    }
+    Statement statement;
+    prepared = statement.prepare(database,
+                                 "INSERT INTO schema3_provenance VALUES(?1)");
+    if (!prepared.ok() || !statement.text(1, provenance.value()).ok()) {
+      return database.error("Unable to bind schema-3 provenance");
+    }
+    inserted = statement.done();
+    if (!inserted.ok()) {
+      return inserted.error();
+    }
   }
 
   for (const auto &span : identity.spans) {
@@ -1104,8 +2087,13 @@ core::Result<OpenedResult> readResultFile(
                           "SELECT schema_version,result_id,status,"
                           "canonical_hash,terminal_reason,numeric_policy,"
                           "aggregation_policy,saved_utc_ms FROM result_meta");
-  if (!prepared.ok() || meta.step() != SQLITE_ROW ||
-      sqlite3_column_int(meta.handle(), 0) != schemaVersion ||
+  if (!prepared.ok() || meta.step() != SQLITE_ROW) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Result schema or policy is incompatible");
+  }
+  const auto storedSchemaVersion = sqlite3_column_int64(meta.handle(), 0);
+  if ((storedSchemaVersion != schemaTwoVersion &&
+       storedSchemaVersion != schemaThreeVersion) ||
       textColumn(meta.handle(), 5) != numericPolicy ||
       textColumn(meta.handle(), 6) != aggregationPolicy) {
     if (cancellation.isCancellationRequested()) {
@@ -1115,6 +2103,8 @@ core::Result<OpenedResult> readResultFile(
     return core::makeError(core::ErrorCode::schemaMismatch,
                            "Result schema or policy is incompatible");
   }
+  result.schemaVersion = storedSchemaVersion;
+  result.descriptor.schemaVersion = storedSchemaVersion;
   result.resultId = textColumn(meta.handle(), 1);
   result.status = static_cast<RunStatus>(sqlite3_column_int(meta.handle(), 2));
   result.canonicalResultHash = textColumn(meta.handle(), 3);
@@ -1197,6 +2187,51 @@ core::Result<OpenedResult> readResultFile(
   identity.timeframe = textColumn(selection.handle(), 3);
   identity.profile = textColumn(selection.handle(), 4);
 
+  if (storedSchemaVersion == schemaThreeVersion) {
+    Statement provenance;
+    prepared = provenance.prepare(
+        *database.value(), "SELECT canonical_json FROM schema3_provenance");
+    if (!prepared.ok() || provenance.step() != SQLITE_ROW) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Schema-3 Result provenance is unavailable");
+    }
+    auto parsedProvenance =
+        parseStoredProvenance(textColumn(provenance.handle(), 0));
+    if (!parsedProvenance.ok() || provenance.step() != SQLITE_DONE) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Schema-3 Result provenance is invalid");
+    }
+    result.descriptor.provenance = std::move(parsedProvenance).value();
+    Statement migrationOrigin;
+    prepared = migrationOrigin.prepare(
+        *database.value(), "SELECT source_result_id,source_canonical_hash "
+                           "FROM schema3_migration_origin");
+    if (!prepared.ok()) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Schema-3 migration provenance is unavailable");
+    }
+    if (migrationOrigin.step() == SQLITE_ROW) {
+      MigrationSourceIdentity origin{
+          .resultId = textColumn(migrationOrigin.handle(), 0),
+          .canonicalResultHash = textColumn(migrationOrigin.handle(), 1),
+      };
+      if (!validResultId(origin.resultId) ||
+          !validHash(origin.canonicalResultHash) ||
+          origin.resultId == result.resultId ||
+          migrationOrigin.step() != SQLITE_DONE) {
+        return core::makeError(core::ErrorCode::schemaMismatch,
+                               "Schema-3 migration provenance is invalid");
+      }
+      result.migratedFrom = std::move(origin);
+    }
+    if ((result.descriptor.provenance.strategyMode ==
+         StrategyMode::legacyUnrecorded) != result.migratedFrom.has_value()) {
+      return core::makeError(
+          core::ErrorCode::schemaMismatch,
+          "Legacy schema-3 provenance requires migration identity");
+    }
+  }
+
   Statement capabilities;
   prepared = capabilities.prepare(
       *database.value(),
@@ -1232,7 +2267,7 @@ core::Result<OpenedResult> readResultFile(
       .corporateActions = sqlite3_column_int(capabilities.handle(), 10) != 0,
       .margin = sqlite3_column_int(capabilities.handle(), 11) != 0,
   };
-  if (result.capabilities != ResultCapabilities{} ||
+  if (result.capabilities != capabilitiesFor(result.descriptor) ||
       capabilities.step() != SQLITE_DONE) {
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
@@ -1353,16 +2388,36 @@ core::Result<OpenedResult> readResultFile(
         optionalIntegerColumn(summary.handle(), 0);
     result.summary.pnlMicrodollars = optionalIntegerColumn(summary.handle(), 1);
   }
+  if (result.schemaVersion == schemaThreeVersion) {
+    Statement terminalState;
+    prepared = terminalState.prepare(
+        *database.value(),
+        "SELECT diagnostics_complete FROM schema3_terminal_state");
+    if (!prepared.ok() || terminalState.step() != SQLITE_ROW) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Schema-3 terminal diagnostics state is missing");
+    }
+    const auto complete = sqlite3_column_int(terminalState.handle(), 0);
+    if ((complete != 0 && complete != 1) ||
+        terminalState.step() != SQLITE_DONE) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Schema-3 terminal diagnostics state is invalid");
+    }
+    result.summary.diagnosticsComplete = complete != 0;
+  }
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
                            "Result read was cancelled");
   }
-  if (result.status != RunStatus::running &&
-      canonicalHash(result.descriptor, result.records, result.status,
-                    result.terminalReason,
-                    result.summary) != result.canonicalResultHash) {
-    return core::makeError(core::ErrorCode::schemaMismatch,
-                           "Canonical Result hash is invalid");
+  if (result.status != RunStatus::running) {
+    const auto computedHash =
+        canonicalHash(result.descriptor, result.records, result.status,
+                      result.terminalReason, result.summary);
+    if (!computedHash.ok() ||
+        computedHash.value() != result.canonicalResultHash) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Canonical Result hash is invalid");
+    }
   }
   if (dataValidation == DataValidationPolicy::validateExact) {
     auto exact = validateDataSelection(dataRoot, identity, cancellation);
@@ -1511,6 +2566,9 @@ core::Result<void> interruptArtifact(const std::filesystem::path &path,
   const FinalSummary summary;
   const auto hash = canonicalHash(staged.descriptor, staged.records,
                                   RunStatus::interrupted, reason, summary);
+  if (!hash.ok()) {
+    return hash.error();
+  }
   auto database = openDatabase(path, false, false);
   if (!database.ok()) {
     return database.error();
@@ -1524,6 +2582,19 @@ core::Result<void> interruptArtifact(const std::filesystem::path &path,
   if (!inserted.ok()) {
     return inserted.error();
   }
+  if (staged.schemaVersion == schemaThreeVersion) {
+    Statement terminalState;
+    auto prepared = terminalState.prepare(
+        *database.value(), "INSERT INTO schema3_terminal_state VALUES(?1)");
+    if (!prepared.ok() || !terminalState.integer(1, 0).ok()) {
+      return database.value()->error(
+          "Unable to bind recovered terminal diagnostics state");
+    }
+    inserted = terminalState.done();
+    if (!inserted.ok()) {
+      return inserted.error();
+    }
+  }
   Statement meta;
   auto prepared = meta.prepare(
       *database.value(),
@@ -1532,7 +2603,7 @@ core::Result<void> interruptArtifact(const std::filesystem::path &path,
   if (!prepared.ok() ||
       !meta.integer(1, static_cast<std::int64_t>(RunStatus::interrupted))
            .ok() ||
-      !meta.text(2, hash).ok() || !meta.text(3, reason).ok() ||
+      !meta.text(2, hash.value()).ok() || !meta.text(3, reason).ok() ||
       !meta.integer(4, nowUtcMillis()).ok()) {
     return database.value()->error("Unable to bind recovered Result");
   }
@@ -2057,6 +3128,9 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
   }
   const auto hash = canonicalHash(impl_->descriptor, impl_->records, status,
                                   terminalReason, summary, terminalTail);
+  if (!hash.ok()) {
+    return hash.error();
+  }
   if (consumeFailure(testing::FailurePoint::hashFinalization)) {
     return injectedFailure("hash finalization");
   }
@@ -2088,14 +3162,32 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
       static_cast<void>(ignored);
       return written.error();
     }
+    if (impl_->descriptor.schemaVersion == schemaThreeVersion) {
+      Statement terminalState;
+      prepared = terminalState.prepare(
+          *impl_->database, "INSERT INTO schema3_terminal_state VALUES(?1)");
+      const auto complete = summary.diagnosticsComplete ? 1 : 0;
+      if (!prepared.ok() || !terminalState.integer(1, complete).ok()) {
+        const auto ignored = impl_->database->execute("ROLLBACK");
+        static_cast<void>(ignored);
+        return impl_->database->error(
+            "Unable to bind terminal diagnostics state");
+      }
+      written = terminalState.done();
+      if (!written.ok()) {
+        const auto ignored = impl_->database->execute("ROLLBACK");
+        static_cast<void>(ignored);
+        return written.error();
+      }
+    }
     Statement meta;
     prepared = meta.prepare(
         *impl_->database, "UPDATE result_meta SET status=?1,canonical_hash=?2,"
                           "terminal_reason=?3,saved_utc_ms=?4");
     if (!prepared.ok() ||
         !meta.integer(1, static_cast<std::int64_t>(status)).ok() ||
-        !meta.text(2, hash).ok() || !meta.text(3, terminalReason).ok() ||
-        !meta.integer(4, saved).ok()) {
+        !meta.text(2, hash.value()).ok() ||
+        !meta.text(3, terminalReason).ok() || !meta.integer(4, saved).ok()) {
       const auto ignored = impl_->database->execute("ROLLBACK");
       static_cast<void>(ignored);
       return impl_->database->error("Unable to bind Result finalization");
@@ -2160,13 +3252,14 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
     if (consumeFailure(testing::FailurePoint::catalogVisibility)) {
       return injectedFailure("catalog visibility");
     }
-    auto cataloged = upsertCatalog(impl_->root, {.resultId = impl_->id,
-                                                 .displayName = {},
-                                                 .canonicalResultHash = hash,
-                                                 .status = status,
-                                                 .savedUtcMillis = saved,
-                                                 .available = true,
-                                                 .unavailableReason = {}});
+    auto cataloged =
+        upsertCatalog(impl_->root, {.resultId = impl_->id,
+                                    .displayName = {},
+                                    .canonicalResultHash = hash.value(),
+                                    .status = status,
+                                    .savedUtcMillis = saved,
+                                    .available = true,
+                                    .unavailableReason = {}});
     if (!cataloged.ok()) {
       return cataloged.error();
     }
@@ -2205,7 +3298,8 @@ ResultWriter::finalize(const RunStatus status, const FinalSummary &summary,
   // GCOVR_EXCL_STOP
   impl_->finalized = true;
   impl_->lease.reset();
-  return FinalizedResult{.resultId = impl_->id, .canonicalResultHash = hash};
+  return FinalizedResult{.resultId = impl_->id,
+                         .canonicalResultHash = hash.value()};
 }
 
 ResultStore::ResultStore(ConstructionKey, std::filesystem::path root,
@@ -2922,6 +4016,285 @@ ResultStore::importResult(const std::filesystem::path &source) const {
   return FinalizedResult{.resultId = importedId,
                          .canonicalResultHash =
                              validated.value().canonicalResultHash};
+}
+
+core::Result<FinalizedResult>
+ResultStore::migrateSchema2Copy(const std::string &resultId) const {
+  auto sourceLease = mutationLease({root_, dataStore_}, resultId);
+  if (!sourceLease.ok()) {
+    return sourceLease.error();
+  }
+  auto sourcePath = existingResultPath(root_, resultId);
+  if (!sourcePath.ok()) {
+    return sourcePath.error();
+  }
+  auto source = readResultFile(sourcePath.value(), dataStore_,
+                               DataValidationPolicy::validateExact);
+  if (!source.ok()) {
+    return source.error();
+  }
+  if (source.value().schemaVersion != schemaTwoVersion) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Only schema-2 Results can be copied to schema 3");
+  }
+
+  auto migrated = source.value();
+  migrated.schemaVersion = schemaThreeVersion;
+  migrated.descriptor.schemaVersion = schemaThreeVersion;
+  migrated.descriptor.provenance = ResultProvenance{
+      .engineBuild = std::nullopt,
+      .timeframe = migrated.descriptor.dataSelection.timeframe,
+      .costProfile = std::nullopt,
+      .commissionRatePartsPerBillion = std::nullopt,
+      .slippageRatePartsPerBillion = std::nullopt,
+      .seed = std::nullopt,
+      .strategyMode = StrategyMode::legacyUnrecorded,
+      .canonicalParametersJson = "null",
+      .provenanceAvailability =
+          {
+              {"aggregationPolicy", ProvenanceAvailabilityState::recorded},
+              {"costs", ProvenanceAvailabilityState::legacyUnrecorded},
+              {"dataSelection", ProvenanceAvailabilityState::recorded},
+              {"engineBuild", ProvenanceAvailabilityState::legacyUnrecorded},
+              {"numericPolicy", ProvenanceAvailabilityState::recorded},
+              {"runtimeProfile", ProvenanceAvailabilityState::legacyUnrecorded},
+              {"runtimePackages",
+               ProvenanceAvailabilityState::legacyUnrecorded},
+              {"seed", ProvenanceAvailabilityState::legacyUnrecorded},
+              {"strategyApi", ProvenanceAvailabilityState::legacyUnrecorded},
+              {"strategyArtifact",
+               ProvenanceAvailabilityState::legacyUnrecorded},
+              {"strategyMode", ProvenanceAvailabilityState::legacyUnrecorded},
+              {"strategyTemplate",
+               ProvenanceAvailabilityState::legacyUnrecorded},
+              {"timeframe", ProvenanceAvailabilityState::recorded},
+          },
+  };
+  migrated.summary.diagnosticsComplete = false;
+  const auto provenance =
+      serializeStoredProvenance(migrated.descriptor.provenance);
+  if (!provenance.ok()) {
+    return provenance.error();
+  }
+  const auto hash =
+      canonicalHash(migrated.descriptor, migrated.records, migrated.status,
+                    migrated.terminalReason, migrated.summary);
+  if (!hash.ok()) {
+    return hash.error();
+  }
+
+  std::string migratedId;
+  std::filesystem::path stagingPath;
+  std::unique_ptr<ResultLease> lease;
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    const auto candidate = allocateResultId();
+    if (candidate == resultId || hasResultArtifact(root_, candidate)) {
+      continue;
+    }
+    auto acquiredLease =
+        ResultLease::acquire(root_, candidate, ResultLease::Creation::fresh);
+    if (!acquiredLease.ok()) {
+      if (acquiredLease.error().code == core::ErrorCode::resourceBusy) {
+        continue;
+      }
+      return acquiredLease.error();
+    }
+    lease = std::move(acquiredLease).value();
+    migratedId = candidate;
+    stagingPath = root_ / "Staging" / (candidate + ".bteresult");
+    break;
+  }
+  if (migratedId.empty()) {
+    return storageError("Unable to allocate a unique schema-3 Result ID");
+  }
+  struct StagingCleanup final {
+    std::filesystem::path path;
+    ~StagingCleanup() {
+      std::error_code ignored;
+      std::filesystem::remove(path, ignored);
+    }
+  } cleanup{stagingPath};
+
+  if (consumeFailure(testing::FailurePoint::migrationCopy)) {
+    return injectedFailure("schema-2 copy migration copy");
+  }
+  std::error_code copyError;
+  if (!std::filesystem::copy_file(sourcePath.value(), stagingPath,
+                                  std::filesystem::copy_options::none,
+                                  copyError)) {
+    return storageError("Unable to stage schema-2 Result copy: " +
+                        copyError.message());
+  }
+  auto databaseResult = openDatabase(stagingPath, false, false);
+  if (!databaseResult.ok()) {
+    return databaseResult.error();
+  }
+  auto database = std::move(databaseResult).value();
+  const auto saved = nowUtcMillis();
+  {
+    auto transaction = database->execute("BEGIN IMMEDIATE");
+    if (!transaction.ok()) {
+      return transaction.error();
+    }
+    if (consumeFailure(testing::FailurePoint::migrationWrite)) {
+      return injectedFailure("schema-2 copy migration write");
+    }
+    for (const auto *sql : {
+             "CREATE TABLE schema3_provenance(canonical_json TEXT NOT NULL)",
+             "CREATE TABLE schema3_terminal_state(diagnostics_complete INTEGER "
+             "NOT NULL)",
+             "CREATE TABLE schema3_migration_origin(source_result_id TEXT NOT "
+             "NULL,source_canonical_hash TEXT NOT NULL)",
+         }) {
+      auto created = database->execute(sql);
+      if (!created.ok()) {
+        return created.error();
+      }
+    }
+
+    Statement provenanceStatement;
+    auto prepared = provenanceStatement.prepare(
+        *database, "INSERT INTO schema3_provenance VALUES(?1)");
+    if (!prepared.ok() ||
+        !provenanceStatement.text(1, provenance.value()).ok()) {
+      return database->error("Unable to bind migrated provenance");
+    }
+    auto written = provenanceStatement.done();
+    if (!written.ok()) {
+      return written.error();
+    }
+    Statement terminalState;
+    prepared = terminalState.prepare(
+        *database, "INSERT INTO schema3_terminal_state VALUES(0)");
+    if (!prepared.ok()) {
+      return database->error("Unable to create migrated terminal state");
+    }
+    written = terminalState.done();
+    if (!written.ok()) {
+      return written.error();
+    }
+    Statement migrationOrigin;
+    prepared = migrationOrigin.prepare(
+        *database, "INSERT INTO schema3_migration_origin VALUES(?1,?2)");
+    if (!prepared.ok() ||
+        !migrationOrigin.text(1, source.value().resultId).ok() ||
+        !migrationOrigin.text(2, source.value().canonicalResultHash).ok()) {
+      return database->error("Unable to bind migration source identity");
+    }
+    written = migrationOrigin.done();
+    if (!written.ok()) {
+      return written.error();
+    }
+
+    Statement metadata;
+    prepared = metadata.prepare(
+        *database, "UPDATE result_meta SET "
+                   "schema_version=?1,result_id=?2,canonical_hash=?3,"
+                   "created_utc_ms=?4,saved_utc_ms=?4");
+    if (!prepared.ok() || !metadata.integer(1, schemaThreeVersion).ok() ||
+        !metadata.text(2, migratedId).ok() ||
+        !metadata.text(3, hash.value()).ok() ||
+        !metadata.integer(4, saved).ok()) {
+      return database->error("Unable to bind migrated Result metadata");
+    }
+    written = metadata.done();
+    if (!written.ok()) {
+      return written.error();
+    }
+    transaction = database->execute("COMMIT");
+    if (!transaction.ok()) {
+      return transaction.error();
+    }
+    auto checkpointed = database->execute("PRAGMA wal_checkpoint(TRUNCATE)");
+    if (!checkpointed.ok()) {
+      return checkpointed.error();
+    }
+  }
+  auto closed = database->close();
+  if (!closed.ok()) {
+    return closed.error();
+  }
+  database.reset();
+
+  if (consumeFailure(testing::FailurePoint::migrationValidation)) {
+    return injectedFailure("schema-2 copy migration validation");
+  }
+  auto validated = readResultFile(stagingPath, dataStore_,
+                                  DataValidationPolicy::validateExact);
+  if (!validated.ok()) {
+    return validated.error();
+  }
+  if (validated.value().resultId != migratedId ||
+      validated.value().schemaVersion != schemaThreeVersion ||
+      validated.value().canonicalResultHash != hash.value() ||
+      validated.value().migratedFrom !=
+          std::optional<MigrationSourceIdentity>{MigrationSourceIdentity{
+              .resultId = source.value().resultId,
+              .canonicalResultHash = source.value().canonicalResultHash}}) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Migrated Result copy did not validate");
+  }
+
+  auto retention = data::SegmentRetentionStore::open(dataStore_);
+  if (!retention.ok()) {
+    return retention.error();
+  }
+  auto pinned = retention.value()->acquire(
+      migratedId, distinctSegments(source.value().descriptor));
+  if (!pinned.ok()) {
+    return pinned.error();
+  }
+  const auto destination = root_ / "Results" / (migratedId + ".bteresult");
+  std::error_code promotionError;
+  std::filesystem::create_hard_link(stagingPath, destination, promotionError);
+  if (promotionError) {
+    const auto ignored = retention.value()->release(migratedId);
+    static_cast<void>(ignored);
+    return storageError("Unable to promote schema-3 Result copy: " +
+                        promotionError.message());
+  }
+  std::error_code removeError;
+  std::filesystem::remove(stagingPath, removeError);
+  if (removeError) {
+    std::error_code rollbackError;
+    std::filesystem::remove(destination, rollbackError);
+    if (!rollbackError) {
+      const auto ignored = retention.value()->release(migratedId);
+      static_cast<void>(ignored);
+    }
+    return storageError("Unable to remove migrated staging copy: " +
+                        removeError.message());
+  }
+
+  const auto rollBackPromotion = [&](const core::Error &failure) {
+    std::error_code rollbackError;
+    std::filesystem::remove(destination, rollbackError);
+    if (rollbackError) {
+      return storageError("Unable to roll back migrated Result copy: " +
+                          rollbackError.message());
+    }
+    auto released = retention.value()->release(migratedId);
+    if (!released.ok()) {
+      return released.error();
+    }
+    return failure;
+  };
+  if (consumeFailure(testing::FailurePoint::catalogVisibility)) {
+    return rollBackPromotion(injectedFailure("catalog visibility"));
+  }
+  auto cataloged = upsertCatalog(
+      root_, {.resultId = migratedId,
+              .displayName = validated.value().displayName,
+              .canonicalResultHash = validated.value().canonicalResultHash,
+              .status = validated.value().status,
+              .savedUtcMillis = saved,
+              .available = true,
+              .unavailableReason = {}});
+  if (!cataloged.ok()) {
+    return rollBackPromotion(cataloged.error());
+  }
+  return FinalizedResult{.resultId = migratedId,
+                         .canonicalResultHash = hash.value()};
 }
 
 } // namespace bte::results

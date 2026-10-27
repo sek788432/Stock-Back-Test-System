@@ -229,6 +229,17 @@ The following work is explicitly unimplemented:
 - Clazy analysis for Qt-specific correctness and performance findings.
 - CodeQL analysis and a custom Clang AST policy plugin.
 - Canonical functional-result fixture comparison.
+- Merge-blocking CI automation for the implemented optional macOS runtime
+  builder: offline profile assembly, license/notice and SPDX SBOM checks, and
+  the profile-backed `.app` verification test on Apple Silicon runners.
+- Full managed-runtime integration tests for Python protocol, startup/hook
+  deadlines, cancellation, process-tree cleanup, and shared-memory lifetime on
+  macOS 14+ Apple Silicon. The default CI suite still uses the host test
+  interpreter and synthetic fixtures; the optional bundled-runtime build adds
+  profile-backed C++ worker and `.app` verification tests and is verified by
+  the documented local workflow. Windows/Linux must prove the feature is
+  unavailable without a system-Python fallback until their own profiles are
+  accepted.
 - Repository-verifiable reviewer and branch-protection policy checks.
 
 Implement planned checks incrementally. Each implementation must include tests

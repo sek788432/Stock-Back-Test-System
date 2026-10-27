@@ -1,4 +1,4 @@
-"""Regression coverage for the accepted Results-storage dependency pin."""
+"""Regression coverage for the accepted native dependency pins."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ SQLITE_BASELINE = "9e593bb18ea69cc5095e012465dcd675a822ed0d"
 
 
 class VcpkgManifestTest(unittest.TestCase):
-    def test_sqlite_dependency_is_exactly_pinned_for_results_storage(self) -> None:
+    def test_native_dependencies_are_exactly_pinned(self) -> None:
         manifest_path = REPOSITORY_ROOT / "vcpkg.json"
         self.assertTrue(manifest_path.is_file(), "Results requires a pinned manifest")
 
@@ -21,11 +21,21 @@ class VcpkgManifestTest(unittest.TestCase):
         self.assertEqual(manifest["builtin-baseline"], SQLITE_BASELINE)
         self.assertEqual(
             manifest["dependencies"],
-            [{"name": "sqlite3", "version>=": "3.53.4"}],
+            [
+                {"name": "nlohmann-json", "version>=": "3.12.0"},
+                {"name": "sqlite3", "version>=": "3.53.4"},
+            ],
         )
         self.assertEqual(
             manifest["overrides"],
-            [{"name": "sqlite3", "version": "3.53.4", "port-version": 0}],
+            [
+                {
+                    "name": "nlohmann-json",
+                    "version": "3.12.0",
+                    "port-version": 2,
+                },
+                {"name": "sqlite3", "version": "3.53.4", "port-version": 0},
+            ],
         )
 
 

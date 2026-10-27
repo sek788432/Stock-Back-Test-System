@@ -3,8 +3,8 @@
 #include "Bte/Frontend/BacktestTab.h"
 #include "Bte/Frontend/ReplayTab.h"
 #include "Bte/Frontend/ResultsTab.h"
+#include "Bte/Frontend/StrategyTab.h"
 
-#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -19,14 +19,6 @@
 
 namespace bte::app {
 namespace {
-
-QWidget *makePlaceholderTab(const QString &message) {
-  auto label = std::make_unique<QLabel>(message);
-  label->setAlignment(Qt::AlignCenter);
-  label->setObjectName("placeholderTab");
-  label->setAccessibleName(label->text());
-  return label.release();
-}
 
 QString launcherValue(const char *name) {
   const auto value = qEnvironmentVariable(name);
@@ -122,9 +114,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   tabs_ = std::make_unique<QTabWidget>(this).release();
   tabs_->setObjectName("mainTabWidget");
   tabs_->setAccessibleName("Main tabs");
-  tabs_->addTab(
-      makePlaceholderTab(tr("Saved Strategy persistence is planned.")),
-      tr("Strategies"));
+  auto *strategies = std::make_unique<frontend::StrategyTab>(tabs_).release();
+  tabs_->addTab(strategies, tr("Strategies"));
   auto backtestOwner =
       frontend::BacktestTab::createApplicationConfigured(tabs_);
   auto *backtest = backtestOwner.release();
@@ -138,6 +129,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                      replay->openResult(resultId);
                      tabs_->setCurrentIndex(replayIndex);
                    });
+  QObject::connect(
+      strategies, &frontend::StrategyTab::useInBacktest, backtest,
+      [this, backtest](const QString &source, const QString &parameters) {
+        backtest->setPythonStrategyDraft(source, parameters);
+        tabs_->setCurrentWidget(backtest);
+      });
   QObject::connect(results, &frontend::ResultsTab::openResultInReplay, this,
                    [this, replay, replayIndex](const QString &resultId) {
                      replay->openResult(resultId);
@@ -151,6 +148,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                        results->refresh();
                      }
                    });
+  QObject::connect(
+      tabs_, &QTabWidget::currentChanged, strategies,
+      [strategies](int) { static_cast<void>(strategies->autosaveDraft()); });
   tabs_->setCurrentIndex(1);
   setCentralWidget(tabs_);
 

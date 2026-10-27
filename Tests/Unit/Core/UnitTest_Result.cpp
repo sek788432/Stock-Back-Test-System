@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <span>
@@ -113,6 +114,40 @@ TEST(DigestTest, sha256MatchesPublishedMillionAVector) {
   EXPECT_EQ(bte::core::sha256(std::string(1'000'000, 'a')),
             "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
 }
+
+TEST(DigestTest, incrementalSha256MatchesPublishedMillionAVectorAcrossChunks) {
+  const std::string input(1'000'000, 'a');
+  const std::array chunkSizes{std::size_t{1},   std::size_t{55},
+                              std::size_t{64},  std::size_t{119},
+                              std::size_t{128}, std::size_t{65'536}};
+  bte::core::Sha256Accumulator accumulator;
+  std::size_t offset = 0;
+  std::size_t chunkIndex = 0;
+  while (offset < input.size()) {
+    const auto count = std::min(chunkSizes[chunkIndex % chunkSizes.size()],
+                                input.size() - offset);
+    const auto bytes =
+        std::as_bytes(std::span<const char>{input.data() + offset, count});
+    accumulator.update(bytes);
+    offset += count;
+    ++chunkIndex;
+  }
+
+  EXPECT_EQ(accumulator.finalize(),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+}
+
+TEST(DigestTest, incrementalSha256FinalizationReturnsAContinuableSnapshot) {
+  bte::core::Sha256Accumulator accumulator;
+  accumulator.update(std::as_bytes(std::span<const char>{"abc", 3}));
+
+  EXPECT_EQ(accumulator.finalize(), "ba7816bf8f01cfea414140de5dae2223"
+                                    "b00361a396177a9cb410ff61f20015ad");
+  accumulator.update(std::as_bytes(std::span<const char>{"d", 1}));
+  EXPECT_EQ(accumulator.finalize(), "88d4266fd4e6338d13b845fcf289579d"
+                                    "209c897823b9217da3e161936f031589");
+}
+
 TEST(DigestTest, sha256HonorsBorrowedSubspansWithoutHashingSurroundingBytes) {
   std::vector<std::byte> storage(67, std::byte{0xff});
   for (std::size_t index = 1; index <= 65; ++index) {

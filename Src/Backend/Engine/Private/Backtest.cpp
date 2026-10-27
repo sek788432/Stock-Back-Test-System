@@ -2,9 +2,11 @@
 
 // IWYU pragma: no_include <math>
 
+#include "Bte/Core/CanonicalJson.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
+#include "Bte/Indicators/StreamingIndicator.h"
 #include "Bte/Results/ResultStore.h"
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include "BacktestTestHooks.h"
@@ -18,8 +20,10 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace bte::engine {
@@ -194,6 +198,33 @@ validateRequest(const BacktestRequest &request,
       return invalidArgument("bars must have strictly increasing timestamps");
     }
   }
+  if (request.historyBars.size() >
+      static_cast<std::size_t>(indicators::maximumIndicatorPeriod)) {
+    return invalidArgument(
+        "strategy warm-up history exceeds 10000 actual bars");
+  }
+  for (std::size_t index = 0; index < request.historyBars.size(); ++index) {
+    if (cancellation.isCancellationRequested()) {
+      return cancelled();
+    }
+    const auto &bar = request.historyBars[index];
+    if (!bar.isValid() || !std::isfinite(bar.volume)) {
+      return invalidArgument(
+          "all strategy history bars must satisfy OHLCV invariants");
+    }
+    for (const auto price :
+         std::array{bar.open, bar.high, bar.low, bar.close}) {
+      if (!checkedPriceNanodollars(price).ok()) {
+        return invalidArgument("all strategy history prices must fit the "
+                               "fixed-point engine range");
+      }
+    }
+    if (bar.ts >= request.bars.front().ts ||
+        (index > 0 && request.historyBars[index - 1].ts >= bar.ts)) {
+      return invalidArgument("strategy history bars must be strictly "
+                             "increasing and precede the run");
+    }
+  }
   return request.initialCapitalMicrodollars;
 }
 
@@ -224,14 +255,15 @@ void appendRecord(BacktestResult &result, results::CanonicalRecord record) {
 }
 
 void appendOrderRecord(BacktestResult &result, const BacktestRequest &request,
-                       const core::Bar &bar, const BacktestOrderSide side) {
+                       const core::Bar &bar, const BacktestOrderSide side,
+                       const std::int64_t quantityShares) {
   appendRecord(result, {.timestamp = bar.ts,
                         .symbol = request.symbol,
                         .family = results::RecordFamily::order,
                         .side = side == BacktestOrderSide::buy
                                     ? results::OrderSide::buy
                                     : results::OrderSide::sell,
-                        .quantityShares = request.quantityShares,
+                        .quantityShares = quantityShares,
                         .priceNanodollars = {},
                         .amountMicrodollars = {},
                         .cashMicrodollars = {},
@@ -325,9 +357,8 @@ void appendTerminalDiagnostic(BacktestResult &result,
                         .text = reason});
 }
 
-core::Result<void> appendPortfolioRecord(BacktestResult &result,
-                                         const BacktestRequest &request,
-                                         const core::Bar &bar) {
+core::Result<void> updatePortfolioMark(BacktestResult &result,
+                                       const core::Bar &bar) {
   const auto close = checkedPriceNanodollars(bar.close);
   // Pre-run validation checks every close with the same conversion.
   // GCOVR_EXCL_START
@@ -353,6 +384,12 @@ core::Result<void> appendPortfolioRecord(BacktestResult &result,
   result.equityMicrodollars = equity.value();
   result.pnlMicrodollars =
       result.equityMicrodollars - result.initialCapitalMicrodollars;
+  return {};
+}
+
+void appendPortfolioRecord(BacktestResult &result,
+                           const BacktestRequest &request,
+                           const core::Bar &bar) {
   appendRecord(result,
                {.timestamp = bar.ts,
                 .symbol = request.symbol,
@@ -367,7 +404,6 @@ core::Result<void> appendPortfolioRecord(BacktestResult &result,
                 .pnlMicrodollars = result.pnlMicrodollars,
                 .positionShares = result.positionShares,
                 .text = {}});
-  return {};
 }
 
 void recordFill(BacktestResult &result, const BacktestFill &fill) {
@@ -456,9 +492,9 @@ executePendingOrder(const BacktestOrderSide side, BacktestResult &result,
   return executeSellAtOpen(result, bar, open);
 }
 
-StarterOrderStatus selectableStatus(const BacktestResult &result,
-                                    const bool rejectedOrder,
-                                    const bool pendingOrder) noexcept {
+StarterOrderStatus strategyOrderStatus(const BacktestResult &result,
+                                       const bool rejectedOrder,
+                                       const bool pendingOrder) noexcept {
   if (!result.fills.empty()) {
     return StarterOrderStatus::filled;
   }
@@ -471,15 +507,88 @@ StarterOrderStatus selectableStatus(const BacktestResult &result,
   return StarterOrderStatus::completedNoSignal;
 }
 
-std::optional<BacktestOrderSide>
-nextOrderFor(const strategy::SelectableStrategySignal &signal,
-             const std::int64_t positionShares) noexcept {
-  if (positionShares == 0) {
-    return signal.buy ? std::optional<BacktestOrderSide>{BacktestOrderSide::buy}
-                      : std::nullopt;
+core::Error rejectedStrategyCommand(std::string message) {
+  return core::makeError(core::ErrorCode::strategyCommandRejected,
+                         "StrategyCommandRejected: " + std::move(message));
+}
+
+class StarterMarketBuyStrategy final : public strategy::Strategy {
+public:
+  explicit StarterMarketBuyStrategy(const std::int64_t quantityShares)
+      : quantityShares_(quantityShares) {}
+
+  [[nodiscard]] core::Result<strategy::StrategyCommandBatch>
+  onMarket(const strategy::StrategyContext &context,
+           const core::CancellationToken &) override {
+    if (submitted_) {
+      return strategy::StrategyCommandBatch{};
+    }
+    submitted_ = true;
+    return strategy::StrategyCommandBatch{{
+        .kind = strategy::StrategyCommandKind::buyMarket,
+        .symbol = std::string{context.symbol},
+        .quantityShares = quantityShares_,
+    }};
   }
-  return signal.sell ? std::optional<BacktestOrderSide>{BacktestOrderSide::sell}
-                     : std::nullopt;
+
+private:
+  std::int64_t quantityShares_ = 0;
+  bool submitted_ = false;
+};
+
+struct RuntimeIndicator final {
+  std::string name;
+  indicators::StreamingIndicator stream;
+  std::optional<indicators::IndicatorValue> latest;
+};
+
+[[nodiscard]] bool isValidIndicatorName(const std::string_view name) {
+  if (name.empty() || name.size() > 64) {
+    return false;
+  }
+  const auto isLetter = [](const char character) {
+    return (character >= 'A' && character <= 'Z') ||
+           (character >= 'a' && character <= 'z');
+  };
+  return isLetter(name.front()) &&
+         std::ranges::all_of(name.substr(1), [&](const char character) {
+           return isLetter(character) ||
+                  (character >= '0' && character <= '9') || character == '_';
+         });
+}
+
+[[nodiscard]] core::Result<std::vector<RuntimeIndicator>>
+createRuntimeIndicators(const strategy::StrategyRequirements &requirements) {
+  if (requirements.maxHistoryBars >
+      static_cast<std::size_t>(indicators::maximumIndicatorPeriod)) {
+    return invalidArgument("strategy history budget exceeds 10000 actual bars");
+  }
+  std::vector<RuntimeIndicator> result;
+  result.reserve(requirements.indicators.size());
+  std::set<std::string> names;
+  for (const auto &registration : requirements.indicators) {
+    const auto &definition = registration.definition;
+    if (!isValidIndicatorName(registration.name) ||
+        !names.insert(registration.name).second ||
+        definition.kind != indicators::IndicatorKind::sma ||
+        definition.output != indicators::IndicatorOutput::value ||
+        definition.field != indicators::BarField::close ||
+        definition.period < 1 ||
+        definition.period > indicators::maximumIndicatorPeriod ||
+        requirements.maxHistoryBars <
+            static_cast<std::size_t>(definition.period)) {
+      return invalidArgument("strategy indicator registrations require unique "
+                             "close SMA names and a sufficient history budget");
+    }
+    auto stream = indicators::StreamingIndicator::create(definition);
+    if (!stream.ok()) {
+      return stream.error();
+    }
+    result.push_back(RuntimeIndicator{.name = registration.name,
+                                      .stream = std::move(stream).value(),
+                                      .latest = std::nullopt});
+  }
+  return result;
 }
 
 } // namespace
@@ -499,6 +608,26 @@ void recordBacktestStart() noexcept {
 #endif
 
 struct BacktestExecution::Impl final {
+  Impl(BacktestRequest requestValue, BacktestResult resultValue,
+       std::unique_ptr<strategy::Strategy> strategyValue,
+       std::vector<RuntimeIndicator> runtimeIndicatorsValue,
+       const std::size_t maxHistoryBarsValue)
+      : request(std::move(requestValue)), result(std::move(resultValue)),
+        strategy(std::move(strategyValue)),
+        runtimeIndicators(std::move(runtimeIndicatorsValue)),
+        maxHistoryBars(maxHistoryBarsValue) {
+    indicatorValues.reserve(runtimeIndicators.size());
+    for (const auto &indicator : runtimeIndicators) {
+      indicatorValues.push_back(
+          {.name = indicator.name, .value = indicator.latest});
+    }
+  }
+
+  struct PendingOrder final {
+    BacktestOrderSide side = BacktestOrderSide::buy;
+    std::int64_t quantityShares = 0;
+  };
+
   struct SliceCheckpoint final {
     StarterOrderStatus orderStatus = StarterOrderStatus::completedNoSignal;
     std::optional<BacktestFill> firstFill;
@@ -510,21 +639,146 @@ struct BacktestExecution::Impl final {
     std::int64_t finalPriceNanodollars = 0;
     std::int64_t positionShares = 0;
     std::size_t recordCount = 0;
-    std::optional<BacktestOrderSide> pendingOrder;
+    std::optional<PendingOrder> pendingOrder;
+    std::optional<std::int64_t> currentMarkPriceNanodollars;
     bool rejectedOrder = false;
   };
 
   BacktestRequest request;
   BacktestResult result;
-  std::unique_ptr<strategy::SelectableStrategy> strategy;
-  std::optional<BacktestOrderSide> pendingOrder = std::nullopt;
+  std::unique_ptr<strategy::Strategy> strategy;
+  std::vector<RuntimeIndicator> runtimeIndicators;
+  std::vector<strategy::StrategyIndicatorValue> indicatorValues;
+  std::size_t maxHistoryBars = 0;
+  bool warmed = false;
+  std::optional<PendingOrder> pendingOrder = std::nullopt;
+  std::optional<std::int64_t> currentMarkPriceNanodollars = std::nullopt;
   std::size_t nextBar = 0;
+  bool started = false;
   bool rejectedOrder = false;
   std::unique_ptr<results::ResultWriter> ownedWriter = nullptr;
   results::ResultWriter *recordingWriter = nullptr;
   std::size_t committedRecords = 0;
   std::optional<core::Error> persistenceError;
   bool finalized = false;
+  std::vector<strategy::StrategyDiagnostic> terminalDiagnostics;
+  std::uint64_t omittedDiagnosticBytes = 0;
+  std::uint64_t omittedDiagnosticEntries = 0;
+  bool truncationNoticeAppended = false;
+  bool strategyTerminalDiagnosticAppended = false;
+
+  [[nodiscard]] core::Result<void>
+  appendStrategyDiagnostic(const strategy::StrategyDiagnostic &diagnostic,
+                           const core::Timestamp timestamp) {
+    nlohmann::json payload;
+    auto family = results::RecordFamily::log;
+    if (diagnostic.kind == strategy::StrategyDiagnosticKind::log) {
+      const auto fields =
+          core::parseCanonicalJson(diagnostic.canonicalFieldsJson);
+      if (!fields.ok() || !fields.value().is_object() ||
+          diagnostic.hook.empty() || diagnostic.level.empty()) {
+        return core::makeError(
+            core::ErrorCode::strategyProtocolViolation,
+            "Strategy returned a malformed structured diagnostic.");
+      }
+      payload = nlohmann::json{{"fields", fields.value()},
+                               {"hook", diagnostic.hook},
+                               {"level", diagnostic.level},
+                               {"message", diagnostic.message}};
+    } else {
+      family = results::RecordFamily::terminalDiagnostic;
+      payload = nlohmann::json{
+          {"errorCode", diagnostic.errorCode},
+          {"hook", diagnostic.hook},
+          {"message", diagnostic.message},
+          {"omittedBytes", diagnostic.omittedBytes},
+          {"omittedEntries", diagnostic.omittedEntries},
+          {"sourceColumn", diagnostic.sourceColumn.has_value()
+                               ? nlohmann::json(diagnostic.sourceColumn.value())
+                               : nlohmann::json(nullptr)},
+          {"sourceLine", diagnostic.sourceLine.has_value()
+                             ? nlohmann::json(diagnostic.sourceLine.value())
+                             : nlohmann::json(nullptr)},
+          {"traceback", diagnostic.traceback},
+      };
+      strategyTerminalDiagnosticAppended = true;
+    }
+    const auto canonical = core::serializeCanonicalJson(payload);
+    if (!canonical.ok()) {
+      return canonical.error();
+    }
+    appendRecord(result, {.timestamp = timestamp,
+                          .symbol = request.symbol,
+                          .family = family,
+                          .side = results::OrderSide::none,
+                          .text = canonical.value()});
+    if (diagnostic.omittedBytes > 0 || diagnostic.omittedEntries > 0) {
+      result.diagnosticsComplete = false;
+    }
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  collectStrategyDiagnostics(const core::Timestamp timestamp,
+                             const bool finalize) {
+    auto batch = strategy->takeDiagnostics();
+    result.diagnosticsComplete = result.diagnosticsComplete && batch.complete;
+    omittedDiagnosticBytes += batch.omittedLogBytes;
+    omittedDiagnosticEntries += batch.omittedLogEntries;
+    if (!batch.complete || batch.omittedLogBytes > 0 ||
+        batch.omittedLogEntries > 0) {
+      result.diagnosticsComplete = false;
+    }
+    for (auto &diagnostic : batch.records) {
+      if (diagnostic.omittedBytes > 0 || diagnostic.omittedEntries > 0) {
+        result.diagnosticsComplete = false;
+      }
+      omittedDiagnosticBytes += diagnostic.omittedBytes;
+      if (diagnostic.kind == strategy::StrategyDiagnosticKind::terminal) {
+        terminalDiagnostics.push_back(std::move(diagnostic));
+      } else {
+        const auto appended = appendStrategyDiagnostic(diagnostic, timestamp);
+        if (!appended.ok()) {
+          result.diagnosticsComplete = false;
+          return appended.error();
+        }
+      }
+    }
+    if (!finalize) {
+      return {};
+    }
+    if (!truncationNoticeAppended &&
+        (!result.diagnosticsComplete || omittedDiagnosticBytes > 0 ||
+         omittedDiagnosticEntries > 0)) {
+      const nlohmann::json notice{
+          {"fields",
+           {{"omitted_bytes", std::to_string(omittedDiagnosticBytes)},
+            {"omitted_entries", std::to_string(omittedDiagnosticEntries)}}},
+          {"hook", "engine"},
+          {"level", "warning"},
+          {"message", "DiagnosticsTruncated"},
+      };
+      const auto canonical = core::serializeCanonicalJson(notice);
+      if (!canonical.ok()) {
+        return canonical.error();
+      }
+      appendRecord(result, {.timestamp = timestamp,
+                            .symbol = request.symbol,
+                            .family = results::RecordFamily::log,
+                            .side = results::OrderSide::none,
+                            .text = canonical.value()});
+      truncationNoticeAppended = true;
+    }
+    for (const auto &diagnostic : terminalDiagnostics) {
+      const auto appended = appendStrategyDiagnostic(diagnostic, timestamp);
+      if (!appended.ok()) {
+        result.diagnosticsComplete = false;
+        return appended.error();
+      }
+    }
+    terminalDiagnostics.clear();
+    return {};
+  }
 
   [[nodiscard]] SliceCheckpoint checkpoint() const {
     return {
@@ -539,6 +793,7 @@ struct BacktestExecution::Impl final {
         .positionShares = result.positionShares,
         .recordCount = result.canonicalRecords.size(),
         .pendingOrder = pendingOrder,
+        .currentMarkPriceNanodollars = currentMarkPriceNanodollars,
         .rejectedOrder = rejectedOrder,
     };
   }
@@ -555,44 +810,65 @@ struct BacktestExecution::Impl final {
     result.positionShares = saved.positionShares;
     result.canonicalRecords.resize(saved.recordCount);
     pendingOrder = saved.pendingOrder;
+    currentMarkPriceNanodollars = saved.currentMarkPriceNanodollars;
     rejectedOrder = saved.rejectedOrder;
   }
 
-  [[nodiscard]] core::Result<void> processStarter(const core::Bar &bar) {
-    if (nextBar == 0U) {
-      appendOrderRecord(result, request, bar, BacktestOrderSide::buy);
-    } else if (nextBar == 1U) {
-      const auto open = checkedPriceNanodollars(bar.open).value();
-      auto execution = executePendingOrder(BacktestOrderSide::buy, result, bar,
-                                           request.quantityShares);
-      if (!execution.ok()) {
-        return execution.error();
-      }
-      const auto executionResult = std::move(execution).value();
-      if (executionResult.rejectedInsufficientCash) {
-        result.orderStatus = StarterOrderStatus::rejectedInsufficientCash;
-      } else if (executionResult.fill.has_value()) {
-        result.orderStatus = StarterOrderStatus::filled;
-        const auto &fill = executionResult.fill.value();
-        recordFill(result, fill);
-        appendFillRecord(result, request, fill);
-        auto cost = appendSlippageCostRecord(result, request, fill, open);
-        // appendSlippageCostRecord retains its defensive Result contract even
-        // though validated starter inputs cannot overflow. GCOVR_EXCL_START
-        if (!cost.ok()) {
-          return cost.error();
-        }
-        // GCOVR_EXCL_STOP
-      }
-    }
-    return appendPortfolioRecord(result, request, bar);
+  [[nodiscard]] strategy::StrategyContext
+  contextFor(std::optional<core::Bar> bar = std::nullopt) const {
+    return {.symbol = request.symbol,
+            .bar = std::move(bar),
+            .cashMicrodollars = result.cashMicrodollars,
+            .equityMicrodollars = result.equityMicrodollars,
+            .positionShares = result.positionShares,
+            .markPriceNanodollars = currentMarkPriceNanodollars,
+            .warmupHistory = request.historyBars,
+            .indicatorValues = indicatorValues};
   }
 
-  [[nodiscard]] core::Result<void> processSelectable(const core::Bar &bar) {
+  [[nodiscard]] core::Result<void>
+  updateIndicators(const core::Bar &bar,
+                   const core::CancellationToken &cancellation) {
+    for (std::size_t index = 0; index < runtimeIndicators.size(); ++index) {
+      if (cancellation.isCancellationRequested()) {
+        return cancelled();
+      }
+      auto updated = runtimeIndicators[index].stream.update(bar);
+      if (!updated.ok()) {
+        return updated.error();
+      }
+      runtimeIndicators[index].latest = updated.value();
+      indicatorValues[index].value = updated.value();
+    }
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  warmup(const core::CancellationToken &cancellation) {
+    if (warmed) {
+      return {};
+    }
+    for (const auto &bar : request.historyBars) {
+      const auto updated = updateIndicators(bar, cancellation);
+      if (!updated.ok()) {
+        return updated.error();
+      }
+    }
+    warmed = true;
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  processMarket(const core::Bar &bar,
+                const core::CancellationToken &cancellation) {
+    if (cancellation.isCancellationRequested()) {
+      return cancelled();
+    }
     if (pendingOrder.has_value()) {
+      const auto order = pendingOrder.value();
       const auto open = checkedPriceNanodollars(bar.open).value();
-      auto execution = executePendingOrder(*pendingOrder, result, bar,
-                                           request.quantityShares);
+      auto execution =
+          executePendingOrder(order.side, result, bar, order.quantityShares);
       if (!execution.ok()) {
         return execution.error();
       }
@@ -603,50 +879,156 @@ struct BacktestExecution::Impl final {
         recordFill(result, fill);
         appendFillRecord(result, request, fill);
         auto cost = appendSlippageCostRecord(result, request, fill, open);
-        // appendSlippageCostRecord retains its defensive Result contract even
-        // though validated strategy inputs cannot overflow. GCOVR_EXCL_START
+        // Accepted prices and quantities fit the fixed-point cost operation.
+        // GCOVR_EXCL_START
         if (!cost.ok()) {
           return cost.error();
         }
         // GCOVR_EXCL_STOP
+        const auto notified =
+            strategy->onFill({.timestamp = fill.timestamp,
+                              .side = fill.side == BacktestOrderSide::buy
+                                          ? strategy::StrategyFillSide::buy
+                                          : strategy::StrategyFillSide::sell,
+                              .quantityShares = fill.quantityShares,
+                              .priceNanodollars = fill.priceNanodollars,
+                              .amountMicrodollars = fill.amountMicrodollars},
+                             contextFor(bar), cancellation);
+        if (!notified.ok()) {
+          return notified.error();
+        }
+        if (cancellation.isCancellationRequested()) {
+          return cancelled();
+        }
       }
       pendingOrder.reset();
     }
-    auto signal = strategy->onBar(bar);
-    if (!signal.ok()) {
-      return signal.error();
+
+    const auto indicatorsUpdated = updateIndicators(bar, cancellation);
+    if (!indicatorsUpdated.ok()) {
+      return indicatorsUpdated.error();
     }
-    pendingOrder = nextOrderFor(signal.value(), result.positionShares);
-    if (pendingOrder.has_value()) {
-      appendOrderRecord(result, request, bar, *pendingOrder);
+
+    const auto marked = updatePortfolioMark(result, bar);
+    if (!marked.ok()) {
+      return marked.error();
     }
-    return appendPortfolioRecord(result, request, bar);
+    currentMarkPriceNanodollars = result.finalPriceNanodollars;
+
+    if (cancellation.isCancellationRequested()) {
+      return cancelled();
+    }
+    const auto decision = strategy->onMarket(contextFor(bar), cancellation);
+    if (!decision.ok()) {
+      return decision.error();
+    }
+    const auto &commands = decision.value();
+    if (commands.size() > strategy::maximumCommandsPerMarketCallback) {
+      return rejectedStrategyCommand(
+          "a market callback may submit at most one command");
+    }
+    if (!commands.empty()) {
+      const auto &command = commands.front();
+      if (command.symbol != request.symbol) {
+        return rejectedStrategyCommand(
+            "command symbol must match the selected symbol");
+      }
+      if (command.kind == strategy::StrategyCommandKind::buyMarket) {
+        if (command.quantityShares <= 0 ||
+            command.quantityShares > maximumStarterQuantityShares) {
+          return rejectedStrategyCommand(
+              "buy quantity is outside the supported whole-share range");
+        }
+        if (result.positionShares != 0) {
+          return rejectedStrategyCommand(
+              "a market buy requires a flat position");
+        }
+        pendingOrder = PendingOrder{.side = BacktestOrderSide::buy,
+                                    .quantityShares = command.quantityShares};
+      } else if (command.kind == strategy::StrategyCommandKind::closePosition) {
+        if (command.quantityShares != 0) {
+          return rejectedStrategyCommand(
+              "a close-position command does not accept a quantity");
+        }
+        if (result.positionShares <= 0) {
+          return rejectedStrategyCommand(
+              "a close-position command requires a long position");
+        }
+        pendingOrder = PendingOrder{.side = BacktestOrderSide::sell,
+                                    .quantityShares = result.positionShares};
+      } else {
+        return rejectedStrategyCommand("command kind is unsupported");
+      }
+      appendOrderRecord(result, request, bar, pendingOrder->side,
+                        pendingOrder->quantityShares);
+    }
+    const auto diagnostics = collectStrategyDiagnostics(bar.ts, false);
+    if (!diagnostics.ok()) {
+      return diagnostics.error();
+    }
+    appendPortfolioRecord(result, request, bar);
+    return {};
   }
 
   void fail(const core::Error &error, const core::Timestamp timestamp) {
+    strategy->onCancel();
     result.status = error.code == core::ErrorCode::cancelled
                         ? results::RunStatus::canceled
                         : results::RunStatus::failed;
     result.terminalError = error;
-    appendTerminalDiagnostic(result, request, timestamp, error.message);
+    const auto diagnostics = collectStrategyDiagnostics(timestamp, true);
+    if (!strategyTerminalDiagnosticAppended) {
+      appendTerminalDiagnostic(result, request, timestamp, error.message);
+    }
+    if (!diagnostics.ok()) {
+      result.diagnosticsComplete = false;
+    }
   }
 
-  void finish() {
-    if (strategy != nullptr) {
-      result.orderStatus =
-          selectableStatus(result, rejectedOrder, pendingOrder.has_value());
-    }
+  [[nodiscard]] core::Result<void>
+  finish(const core::CancellationToken &cancellation) {
+    result.orderStatus =
+        strategyOrderStatus(result, rejectedOrder, pendingOrder.has_value());
     if (request.requiredFinalMarkTimestamp.has_value() &&
         request.bars.back().ts != *request.requiredFinalMarkTimestamp) {
       const auto error =
           core::makeError(core::ErrorCode::dataUnavailable, "StaleFinalMark");
+      strategy->onCancel();
+      const auto diagnostics =
+          collectStrategyDiagnostics(request.bars.back().ts, true);
       result.status = results::RunStatus::incomplete;
       result.terminalError = error;
       appendTerminalDiagnostic(result, request, request.bars.back().ts,
                                error.message);
-      return;
+      if (!diagnostics.ok()) {
+        result.diagnosticsComplete = false;
+      }
+      return {};
+    }
+    if (cancellation.isCancellationRequested()) {
+      const auto error = cancelled();
+      fail(error, request.bars.back().ts);
+      return error;
+    }
+    const auto finished =
+        strategy->onFinish(contextFor(request.bars.back()), cancellation);
+    if (!finished.ok()) {
+      fail(finished.error(), request.bars.back().ts);
+      return finished.error();
+    }
+    const auto diagnostics =
+        collectStrategyDiagnostics(request.bars.back().ts, true);
+    if (!diagnostics.ok()) {
+      fail(diagnostics.error(), request.bars.back().ts);
+      return diagnostics.error();
+    }
+    if (cancellation.isCancellationRequested()) {
+      const auto error = cancelled();
+      fail(error, request.bars.back().ts);
+      return error;
     }
     result.status = results::RunStatus::completed;
+    return {};
   }
 };
 
@@ -658,6 +1040,19 @@ BacktestExecution::~BacktestExecution() = default;
 
 core::Result<std::unique_ptr<BacktestExecution>>
 BacktestExecution::start(BacktestRequest request) {
+  return startWithStrategy(std::move(request), nullptr, true);
+}
+
+core::Result<std::unique_ptr<BacktestExecution>>
+BacktestExecution::start(BacktestRequest request,
+                         std::unique_ptr<strategy::Strategy> strategy) {
+  return startWithStrategy(std::move(request), std::move(strategy), false);
+}
+
+core::Result<std::unique_ptr<BacktestExecution>>
+BacktestExecution::startWithStrategy(
+    BacktestRequest request, std::unique_ptr<strategy::Strategy> strategy,
+    const bool useLegacySelection) {
 #if defined(BTE_ENABLE_TEST_HOOKS)
   testing::recordBacktestStart();
 #endif
@@ -670,38 +1065,80 @@ BacktestExecution::start(BacktestRequest request) {
     return invalidArgument(
         "required final mark cannot precede the last actual bar");
   }
-  std::unique_ptr<strategy::SelectableStrategy> strategy;
-  if (request.selectableStrategy.has_value()) {
-    auto created = strategy::SelectableStrategy::create(
-        *request.selectableStrategy, request.previousDataDayClose,
-        request.previousDataDays);
-    if (!created.ok()) {
-      return created.error();
+  if (useLegacySelection) {
+    if (request.selectableStrategy.has_value()) {
+      auto created = strategy::createSelectableStrategyAdapter(
+          *request.selectableStrategy, request.quantityShares,
+          request.previousDataDayClose, request.previousDataDays);
+      if (!created.ok()) {
+        return created.error();
+      }
+      strategy = std::move(created).value();
+    } else {
+      strategy =
+          std::make_unique<StarterMarketBuyStrategy>(request.quantityShares);
     }
-    strategy = std::move(created).value();
+    request.selectableStrategy.reset();
+  } else if (request.selectableStrategy.has_value()) {
+    return invalidArgument(
+        "a caller-supplied Strategy cannot also use a Selectable plan");
+  }
+  if (strategy == nullptr) {
+    return invalidArgument("a caller-supplied Strategy is required");
+  }
+  const auto &requirements = strategy->requirements();
+  if (request.historyBars.size() > requirements.maxHistoryBars) {
+    return invalidArgument(
+        "strategy history bars exceed the strategy's declared history budget");
+  }
+  auto runtimeIndicators = createRuntimeIndicators(requirements);
+  if (!runtimeIndicators.ok()) {
+    return runtimeIndicators.error();
   }
   auto result = makeInitialResult(request);
   result.fills.reserve(request.bars.size());
   appendDividendWarning(result, request);
-  auto implementation = std::make_unique<Impl>(Impl{
-      .request = std::move(request),
-      .result = std::move(result),
-      .strategy = std::move(strategy),
-      .persistenceError = std::nullopt,
-  });
+  auto implementation = std::make_unique<Impl>(
+      std::move(request), std::move(result), std::move(strategy),
+      std::move(runtimeIndicators).value(), requirements.maxHistoryBars);
   return std::make_unique<BacktestExecution>(ConstructionKey{},
                                              std::move(implementation));
 }
 
 core::Result<std::unique_ptr<BacktestExecution>>
-BacktestExecution::startRecorded(BacktestRequest request,
-                                 const results::ResultStore &store,
-                                 const results::RunDescriptor &descriptor,
-                                 const core::CancellationToken &cancellation) {
+BacktestExecution::startRecorded(
+    BacktestRequest request, const results::ResultStore &store,
+    const results::RunDescriptor &descriptor,
+    const core::CancellationToken &cancellation,
+    const RecordedResultObserver &onResultCreated) {
+  return startRecordedWithStrategy(std::move(request), nullptr, store,
+                                   descriptor, cancellation, onResultCreated,
+                                   true);
+}
+
+core::Result<std::unique_ptr<BacktestExecution>>
+BacktestExecution::startRecorded(
+    BacktestRequest request, std::unique_ptr<strategy::Strategy> strategy,
+    const results::ResultStore &store, const results::RunDescriptor &descriptor,
+    const core::CancellationToken &cancellation,
+    const RecordedResultObserver &onResultCreated) {
+  return startRecordedWithStrategy(std::move(request), std::move(strategy),
+                                   store, descriptor, cancellation,
+                                   onResultCreated, false);
+}
+
+core::Result<std::unique_ptr<BacktestExecution>>
+BacktestExecution::startRecordedWithStrategy(
+    BacktestRequest request, std::unique_ptr<strategy::Strategy> strategy,
+    const results::ResultStore &store, const results::RunDescriptor &descriptor,
+    const core::CancellationToken &cancellation,
+    const RecordedResultObserver &onResultCreated,
+    const bool useLegacySelection) {
   if (cancellation.isCancellationRequested()) {
     return cancelled();
   }
-  auto execution = start(std::move(request));
+  auto execution = startWithStrategy(std::move(request), std::move(strategy),
+                                     useLegacySelection);
   if (!execution.ok()) {
     return execution.error();
   }
@@ -730,6 +1167,13 @@ BacktestExecution::startRecorded(BacktestRequest request,
   auto &implementation = *execution.value()->impl_;
   implementation.ownedWriter = std::move(writer).value();
   implementation.recordingWriter = implementation.ownedWriter.get();
+  if (onResultCreated) {
+    const auto observed =
+        onResultCreated(implementation.recordingWriter->resultId());
+    if (!observed.ok()) {
+      return observed.error();
+    }
+  }
   return std::move(execution).value();
 }
 
@@ -744,15 +1188,38 @@ BacktestExecution::advance(const core::CancellationToken &cancellation) {
     impl_->fail(error, timestamp);
     return error;
   }
+  if (!impl_->started) {
+    const auto started =
+        impl_->strategy->onStart(impl_->contextFor(), cancellation);
+    if (!started.ok()) {
+      impl_->fail(started.error(), timestamp);
+      return started.error();
+    }
+    impl_->started = true;
+    if (cancellation.isCancellationRequested()) {
+      const auto error = cancelled();
+      impl_->fail(error, timestamp);
+      return error;
+    }
+  }
+  const auto warmed = impl_->warmup(cancellation);
+  if (!warmed.ok()) {
+    impl_->fail(warmed.error(), timestamp);
+    return warmed.error();
+  }
   const auto saved = impl_->checkpoint();
   auto processed =
-      impl_->strategy == nullptr
-          ? impl_->processStarter(impl_->request.bars[impl_->nextBar])
-          : impl_->processSelectable(impl_->request.bars[impl_->nextBar]);
+      impl_->processMarket(impl_->request.bars[impl_->nextBar], cancellation);
   if (!processed.ok()) {
     impl_->restore(saved);
     impl_->fail(processed.error(), timestamp);
     return processed.error();
+  }
+  if (cancellation.isCancellationRequested()) {
+    impl_->restore(saved);
+    const auto error = cancelled();
+    impl_->fail(error, timestamp);
+    return error;
   }
   if (impl_->recordingWriter != nullptr) {
     // Only this completed bar's delta is copied; preceding records stay put.
@@ -777,7 +1244,10 @@ BacktestExecution::advance(const core::CancellationToken &cancellation) {
   ++impl_->nextBar;
   impl_->result.barsProcessed = impl_->nextBar;
   if (impl_->nextBar == impl_->request.bars.size()) {
-    impl_->finish();
+    const auto finished = impl_->finish(cancellation);
+    if (!finished.ok()) {
+      return finished.error();
+    }
   }
   return {};
 }
@@ -819,12 +1289,12 @@ BacktestExecution::finalizeAndRecord(results::ResultWriter &writer) {
     return invalidArgument("recorded execution cannot switch Result writers");
   }
   const auto completed = impl_->result.status == results::RunStatus::completed;
-  const auto summary =
-      completed ? results::FinalSummary{.finalEquityMicrodollars =
-                                            impl_->result.equityMicrodollars,
-                                        .pnlMicrodollars =
-                                            impl_->result.pnlMicrodollars}
-                : results::FinalSummary{};
+  results::FinalSummary summary{.diagnosticsComplete =
+                                    impl_->result.diagnosticsComplete};
+  if (completed) {
+    summary.finalEquityMicrodollars = impl_->result.equityMicrodollars;
+    summary.pnlMicrodollars = impl_->result.pnlMicrodollars;
+  }
   std::string reason;
   if (const auto &terminalError = impl_->result.terminalError;
       terminalError.has_value()) {
@@ -898,6 +1368,22 @@ runBacktestAndRecord(const BacktestRequest &request,
                      const core::CancellationToken &cancellation) {
   auto execution = BacktestExecution::startRecorded(request, store, descriptor,
                                                     cancellation);
+  if (!execution.ok()) {
+    return execution.error();
+  }
+  const auto ignored = execution.value()->runToCompletion(cancellation);
+  return execution.value()->finalizeRecorded();
+}
+
+core::Result<RecordedBacktestOutcome> runBacktestAndRecord(
+    const BacktestRequest &request,
+    std::unique_ptr<strategy::Strategy> strategy,
+    const results::ResultStore &store, const results::RunDescriptor &descriptor,
+    const core::CancellationToken &cancellation,
+    const BacktestExecution::RecordedResultObserver &onResultCreated) {
+  auto execution = BacktestExecution::startRecorded(
+      request, std::move(strategy), store, descriptor, cancellation,
+      onResultCreated);
   if (!execution.ok()) {
     return execution.error();
   }

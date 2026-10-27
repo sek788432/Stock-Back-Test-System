@@ -16,8 +16,8 @@ in [`EngineReplayPnL.md`](EngineReplayPnL.md).
 | Task 17 previous data-day close condition | **Implemented limited slice** | Backtest offers positive-magnitude Down/Up thresholds against the previous available UTC data day's last CSV source close, including extended hours; history comes from the same immutable snapshot and stays out of Result/Replay bars. |
 | Task 18 historical data-day conditions | **Implemented limited slice** | Backtest offers a 30-data-day close-to-close gain and 21-data-day high/low drawdown, rebound, and strict breakout conditions. Prior UTC data dates come from the same immutable snapshot and stay out of Result/Replay bars. |
 | Saved strategies and complete Results library | **Accepted design / partially implemented** | Backend Result storage and a limited Results management page exist, but saved Strategies and the complete Results library remain planned. |
-| Durable results and result replay | **Implemented limited slice** | The current Backtest records canonical warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar in a durable draft. Save publishes the same `.bteresult` artifact, which Replay can open without engine execution. Unsupported record families are declared in persisted capability metadata. The complete engine, canonical record families, and result migration remain planned. |
-| Python Strategy and Debug Run | **Accepted design / not implemented** | No shipped Python worker or Debug Run path exists yet. |
+| Durable results and result replay | **Implemented limited slice** | The current Backtest records canonical warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar in a durable draft. Save publishes the same `.bteresult` artifact, which Replay can open without engine execution. Unsupported record families are declared in persisted capability metadata. An internal schema-2-to-3 copy migration is implemented and tested; its Results UI action, the complete engine, and remaining canonical record families are planned. |
+| Python Strategy first-milestone UI, backend, and optional runtime bundle | **Implemented; release acceptance remains** | The editor, recoverable draft, Validate/Run/Cancel/Verify actions, schema-3 result provenance, verification evidence coordinator, and locked macOS Apple Silicon runtime bundle are implemented and tested. The default developer app omits the profile; builds with `BTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON` include CPython so users need no separate Python installation. Signed-installer and manual edit-to-Replay acceptance remain incomplete. Debug Run is not implemented. |
 | Public product release containing market data | **Blocked** | Redistribution rights for every included dataset, a verified redistribution-cleared split manifest, and exact snapshot hashes are required. |
 
 The UI, README, release notes, and screenshots must preserve these distinctions.
@@ -26,7 +26,8 @@ The UI, README, release notes, and screenshots must preserve these distinctions.
 
 The accepted product has separate **Strategies**, **Backtest**, **Results**, and
 **Replay** pages. The current shell exposes exactly those four pages;
-Strategies remains a placeholder. Results now has limited list/details,
+Strategies contains the first-milestone Python editor and one recoverable
+draft. Results has limited list/details,
 Open Replay, Trash and Restore actions; its full library remains planned.
 AI authoring and a canonical Stock Screener remain outside
 accepted scope.
@@ -39,41 +40,43 @@ accepted scope.
 - **Replay** presents one existing result and its exact retained data. It does
   not accept a Strategy and does not execute the engine.
 
-## Strategy library
+## Strategy authoring
 
-This section is the accepted target; saved Strategy persistence and its UI are
-not implemented in the current checkout.
+The first Python milestone is a basic editor, not a complete saved/versioned
+Strategy library. The Strategies page shows an SMA sample, a source editor,
+fast/slow/quantity controls, `.py` Load/Export, **Validate**, and **Use in
+Backtest**. The app retains one recoverable editing draft of normalized source
+and parameters; it does not create logical Strategy IDs, immutable versions,
+imports of Strategy packages, or Active/Trash library folders. Full versioned
+Strategy storage is deferred until after first-milestone acceptance.
 
-Strategy artifacts are stored in `Strategies/Active` using UUIDv7 filenames
-and the `.btestrategy` extension. The library shows name, authoring mode,
-API/schema version, modified time, validation state, Runtime Profile, and
-last-used time. It sorts by most recently modified by default.
+The draft is autosaved atomically after a 500 ms idle debounce, before page
+handoff, and on orderly shutdown. One previous valid generation is retained
+for crash recovery. Load accepts strict UTF-8 `.py` source up to 1 MiB, strips
+one leading UTF-8 BOM, normalizes CRLF/CR to LF, and leaves the current buffer
+unchanged if decoding or size checks fail. Export writes the exact normalized
+source as UTF-8/LF with an atomic replace. Dirty-buffer replacement offers
+**Save Draft**, **Discard**, and **Cancel**; replacing never silently destroys
+the current recoverable generation.
 
-Actions are New, Edit, Duplicate, Import, Export, Validate, Use in Backtest,
-Version History, Move to Trash, and Restore. Saving an edit creates a new
-immutable version under the same logical Strategy ID. Older versions remain in
-Version History until explicitly trashed; existing Results retain the exact
-version and hash they used.
-
-Names are required trimmed Unicode text from 1 through 100 characters.
-Duplicates are allowed because UUID identity is authoritative; the UI
-disambiguates with mode and modified time. Import previews and validates an
-untrusted artifact's schema, size, hashes, mode/API, and identifiers before
-staging and atomic promotion. Import never executes source. Python still
-requires consent before first execution and whenever its source hash changes.
-
-**Use in Backtest** performs normal validation, then selects that exact Strategy
-version and switches pages without starting a run. If Backtest contains unsaved
-edits, the user must choose Save, Discard, or Cancel before replacement. A run
-still requires an explicit **Run** action and never mutates the saved artifact.
+**Use in Backtest** copies draft source and parameters into Backtest setup and
+switches pages without consent or execution. At **Run** or **Verify
+Reproducibility**, the app freezes source bytes, API/template versions,
+canonical parameters, and the selected immutable data/configuration identity
+before presenting source-hash consent. Edits after capture remain editable but
+belong to the next run; they cannot alter the active run or its Result.
 
 ## Backtest setup
 
-A Run Configuration selects an immutable snapshot, ordered symbols, timeframe,
-half-open UTC range, strictly positive initial capital, costs, a finite annual
-risk-free rate greater than `-1`, numeric profile, and one exact Strategy
-version. Invalid values are rejected before execution. The default supports one
-active Backtest.
+A Run Configuration retains the existing immutable snapshot, ordered-symbol,
+timeframe, half-open UTC range, positive initial-capital, costs, finite annual
+risk-free-rate, numeric-profile, and exact Selectable Conditions plan fields.
+The first Python workflow narrows its selected data to one symbol and hourly
+actual bars, then captures a frozen Python source/parameter snapshot. It
+defaults fast/slow/quantity to 5/20/1 and requires integer periods 1–10,000
+with `fast < slow` and a whole-share quantity 1–1,000,000,000. Invalid source,
+parameters, permissions, runtime, and data references are rejected before
+Engine execution. One active Backtest is allowed.
 
 Selectable Conditions offer separate buy and sell groups, each with one to
 five rows and flat **ALL** or **ANY** logic. The V1 editor exposes only the
@@ -94,6 +97,28 @@ strict. Historical pre-range data comes from the same immutable snapshot and
 does not add Result or Replay bars. See the
 [`StrategyAuthoring.md`](StrategyAuthoring.md#csvutc-day-historical-conditions)
 contract.
+
+For Python Script Strategy, the Backtest page displays the selected symbol,
+range, capital, frozen source identity, and captured parameters. **Validate**
+checks syntax, imports, API/template, parameters, and factory output in the
+managed worker after hash-scoped consent; it never creates a Result.
+**Run** starts one worker and one Engine execution. **Cancel** stops the active
+callback under the parent-side deadline and preserves only committed slices.
+The run panel displays progress, bounded structured logs, source-line
+traceback, terminal error code, fills, and the normal Result draft actions.
+The Python runtime process never fills orders or owns portfolio values.
+
+A normal run records `reproducibilityStatus=unverified`. **Verify
+Reproducibility** freezes the same functional inputs and runs three fresh
+workers sequentially, showing attempt progress 1/3 through 3/3. It stops on
+first mismatch, failure, cancellation, or interruption and records every
+available attempt Result ID/status/hash. Only three completed, identical
+canonical functional hashes for the same frozen identity produce a verified
+label. Verification evidence is stored separately and never changes Result
+hashes or automatically publishes attempt drafts. Each attempt remains subject
+to explicit Save Result / Save & Replay / Discard. Editing the draft while
+verification is active cannot change the frozen identity or transfer its
+verified label to the edited source.
 
 At widths of at least 1100 px, buy and sell groups appear side by side; at
 narrower widths they stack. Each group has a compact sticky header and Add
@@ -137,9 +162,24 @@ and Backtest can
 hand it an exact promoted Result ID.
 
 The limited Result details view enumerates every schema-2 capability from the
-persisted capability metadata and displays persisted warning records. It does
-not fabricate values for unsupported trade, metric, log, indicator, corporate
-action, or margin families.
+persisted capability metadata and displays persisted warning records. Schema-3
+Python Results declare structured logs as a supported record family and
+persist worker output and hook failures. The Strategies and Backtest pages
+provide the first-milestone Python authoring, validation, execution,
+cancellation, reproducibility, and diagnostic workflow; actual execution
+requires an app bundle built with the pinned runtime profile. The UI does not
+fabricate values for unsupported trade, metric, indicator, corporate action,
+or margin families.
+
+Python Results use schema 3 and retain exact source, parameters, API/template,
+runtime profile identity, seed, numeric policy, data spans, canonical events,
+and bounded diagnostic provenance in the internal backend. Schema-2 Results
+remain readable under their existing validator and hash. The internal
+**Create Schema-3 Copy** backend operation validates a schema-2 Result and its
+data references before writing a new Result ID and new schema-3 hash; it never
+modifies the original or executes embedded source. A migrated Result marks
+unavailable legacy provenance and is never considered reproducibility-
+verified. A user-facing migration action remains planned.
 
 The accepted complete Results page shows status, Strategy name,
 symbols/universe, timeframe, range, completion time, valid total return,

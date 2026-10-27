@@ -24,6 +24,9 @@ enum class FailurePoint : std::uint8_t {
   integerBinding,
   optionalIntegerBinding,
   statementExecution,
+  migrationCopy,
+  migrationWrite,
+  migrationValidation,
 };
 
 void failNext(FailurePoint point) noexcept;

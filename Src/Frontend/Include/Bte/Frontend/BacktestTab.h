@@ -30,6 +30,12 @@ public:
           const core::CancellationToken &)>;
   using DraftDiscarder = std::function<core::Result<void>(
       const std::string &, const core::CancellationToken &)>;
+  using VerificationRunner =
+      std::function<core::Result<results::VerificationEvidence>(
+          const bindings::BacktestConfiguration &,
+          const core::CancellationToken &,
+          const bindings::PythonVerificationProgressObserver &)>;
+  using ConsentProvider = std::function<bool(const std::string &sourceHash)>;
 
   explicit BacktestTab(QWidget *parent = nullptr);
   explicit BacktestTab(BacktestRunner runner, QWidget *parent = nullptr);
@@ -40,6 +46,10 @@ public:
               QWidget *parent = nullptr);
   [[nodiscard]] static std::unique_ptr<BacktestTab>
   createApplicationConfigured(QWidget *parent = nullptr);
+  void setPythonStrategyDraft(QString sourceUtf8,
+                              QString canonicalParametersJson);
+  void setVerificationRunner(VerificationRunner runner);
+  void setConsentProvider(ConsentProvider provider);
   ~BacktestTab() override;
   BacktestTab(const BacktestTab &) = delete;
   BacktestTab &operator=(const BacktestTab &) = delete;

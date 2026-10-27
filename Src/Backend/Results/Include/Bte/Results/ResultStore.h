@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -39,6 +40,59 @@ enum class RecordFamily : std::uint8_t {
 
 enum class OrderSide : std::uint8_t { none, buy, sell };
 
+enum class StrategyMode : std::uint8_t {
+  starter,
+  selectableConditions,
+  python,
+  legacyUnrecorded,
+};
+
+enum class ProvenanceAvailabilityState : std::uint8_t {
+  recorded,
+  legacyUnrecorded,
+};
+
+struct RuntimePackageIdentity {
+  std::string name;
+  std::string version;
+  std::string artifactHash;
+
+  bool operator==(const RuntimePackageIdentity &) const = default;
+};
+
+struct RuntimeProfileProvenance {
+  std::string profileId;
+  std::string canonicalManifestJson;
+  std::string manifestHash;
+  std::string pythonVersion;
+  std::string pythonAbi;
+  std::vector<RuntimePackageIdentity> packages;
+  std::string stockbtSourceHash;
+
+  bool operator==(const RuntimeProfileProvenance &) const = default;
+};
+
+struct ResultProvenance {
+  std::optional<std::string> engineBuild;
+  std::string timeframe;
+  std::optional<std::string> costProfile;
+  std::optional<std::int64_t> commissionRatePartsPerBillion;
+  std::optional<std::int64_t> slippageRatePartsPerBillion;
+  std::optional<std::int64_t> seed;
+  StrategyMode strategyMode = StrategyMode::starter;
+  std::string apiVersion;
+  std::string templateVersion;
+  std::string canonicalParametersJson = "{}";
+  std::string sourceUtf8;
+  std::string sourceHash;
+  std::string canonicalPlanJson;
+  std::string planHash;
+  std::optional<RuntimeProfileProvenance> runtime;
+  std::map<std::string, ProvenanceAvailabilityState> provenanceAvailability;
+
+  bool operator==(const ResultProvenance &) const = default;
+};
+
 struct ResultCapabilities {
   bool orders = true;
   bool fills = true;
@@ -57,12 +111,14 @@ struct ResultCapabilities {
 };
 
 struct RunDescriptor {
+  std::int64_t schemaVersion = 2;
   std::vector<std::string> universe;
   core::DateRange range;
   std::int64_t initialCapitalMicrodollars = 0;
   std::string strategyId;
   std::string strategyHash;
   data::DataSelectionIdentity dataSelection;
+  ResultProvenance provenance;
 
   bool operator==(const RunDescriptor &) const = default;
 };
@@ -93,6 +149,7 @@ struct CanonicalRecord {
 struct FinalSummary {
   std::optional<std::int64_t> finalEquityMicrodollars;
   std::optional<std::int64_t> pnlMicrodollars;
+  bool diagnosticsComplete = true;
 
   bool operator==(const FinalSummary &) const = default;
 };
@@ -112,7 +169,15 @@ struct ResultSummary {
   std::string unavailableReason;
 };
 
+struct MigrationSourceIdentity {
+  std::string resultId;
+  std::string canonicalResultHash;
+
+  bool operator==(const MigrationSourceIdentity &) const = default;
+};
+
 struct OpenedResult {
+  std::int64_t schemaVersion = 2;
   std::string resultId;
   std::string displayName;
   std::string canonicalResultHash;
@@ -123,6 +188,7 @@ struct OpenedResult {
   std::vector<CanonicalRecord> records;
   FinalSummary summary;
   ResultCapabilities capabilities;
+  std::optional<MigrationSourceIdentity> migratedFrom;
 };
 
 struct OpenedResultWithData {
@@ -235,6 +301,8 @@ public:
                      const core::CancellationToken &cancellation = {}) const;
   [[nodiscard]] core::Result<FinalizedResult>
   importResult(const std::filesystem::path &source) const;
+  [[nodiscard]] core::Result<FinalizedResult>
+  migrateSchema2Copy(const std::string &resultId) const;
   [[nodiscard]] core::Result<void>
   moveToTrash(const std::string &resultId) const;
   [[nodiscard]] core::Result<void> restore(const std::string &resultId) const;

@@ -236,6 +236,9 @@ private slots:
   void destructionCancelsAndJoinsActiveRun();
   void workerExceptionIsPresentedAsAnError();
   void unknownWorkerExceptionIsPresentedAsAnError();
+  void pythonDraftIsFrozenAndPassedToTheRunWorker();
+  void reproducibilityVerificationReportsProgressAndCompletion();
+  void reproducibilityVerificationCanBeCanceled();
   void defaultRunnerExecutesTrackedBars();
   void applicationConfiguredRunnerUsesEnvironmentStorage();
   void selectableConditionsSubmitTypedPlanToBackend();
@@ -1009,6 +1012,143 @@ void BacktestTabTest::unknownWorkerExceptionIsPresentedAsAnError() {
   QVERIFY(bte::test::waitUntil(
       [&status] { return status->text().contains("backtest worker failed"); }));
   QVERIFY(run->isEnabled());
+}
+
+void BacktestTabTest::pythonDraftIsFrozenAndPassedToTheRunWorker() {
+  std::mutex captureMutex;
+  std::optional<bte::bindings::BacktestConfiguration> captured;
+  std::atomic_int calls = 0;
+  bte::frontend::BacktestTab tab{
+      [&captureMutex, &captured,
+       &calls](bte::bindings::BacktestConfiguration configuration,
+               bte::core::CancellationToken) {
+        {
+          const std::scoped_lock lock{captureMutex};
+          captured = std::move(configuration);
+        }
+        ++calls;
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  tab.setConsentProvider([](const std::string &) { return true; });
+  tab.setPythonStrategyDraft("def create_strategy(params):\n    return None\n",
+                             "{\"quantity\":3}");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  QVERIFY(run != nullptr);
+  QVERIFY(run->isEnabled());
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&calls, run] { return calls.load() == 1 && run->isEnabled(); }));
+  const std::scoped_lock lock{captureMutex};
+  QVERIFY(captured.has_value());
+  QVERIFY(captured->pythonStrategy.has_value());
+  QCOMPARE(QString::fromStdString(captured->pythonStrategy->sourceUtf8),
+           QString{"def create_strategy(params):\n    return None\n"});
+  QCOMPARE(
+      QString::fromStdString(captured->pythonStrategy->canonicalParametersJson),
+      QString{"{\"quantity\":3}"});
+  QVERIFY(captured->pythonStrategy->sourceConsentGranted);
+  QVERIFY(!captured->selectableStrategy.has_value());
+}
+
+void BacktestTabTest::
+    reproducibilityVerificationReportsProgressAndCompletion() {
+  std::atomic_int calls = 0;
+  std::atomic_int progress = 0;
+  bte::frontend::BacktestTab tab{[](bte::bindings::BacktestConfiguration,
+                                    bte::core::CancellationToken) {
+    return bte::core::Result<bte::bindings::BacktestSnapshot>{filledSnapshot()};
+  }};
+  tab.setConsentProvider([](const std::string &) { return true; });
+  tab.setPythonStrategyDraft("source", "{}");
+  tab.setVerificationRunner(
+      [&calls, &progress](
+          const bte::bindings::BacktestConfiguration &configuration,
+          const bte::core::CancellationToken &,
+          const bte::bindings::PythonVerificationProgressObserver &observe) {
+        ++calls;
+        if (!configuration.pythonStrategy.has_value()) {
+          return bte::core::Result<bte::results::VerificationEvidence>{
+              bte::core::makeError(bte::core::ErrorCode::invalidArgument,
+                                   "python strategy missing")};
+        }
+        bte::results::VerificationEvidence evidence;
+        evidence.verificationId = "verification-id";
+        evidence.status = bte::results::VerificationStatus::running;
+        evidence.progressOrdinal = 1;
+        observe(evidence);
+        ++progress;
+        evidence.status = bte::results::VerificationStatus::verified;
+        evidence.progressOrdinal = 3;
+        observe(evidence);
+        ++progress;
+        return bte::core::Result<bte::results::VerificationEvidence>{evidence};
+      });
+  auto *verify =
+      tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(verify != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(!verify->isHidden());
+  QVERIFY(verify->isEnabled());
+  QTest::mouseClick(verify, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&calls, &progress, status, run] {
+    return calls.load() == 1 && progress.load() == 2 && run->isEnabled() &&
+           status->text().contains("verified across 3 fresh runs");
+  }));
+}
+
+void BacktestTabTest::reproducibilityVerificationCanBeCanceled() {
+  std::atomic_bool started = false;
+  std::atomic_bool observedCancellation = false;
+  std::atomic_int verificationCalls = 0;
+  bte::frontend::BacktestTab tab{[](bte::bindings::BacktestConfiguration,
+                                    bte::core::CancellationToken) {
+    return bte::core::Result<bte::bindings::BacktestSnapshot>{filledSnapshot()};
+  }};
+  tab.setConsentProvider([](const std::string &) { return true; });
+  tab.setPythonStrategyDraft("source", "{}");
+  tab.setVerificationRunner(
+      [&started, &observedCancellation, &verificationCalls](
+          const bte::bindings::BacktestConfiguration &,
+          const bte::core::CancellationToken &cancellation,
+          const bte::bindings::PythonVerificationProgressObserver &) {
+        ++verificationCalls;
+        started.store(true);
+        while (!cancellation.isCancellationRequested()) {
+          QThread::msleep(1);
+        }
+        observedCancellation.store(true);
+        bte::results::VerificationEvidence evidence;
+        evidence.status = bte::results::VerificationStatus::canceled;
+        return bte::core::Result<bte::results::VerificationEvidence>{evidence};
+      });
+  auto *verify =
+      tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *cancel = tab.findChild<QPushButton *>("backtestCancelOperationButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  QVERIFY(verify != nullptr);
+  QVERIFY(cancel != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(strategy != nullptr);
+  QTest::mouseClick(verify, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&started] { return started.load(); }));
+  strategy->setCurrentIndex(0);
+  strategy->setCurrentIndex(2);
+  QVERIFY(!verify->isEnabled());
+  QTest::mouseClick(verify, Qt::LeftButton);
+  QTest::qWait(50);
+  QCOMPARE(verificationCalls.load(), 1);
+  QTest::mouseClick(cancel, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&observedCancellation, status, run] {
+    return observedCancellation.load() && run->isEnabled() &&
+           status->text().contains("verification canceled");
+  }));
 }
 
 void BacktestTabTest::defaultRunnerExecutesTrackedBars() {

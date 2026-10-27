@@ -3,12 +3,13 @@
 #include "Bte/Frontend/BacktestTab.h"
 #include "Bte/Frontend/ReplayTab.h"
 #include "Bte/Frontend/ResultsTab.h"
+#include "Bte/Frontend/StrategyTab.h"
 
 #include <QAction>
 #include <QByteArray>
 #include <QComboBox>
-#include <QLabel>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTest>
@@ -75,13 +76,14 @@ void MainWindowTest::libraryPagesExplainCurrentDeliveryStatus() {
   const auto *tabs = window.findChild<QTabWidget *>("mainTabWidget");
   QVERIFY(tabs != nullptr);
 
-  const auto *strategiesMessage = qobject_cast<QLabel *>(tabs->widget(0));
+  const auto *strategies =
+      qobject_cast<bte::frontend::StrategyTab *>(tabs->widget(0));
   const auto *results =
       qobject_cast<bte::frontend::ResultsTab *>(tabs->widget(2));
 
-  QVERIFY(strategiesMessage != nullptr);
-  QCOMPARE(strategiesMessage->text(),
-           QString{"Saved Strategy persistence is planned."});
+  QVERIFY(strategies != nullptr);
+  QVERIFY(strategies->findChild<QPlainTextEdit *>(
+              "pythonStrategySourceEditor") != nullptr);
   QVERIFY(results != nullptr);
 }
 

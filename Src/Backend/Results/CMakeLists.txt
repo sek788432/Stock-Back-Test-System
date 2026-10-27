@@ -2,7 +2,11 @@ add_library(
   bte_results
   STATIC
     Include/Bte/Results/ResultStore.h
+    Include/Bte/Results/ReproducibilityCoordinator.h
+    Include/Bte/Results/ReproducibilityStore.h
     Private/ResultStore.cpp
+    Private/ReproducibilityCoordinator.cpp
+    Private/ReproducibilityStore.cpp
     Private/ResultStoreTestHooks.h)
 
 add_library(bte::results ALIAS bte_results)

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,7 +17,8 @@
 
 namespace bte::engine {
 
-inline constexpr std::int64_t maximumStarterQuantityShares = 1'000'000'000;
+inline constexpr std::int64_t maximumStarterQuantityShares =
+    strategy::maximumStrategyQuantityShares;
 
 enum class StarterOrderStatus : std::uint8_t {
   filled,
@@ -29,6 +31,9 @@ enum class BacktestOrderSide : std::uint8_t { buy, sell };
 
 struct BacktestRequest {
   std::vector<core::Bar> bars;
+  /// Optional actual pre-range bars for a strategy's bounded warm-up/history.
+  /// They are never executed, persisted, or shown in Replay.
+  std::vector<core::Bar> historyBars;
   std::string symbol = "PRIMARY";
   std::int64_t initialCapitalMicrodollars = 0;
   std::int64_t quantityShares = 0;
@@ -67,6 +72,7 @@ struct BacktestResult {
   std::size_t barsProcessed = 0;
   std::vector<results::CanonicalRecord> canonicalRecords;
   results::RunStatus status = results::RunStatus::running;
+  bool diagnosticsComplete = true;
   std::optional<core::Error> terminalError;
 };
 
@@ -86,6 +92,8 @@ private:
   struct Impl;
 
 public:
+  using RecordedResultObserver =
+      std::function<core::Result<void>(const std::string &)>;
   explicit BacktestExecution(ConstructionKey, std::unique_ptr<Impl> impl);
   ~BacktestExecution();
   BacktestExecution(const BacktestExecution &) = delete;
@@ -95,11 +103,23 @@ public:
 
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   start(BacktestRequest request);
+  /// Starts the same Engine lifecycle with a caller-owned typed Strategy.
+  /// The request must not also contain a Selectable Conditions plan.
+  [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
+  start(BacktestRequest request, std::unique_ptr<strategy::Strategy> strategy);
   /// Owns a durable writer; advance commits each complete bar before progress.
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   startRecorded(BacktestRequest request, const results::ResultStore &store,
                 const results::RunDescriptor &descriptor,
-                const core::CancellationToken &cancellation = {});
+                const core::CancellationToken &cancellation = {},
+                const RecordedResultObserver &onResultCreated = {});
+  [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
+  startRecorded(BacktestRequest request,
+                std::unique_ptr<strategy::Strategy> strategy,
+                const results::ResultStore &store,
+                const results::RunDescriptor &descriptor,
+                const core::CancellationToken &cancellation = {},
+                const RecordedResultObserver &onResultCreated = {});
   [[nodiscard]] core::Result<void>
   advance(const core::CancellationToken &cancellation = {});
   [[nodiscard]] core::Result<void>
@@ -113,6 +133,18 @@ public:
   [[nodiscard]] core::Result<RecordedBacktestOutcome> finalizeRecorded();
 
 private:
+  [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
+  startWithStrategy(BacktestRequest request,
+                    std::unique_ptr<strategy::Strategy> strategy,
+                    bool useLegacySelection);
+  [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
+  startRecordedWithStrategy(BacktestRequest request,
+                            std::unique_ptr<strategy::Strategy> strategy,
+                            const results::ResultStore &store,
+                            const results::RunDescriptor &descriptor,
+                            const core::CancellationToken &cancellation,
+                            const RecordedResultObserver &onResultCreated,
+                            bool useLegacySelection);
   // The borrowed writer is attached only inside this synchronous entry point.
   friend core::Result<RecordedBacktestOutcome>
   runBacktestAndRecord(const BacktestRequest &request,
@@ -142,5 +174,14 @@ runBacktestAndRecord(const BacktestRequest &request,
                      const results::ResultStore &store,
                      const results::RunDescriptor &descriptor,
                      const core::CancellationToken &cancellation = {});
+
+/// Executes and records a caller-supplied typed Strategy using the same
+/// validation-before-writer and per-slice durability rules.
+[[nodiscard]] core::Result<RecordedBacktestOutcome> runBacktestAndRecord(
+    const BacktestRequest &request,
+    std::unique_ptr<strategy::Strategy> strategy,
+    const results::ResultStore &store, const results::RunDescriptor &descriptor,
+    const core::CancellationToken &cancellation = {},
+    const BacktestExecution::RecordedResultObserver &onResultCreated = {});
 
 } // namespace bte::engine

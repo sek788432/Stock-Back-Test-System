@@ -56,6 +56,7 @@ private slots:
   void selectablePlanPresentsNoSignalOutcome();
   void invalidSelectablePlanPreservesCompileError();
   void configuredRunComposesTrackedDataAndEngine();
+  void pythonWarmupSelectsActualBarsBeyondTheInitialCalendarWindow();
   void draftLifecycleBoundariesReturnStructuredResults();
   void catalogSnapshotTranslatesEntriesAndEveryRecoveryReason();
   void draftCatalogKeepsRecoveryNoticesWithoutMutatingLegacyFiles();
@@ -473,6 +474,40 @@ void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
   QCOMPARE(result.value().positionShares, 7);
   QVERIFY(result.value().barsProcessed > 1U);
   QVERIFY(result.value().fill.has_value());
+}
+
+void BacktestSessionVmTest::
+    pythonWarmupSelectsActualBarsBeyondTheInitialCalendarWindow() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto sourceDirectory = root / "Source";
+  std::filesystem::create_directories(sourceDirectory);
+  std::ofstream source{sourceDirectory / "SYN.csv"};
+  source << "symbol,ts,open,high,low,close,volume,schemaName\n"
+            "SYN,2024-01-01 00:00:00+00:00,100,101,99,100,1200,ohlcv-1h\n"
+            "SYN,2024-06-01 00:00:00+00:00,101,102,100,101,1200,ohlcv-1h\n"
+            "SYN,2024-11-01 00:00:00+00:00,102,103,101,102,1200,ohlcv-1h\n"
+            "SYN,2025-04-01 00:00:00+00:00,103,104,102,103,1200,ohlcv-1h\n"
+            "SYN,2025-09-01 00:00:00+00:00,104,105,103,104,1200,ohlcv-1h\n";
+  source.close();
+  const auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = root / "Data",
+      .symbols = {"SYN"},
+      .rowsPerSegment = 2,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  QVERIFY2(built.ok(), built.error().message.c_str());
+
+  const auto selected = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", built.value().snapshotId, "SYN", QDate{2025, 10, 1}, 5);
+  QVERIFY2(selected.ok(), selected.ok() ? "" : selected.error().message.c_str());
+  QCOMPARE(selected.value().size(), 5U);
+  QCOMPARE(selected.value().front().ts,
+           bte::core::Timestamp{std::chrono::sys_days{
+               std::chrono::year{2024} / 1 / 1}});
 }
 
 void BacktestSessionVmTest::draftLifecycleBoundariesReturnStructuredResults() {

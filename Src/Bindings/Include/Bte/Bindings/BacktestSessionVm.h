@@ -4,6 +4,8 @@
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
+#include "Bte/Results/ReproducibilityStore.h"
+#include "Bte/Results/ResultStore.h"
 #include "Bte/Strategy/SelectableStrategy.h"
 
 #include <QDate>
@@ -13,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -50,6 +53,16 @@ struct BacktestSnapshot {
   std::size_t barsProcessed = 0;
   std::string resultId;
   std::string canonicalResultHash;
+  results::RunStatus status = results::RunStatus::completed;
+  std::string terminalReason;
+  std::vector<std::string> strategyDiagnostics;
+  bool reproducibilityVerified = false;
+};
+
+struct PythonStrategyConfiguration {
+  std::string sourceUtf8;
+  std::string canonicalParametersJson;
+  bool sourceConsentGranted = false;
 };
 
 struct BacktestConfiguration {
@@ -61,6 +74,7 @@ struct BacktestConfiguration {
   std::int64_t quantityShares = 0;
   std::optional<strategy::SelectableStrategyPlan> selectableStrategy =
       std::nullopt;
+  std::optional<PythonStrategyConfiguration> pythonStrategy = std::nullopt;
 };
 
 struct PersistedBacktestStorage {
@@ -90,6 +104,23 @@ runBacktestConfiguration(const BacktestConfiguration &configuration,
 [[nodiscard]] core::Result<BacktestSnapshot> runPersistedBacktestConfiguration(
     const BacktestConfiguration &configuration,
     const PersistedBacktestStorage &storage,
+    const core::CancellationToken &cancellation = {});
+
+[[nodiscard]] core::Result<void>
+validatePythonStrategy(const PythonStrategyConfiguration &configuration,
+                       const std::filesystem::path &applicationResourcesRoot,
+                       const std::filesystem::path &workerBootstrapPath,
+                       const core::CancellationToken &cancellation = {});
+
+using PythonVerificationProgressObserver =
+    std::function<void(const results::VerificationEvidence &)>;
+[[nodiscard]] core::Result<results::VerificationEvidence>
+verifyPersistedPythonBacktestConfiguration(
+    const BacktestConfiguration &configuration,
+    const PersistedBacktestStorage &storage,
+    const std::filesystem::path &applicationResourcesRoot,
+    const std::filesystem::path &workerBootstrapPath,
+    const PythonVerificationProgressObserver &observeProgress = {},
     const core::CancellationToken &cancellation = {});
 
 [[nodiscard]] core::Result<std::string>
