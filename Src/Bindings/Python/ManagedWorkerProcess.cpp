@@ -225,11 +225,11 @@ private:
       ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX F_GETFD reads
                // descriptor flags without an optional variadic argument.
           descriptor, F_GETFD);
-  return flags < 0 ? -1
-                   : ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg):
-                              // POSIX F_SETFD requires updated descriptor flags
-                              // variadically.
-                         descriptor, F_SETFD, flags | FD_CLOEXEC);
+  if (flags < 0) {
+    return -1;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): POSIX fcntl varargs.
+  return ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
 }
 
 [[nodiscard]] int setNonBlocking(const int descriptor) {
@@ -237,11 +237,11 @@ private:
       ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX F_GETFL reads
                // status flags before setting O_NONBLOCK.
           descriptor, F_GETFL);
-  return flags < 0 ? -1
-                   : ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg):
-                              // POSIX F_SETFL requires updated file status
-                              // flags variadically.
-                         descriptor, F_SETFL, flags | O_NONBLOCK);
+  if (flags < 0) {
+    return -1;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): POSIX fcntl varargs.
+  return ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK);
 }
 
 [[nodiscard]] bool isWritableDescriptor(const int descriptor) {
