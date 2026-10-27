@@ -847,10 +847,8 @@ struct WorkerArguments {
       argumentVector.emplace_back(argument.data());
     }
     argumentVector.emplace_back(nullptr);
-    auto *environmentPointer = environmentVector.data();
-    for (auto &environment : environmentStorage) {
-      *environmentPointer = environment.data();
-      ++environmentPointer;
+    for (std::size_t index = 0; index < environmentStorage.size(); ++index) {
+      environmentVector[index] = environmentStorage[index].data();
     }
   }
 };

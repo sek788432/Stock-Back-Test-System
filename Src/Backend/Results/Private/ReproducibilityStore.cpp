@@ -285,7 +285,7 @@ struct CanonicalObjectParseMessages final {
 
 core::Result<nlohmann::json>
 parseCanonicalObject(const std::string &jsonText,
-                     const CanonicalObjectParseMessages messages) {
+                     const CanonicalObjectParseMessages &messages) {
   auto parsed = core::parseCanonicalJson(jsonText);
   if (!parsed.ok() || !parsed.value().is_object()) {
     return invalidArgument(std::string{messages.invalid});

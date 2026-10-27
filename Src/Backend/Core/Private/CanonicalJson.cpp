@@ -324,9 +324,9 @@ formatFixedNumber(const std::string &digits, const int decimalPosition) {
                                         std::string &output,
                                         const std::size_t depth) {
   struct Property {
-    std::string_view key;
-    const nlohmann::json *value;
-    std::vector<std::uint16_t> utf16;
+    std::string_view key{};
+    const nlohmann::json *value = nullptr;
+    std::vector<std::uint16_t> utf16{};
   };
   std::vector<Property> properties;
   properties.reserve(value.size());

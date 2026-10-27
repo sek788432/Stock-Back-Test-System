@@ -169,7 +169,7 @@ core::Result<VerificationEvidence> ReproducibilityCoordinator::verify(
       break;
     }
   }
-  return std::move(evidence);
+  return evidence;
 }
 
 } // namespace bte::results
