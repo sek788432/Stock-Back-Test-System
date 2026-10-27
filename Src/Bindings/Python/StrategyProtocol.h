@@ -2,7 +2,9 @@
 
 #include <Bte/Core/Result.h>
 
+#include <cstddef>
 #include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include <cstdint>
 #include <functional>

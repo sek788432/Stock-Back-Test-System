@@ -1,5 +1,6 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
+#include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Digest.h"
 #include "SelectableStrategyDetail.h"
 

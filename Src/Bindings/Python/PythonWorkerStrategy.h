@@ -3,12 +3,16 @@
 #include "ManagedWorkerProcess.h"
 #include "RuntimeProfile.h"
 
+#include <Bte/Core/Bar.h>
+#include <Bte/Core/Cancellation.h>
 #include <Bte/Core/Result.h>
 #include <Bte/Strategy/Strategy.h>
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <nlohmann/json_fwd.hpp>
 #include <span>
 #include <string>
 #include <vector>

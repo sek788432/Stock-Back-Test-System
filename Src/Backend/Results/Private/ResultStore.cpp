@@ -25,7 +25,11 @@
 #include <filesystem>
 #include <functional> // IWYU pragma: keep
 #include <initializer_list>
+#include <iterator>
 #include <memory>
+#include <nlohmann/detail/json_ref.hpp>
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <random>
 #include <ranges> // IWYU pragma: keep

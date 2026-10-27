@@ -2,15 +2,27 @@
 
 #include "Bte/Core/CanonicalJson.h"
 #include "Bte/Core/Digest.h"
+#include "Bte/Core/Time.h"
+#include "Bte/Data/ReleaseSnapshot.h"
+
+// IWYU pragma: no_include <_stdio.h>
 
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <mutex>
+#include <nlohmann/detail/json_ref.hpp>
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <random>
 #include <set>
 #include <string>
@@ -20,7 +32,6 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 #include <fcntl.h>
-#include <sys/file.h>
 #include <unistd.h>
 #endif
 
@@ -647,7 +658,7 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
                               .message()});
     }
     static_cast<void>(::unlink(temporaryName.c_str()));
-  } else if (::rename(temporaryName.c_str(), destinationName.c_str()) != 0) {
+  } else if (std::rename(temporaryName.c_str(), destinationName.c_str()) != 0) {
     const auto savedError = errno;
     static_cast<void>(::unlink(temporaryName.c_str()));
     return fileError(

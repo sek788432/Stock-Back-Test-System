@@ -4,6 +4,7 @@
 #include "Bte/Bindings/ResultCatalogSnapshot.h"
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
+#include "Bte/Results/ReproducibilityStore.h"
 
 #include <QObject>
 #include <QString>

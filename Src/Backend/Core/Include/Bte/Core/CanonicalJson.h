@@ -2,7 +2,7 @@
 
 #include "Bte/Core/Result.h"
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include <string>
 #include <string_view>

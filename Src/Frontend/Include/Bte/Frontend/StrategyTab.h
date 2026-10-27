@@ -4,14 +4,14 @@
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
 
+#include <QObject>
+#include <QString>
 #include <QWidget>
 
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
-
-class QString;
 
 namespace bte::frontend {
 

@@ -5,6 +5,7 @@
 #include "Bte/Bindings/BacktestSessionVm.h"
 #include "Bte/Core/Digest.h"
 #include "Bte/Indicators/StreamingIndicator.h"
+#include "Bte/Results/ResultStore.h"
 #include "Bte/Strategy/SelectableStrategy.h"
 
 #include <QAbstractItemView>
@@ -45,6 +46,7 @@
 #include <QtCore/qchar.h>
 #include <QtCore/qtenvironmentvariables.h>
 #include <QtCore/qtimezone.h>
+#include <QtGlobal>
 #include <QtGui/qkeysequence.h>
 #include <algorithm>
 
@@ -54,7 +56,6 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
-#include <nlohmann/json.hpp>
 #include <optional>
 #include <span>
 #include <string>

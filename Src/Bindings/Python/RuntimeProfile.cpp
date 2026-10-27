@@ -2,21 +2,26 @@
 
 #include "StrategyProtocol.h"
 
+#include <Bte/Core/Result.h>
+
 #include <Bte/Core/Digest.h>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <map>
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)

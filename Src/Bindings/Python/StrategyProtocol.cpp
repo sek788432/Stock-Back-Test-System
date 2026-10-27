@@ -2,12 +2,16 @@
 
 #include <Bte/Core/CanonicalJson.h>
 #include <Bte/Core/Digest.h>
+#include <Bte/Core/Result.h>
 
-#include <algorithm>
+// IWYU pragma: no_include <_string.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <map>
+#include <nlohmann/detail/json_ref.hpp>
 #include <span>
 #include <string>
 #include <utility>

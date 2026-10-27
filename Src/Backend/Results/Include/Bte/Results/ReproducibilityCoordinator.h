@@ -3,9 +3,9 @@
 #include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Results/ReproducibilityStore.h"
+#include "Bte/Results/ResultStore.h"
 
 #include <functional>
-#include <optional>
 #include <string>
 
 namespace bte::results {

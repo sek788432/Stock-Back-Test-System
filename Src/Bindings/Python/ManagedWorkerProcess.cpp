@@ -1,27 +1,35 @@
 #include "ManagedWorkerProcess.h"
 
+#include <Bte/Core/Cancellation.h>
 #include <Bte/Core/Digest.h>
+#include <Bte/Core/Result.h>
+
+// IWYU pragma: no_include <_string.h>
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include "ManagedWorkerProcessTestHooks.h"
+#include <atomic>
 #endif
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <filesystem>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <random>
+#include <ratio>
+#include <span>
 #include <string>
 #include <system_error>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -29,7 +37,6 @@
 #include <csignal>
 #include <fcntl.h>
 #include <poll.h>
-#include <pthread.h>
 #include <spawn.h>
 #include <sys/mman.h>
 #include <sys/stat.h>

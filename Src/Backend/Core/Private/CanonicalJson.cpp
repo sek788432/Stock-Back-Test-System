@@ -1,11 +1,17 @@
 #include "Bte/Core/CanonicalJson.h"
 
+// IWYU pragma: no_include <math>
+
 #include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <nlohmann/detail/input/json_sax.hpp>
+#include <nlohmann/detail/output/serializer.hpp>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <string_view>

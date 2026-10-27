@@ -3,14 +3,11 @@
 #include "Bte/Core/CanonicalJson.h"
 #include "Bte/Core/Digest.h"
 
-#include <QByteArray>
 #include <QChar>
 #include <QCoreApplication>
-#include <QCryptographicHash>
 #include <QDebug>
 #include <QFile>
 #include <QFileDialog>
-#include <QFileInfo>
 #include <QFont>
 #include <QFormLayout>
 #include <QFutureWatcher>
@@ -21,24 +18,33 @@
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSettings>
-#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStringDecoder>
 #include <QTimer>
-#include <QVBoxLayout>
+#include <QVariant>
 #include <QWidget>
 #include <QtConcurrent/QtConcurrentRun>
+#include <QtCore/qbytearray.h>
+#include <QtCore/qiodevice.h>
+#include <QtGlobal>
 #include <cstdint>
 #include <exception>
+#include <map>
 
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <nlohmann/detail/json_ref.hpp>
+#include <nlohmann/detail/output/serializer.hpp>
 #include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
+#include <system_error>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 namespace bte::frontend {
 namespace {

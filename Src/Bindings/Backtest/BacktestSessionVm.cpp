@@ -7,10 +7,12 @@
 #include "Bte/Bindings/ReplayDataLoader.h"
 #include "Bte/Core/CanonicalJson.h"
 #include "Bte/Core/Digest.h"
+#include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Engine/Backtest.h"
 #include "Bte/Results/ReproducibilityCoordinator.h"
 #include "Bte/Results/ResultStore.h"
+#include "Bte/Strategy/Strategy.h"
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include "BacktestSessionVmTestHooks.h"
 #endif
@@ -27,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <span>
 #include <string> // IWYU pragma: keep
@@ -35,6 +38,7 @@
 
 #include <QCoreApplication>
 #include <QtCore/qtenvironmentvariables.h>
+#include <QtGlobal>
 
 // libstdc++ attributes the ranges algorithm's default projection to this
 // header.

@@ -5,6 +5,7 @@
 #include "Bte/Core/Result.h"
 #include "Bte/Results/ResultStore.h"
 #include "Bte/Strategy/SelectableStrategy.h"
+#include "Bte/Strategy/Strategy.h"
 
 #include <chrono>
 #include <cstddef>

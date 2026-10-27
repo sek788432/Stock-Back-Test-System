@@ -1,18 +1,33 @@
 #include "PythonWorkerStrategy.h"
 
+#include "Bte/Core/Bar.h"
+#include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Digest.h"
+#include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
+#include "Bte/Indicators/StreamingIndicator.h"
+#include "Bte/Strategy/Strategy.h"
+#include "StrategyProtocol.h"
+
+// IWYU pragma: no_include <math>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <limits>
+#include <nlohmann/detail/json_ref.hpp>
+#include <nlohmann/detail/output/serializer.hpp>
+#include <optional>
 #include <random>
+#include <ratio>
 #include <set>
 #include <span>
 #include <string>
