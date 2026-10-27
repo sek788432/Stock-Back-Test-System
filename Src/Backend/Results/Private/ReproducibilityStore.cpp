@@ -8,7 +8,6 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -28,8 +27,8 @@
 namespace bte::results {
 namespace {
 
-constexpr std::size_t maximumEvidenceBytes = 64U * 1024U;
-constexpr std::size_t maximumStrategySourceBytes = 1024U * 1024U;
+constexpr std::size_t maximumEvidenceBytes = std::size_t{64} * 1024U;
+constexpr std::size_t maximumStrategySourceBytes = std::size_t{1024} * 1024U;
 constexpr std::size_t maximumErrorCodeBytes = 128;
 constexpr std::size_t maximumErrorMessageBytes = 2048;
 constexpr std::size_t requiredAttemptCount = 3;
@@ -41,7 +40,7 @@ std::mutex &storeMutex() {
   return mutex;
 }
 
-core::Error fileError(std::string operation, const std::string_view detail);
+core::Error fileError(std::string operation, std::string_view detail);
 
 class VerificationFileLock final {
 public:
@@ -75,15 +74,18 @@ public:
 #if defined(__APPLE__) || defined(__linux__)
     const auto path = (directory / ".verification-store.lock").string();
     lock.descriptor_ =
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): lock O_CREAT mode
         ::open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
     if (lock.descriptor_ < 0) {
-      return fileError("Unable to open verification store lock",
-                       std::strerror(errno));
+      return fileError(
+          "Unable to open verification store lock",
+          std::error_code{errno, std::generic_category()}.message());
     }
     if (::flock(lock.descriptor_, LOCK_EX) != 0) {
       const auto savedError = errno;
-      return fileError("Unable to lock verification store",
-                       std::strerror(savedError));
+      return fileError(
+          "Unable to lock verification store",
+          std::error_code{savedError, std::generic_category()}.message());
     }
 #else
     static_cast<void>(directory);
@@ -223,16 +225,10 @@ parseVerificationStatus(const std::string_view status) {
   return std::nullopt;
 }
 
-core::Result<VerificationIdentity>
-functionalInputIdentity(const RunDescriptor &descriptor) {
-  auto orderedUniverse = descriptor.universe;
-  std::ranges::sort(orderedUniverse);
-  static constexpr std::array<std::string_view, 13> availabilityKeys{
-      "aggregationPolicy", "costs",         "dataSelection",
-      "engineBuild",       "numericPolicy", "runtimeProfile",
-      "runtimePackages",   "seed",          "strategyApi",
-      "strategyArtifact",  "strategyMode",  "strategyTemplate",
-      "timeframe"};
+core::Result<void> validateFunctionalRunInputs(
+    const RunDescriptor &descriptor,
+    const std::vector<std::string> &orderedUniverse,
+    const std::array<std::string_view, 13> &availabilityKeys) {
   if (descriptor.schemaVersion != 3 || descriptor.universe.empty() ||
       descriptor.range.start >= descriptor.range.end ||
       descriptor.initialCapitalMicrodollars <= 0 ||
@@ -279,23 +275,32 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
     return invalidArgument(
         "Reproducibility verification inputs are incomplete");
   }
+  return {};
+}
 
-  auto parsedParameters =
-      core::parseCanonicalJson(provenance.canonicalParametersJson);
-  if (!parsedParameters.ok() || !parsedParameters.value().is_object()) {
-    return invalidArgument(
-        "Reproducibility parameters must be a canonical JSON object");
-  }
-  auto canonicalParameters =
-      core::serializeCanonicalJson(parsedParameters.value());
-  if (!canonicalParameters.ok() ||
-      canonicalParameters.value() != provenance.canonicalParametersJson) {
-    return invalidArgument("Reproducibility parameters are not canonical JSON");
-  }
+struct CanonicalObjectParseMessages final {
+  std::string_view invalid;
+  std::string_view nonCanonical;
+};
 
-  const auto &runtime = *provenance.runtime;
-  auto parsedManifest = core::parseCanonicalJson(runtime.canonicalManifestJson);
-  if (!parsedManifest.ok() || !parsedManifest.value().is_object() ||
+core::Result<nlohmann::json>
+parseCanonicalObject(const std::string &jsonText,
+                     const CanonicalObjectParseMessages messages) {
+  auto parsed = core::parseCanonicalJson(jsonText);
+  if (!parsed.ok() || !parsed.value().is_object()) {
+    return invalidArgument(std::string{messages.invalid});
+  }
+  auto canonical = core::serializeCanonicalJson(parsed.value());
+  if (!canonical.ok() || canonical.value() != jsonText) {
+    return invalidArgument(std::string{messages.nonCanonical});
+  }
+  return parsed;
+}
+
+core::Result<nlohmann::json>
+parseRuntimeManifest(const RuntimeProfileProvenance &runtime) {
+  auto parsed = core::parseCanonicalJson(runtime.canonicalManifestJson);
+  if (!parsed.ok() || !parsed.value().is_object() ||
       !validHex(runtime.manifestHash, 64) ||
       runtime.manifestHash != core::sha256(runtime.canonicalManifestJson) ||
       runtime.profileId.empty() || runtime.pythonVersion.empty() ||
@@ -303,14 +308,17 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
     return invalidArgument(
         "Reproducibility Runtime Profile identity is invalid");
   }
-  auto canonicalManifest = core::serializeCanonicalJson(parsedManifest.value());
-  if (!canonicalManifest.ok() ||
-      canonicalManifest.value() != runtime.canonicalManifestJson) {
+  auto canonical = core::serializeCanonicalJson(parsed.value());
+  if (!canonical.ok() || canonical.value() != runtime.canonicalManifestJson) {
     return invalidArgument(
         "Reproducibility Runtime Profile manifest is not canonical");
   }
+  return parsed;
+}
 
-  const auto &manifest = parsedManifest.value();
+core::Result<nlohmann::json>
+runtimePackageValues(const RuntimeProfileProvenance &runtime,
+                     const nlohmann::json &manifest) {
   const auto stringFieldMatches = [&manifest](const std::string_view key,
                                               const std::string_view expected) {
     const auto field = manifest.find(std::string{key});
@@ -327,7 +335,6 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
     return invalidArgument(
         "Reproducibility Runtime Profile does not match its manifest");
   }
-
   auto packages = runtime.packages;
   std::ranges::sort(packages, {}, &RuntimePackageIdentity::name);
   nlohmann::json packageValues = nlohmann::json::array();
@@ -367,12 +374,17 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
     return invalidArgument(
         "Reproducibility Runtime Profile packages are inconsistent");
   }
+  return packageValues;
+}
 
+core::Result<nlohmann::json>
+dataSpanIdentityValues(const RunDescriptor &descriptor,
+                       const std::vector<std::string> &orderedUniverse) {
   nlohmann::json spans = nlohmann::json::array();
-  std::optional<std::size_t> previousOrdinal;
+  std::size_t previousOrdinal = 0;
+  bool hasPreviousOrdinal = false;
   for (const auto &span : descriptor.dataSelection.spans) {
-    if ((previousOrdinal.has_value() &&
-         *previousOrdinal >= span.segmentOrdinal) ||
+    if ((hasPreviousOrdinal && previousOrdinal >= span.segmentOrdinal) ||
         !std::ranges::binary_search(orderedUniverse, span.symbol) ||
         !validHex(span.segmentId, 64) || span.segmentHash != span.segmentId ||
         span.rowCount == 0 || span.firstTimestamp > span.lastTimestamp) {
@@ -380,6 +392,7 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
           "Reproducibility data-selection spans are invalid");
     }
     previousOrdinal = span.segmentOrdinal;
+    hasPreviousOrdinal = true;
     spans.push_back(
         {{"firstRow", std::to_string(span.firstRow)},
          {"firstTimestampUnixMillis",
@@ -396,7 +409,45 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
     return invalidArgument(
         "Reproducibility verification requires immutable data spans");
   }
+  return spans;
+}
 
+core::Result<VerificationIdentity>
+functionalInputIdentity(const RunDescriptor &descriptor) {
+  auto orderedUniverse = descriptor.universe;
+  std::ranges::sort(orderedUniverse);
+  static constexpr std::array<std::string_view, 13> availabilityKeys{
+      "aggregationPolicy", "costs",         "dataSelection",
+      "engineBuild",       "numericPolicy", "runtimeProfile",
+      "runtimePackages",   "seed",          "strategyApi",
+      "strategyArtifact",  "strategyMode",  "strategyTemplate",
+      "timeframe"};
+  const auto inputValidation = validateFunctionalRunInputs(
+      descriptor, orderedUniverse, availabilityKeys);
+  if (!inputValidation.ok()) {
+    return inputValidation.error();
+  }
+  const auto &provenance = descriptor.provenance;
+  auto parameters = parseCanonicalObject(
+      provenance.canonicalParametersJson,
+      {.invalid = "Reproducibility parameters must be a canonical JSON object",
+       .nonCanonical = "Reproducibility parameters are not canonical JSON"});
+  if (!parameters.ok()) {
+    return parameters.error();
+  }
+  const auto runtime = provenance.runtime.value_or(RuntimeProfileProvenance{});
+  auto manifest = parseRuntimeManifest(runtime);
+  if (!manifest.ok()) {
+    return manifest.error();
+  }
+  auto packageValues = runtimePackageValues(runtime, manifest.value());
+  if (!packageValues.ok()) {
+    return packageValues.error();
+  }
+  auto spans = dataSpanIdentityValues(descriptor, orderedUniverse);
+  if (!spans.ok()) {
+    return spans.error();
+  }
   const auto optionalInteger = [](const std::optional<std::int64_t> value) {
     return value.has_value() ? nlohmann::json(std::to_string(*value))
                              : nlohmann::json(nullptr);
@@ -408,9 +459,9 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
         {"calendarHash", descriptor.dataSelection.calendarHash},
         {"snapshotId", descriptor.dataSelection.snapshotId},
         {"sourceTimeframe", descriptor.dataSelection.timeframe},
-        {"spans", std::move(spans)},
+        {"spans", std::move(spans).value()},
         {"splitManifestHash", descriptor.dataSelection.splitManifestHash}}},
-      {"engineBuild", *provenance.engineBuild},
+      {"engineBuild", provenance.engineBuild.value_or(std::string{})},
       {"initialCapitalMicrodollars",
        std::to_string(descriptor.initialCapitalMicrodollars)},
       {"numericPolicy", numericPolicy},
@@ -420,7 +471,7 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
        std::to_string(core::time::toUnixMillis(descriptor.range.start))},
       {"runtime",
        {{"manifestHash", runtime.manifestHash},
-        {"packages", std::move(packageValues)},
+        {"packages", std::move(packageValues).value()},
         {"profileId", runtime.profileId},
         {"pythonAbi", runtime.pythonAbi},
         {"pythonVersion", runtime.pythonVersion},
@@ -429,7 +480,7 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
       {"seed", optionalInteger(provenance.seed)},
       {"strategy",
        {{"apiVersion", provenance.apiVersion},
-        {"canonicalParameters", std::move(parsedParameters).value()},
+        {"canonicalParameters", std::move(parameters).value()},
         {"mode", "python"},
         {"sourceHash", provenance.sourceHash},
         {"strategyHash", descriptor.strategyHash},
@@ -438,7 +489,7 @@ functionalInputIdentity(const RunDescriptor &descriptor) {
       {"costs",
        {{"commissionRatePartsPerBillion",
          optionalInteger(provenance.commissionRatePartsPerBillion)},
-        {"costProfile", *provenance.costProfile},
+        {"costProfile", provenance.costProfile.value_or(std::string{})},
         {"slippageRatePartsPerBillion",
          optionalInteger(provenance.slippageRatePartsPerBillion)}}},
       {"timeframe", provenance.timeframe},
@@ -549,10 +600,11 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
   const auto temporaryName = temporary.string();
   const auto destinationName = path.string();
   const auto descriptor =
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): stage O_CREAT mode
       ::open(temporaryName.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
   if (descriptor < 0) {
     return fileError("Unable to create verification staging file",
-                     std::strerror(errno));
+                     std::error_code{errno, std::generic_category()}.message());
   }
   std::size_t writtenBytes = 0;
   while (writtenBytes < bytes.size()) {
@@ -562,8 +614,9 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
       const auto savedError = written < 0 ? errno : EIO;
       static_cast<void>(::close(descriptor));
       static_cast<void>(::unlink(temporaryName.c_str()));
-      return fileError("Unable to write verification staging file",
-                       std::strerror(savedError));
+      return fileError(
+          "Unable to write verification staging file",
+          std::error_code{savedError, std::generic_category()}.message());
     }
     writtenBytes += static_cast<std::size_t>(written);
   }
@@ -571,33 +624,38 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
     const auto savedError = errno;
     static_cast<void>(::close(descriptor));
     static_cast<void>(::unlink(temporaryName.c_str()));
-    return fileError("Unable to flush verification staging file",
-                     std::strerror(savedError));
+    return fileError(
+        "Unable to flush verification staging file",
+        std::error_code{savedError, std::generic_category()}.message());
   }
   if (::close(descriptor) != 0) {
     const auto savedError = errno;
     static_cast<void>(::unlink(temporaryName.c_str()));
-    return fileError("Unable to close verification staging file",
-                     std::strerror(savedError));
+    return fileError(
+        "Unable to close verification staging file",
+        std::error_code{savedError, std::generic_category()}.message());
   }
   if (createOnly) {
     if (::link(temporaryName.c_str(), destinationName.c_str()) != 0) {
       const auto savedError = errno;
       static_cast<void>(::unlink(temporaryName.c_str()));
-      return core::makeError(savedError == EEXIST
-                                 ? core::ErrorCode::resourceBusy
-                                 : core::ErrorCode::permissionDenied,
-                             "Unable to install verification evidence: " +
-                                 std::string{std::strerror(savedError)});
+      return core::makeError(
+          savedError == EEXIST ? core::ErrorCode::resourceBusy
+                               : core::ErrorCode::permissionDenied,
+          "Unable to install verification evidence: " +
+              std::string{std::error_code{savedError, std::generic_category()}
+                              .message()});
     }
     static_cast<void>(::unlink(temporaryName.c_str()));
   } else if (::rename(temporaryName.c_str(), destinationName.c_str()) != 0) {
     const auto savedError = errno;
     static_cast<void>(::unlink(temporaryName.c_str()));
-    return fileError("Unable to replace verification evidence",
-                     std::strerror(savedError));
+    return fileError(
+        "Unable to replace verification evidence",
+        std::error_code{savedError, std::generic_category()}.message());
   }
   const auto directoryDescriptor =
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): Directory fsync fd.
       ::open(path.parent_path().string().c_str(), O_RDONLY);
   if (directoryDescriptor >= 0) {
     static_cast<void>(::fsync(directoryDescriptor));
@@ -663,6 +721,176 @@ core::Result<std::string> readFile(const std::filesystem::path &path) {
   return bytes;
 }
 
+struct VerificationAttemptPosition final {
+  std::size_t ordinal = 0;
+  std::size_t count = 0;
+};
+
+core::Result<std::optional<std::string>>
+readOptionalAttemptString(const nlohmann::json &attemptJsonValue,
+                          const std::string_view key,
+                          const std::size_t maxBytes) {
+  const auto &value = attemptJsonValue[std::string{key}];
+  if (value.is_null()) {
+    return std::optional<std::string>{};
+  }
+  if (!value.is_string()) {
+    return schemaError("Verification attempt string field is invalid");
+  }
+  auto stringValue = value.get<std::string>();
+  if (stringValue.size() > maxBytes) {
+    return schemaError("Verification attempt string exceeds its limit");
+  }
+  return std::optional<std::string>{std::move(stringValue)};
+}
+
+core::Result<void>
+parseAttemptTerminalStatus(const std::optional<std::string> &statusText,
+                           VerificationAttempt &attempt) {
+  if (!statusText.has_value()) {
+    return {};
+  }
+  const auto terminalStatus = parseRunStatus(statusText.value());
+  if (!terminalStatus.has_value() ||
+      terminalStatus.value() == RunStatus::running) {
+    return schemaError("Verification attempt terminal status is invalid");
+  }
+  attempt.terminalStatus = terminalStatus;
+  return {};
+}
+
+core::Result<std::optional<VerificationError>>
+parseAttemptError(const nlohmann::json &error) {
+  if (error.is_null()) {
+    return std::optional<VerificationError>{};
+  }
+  if (!isObjectWithKeys(error, {"code", "message"}) ||
+      !error["code"].is_string() || !error["message"].is_string()) {
+    return schemaError("Verification attempt error is invalid");
+  }
+  const auto code = error["code"].get<std::string>();
+  const auto message = error["message"].get<std::string>();
+  if (code.empty() || code.size() > maximumErrorCodeBytes ||
+      message.size() > maximumErrorMessageBytes) {
+    return schemaError("Verification attempt error exceeds its limit");
+  }
+  return std::optional<VerificationError>{
+      VerificationError{.code = code, .message = message}};
+}
+
+core::Result<void>
+validateAttemptResultReferences(const VerificationAttempt &attempt) {
+  if (attempt.resultId.has_value() &&
+      !validIdentity(attempt.resultId.value())) {
+    return schemaError("Verification attempt Result ID is invalid");
+  }
+  if (attempt.canonicalResultHash.has_value() &&
+      !validHex(attempt.canonicalResultHash.value(), 64)) {
+    return schemaError("Verification attempt Result hash is invalid");
+  }
+  return {};
+}
+
+core::Result<void>
+validateParsedAttemptState(const VerificationAttempt &attempt,
+                           const VerificationAttemptPosition position) {
+  if (attempt.terminalStatus.has_value() && !attempt.resultId.has_value()) {
+    return schemaError("Terminal verification attempt has no Result ID");
+  }
+  if (attempt.terminalStatus == RunStatus::completed &&
+      !attempt.canonicalResultHash.has_value()) {
+    return schemaError("Completed verification attempt has no Result hash");
+  }
+  if (position.ordinal < position.count &&
+      !attempt.terminalStatus.has_value()) {
+    return schemaError("Only the final verification attempt may be active");
+  }
+  return {};
+}
+
+core::Result<VerificationAttempt>
+parseVerificationAttempt(const nlohmann::json &attemptJsonValue,
+                         const VerificationAttemptPosition position) {
+  if (!isObjectWithKeys(attemptJsonValue,
+                        {"attemptOrdinal", "canonicalResultHash", "error",
+                         "resultId", "terminalStatus"}) ||
+      !attemptJsonValue["attemptOrdinal"].is_number_unsigned() ||
+      attemptJsonValue["attemptOrdinal"].get<std::size_t>() !=
+          position.ordinal) {
+    return schemaError("Verification attempt metadata is invalid");
+  }
+  VerificationAttempt attempt;
+  attempt.ordinal = position.ordinal;
+  auto resultId = readOptionalAttemptString(attemptJsonValue, "resultId", 32);
+  auto resultHash =
+      readOptionalAttemptString(attemptJsonValue, "canonicalResultHash", 64);
+  auto status =
+      readOptionalAttemptString(attemptJsonValue, "terminalStatus", 32);
+  if (!resultId.ok() || !resultHash.ok() || !status.ok()) {
+    return schemaError("Verification attempt fields are invalid");
+  }
+  attempt.resultId = std::move(resultId).value();
+  attempt.canonicalResultHash = std::move(resultHash).value();
+  auto referencesValid = validateAttemptResultReferences(attempt);
+  if (!referencesValid.ok()) {
+    return referencesValid.error();
+  }
+  auto terminalStatus =
+      parseAttemptTerminalStatus(std::move(status).value(), attempt);
+  if (!terminalStatus.ok()) {
+    return terminalStatus.error();
+  }
+  auto error = parseAttemptError(attemptJsonValue["error"]);
+  if (!error.ok()) {
+    return error.error();
+  }
+  attempt.error = std::move(error).value();
+  auto stateValid = validateParsedAttemptState(attempt, position);
+  if (!stateValid.ok()) {
+    return stateValid.error();
+  }
+  return attempt;
+}
+
+core::Result<void>
+validateVerificationEvidenceState(const VerificationEvidence &evidence) {
+  if (!evidence.attempts.empty()) {
+    const auto &last = evidence.attempts.back();
+    if (evidence.status == VerificationStatus::running &&
+        ((evidence.attempts.size() >= requiredAttemptCount &&
+          last.terminalStatus.has_value()) ||
+         last.error.has_value())) {
+      return schemaError("Running verification has a terminal attempt state");
+    }
+    if (last.terminalStatus.has_value() &&
+        last.terminalStatus.value() != RunStatus::completed &&
+        evidence.status == VerificationStatus::running) {
+      return schemaError("Running verification has a failed attempt");
+    }
+  }
+  if (evidence.status == VerificationStatus::verified) {
+    const auto firstHash = evidence.attempts.empty()
+                               ? std::optional<std::string>{}
+                               : evidence.attempts.front().canonicalResultHash;
+    const auto allCompleted =
+        std::ranges::all_of(evidence.attempts, [](const auto &attempt) {
+          return attempt.terminalStatus == RunStatus::completed &&
+                 attempt.canonicalResultHash.has_value() &&
+                 !attempt.error.has_value();
+        });
+    const auto hashesMatch = std::ranges::all_of(
+        evidence.attempts, [firstHash](const auto &attempt) {
+          return attempt.canonicalResultHash == firstHash;
+        });
+    if (evidence.attempts.size() != requiredAttemptCount || !allCompleted ||
+        !hashesMatch) {
+      return schemaError(
+          "Verified evidence does not contain three matching runs");
+    }
+  }
+  return {};
+}
+
 core::Result<VerificationEvidence>
 parseEvidence(const std::filesystem::path &path,
               const std::string_view expectedId) {
@@ -694,7 +922,6 @@ parseEvidence(const std::filesystem::path &path,
       !json["state"].is_string()) {
     return schemaError("Verification evidence metadata is invalid");
   }
-
   auto identityJson = core::serializeCanonicalJson(json["identity"]);
   const auto identityHash = json["identityHash"].get<std::string>();
   const auto integrityHash = json["integrityHash"].get<std::string>();
@@ -710,16 +937,15 @@ parseEvidence(const std::filesystem::path &path,
       core::sha256(integrityBytes.value()) != integrityHash) {
     return schemaError("Verification evidence integrity hash is invalid");
   }
-
   const auto state = parseVerificationStatus(json["state"].get<std::string>());
-  if (!state.has_value()) {
+  if (!state) {
     return schemaError("Verification evidence state is invalid");
   }
   VerificationEvidence result{
       .verificationId = std::string{expectedId},
       .identity = {.canonicalJson = std::move(identityJson).value(),
                    .sha256 = identityHash},
-      .status = *state,
+      .status = state.value(),
       .progressOrdinal = json["progressOrdinal"].get<std::size_t>(),
       .attempts = {},
       .integrityHash = integrityHash,
@@ -728,114 +954,19 @@ parseEvidence(const std::filesystem::path &path,
       result.progressOrdinal != json["attempts"].size()) {
     return schemaError("Verification progress ordinal is invalid");
   }
-  for (std::size_t index = 0; index < json["attempts"].size(); ++index) {
-    const auto &attemptJsonValue = json["attempts"][index];
-    if (!isObjectWithKeys(attemptJsonValue,
-                          {"attemptOrdinal", "canonicalResultHash", "error",
-                           "resultId", "terminalStatus"}) ||
-        !attemptJsonValue["attemptOrdinal"].is_number_unsigned() ||
-        attemptJsonValue["attemptOrdinal"].get<std::size_t>() != index + 1) {
-      return schemaError("Verification attempt metadata is invalid");
+  for (std::size_t ordinal = 1; ordinal <= json["attempts"].size(); ++ordinal) {
+    const auto index = ordinal - 1;
+    auto attempt = parseVerificationAttempt(
+        json["attempts"][index],
+        {.ordinal = ordinal, .count = json["attempts"].size()});
+    if (!attempt.ok()) {
+      return attempt.error();
     }
-    VerificationAttempt attempt;
-    attempt.ordinal = index + 1;
-    const auto readOptionalString = [&](const std::string_view key,
-                                        const std::size_t maxBytes)
-        -> core::Result<std::optional<std::string>> {
-      const auto &value = attemptJsonValue[std::string{key}];
-      if (value.is_null()) {
-        return std::optional<std::string>{};
-      }
-      if (!value.is_string()) {
-        return schemaError("Verification attempt string field is invalid");
-      }
-      auto stringValue = value.get<std::string>();
-      if (stringValue.size() > maxBytes) {
-        return schemaError("Verification attempt string exceeds its limit");
-      }
-      return std::optional<std::string>{std::move(stringValue)};
-    };
-    auto resultId = readOptionalString("resultId", 32);
-    auto resultHash = readOptionalString("canonicalResultHash", 64);
-    auto status = readOptionalString("terminalStatus", 32);
-    if (!resultId.ok() || !resultHash.ok() || !status.ok()) {
-      return schemaError("Verification attempt fields are invalid");
-    }
-    attempt.resultId = std::move(resultId).value();
-    attempt.canonicalResultHash = std::move(resultHash).value();
-    if (attempt.resultId.has_value() && !validIdentity(*attempt.resultId)) {
-      return schemaError("Verification attempt Result ID is invalid");
-    }
-    if (attempt.canonicalResultHash.has_value() &&
-        !validHex(*attempt.canonicalResultHash, 64)) {
-      return schemaError("Verification attempt Result hash is invalid");
-    }
-    if (status.value().has_value()) {
-      attempt.terminalStatus = parseRunStatus(*status.value());
-      if (!attempt.terminalStatus.has_value() ||
-          *attempt.terminalStatus == RunStatus::running) {
-        return schemaError("Verification attempt terminal status is invalid");
-      }
-    }
-    const auto &error = attemptJsonValue["error"];
-    if (!error.is_null()) {
-      if (!isObjectWithKeys(error, {"code", "message"}) ||
-          !error["code"].is_string() || !error["message"].is_string()) {
-        return schemaError("Verification attempt error is invalid");
-      }
-      const auto code = error["code"].get<std::string>();
-      const auto message = error["message"].get<std::string>();
-      if (code.empty() || code.size() > maximumErrorCodeBytes ||
-          message.size() > maximumErrorMessageBytes) {
-        return schemaError("Verification attempt error exceeds its limit");
-      }
-      attempt.error = VerificationError{.code = code, .message = message};
-    }
-    if (attempt.terminalStatus.has_value() && !attempt.resultId.has_value()) {
-      return schemaError("Terminal verification attempt has no Result ID");
-    }
-    if (attempt.terminalStatus == RunStatus::completed &&
-        !attempt.canonicalResultHash.has_value()) {
-      return schemaError("Completed verification attempt has no Result hash");
-    }
-    if (index + 1 < json["attempts"].size() &&
-        !attempt.terminalStatus.has_value()) {
-      return schemaError("Only the final verification attempt may be active");
-    }
-    result.attempts.push_back(std::move(attempt));
+    result.attempts.push_back(std::move(attempt).value());
   }
-  if (!result.attempts.empty()) {
-    const auto &last = result.attempts.back();
-    if (result.status == VerificationStatus::running &&
-        ((result.attempts.size() >= requiredAttemptCount &&
-          last.terminalStatus.has_value()) ||
-         last.error.has_value())) {
-      return schemaError("Running verification has a terminal attempt state");
-    }
-    if (last.terminalStatus.has_value() &&
-        *last.terminalStatus != RunStatus::completed &&
-        result.status == VerificationStatus::running) {
-      return schemaError("Running verification has a failed attempt");
-    }
-  }
-  if (result.status == VerificationStatus::verified) {
-    const auto firstHash = result.attempts.empty()
-                               ? std::optional<std::string>{}
-                               : result.attempts.front().canonicalResultHash;
-    if (result.attempts.size() != requiredAttemptCount ||
-        !std::ranges::all_of(result.attempts,
-                             [](const auto &attempt) {
-                               return attempt.terminalStatus ==
-                                          RunStatus::completed &&
-                                      attempt.canonicalResultHash.has_value() &&
-                                      !attempt.error.has_value();
-                             }) ||
-        !std::ranges::all_of(result.attempts, [firstHash](const auto &attempt) {
-          return attempt.canonicalResultHash == firstHash;
-        })) {
-      return schemaError(
-          "Verified evidence does not contain three matching runs");
-    }
+  const auto stateValidation = validateVerificationEvidenceState(result);
+  if (!stateValidation.ok()) {
+    return stateValidation.error();
   }
   return result;
 }
@@ -893,8 +1024,8 @@ verificationPaths(const std::filesystem::path &directory) {
         iterator->path().extension() != ".bteverify") {
       continue;
     }
-    const auto id = iterator->path().stem().string();
-    if (validIdentity(id)) {
+    const auto verificationId = iterator->path().stem().string();
+    if (validIdentity(verificationId)) {
       paths.push_back(iterator->path());
     }
   }
@@ -1080,8 +1211,7 @@ VerificationStore::attachResultId(const std::string &verificationId,
   if (!active.ok()) {
     return active.error();
   }
-  if (active.value()->resultId.has_value() &&
-      *active.value()->resultId != resultId) {
+  if (active.value()->resultId.value_or(resultId) != resultId) {
     return invalidArgument("Attempt Result ID is already assigned");
   }
   active.value()->resultId = resultId;
@@ -1116,7 +1246,7 @@ core::Result<VerificationEvidence> VerificationStore::completeAttempt(
     return active.error();
   }
   auto &attempt = *active.value();
-  if (attempt.resultId.has_value() && *attempt.resultId != result.resultId) {
+  if (attempt.resultId.value_or(result.resultId) != result.resultId) {
     attempt.error = VerificationError{
         .code = "attemptResultIdMismatch",
         .message = "The finalized Result ID differs from the active attempt"};
@@ -1157,7 +1287,7 @@ core::Result<VerificationEvidence> VerificationStore::completeAttempt(
 }
 
 core::Result<VerificationEvidence>
-VerificationStore::failAttempt(const std::string &verificationId,
+VerificationStore::failAttempt(const std::string_view verificationId,
                                std::string errorCode, std::string errorMessage,
                                std::optional<std::string> resultId) {
   if (errorCode.empty() || errorCode.size() > maximumErrorCodeBytes ||
@@ -1181,7 +1311,7 @@ VerificationStore::failAttempt(const std::string &verificationId,
   }
   auto &attempt = *active.value();
   if (attempt.resultId.has_value() && resultId.has_value() &&
-      *attempt.resultId != *resultId) {
+      attempt.resultId.value_or("") != resultId.value_or("")) {
     return invalidArgument("Failure Result ID differs from the active attempt");
   }
   if (!attempt.resultId.has_value()) {
@@ -1198,7 +1328,7 @@ VerificationStore::failAttempt(const std::string &verificationId,
 }
 
 core::Result<VerificationEvidence>
-VerificationStore::cancelAttempt(const std::string &verificationId,
+VerificationStore::cancelAttempt(const std::string_view verificationId,
                                  std::string errorMessage,
                                  std::optional<std::string> resultId) {
   if (errorMessage.size() > maximumErrorMessageBytes ||
@@ -1222,7 +1352,7 @@ VerificationStore::cancelAttempt(const std::string &verificationId,
   }
   auto &attempt = *active.value();
   if (attempt.resultId.has_value() && resultId.has_value() &&
-      *attempt.resultId != *resultId) {
+      attempt.resultId.value_or("") != resultId.value_or("")) {
     return invalidArgument(
         "Canceled Result ID differs from the active attempt");
   }

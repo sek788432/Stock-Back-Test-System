@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace bte::results {
@@ -93,11 +94,11 @@ public:
                   const RunDescriptor &attemptDescriptor,
                   const FinalizedResult &result, RunStatus terminalStatus);
   [[nodiscard]] core::Result<VerificationEvidence>
-  failAttempt(const std::string &verificationId, std::string errorCode,
+  failAttempt(std::string_view verificationId, std::string errorCode,
               std::string errorMessage,
               std::optional<std::string> resultId = std::nullopt);
   [[nodiscard]] core::Result<VerificationEvidence>
-  cancelAttempt(const std::string &verificationId, std::string errorMessage,
+  cancelAttempt(std::string_view verificationId, std::string errorMessage,
                 std::optional<std::string> resultId = std::nullopt);
   [[nodiscard]] core::Result<VerificationEvidence>
   cancel(const std::string &verificationId);

@@ -5,24 +5,56 @@
 #include <Bte/Core/Bar.h>
 #include <Bte/Strategy/Strategy.h>
 
+#include <QAbstractButton>
+#include <QApplication>
+#include <QByteArray>
 #include <QFile>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <future>
+#include <memory>
 #include <optional>
 #include <string>
 
 namespace {
+
+bool writeSourceFile(const std::filesystem::path &path,
+                     const QByteArray &source) {
+  QFile file{QString::fromStdString(path.string())};
+  return file.open(QIODevice::WriteOnly) &&
+         file.write(source) == static_cast<qint64>(source.size());
+}
+
+std::shared_ptr<bool> chooseReplacementButton(const QString &buttonText) {
+  const auto clicked = std::make_shared<bool>(false);
+  QTimer::singleShot(0, qApp, [buttonText, clicked] {
+    auto *dialog =
+        qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+    if (dialog == nullptr) {
+      return;
+    }
+    for (auto *button : dialog->buttons()) {
+      if (button->text() == buttonText) {
+        *clicked = true;
+        button->click();
+        return;
+      }
+    }
+  });
+  return clicked;
+}
 
 class StrategyTabTest final : public QObject {
   Q_OBJECT
@@ -30,6 +62,11 @@ class StrategyTabTest final : public QObject {
 private slots:
   void exposesSampleAndPersistsRecoverableDrafts();
   void importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles();
+  void acceptsSourceAtTheOneMiBLimit();
+  void autosavesAfterFiveHundredMillisecondsOfIdle();
+  void savesDirtyDraftBeforeLoadingReplacementWhenRequested();
+  void discardsDirtyDraftBeforeLoadingReplacementWhenRequested();
+  void keepsDirtyDraftWhenReplacementIsCanceled();
   void validatesWithFrozenParametersAndConsent();
   void ignoresValidationForAnEditedDraft();
   void useInBacktestEmitsTheCurrentSourceAndParameters();
@@ -115,6 +152,129 @@ void StrategyTabTest::importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles() {
   oversized.close();
   QVERIFY(!tab.loadSourceFile(oversizedPath));
   QCOMPARE(QString::fromStdString(tab.sourceUtf8()), QString{"x=1\n"});
+}
+
+void StrategyTabTest::acceptsSourceAtTheOneMiBLimit() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto sourcePath = root / "boundary.py";
+  const auto expectedSource = QByteArray(1024 * 1024, '#');
+  QFile source{QString::fromStdString(sourcePath.string())};
+  QVERIFY(source.open(QIODevice::WriteOnly));
+  QCOMPARE(source.write(expectedSource),
+           static_cast<qint64>(expectedSource.size()));
+  source.close();
+
+  bte::frontend::StrategyTab tab{root / "drafts", {}};
+  QVERIFY(tab.saveDraft());
+  QVERIFY(tab.loadSourceFile(sourcePath));
+  QCOMPARE(QString::fromStdString(tab.sourceUtf8()),
+           QString::fromUtf8(expectedSource));
+  QCOMPARE(tab.sourceUtf8().size(), std::size_t{1024 * 1024});
+}
+
+void StrategyTabTest::autosavesAfterFiveHundredMillisecondsOfIdle() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto drafts =
+      std::filesystem::path{directory.path().toStdString()} / "drafts";
+  const auto draftPath = drafts / "python-draft.json";
+  bte::frontend::StrategyTab tab{drafts, {}};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  QVERIFY(editor != nullptr);
+
+  editor->setPlainText("first idle generation = True\n");
+  QTest::qWait(350);
+  editor->setPlainText("second idle generation = True\n");
+  QTest::qWait(350);
+  QVERIFY(!std::filesystem::exists(draftPath));
+  QTRY_VERIFY_WITH_TIMEOUT(std::filesystem::exists(draftPath), 1500);
+
+  QFile draft{QString::fromStdString(draftPath.string())};
+  QVERIFY(draft.open(QIODevice::ReadOnly));
+  const auto saved = QString::fromUtf8(draft.readAll());
+  QVERIFY(saved.contains("second idle generation = True"));
+  QVERIFY(!saved.contains("first idle generation = True"));
+}
+
+void StrategyTabTest::savesDirtyDraftBeforeLoadingReplacementWhenRequested() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto drafts = root / "drafts";
+  const auto replacementPath = root / "replacement.py";
+  QVERIFY(writeSourceFile(replacementPath, QByteArray{"# replacement\n"}));
+
+  bte::frontend::StrategyTab tab{drafts, {}};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  QVERIFY(editor != nullptr);
+  editor->setPlainText("saved generation = True\n");
+  QVERIFY(tab.saveDraft());
+  editor->setPlainText("unsaved generation = True\n");
+
+  const auto clicked = chooseReplacementButton("Save Draft");
+  QVERIFY(tab.loadSourceFile(replacementPath));
+  QVERIFY(*clicked);
+  QCOMPARE(tab.sourceUtf8(), std::string{"# replacement\n"});
+  QVERIFY(tab.autosaveDraft());
+
+  QFile previous{
+      QString::fromStdString((drafts / "python-draft.previous.json").string())};
+  QVERIFY(previous.open(QIODevice::ReadOnly));
+  QVERIFY(QString::fromUtf8(previous.readAll())
+              .contains("unsaved generation = True"));
+}
+
+void StrategyTabTest::
+    discardsDirtyDraftBeforeLoadingReplacementWhenRequested() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto drafts = root / "drafts";
+  const auto replacementPath = root / "replacement.py";
+  QVERIFY(writeSourceFile(replacementPath, QByteArray{"# replacement\n"}));
+
+  bte::frontend::StrategyTab tab{drafts, {}};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  QVERIFY(editor != nullptr);
+  editor->setPlainText("saved generation = True\n");
+  QVERIFY(tab.saveDraft());
+  editor->setPlainText("discarded generation = True\n");
+
+  const auto clicked = chooseReplacementButton("Discard");
+  QVERIFY(tab.loadSourceFile(replacementPath));
+  QVERIFY(*clicked);
+  QCOMPARE(tab.sourceUtf8(), std::string{"# replacement\n"});
+  QVERIFY(tab.autosaveDraft());
+
+  QFile current{
+      QString::fromStdString((drafts / "python-draft.json").string())};
+  QVERIFY(current.open(QIODevice::ReadOnly));
+  const auto saved = QString::fromUtf8(current.readAll());
+  QVERIFY(saved.contains("# replacement"));
+  QVERIFY(!saved.contains("discarded generation = True"));
+}
+
+void StrategyTabTest::keepsDirtyDraftWhenReplacementIsCanceled() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto drafts = root / "drafts";
+  const auto replacementPath = root / "replacement.py";
+  QVERIFY(writeSourceFile(replacementPath, QByteArray{"# replacement\n"}));
+
+  bte::frontend::StrategyTab tab{drafts, {}};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  QVERIFY(editor != nullptr);
+  editor->setPlainText("saved generation = True\n");
+  QVERIFY(tab.saveDraft());
+  editor->setPlainText("unsaved generation = True\n");
+
+  const auto clicked = chooseReplacementButton("Cancel");
+  QVERIFY(!tab.loadSourceFile(replacementPath));
+  QVERIFY(*clicked);
+  QCOMPARE(tab.sourceUtf8(), std::string{"unsaved generation = True\n"});
 }
 
 void StrategyTabTest::validatesWithFrozenParametersAndConsent() {

@@ -1,4 +1,5 @@
 #include "ManagedWorkerProcess.h"
+#include "ManagedWorkerProcessTestHooks.h"
 
 #include <gtest/gtest.h>
 
@@ -106,6 +107,26 @@ TEST(ManagedWorkerProcessTest,
   EXPECT_NE(diagnostics.standardError.retainedBytes.rfind("stderr-last\n"),
             std::string::npos);
   EXPECT_TRUE(worker.waitForExit(2s).ok());
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     rejectsAnIndividualArgumentAbove64KiBBeforeStartingAWorker) {
+#if defined(__unix__) || defined(__APPLE__)
+  const auto startCountBefore =
+      bte::bindings::python::testing::managedWorkerProcessStartCount();
+  const auto oversizedArgument = std::string(64U * 1024U + 1U, 'x');
+  const auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(), .arguments = {oversizedArgument}});
+
+  ASSERT_FALSE(started.ok());
+  EXPECT_EQ(started.error().message,
+            "Managed worker arguments are malformed or too large.");
+  EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+            startCountBefore);
 #else
   GTEST_SKIP()
       << "POSIX worker process fixture is unavailable on this platform.";

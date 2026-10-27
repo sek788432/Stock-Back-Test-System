@@ -12,7 +12,8 @@
 
 namespace bte::bindings::python {
 
-inline constexpr std::size_t maximumProtocolPayloadBytes = 1024U * 1024U;
+inline constexpr std::size_t maximumProtocolPayloadBytes =
+    std::size_t{1024} * 1024;
 inline constexpr std::uint32_t currentProtocolVersion = 1;
 
 struct ProtocolMessage {
@@ -41,7 +42,7 @@ frameCanonicalPayload(std::string_view payloadBytes);
 encodeMessage(const ProtocolMessage &message);
 
 [[nodiscard]] core::Result<ProtocolMessage>
-decodeMessage(std::string_view frame, std::string_view expectedRunId,
+decodeMessage(const std::string &frame, std::string_view expectedRunId,
               std::uint64_t expectedSequence);
 
 [[nodiscard]] core::Result<ProtocolMessage>

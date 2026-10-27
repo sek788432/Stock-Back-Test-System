@@ -11,6 +11,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace bte::frontend {
@@ -58,8 +59,29 @@ public:
 
 signals:
   void openResultInReplay(const QString &resultId);
+  void verificationProgressUpdated(QString statusText);
 
 private:
+  void connectConditionControls();
+  void connectOperationControls(BacktestRunner runner,
+                                const std::function<void()> &beginDraftRefresh);
+  void handleStrategySelectionChanged(int index);
+  void handleBacktestFinished(const std::function<void()> &beginDraftRefresh);
+  void handleVerificationRequested();
+  void showVerificationProgress(const QString &statusText);
+  void
+  handleVerificationFinished(const std::function<void()> &beginDraftRefresh);
+  void handleCancelRequested();
+  void handleBacktestRequested(const BacktestRunner &runner);
+  [[nodiscard]] std::optional<bindings::PythonStrategyConfiguration>
+  currentPythonStrategyDraft();
+  [[nodiscard]] bindings::BacktestConfiguration
+  backtestConfigurationFromWidgets() const;
+  void addSelectableConditions(bindings::BacktestConfiguration &configuration);
+  void resetBacktestView();
+  void startBacktest(bindings::BacktestConfiguration configuration,
+                     const BacktestRunner &runner);
+
   struct RunState;
   std::unique_ptr<RunState> runState_;
 };

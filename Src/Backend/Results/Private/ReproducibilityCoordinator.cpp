@@ -1,5 +1,6 @@
 #include "Bte/Results/ReproducibilityCoordinator.h"
 
+#include <atomic>
 #include <exception>
 #include <mutex>
 #include <optional>
@@ -22,7 +23,9 @@ void observe(const VerificationProgressObserver &observer,
   try {
     observer(evidence);
   } catch (...) {
-    // UI progress is advisory and cannot change the persisted execution.
+    // Keep advisory callbacks isolated while retaining a diagnostic count.
+    static std::atomic_size_t observerFailureCount = 0;
+    observerFailureCount.fetch_add(1, std::memory_order_relaxed);
   }
 }
 
@@ -30,7 +33,100 @@ void observe(const VerificationProgressObserver &observer,
 
 ReproducibilityCoordinator::ReproducibilityCoordinator(
     VerificationStore &store) noexcept
-    : store_{store} {}
+    : store_{&store} {}
+
+namespace {
+
+core::Result<VerificationAttemptOutput>
+invokeAttempt(const RunDescriptor &frozenDescriptor,
+              const VerificationAttemptRunner &runAttempt,
+              const core::CancellationToken &cancellation,
+              const VerificationResultIdPublisher &publishResultId,
+              std::optional<core::Error> &publicationError) {
+  core::Result<VerificationAttemptOutput> output = core::makeError(
+      core::ErrorCode::internal, "Verification attempt did not run");
+  try {
+    output = runAttempt(frozenDescriptor, cancellation, publishResultId);
+  } catch (const std::exception &error) {
+    output = core::makeError(core::ErrorCode::internal, error.what());
+  } catch (...) {
+    output = core::makeError(core::ErrorCode::internal,
+                             "Verification attempt raised an unknown error");
+  }
+  if (publicationError.has_value()) {
+    return *publicationError;
+  }
+  return output;
+}
+
+core::Result<void>
+failVerificationAttempt(VerificationStore &store,
+                        VerificationEvidence &evidence,
+                        const core::Error &error, const bool canceled,
+                        const std::optional<std::string> &resultId,
+                        const VerificationProgressObserver &observeProgress) {
+  auto terminal = canceled ? store.cancelAttempt(evidence.verificationId,
+                                                 error.message, resultId)
+                           : store.failAttempt(evidence.verificationId,
+                                               "attemptExecutionFailed",
+                                               error.message, resultId);
+  if (!terminal.ok()) {
+    return terminal.error();
+  }
+  evidence = std::move(terminal).value();
+  observe(observeProgress, evidence);
+  return {};
+}
+
+core::Result<void>
+runVerificationAttempt(VerificationStore &store, VerificationEvidence &evidence,
+                       const RunDescriptor &frozenDescriptor,
+                       const VerificationAttemptRunner &runAttempt,
+                       const core::CancellationToken &cancellation,
+                       const VerificationProgressObserver &observeProgress) {
+  auto started = store.beginAttempt(evidence.verificationId);
+  if (!started.ok()) {
+    return started.error();
+  }
+  evidence = std::move(started).value();
+  observe(observeProgress, evidence);
+
+  std::optional<std::string> resultId;
+  std::optional<core::Error> publicationError;
+  const VerificationResultIdPublisher publishResultId =
+      [&store, &evidence, &resultId, &publicationError, &observeProgress](
+          const std::string &publishedResultId) -> core::Result<void> {
+    auto attached =
+        store.attachResultId(evidence.verificationId, publishedResultId);
+    if (!attached.ok()) {
+      publicationError = attached.error();
+      return attached.error();
+    }
+    evidence = std::move(attached).value();
+    resultId = publishedResultId;
+    observe(observeProgress, evidence);
+    return {};
+  };
+  auto output = invokeAttempt(frozenDescriptor, runAttempt, cancellation,
+                              publishResultId, publicationError);
+  if (!output.ok()) {
+    const auto canceled = output.error().code == core::ErrorCode::cancelled ||
+                          cancellation.isCancellationRequested();
+    return failVerificationAttempt(store, evidence, output.error(), canceled,
+                                   resultId, observeProgress);
+  }
+  auto completed =
+      store.completeAttempt(evidence.verificationId, output.value().descriptor,
+                            output.value().result, output.value().status);
+  if (!completed.ok()) {
+    return completed.error();
+  }
+  evidence = std::move(completed).value();
+  observe(observeProgress, evidence);
+  return {};
+}
+
+} // namespace
 
 core::Result<VerificationEvidence> ReproducibilityCoordinator::verify(
     const RunDescriptor &frozenDescriptor,
@@ -41,95 +137,39 @@ core::Result<VerificationEvidence> ReproducibilityCoordinator::verify(
     return core::makeError(core::ErrorCode::invalidArgument,
                            "A verification attempt runner is required");
   }
-  std::unique_lock executionLock{verificationExecutionMutex(),
-                                 std::try_to_lock};
+  const std::unique_lock executionLock{verificationExecutionMutex(),
+                                       std::try_to_lock};
   if (!executionLock.owns_lock()) {
     return core::makeError(core::ErrorCode::resourceBusy,
                            "Another reproducibility verification is active");
   }
-
-  auto evidence = store_.create(frozenDescriptor);
-  if (!evidence.ok()) {
-    return evidence.error();
+  auto created = store_->create(frozenDescriptor);
+  if (!created.ok()) {
+    return created.error();
   }
-  observe(observeProgress, evidence.value());
-
-  while (evidence.value().status == VerificationStatus::running) {
+  auto evidence = std::move(created).value();
+  observe(observeProgress, evidence);
+  while (evidence.status == VerificationStatus::running) {
     if (cancellation.isCancellationRequested()) {
-      auto canceled = store_.cancel(evidence.value().verificationId);
+      auto canceled = store_->cancel(evidence.verificationId);
       if (!canceled.ok()) {
         return canceled.error();
       }
-      evidence = std::move(canceled);
-      observe(observeProgress, evidence.value());
+      evidence = std::move(canceled).value();
+      observe(observeProgress, evidence);
       break;
     }
-
-    auto started = store_.beginAttempt(evidence.value().verificationId);
-    if (!started.ok()) {
-      return started.error();
+    auto attempt =
+        runVerificationAttempt(*store_, evidence, frozenDescriptor, runAttempt,
+                               cancellation, observeProgress);
+    if (!attempt.ok()) {
+      return attempt.error();
     }
-    evidence = std::move(started);
-    observe(observeProgress, evidence.value());
-
-    std::optional<std::string> resultId;
-    std::optional<core::Error> publicationError;
-    const VerificationResultIdPublisher publishResultId =
-        [this, &evidence, &resultId, &publicationError,
-         &observeProgress](const std::string &id) -> core::Result<void> {
-      auto attached =
-          store_.attachResultId(evidence.value().verificationId, id);
-      if (!attached.ok()) {
-        publicationError = attached.error();
-        return attached.error();
-      }
-      evidence = std::move(attached);
-      resultId = id;
-      observe(observeProgress, evidence.value());
-      return {};
-    };
-
-    core::Result<VerificationAttemptOutput> output = core::makeError(
-        core::ErrorCode::internal, "Verification attempt did not run");
-    try {
-      output = runAttempt(frozenDescriptor, cancellation, publishResultId);
-    } catch (const std::exception &error) {
-      output = core::makeError(core::ErrorCode::internal, error.what());
-    } catch (...) {
-      output = core::makeError(core::ErrorCode::internal,
-                               "Verification attempt raised an unknown error");
-    }
-    if (publicationError.has_value()) {
-      return *publicationError;
-    }
-
-    if (!output.ok()) {
-      const auto canceled = output.error().code == core::ErrorCode::cancelled ||
-                            cancellation.isCancellationRequested();
-      auto terminal =
-          canceled ? store_.cancelAttempt(evidence.value().verificationId,
-                                          output.error().message, resultId)
-                   : store_.failAttempt(evidence.value().verificationId,
-                                        "attemptExecutionFailed",
-                                        output.error().message, resultId);
-      if (!terminal.ok()) {
-        return terminal.error();
-      }
-      evidence = std::move(terminal);
-      observe(observeProgress, evidence.value());
+    if (evidence.status != VerificationStatus::running) {
       break;
     }
-
-    auto completed = store_.completeAttempt(
-        evidence.value().verificationId, output.value().descriptor,
-        output.value().result, output.value().status);
-    if (!completed.ok()) {
-      return completed.error();
-    }
-    evidence = std::move(completed);
-    observe(observeProgress, evidence.value());
   }
-  return evidence;
+  return std::move(evidence);
 }
 
 } // namespace bte::results

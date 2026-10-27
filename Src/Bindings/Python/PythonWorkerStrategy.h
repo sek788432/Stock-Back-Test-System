@@ -32,8 +32,8 @@ private:
 
 public:
   ~PythonWorkerStrategy() override;
-  PythonWorkerStrategy(PythonWorkerStrategy &&) noexcept;
-  PythonWorkerStrategy &operator=(PythonWorkerStrategy &&) noexcept;
+  PythonWorkerStrategy(PythonWorkerStrategy &&) = delete;
+  PythonWorkerStrategy &operator=(PythonWorkerStrategy &&) = delete;
   PythonWorkerStrategy(const PythonWorkerStrategy &) = delete;
   PythonWorkerStrategy &operator=(const PythonWorkerStrategy &) = delete;
 

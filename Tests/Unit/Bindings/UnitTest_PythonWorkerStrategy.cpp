@@ -65,6 +65,21 @@ def create_strategy(params):
     return Example()
 )python";
 
+const std::string parameterBoundaryStrategySource = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+
+class Example:
+    max_history_bars = 1
+    indicators = {}
+
+    def on_market(self, ctx):
+        return None
+
+def create_strategy(params):
+    return Example()
+)python";
+
 bte::strategy::StrategyContext context(const std::int64_t timestamp,
                                        const std::int64_t position = 0) {
   using bte::core::Bar;
@@ -411,6 +426,53 @@ TEST(PythonWorkerStrategyTest, validatesFrozenParametersBeforeLaunchingWorker) {
 
   ASSERT_FALSE(strategyResult.ok());
   EXPECT_EQ(strategyResult.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(PythonWorkerStrategyTest, acceptsRunParameterLimitBoundaries) {
+  const auto boundaryParameters = std::array{
+      nlohmann::json{{"fast_period", 1}, {"slow_period", 2}, {"quantity", 1}},
+      nlohmann::json{{"fast_period", 9999},
+                     {"slow_period", 10000},
+                     {"quantity", 1'000'000'000}},
+  };
+
+  for (const auto &configuration : boundaryParameters) {
+    auto strategyResult = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+        parameterBoundaryStrategySource, configuration, true);
+    ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  }
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsOutOfRangeRunParametersBeforeLaunchingWorker) {
+  const auto invalidParameters = std::array{
+      nlohmann::json{{"fast_period", 0}, {"slow_period", 2}, {"quantity", 1}},
+      nlohmann::json{
+          {"fast_period", 10001}, {"slow_period", 10000}, {"quantity", 1}},
+      nlohmann::json{{"fast_period", 1}, {"slow_period", 0}, {"quantity", 1}},
+      nlohmann::json{
+          {"fast_period", 1}, {"slow_period", 10001}, {"quantity", 1}},
+      nlohmann::json{{"fast_period", 1}, {"slow_period", 2}, {"quantity", 0}},
+      nlohmann::json{
+          {"fast_period", 1}, {"slow_period", 2}, {"quantity", 1'000'000'001}},
+      nlohmann::json{{"fast_period", 1}, {"slow_period", 2}, {"quantity", 1.5}},
+      nlohmann::json{{"fast_period", 1.5}, {"slow_period", 2}, {"quantity", 1}},
+  };
+
+  for (const auto &configuration : invalidParameters) {
+    const auto startCountBefore =
+        bte::bindings::python::testing::managedWorkerProcessStartCount();
+    const auto strategyResult = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+        parameterBoundaryStrategySource, configuration, true);
+
+    ASSERT_FALSE(strategyResult.ok());
+    EXPECT_EQ(strategyResult.error().code,
+              bte::core::ErrorCode::invalidArgument);
+    EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+              startCountBefore);
+  }
 }
 
 TEST(PythonWorkerStrategyTest, exposesOnlyValidatedSmaRequirements) {

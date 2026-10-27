@@ -26,10 +26,10 @@
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <csignal>
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
-#include <signal.h>
 #include <spawn.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -157,6 +157,10 @@ public:
       static_cast<void>(::posix_spawn_file_actions_destroy(&actions_));
     }
   }
+  SpawnActions(const SpawnActions &) = delete;
+  SpawnActions &operator=(const SpawnActions &) = delete;
+  SpawnActions(SpawnActions &&) = delete;
+  SpawnActions &operator=(SpawnActions &&) = delete;
   [[nodiscard]] bool valid() const noexcept { return status_ == 0; }
   [[nodiscard]] int addDup2(const int source, const int target) {
     return status_ == 0
@@ -185,6 +189,10 @@ public:
       static_cast<void>(::posix_spawnattr_destroy(&attributes_));
     }
   }
+  SpawnAttributes(const SpawnAttributes &) = delete;
+  SpawnAttributes &operator=(const SpawnAttributes &) = delete;
+  SpawnAttributes(SpawnAttributes &&) = delete;
+  SpawnAttributes &operator=(SpawnAttributes &&) = delete;
   [[nodiscard]] bool valid() const noexcept { return status_ == 0; }
   [[nodiscard]] int configureProcessGroup() {
     if (status_ != 0) {
@@ -206,21 +214,41 @@ private:
 };
 
 [[nodiscard]] int duplicateCloseOnExec(const int descriptor) {
-  return ::fcntl(descriptor, F_DUPFD_CLOEXEC, 10);
+  return ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
+                  // F_DUPFD_CLOEXEC takes the minimum target descriptor
+                  // variadically.
+      descriptor, F_DUPFD_CLOEXEC, 10);
 }
 
 [[nodiscard]] int setCloseOnExec(const int descriptor) {
-  const auto flags = ::fcntl(descriptor, F_GETFD);
-  return flags < 0 ? -1 : ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
+  const auto flags =
+      ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX F_GETFD reads
+               // descriptor flags without an optional variadic argument.
+          descriptor, F_GETFD);
+  return flags < 0 ? -1
+                   : ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg):
+                              // POSIX F_SETFD requires updated descriptor flags
+                              // variadically.
+                         descriptor, F_SETFD, flags | FD_CLOEXEC);
 }
 
 [[nodiscard]] int setNonBlocking(const int descriptor) {
-  const auto flags = ::fcntl(descriptor, F_GETFL);
-  return flags < 0 ? -1 : ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK);
+  const auto flags =
+      ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX F_GETFL reads
+               // status flags before setting O_NONBLOCK.
+          descriptor, F_GETFL);
+  return flags < 0 ? -1
+                   : ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg):
+                              // POSIX F_SETFL requires updated file status
+                              // flags variadically.
+                         descriptor, F_SETFL, flags | O_NONBLOCK);
 }
 
 [[nodiscard]] bool isWritableDescriptor(const int descriptor) {
-  const auto flags = ::fcntl(descriptor, F_GETFL);
+  const auto flags =
+      ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX F_GETFL reads
+               // O_ACCMODE for the read-only check.
+          descriptor, F_GETFL);
   return flags >= 0 && (flags & O_ACCMODE) == O_RDONLY;
 }
 
@@ -261,6 +289,11 @@ private:
 
 #endif
 
+struct DiagnosticEvents final {
+  short standardOutput = 0;
+  short standardError = 0;
+};
+
 } // namespace
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
@@ -272,8 +305,8 @@ std::uint64_t testing::managedWorkerProcessStartCount() noexcept {
 ReadOnlySharedMemory::ReadOnlySharedMemory() noexcept = default;
 
 ReadOnlySharedMemory::ReadOnlySharedMemory(const int descriptor,
-                                           const std::uint64_t size,
-                                           std::string digest) noexcept
+                                           std::string digest,
+                                           const std::uint64_t size) noexcept
     : descriptor_(descriptor), size_(size), digest_(std::move(digest)) {}
 
 ReadOnlySharedMemory::~ReadOnlySharedMemory() { reset(); }
@@ -320,9 +353,11 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
           "/bte-" + std::string{nonceBuffer.data(),
                                 static_cast<std::size_t>(encodedNonce.ptr -
                                                          nonceBuffer.data())};
-      writableDescriptor.reset(::shm_open(sharedName.c_str(),
-                                          O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC,
-                                          S_IRUSR | S_IWUSR));
+      writableDescriptor.reset(
+          ::shm_open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
+                      // shm_open requires this mode because O_CREAT is set.
+              sharedName.c_str(), O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC,
+              S_IRUSR | S_IWUSR));
       if (writableDescriptor.get() < 0 && errno != EEXIST) {
         break;
       }
@@ -334,7 +369,7 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
   if (writableDescriptor.get() < 0) {
     return workerStartError(
         "Could not create a shared-memory object for strategy source: " +
-        std::string{std::strerror(errno)});
+        std::error_code{errno, std::generic_category()}.message());
   }
   const auto removeName = [&sharedName]() {
     if (!sharedName.empty()) {
@@ -376,8 +411,8 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
         std::to_string(status.st_size) + ", expected " +
         std::to_string(bytes.size()) + ").");
   }
-  return ReadOnlySharedMemory(readOnlyDescriptor.release(), bytes.size(),
-                              core::sha256(bytes));
+  return ReadOnlySharedMemory(readOnlyDescriptor.release(), core::sha256(bytes),
+                              bytes.size());
 #else
   static_cast<void>(bytes);
   return unsupportedProcessError();
@@ -418,7 +453,21 @@ struct ManagedWorkerProcess::Impl final {
   DiagnosticBuffer capturedStandardOutput;
   DiagnosticBuffer capturedStandardError;
 
-  ~Impl() { static_cast<void>(terminate(std::chrono::milliseconds{100})); }
+  ~Impl() noexcept {
+    try {
+      static_cast<void>(terminate(std::chrono::milliseconds{100}));
+    } catch (...) {
+      if (processGroup > 0) {
+        static_cast<void>(::kill(-processGroup, SIGKILL));
+      }
+    }
+  }
+
+  Impl() = default;
+  Impl(const Impl &) = delete;
+  Impl &operator=(const Impl &) = delete;
+  Impl(Impl &&) = delete;
+  Impl &operator=(Impl &&) = delete;
 
   [[nodiscard]] bool refreshChildStatus() {
     if (process <= 0 || reaped) {
@@ -442,8 +491,8 @@ struct ManagedWorkerProcess::Impl final {
     standardErrorOpen = false;
   }
 
-  void drainPipe(UniqueDescriptor &descriptor, bool &open,
-                 DiagnosticBuffer &capture) {
+  static void drainPipe(UniqueDescriptor &descriptor, bool &open,
+                        DiagnosticBuffer &capture) {
     if (!open || descriptor.get() < 0) {
       return;
     }
@@ -473,19 +522,18 @@ struct ManagedWorkerProcess::Impl final {
   }
 
   [[nodiscard]] core::Result<void>
-  drainReadyDiagnostics(const short outputEvents, const short errorEvents) {
-    if ((outputEvents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0) {
+  drainReadyDiagnostics(const DiagnosticEvents events) {
+    if ((events.standardOutput & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) !=
+        0) {
       drainPipe(standardOutput, standardOutputOpen, capturedStandardOutput);
     }
-    if ((errorEvents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0) {
+    if ((events.standardError & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0) {
       drainPipe(standardError, standardErrorOpen, capturedStandardError);
     }
     return {};
   }
 
-  [[nodiscard]] core::Result<void> drainAfterExit() {
-    drainPipe(standardOutput, standardOutputOpen, capturedStandardOutput);
-    drainPipe(standardError, standardErrorOpen, capturedStandardError);
+  [[nodiscard]] core::Result<void> drainUnexpectedProtocolOutput() {
     if (protocolOutput.get() < 0) {
       return {};
     }
@@ -512,6 +560,12 @@ struct ManagedWorkerProcess::Impl final {
           "Worker wrote an unexpected protocol message while exiting.");
     }
     return {};
+  }
+
+  [[nodiscard]] core::Result<void> drainAfterExit() {
+    drainPipe(standardOutput, standardOutputOpen, capturedStandardOutput);
+    drainPipe(standardError, standardErrorOpen, capturedStandardError);
+    return drainUnexpectedProtocolOutput();
   }
 
   [[nodiscard]] core::Result<short>
@@ -553,8 +607,10 @@ struct ManagedWorkerProcess::Impl final {
         }
         return workerIoError("Could not poll managed worker pipes.");
       }
-      const auto diagnostics =
-          drainReadyDiagnostics(descriptors[1].revents, descriptors[2].revents);
+      const auto diagnostics = drainReadyDiagnostics(DiagnosticEvents{
+          .standardOutput = descriptors[1].revents,
+          .standardError = descriptors[2].revents,
+      });
       if (!diagnostics.ok()) {
         return diagnostics.error();
       }
@@ -638,8 +694,10 @@ struct ManagedWorkerProcess::Impl final {
                  .revents = 0},
       }};
       static_cast<void>(::poll(diagnostics.data(), diagnostics.size(), 10));
-      static_cast<void>(drainReadyDiagnostics(diagnostics[0].revents,
-                                              diagnostics[1].revents));
+      static_cast<void>(drainReadyDiagnostics(DiagnosticEvents{
+          .standardOutput = diagnostics[0].revents,
+          .standardError = diagnostics[1].revents,
+      }));
     }
     if (processGroupExists(processGroup)) {
       if (::kill(-processGroup, SIGKILL) != 0 && errno != ESRCH) {
@@ -680,15 +738,15 @@ ManagedWorkerProcess::ManagedWorkerProcess(
 ManagedWorkerProcess &ManagedWorkerProcess::operator=(
     ManagedWorkerProcess &&other) noexcept = default;
 
-core::Result<ManagedWorkerProcess>
-ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
-#if defined(__unix__) || defined(__APPLE__)
-  if (launch.executable.empty()) {
+namespace {
+
+[[nodiscard]] core::Result<std::filesystem::path>
+validateWorkerExecutable(const std::filesystem::path &path) {
+  if (path.empty()) {
     return workerStartError("Managed worker executable path is empty.");
   }
   std::error_code filesystemError;
-  const auto executable =
-      std::filesystem::canonical(launch.executable, filesystemError);
+  const auto executable = std::filesystem::canonical(path, filesystemError);
   if (filesystemError ||
       !std::filesystem::is_regular_file(executable, filesystemError)) {
     return workerStartError("Managed worker executable is missing or invalid.");
@@ -702,15 +760,27 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
           std::filesystem::perms::none) {
     return workerStartError("Managed worker executable is not executable.");
   }
+  return executable;
+}
+
+[[nodiscard]] core::Result<void>
+validateWorkerArguments(const WorkerProcessLaunch &launch,
+                        const std::filesystem::path &executable) {
+  constexpr auto maximumArgumentBytes = std::size_t{64} * std::size_t{1024};
   std::size_t argumentBytes = executable.string().size();
   for (const auto &argument : launch.arguments) {
-    if (hasEmbeddedNull(argument) ||
-        argumentBytes > 64U * 1024U - argument.size()) {
+    if (hasEmbeddedNull(argument) || argument.size() > maximumArgumentBytes ||
+        argumentBytes > maximumArgumentBytes - argument.size()) {
       return workerStartError(
           "Managed worker arguments are malformed or too large.");
     }
     argumentBytes += argument.size();
   }
+  return {};
+}
+
+[[nodiscard]] core::Result<void>
+validateWorkerDataDescriptor(const WorkerProcessLaunch &launch) {
   if (launch.readOnlyDataDescriptor >= 0) {
     if (!isWritableDescriptor(launch.readOnlyDataDescriptor) ||
         launch.readOnlyDataLength == 0 ||
@@ -731,6 +801,11 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
              !launch.readOnlyDataSha256.empty()) {
     return workerStartError("Worker shared-data metadata has no descriptor.");
   }
+  return {};
+}
+
+[[nodiscard]] core::Result<void>
+validateWorkerHistoryDescriptor(const WorkerProcessLaunch &launch) {
   if (launch.readOnlyHistoryDescriptor >= 0) {
     if (!isWritableDescriptor(launch.readOnlyHistoryDescriptor) ||
         launch.readOnlyHistoryLength == 0 ||
@@ -752,66 +827,103 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
     return workerStartError(
         "Worker shared-history metadata has no descriptor.");
   }
+  return {};
+}
 
-  std::array<std::array<int, 2>, 4> pipes{};
-  for (auto &pipe : pipes) {
+struct WorkerArguments {
+  std::vector<std::string> argumentStorage;
+  std::vector<char *> argumentVector;
+  std::array<std::string, 6> environmentStorage{"PATH=/usr/bin:/bin",
+                                                "LANG=C",
+                                                "TZ=UTC",
+                                                "PYTHONNOUSERSITE=1",
+                                                "PYTHONDONTWRITEBYTECODE=1",
+                                                "PYTHONSAFEPATH=1"};
+  std::array<char *, 7> environmentVector{};
+
+  void buildVectors() {
+    argumentVector.reserve(argumentStorage.size() + 1);
+    for (auto &argument : argumentStorage) {
+      argumentVector.emplace_back(argument.data());
+    }
+    argumentVector.emplace_back(nullptr);
+    auto *environmentPointer = environmentVector.data();
+    for (auto &environment : environmentStorage) {
+      *environmentPointer = environment.data();
+      ++environmentPointer;
+    }
+  }
+};
+
+struct WorkerPipeSet {
+  std::array<std::array<int, 2>, 4> descriptors{};
+  std::array<UniqueDescriptor, 8> owners;
+};
+
+void closeWorkerPipes(const std::array<std::array<int, 2>, 4> &pipes) {
+  for (const auto &created : pipes) {
+    if (created[0] >= 0) {
+      static_cast<void>(::close(created[0]));
+    }
+    if (created[1] >= 0) {
+      static_cast<void>(::close(created[1]));
+    }
+  }
+}
+
+[[nodiscard]] core::Result<WorkerPipeSet> createWorkerPipes() {
+  WorkerPipeSet workerPipes;
+  for (auto &pipe : workerPipes.descriptors) {
     pipe = {-1, -1};
   }
-  for (auto &pipe : pipes) {
+  for (auto &pipe : workerPipes.descriptors) {
     if (::pipe(pipe.data()) != 0) {
-      for (const auto &created : pipes) {
-        if (created[0] >= 0) {
-          static_cast<void>(::close(created[0]));
-        }
-        if (created[1] >= 0) {
-          static_cast<void>(::close(created[1]));
-        }
-      }
+      closeWorkerPipes(workerPipes.descriptors);
       return workerStartError("Could not create managed worker pipes.");
     }
     if (setCloseOnExec(pipe[0]) != 0 || setCloseOnExec(pipe[1]) != 0) {
-      for (const auto &created : pipes) {
-        if (created[0] >= 0) {
-          static_cast<void>(::close(created[0]));
-        }
-        if (created[1] >= 0) {
-          static_cast<void>(::close(created[1]));
-        }
-      }
+      closeWorkerPipes(workerPipes.descriptors);
       return workerStartError(
           "Could not isolate managed worker pipe descriptors.");
     }
   }
-  std::array<UniqueDescriptor, 8> pipeOwners;
-  for (std::size_t index = 0; index < pipes.size(); ++index) {
-    pipeOwners[index * 2].reset(pipes[index][0]);
-    pipeOwners[index * 2 + 1].reset(pipes[index][1]);
+  auto *owner = workerPipes.owners.data();
+  for (const auto &pipe : workerPipes.descriptors) {
+    owner->reset(pipe[0]);
+    ++owner;
+    owner->reset(pipe[1]);
+    ++owner;
   }
+  return workerPipes;
+}
 
-  const std::array<int, 4> childDescriptors{
-      pipes[0][0], // protocol input -> stdin
-      pipes[1][1], // stdout diagnostics
-      pipes[2][1], // stderr diagnostics
-      pipes[3][1], // protocol output -> descriptor 3
-  };
-  std::array<UniqueDescriptor, 4> childDuplicates;
-  for (std::size_t index = 0; index < childDescriptors.size(); ++index) {
-    const auto duplicate = duplicateCloseOnExec(childDescriptors[index]);
+struct WorkerDuplicates {
+  std::array<UniqueDescriptor, 4> children;
+  UniqueDescriptor sharedData;
+  UniqueDescriptor sharedHistory;
+};
+
+[[nodiscard]] core::Result<WorkerDuplicates>
+duplicateWorkerDescriptors(const WorkerProcessLaunch &launch,
+                           const std::array<int, 4> &childDescriptors) {
+  WorkerDuplicates duplicates;
+  auto *childDuplicate = duplicates.children.data();
+  for (const auto descriptor : childDescriptors) {
+    const auto duplicate = duplicateCloseOnExec(descriptor);
     if (duplicate < 0) {
       return workerStartError("Could not prepare worker protocol descriptors.");
     }
-    childDuplicates[index].reset(duplicate);
+    childDuplicate->reset(duplicate);
+    ++childDuplicate;
   }
-  UniqueDescriptor sharedDuplicate;
   if (launch.readOnlyDataDescriptor >= 0) {
     const auto duplicate = duplicateCloseOnExec(launch.readOnlyDataDescriptor);
     if (duplicate < 0) {
       return workerStartError(
           "Could not prepare the read-only shared-data descriptor.");
     }
-    sharedDuplicate.reset(duplicate);
+    duplicates.sharedData.reset(duplicate);
   }
-  UniqueDescriptor historyDuplicate;
   if (launch.readOnlyHistoryDescriptor >= 0) {
     const auto duplicate =
         duplicateCloseOnExec(launch.readOnlyHistoryDescriptor);
@@ -819,50 +931,18 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
       return workerStartError(
           "Could not prepare the read-only shared-history descriptor.");
     }
-    historyDuplicate.reset(duplicate);
+    duplicates.sharedHistory.reset(duplicate);
   }
+  return duplicates;
+}
 
-  SpawnActions actions;
-  SpawnAttributes attributes;
-  if (!actions.valid() || !attributes.valid()) {
-    return workerStartError(
-        "Could not initialize managed worker spawn actions.");
-  }
-  for (std::size_t index = 0; index < childDuplicates.size(); ++index) {
-    if (actions.addDup2(childDuplicates[index].get(),
-                        static_cast<int>(index)) != 0) {
-      return workerStartError("Could not route managed worker protocol pipes.");
-    }
-  }
-  if (sharedDuplicate.get() >= 0 &&
-      actions.addDup2(sharedDuplicate.get(), 4) != 0) {
-    return workerStartError(
-        "Could not route the read-only shared-data descriptor.");
-  }
-  if (historyDuplicate.get() >= 0 &&
-      actions.addDup2(historyDuplicate.get(), 5) != 0) {
-    return workerStartError(
-        "Could not route the read-only shared-history descriptor.");
-  }
-  for (const auto &duplicate : childDuplicates) {
-    if (actions.addClose(duplicate.get()) != 0) {
-      return workerStartError(
-          "Could not close temporary worker descriptors after spawn.");
-    }
-  }
-  if (sharedDuplicate.get() >= 0 &&
-      actions.addClose(sharedDuplicate.get()) != 0) {
-    return workerStartError(
-        "Could not close the temporary shared-data descriptor.");
-  }
-  if (historyDuplicate.get() >= 0 &&
-      actions.addClose(historyDuplicate.get()) != 0) {
-    return workerStartError(
-        "Could not close the temporary shared-history descriptor.");
-  }
-  for (const auto &pipe : pipes) {
+[[nodiscard]] core::Result<void> addInheritedWorkerDescriptorClosures(
+    const WorkerProcessLaunch &launch, const WorkerPipeSet &workerPipes,
+    const WorkerDuplicates &duplicates, SpawnActions &actions) {
+  for (const auto &pipe : workerPipes.descriptors) {
     for (const auto descriptor : pipe) {
-      if (descriptor > 4 && !(historyDuplicate.get() >= 0 && descriptor == 5) &&
+      if (descriptor > 4 &&
+          (duplicates.sharedHistory.get() < 0 || descriptor != 5) &&
           actions.addClose(descriptor) != 0) {
         return workerStartError(
             "Could not close inherited parent pipe descriptors.");
@@ -870,7 +950,8 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
     }
   }
   if (launch.readOnlyDataDescriptor > 4 &&
-      !(historyDuplicate.get() >= 0 && launch.readOnlyDataDescriptor == 5) &&
+      (duplicates.sharedHistory.get() < 0 ||
+       launch.readOnlyDataDescriptor != 5) &&
       actions.addClose(launch.readOnlyDataDescriptor) != 0) {
     return workerStartError("Could not close the inherited source descriptor.");
   }
@@ -879,58 +960,159 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
     return workerStartError(
         "Could not close the inherited history descriptor.");
   }
+  return {};
+}
+
+[[nodiscard]] core::Result<void> configureWorkerSpawnActions(
+    const WorkerProcessLaunch &launch, const WorkerPipeSet &workerPipes,
+    const WorkerDuplicates &duplicates, SpawnActions &actions,
+    SpawnAttributes &attributes) {
+  if (!actions.valid() || !attributes.valid()) {
+    return workerStartError(
+        "Could not initialize managed worker spawn actions.");
+  }
+  int targetDescriptor = 0;
+  for (const auto &duplicate : duplicates.children) {
+    if (actions.addDup2(duplicate.get(), targetDescriptor) != 0) {
+      return workerStartError("Could not route managed worker protocol pipes.");
+    }
+    ++targetDescriptor;
+  }
+  if (duplicates.sharedData.get() >= 0 &&
+      actions.addDup2(duplicates.sharedData.get(), 4) != 0) {
+    return workerStartError(
+        "Could not route the read-only shared-data descriptor.");
+  }
+  if (duplicates.sharedHistory.get() >= 0 &&
+      actions.addDup2(duplicates.sharedHistory.get(), 5) != 0) {
+    return workerStartError(
+        "Could not route the read-only shared-history descriptor.");
+  }
+  for (const auto &duplicate : duplicates.children) {
+    if (actions.addClose(duplicate.get()) != 0) {
+      return workerStartError(
+          "Could not close temporary worker descriptors after spawn.");
+    }
+  }
+  if (duplicates.sharedData.get() >= 0 &&
+      actions.addClose(duplicates.sharedData.get()) != 0) {
+    return workerStartError(
+        "Could not close the temporary shared-data descriptor.");
+  }
+  if (duplicates.sharedHistory.get() >= 0 &&
+      actions.addClose(duplicates.sharedHistory.get()) != 0) {
+    return workerStartError(
+        "Could not close the temporary shared-history descriptor.");
+  }
+  const auto inheritedClosuresResult = addInheritedWorkerDescriptorClosures(
+      launch, workerPipes, duplicates, actions);
+  if (!inheritedClosuresResult.ok()) {
+    return inheritedClosuresResult.error();
+  }
   if (attributes.configureProcessGroup() != 0) {
     return workerStartError(
         "Could not configure managed worker process ownership.");
   }
+  return {};
+}
 
-  std::vector<std::string> argumentStorage;
-  argumentStorage.reserve(launch.arguments.size() + 8);
-  argumentStorage.push_back(executable.string());
-  argumentStorage.insert(argumentStorage.end(), launch.arguments.begin(),
-                         launch.arguments.end());
+[[nodiscard]] core::Result<WorkerArguments>
+buildWorkerArguments(const WorkerProcessLaunch &launch,
+                     const std::filesystem::path &executable) {
+  WorkerArguments arguments;
+  arguments.argumentStorage.reserve(launch.arguments.size() + 8);
+  arguments.argumentStorage.emplace_back(executable.string());
+  arguments.argumentStorage.insert(arguments.argumentStorage.end(),
+                                   launch.arguments.begin(),
+                                   launch.arguments.end());
   if (launch.readOnlyDataDescriptor >= 0) {
-    argumentStorage.push_back("--shared-data-fd=4");
-    argumentStorage.push_back("--shared-data-length=" +
-                              std::to_string(launch.readOnlyDataLength));
-    argumentStorage.push_back("--shared-data-sha256=" +
-                              launch.readOnlyDataSha256);
+    arguments.argumentStorage.emplace_back("--shared-data-fd=4");
+    arguments.argumentStorage.emplace_back(
+        "--shared-data-length=" + std::to_string(launch.readOnlyDataLength));
+    arguments.argumentStorage.emplace_back("--shared-data-sha256=" +
+                                           launch.readOnlyDataSha256);
   }
   if (launch.readOnlyHistoryDescriptor >= 0) {
-    argumentStorage.push_back("--history-data-fd=5");
-    argumentStorage.push_back("--history-data-length=" +
-                              std::to_string(launch.readOnlyHistoryLength));
-    argumentStorage.push_back("--history-data-sha256=" +
-                              launch.readOnlyHistorySha256);
+    arguments.argumentStorage.emplace_back("--history-data-fd=5");
+    arguments.argumentStorage.emplace_back(
+        "--history-data-length=" +
+        std::to_string(launch.readOnlyHistoryLength));
+    arguments.argumentStorage.emplace_back("--history-data-sha256=" +
+                                           launch.readOnlyHistorySha256);
   }
   if (!launch.timezoneDatabasePath.empty()) {
     const auto timezonePath = launch.timezoneDatabasePath.string();
     if (hasEmbeddedNull(timezonePath)) {
       return workerStartError("Worker timezone database path is malformed.");
     }
-    argumentStorage.push_back("--timezone-data-path=" + timezonePath);
+    arguments.argumentStorage.emplace_back("--timezone-data-path=" +
+                                           timezonePath);
   }
-  std::vector<char *> argumentVector;
-  argumentVector.reserve(argumentStorage.size() + 1);
-  for (auto &argument : argumentStorage) {
-    argumentVector.push_back(argument.data());
+  return arguments;
+}
+
+} // namespace
+
+core::Result<ManagedWorkerProcess>
+ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto executableResult = validateWorkerExecutable(launch.executable);
+  if (!executableResult.ok()) {
+    return executableResult.error();
   }
-  argumentVector.push_back(nullptr);
-  std::array<std::string, 6> environmentStorage{"PATH=/usr/bin:/bin",
-                                                "LANG=C",
-                                                "TZ=UTC",
-                                                "PYTHONNOUSERSITE=1",
-                                                "PYTHONDONTWRITEBYTECODE=1",
-                                                "PYTHONSAFEPATH=1"};
-  std::array<char *, 7> environmentVector{};
-  for (std::size_t index = 0; index < environmentStorage.size(); ++index) {
-    environmentVector[index] = environmentStorage[index].data();
+  const auto executable = std::move(executableResult).value();
+  const auto validArguments = validateWorkerArguments(launch, executable);
+  if (!validArguments.ok()) {
+    return validArguments.error();
+  }
+  const auto validDataDescriptor = validateWorkerDataDescriptor(launch);
+  if (!validDataDescriptor.ok()) {
+    return validDataDescriptor.error();
+  }
+  const auto validHistoryDescriptor = validateWorkerHistoryDescriptor(launch);
+  if (!validHistoryDescriptor.ok()) {
+    return validHistoryDescriptor.error();
   }
 
+  auto workerPipesResult = createWorkerPipes();
+  if (!workerPipesResult.ok()) {
+    return workerPipesResult.error();
+  }
+  auto workerPipes = std::move(workerPipesResult).value();
+  const auto &pipes = workerPipes.descriptors;
+  auto &pipeOwners = workerPipes.owners;
+
+  const std::array<int, 4> childDescriptors{
+      pipes[0][0], // protocol input -> stdin
+      pipes[1][1], // stdout diagnostics
+      pipes[2][1], // stderr diagnostics
+      pipes[3][1], // protocol output -> descriptor 3
+  };
+  auto duplicatesResult = duplicateWorkerDescriptors(launch, childDescriptors);
+  if (!duplicatesResult.ok()) {
+    return duplicatesResult.error();
+  }
+  auto duplicates = std::move(duplicatesResult).value();
+  SpawnActions actions;
+  SpawnAttributes attributes;
+  const auto spawnActionsResult = configureWorkerSpawnActions(
+      launch, workerPipes, duplicates, actions, attributes);
+  if (!spawnActionsResult.ok()) {
+    return spawnActionsResult.error();
+  }
+
+  auto workerArgumentsResult = buildWorkerArguments(launch, executable);
+  if (!workerArgumentsResult.ok()) {
+    return workerArgumentsResult.error();
+  }
+  auto workerArguments = std::move(workerArgumentsResult).value();
+  workerArguments.buildVectors();
+
   pid_t process = -1;
-  const auto spawnStatus = ::posix_spawn(
-      &process, executable.c_str(), actions.get(), attributes.get(),
-      argumentVector.data(), environmentVector.data());
+  const auto spawnStatus =
+      ::posix_spawn(&process, executable.c_str(), actions.get(),
+                    attributes.get(), workerArguments.argumentVector.data(),
+                    workerArguments.environmentVector.data());
   if (spawnStatus != 0) {
     return workerStartError("Could not launch the managed worker executable.");
   }
@@ -1042,30 +1224,14 @@ ManagedWorkerProcess::waitForExit(const std::chrono::milliseconds timeout) {
             .fd = impl_->protocolOutput.get(), .events = POLLIN, .revents = 0},
     }};
     static_cast<void>(::poll(descriptors.data(), descriptors.size(), 10));
-    static_cast<void>(impl_->drainReadyDiagnostics(descriptors[0].revents,
-                                                   descriptors[1].revents));
+    static_cast<void>(impl_->drainReadyDiagnostics(DiagnosticEvents{
+        .standardOutput = descriptors[0].revents,
+        .standardError = descriptors[1].revents,
+    }));
     if ((descriptors[2].revents & (POLLIN | POLLHUP)) != 0) {
-      std::array<std::byte, 8192> discarded{};
-      bool unexpectedBytes = false;
-      while (true) {
-        const auto count = ::read(impl_->protocolOutput.get(), discarded.data(),
-                                  discarded.size());
-        if (count > 0) {
-          unexpectedBytes = true;
-          continue;
-        }
-        if (count < 0 && errno == EINTR) {
-          continue;
-        }
-        if (count == 0) {
-          impl_->protocolOutput.reset();
-        }
-        break;
-      }
-      if (unexpectedBytes) {
-        return core::makeError(
-            core::ErrorCode::strategyProtocolViolation,
-            "Worker wrote an unexpected protocol message while exiting.");
+      const auto protocolDrain = impl_->drainUnexpectedProtocolOutput();
+      if (!protocolDrain.ok()) {
+        return protocolDrain.error();
       }
     }
   }

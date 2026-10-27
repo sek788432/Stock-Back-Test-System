@@ -4,9 +4,10 @@ This repository’s C++ code lives under `Src/` and is built with **CMake 3.24+*
 Core, Data, streaming Indicators, the Selectable Strategy path, Results,
 result-backed Replay, and the limited Engine build in the default preset.
 Bindings, Frontend, and App targets are implemented behind `BTE_BUILD_QT_APP`,
-including the starter and Selectable Conditions Backtest page. General strategy
-execution, broker/accounting/metrics, and the remaining canonical result
-families described in
+including the starter and Selectable Conditions Backtest page. The first
+Python Strategy workflow is implemented in the optional managed-runtime app
+profile. General Engine strategy execution, broker/accounting/metrics, and the
+remaining canonical result families described in
 [`Specs/StrategyAuthoring.md`](Specs/StrategyAuthoring.md) and
 [`Specs/EngineReplayPnL.md`](Specs/EngineReplayPnL.md) remain planned.
 

@@ -29,7 +29,7 @@
 namespace bte::bindings::python {
 namespace {
 
-constexpr std::size_t maximumManifestBytes = 1024U * 1024U;
+constexpr std::size_t maximumManifestBytes = std::size_t{1024} * 1024;
 
 struct PinnedComponent final {
   std::string_view version;
@@ -134,6 +134,8 @@ public:
   }
   FileDescriptor(const FileDescriptor &) = delete;
   FileDescriptor &operator=(const FileDescriptor &) = delete;
+  FileDescriptor(FileDescriptor &&) = delete;
+  FileDescriptor &operator=(FileDescriptor &&) = delete;
   [[nodiscard]] int get() const noexcept { return value_; }
 
 private:
@@ -142,25 +144,30 @@ private:
 
 class ReadOnlyMapping final {
 public:
-  ReadOnlyMapping(const void *address, const std::size_t length)
+  ReadOnlyMapping(void *address, const std::size_t length)
       : address_(address), length_(length) {}
   ~ReadOnlyMapping() {
     if (address_ != MAP_FAILED && length_ > 0) {
-      static_cast<void>(::munmap(const_cast<void *>(address_), length_));
+      static_cast<void>(::munmap(address_, length_));
     }
   }
   ReadOnlyMapping(const ReadOnlyMapping &) = delete;
   ReadOnlyMapping &operator=(const ReadOnlyMapping &) = delete;
+  ReadOnlyMapping(ReadOnlyMapping &&) = delete;
+  ReadOnlyMapping &operator=(ReadOnlyMapping &&) = delete;
   [[nodiscard]] const void *get() const noexcept { return address_; }
 
 private:
-  const void *address_;
+  void *address_;
   std::size_t length_;
 };
 
 [[nodiscard]] core::Result<std::string>
 sha256File(const std::filesystem::path &path) {
-  FileDescriptor file(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+  const FileDescriptor file(
+      ::open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX open omits its
+              // variadic mode because O_CREAT is not set.
+          path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
   if (file.get() < 0) {
     return integrityError("Could not open a managed runtime file.");
   }
@@ -176,8 +183,7 @@ sha256File(const std::filesystem::path &path) {
   if (size == 0) {
     return core::sha256(std::string_view{});
   }
-  const auto *mapping =
-      ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, file.get(), 0);
+  auto *mapping = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, file.get(), 0);
   if (mapping == MAP_FAILED) {
     return integrityError(
         "Could not map a managed runtime file for verification.");
@@ -247,10 +253,14 @@ readManifest(const std::filesystem::path &path) {
       });
 }
 
-} // namespace
+struct CanonicalRuntimeManifest final {
+  std::filesystem::path root;
+  std::string bytes;
+  nlohmann::json value;
+};
 
-core::Result<RuntimeProfile>
-verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
+[[nodiscard]] core::Result<CanonicalRuntimeManifest>
+readCanonicalRuntimeManifest(const std::filesystem::path &profileRoot) {
   std::error_code error;
   const auto canonicalRoot = std::filesystem::canonical(profileRoot, error);
   if (error || !std::filesystem::is_directory(canonicalRoot)) {
@@ -268,7 +278,7 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
   if (!manifestBytes.ok()) {
     return manifestBytes.error();
   }
-  const auto manifest = parseCanonicalJson(manifestBytes.value());
+  auto manifest = parseCanonicalJson(manifestBytes.value());
   if (!manifest.ok()) {
     return integrityError(
         "Runtime profile manifest is not valid canonical JSON.");
@@ -277,7 +287,13 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
   if (!canonicalBytes.ok() || canonicalBytes.value() != manifestBytes.value()) {
     return integrityError("Runtime profile manifest bytes are not canonical.");
   }
+  return CanonicalRuntimeManifest{.root = canonicalRoot,
+                                  .bytes = manifestBytes.value(),
+                                  .value = std::move(manifest).value()};
+}
 
+[[nodiscard]] core::Result<void>
+validateRuntimeManifestMetadata(const nlohmann::json &value) {
   static const std::set<std::string> manifestKeys{"architecture",
                                                   "components",
                                                   "installedFiles",
@@ -290,7 +306,6 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
                                                   "schemaVersion",
                                                   "stockbtApiVersion",
                                                   "stockbtSourceSha256"};
-  const auto &value = manifest.value();
   if (!hasExactKeys(value, manifestKeys) ||
       !value.at("schemaVersion").is_number_unsigned() ||
       value.at("schemaVersion").get<std::uint64_t>() != 1 ||
@@ -313,49 +328,63 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
     return integrityError(
         "Runtime profile manifest has unsupported or missing metadata.");
   }
+  return {};
+}
 
+[[nodiscard]] core::Result<void>
+validateRuntimeComponent(const nlohmann::json &component,
+                         std::set<std::string> &componentNames,
+                         const std::string &stockbtSourceHash) {
+  if (!validComponent(component)) {
+    return integrityError(
+        "Runtime profile component metadata is invalid or duplicated.");
+  }
+  const auto name = component.at("name").get<std::string>();
+  if (!componentNames.insert(name).second) {
+    return integrityError(
+        "Runtime profile component metadata is invalid or duplicated.");
+  }
+  const auto &artifactDigest =
+      component.at("artifactSha256").get_ref<const std::string &>();
+  const auto &version = component.at("version").get_ref<const std::string &>();
+  const auto &licenses = component.at("licenses");
+  if (const auto pin = pinnedComponents().find(name);
+      pin != pinnedComponents().end()) {
+    std::set<std::string> actualLicenses;
+    for (const auto &license : licenses) {
+      actualLicenses.insert(license.get<std::string>());
+    }
+    const std::set<std::string> approvedLicenses(pin->second.licenses.begin(),
+                                                 pin->second.licenses.end());
+    if (version != pin->second.version ||
+        artifactDigest != pin->second.artifactSha256 ||
+        actualLicenses.size() != licenses.size() ||
+        actualLicenses != approvedLicenses) {
+      return integrityError(
+          "Runtime profile component differs from its accepted pin.");
+    }
+  } else if (name == "stockbt") {
+    if (version != "1" || artifactDigest != stockbtSourceHash ||
+        licenses.size() != 1 || licenses.front() != "Apache-2.0") {
+      return integrityError(
+          "Runtime profile stockbt component metadata is invalid.");
+    }
+  } else {
+    return integrityError("Runtime profile includes an unapproved component.");
+  }
+  return {};
+}
+
+[[nodiscard]] core::Result<void>
+validateRuntimeComponents(const nlohmann::json &value) {
   std::set<std::string> componentNames;
+  const auto &stockbtSourceHash =
+      value.at("stockbtSourceSha256").get_ref<const std::string &>();
   for (const auto &component : value.at("components")) {
-    if (!validComponent(component)) {
-      return integrityError(
-          "Runtime profile component metadata is invalid or duplicated.");
-    }
-    const auto name = component.at("name").get<std::string>();
-    if (!componentNames.insert(name).second) {
-      return integrityError(
-          "Runtime profile component metadata is invalid or duplicated.");
-    }
-    const auto &artifactDigest =
-        component.at("artifactSha256").get_ref<const std::string &>();
-    const auto &version =
-        component.at("version").get_ref<const std::string &>();
-    const auto &licenses = component.at("licenses");
-    if (const auto pin = pinnedComponents().find(name);
-        pin != pinnedComponents().end()) {
-      std::set<std::string> actualLicenses;
-      for (const auto &license : licenses) {
-        actualLicenses.insert(license.get<std::string>());
-      }
-      const std::set<std::string> approvedLicenses(pin->second.licenses.begin(),
-                                                   pin->second.licenses.end());
-      if (version != pin->second.version ||
-          artifactDigest != pin->second.artifactSha256 ||
-          actualLicenses.size() != licenses.size() ||
-          actualLicenses != approvedLicenses) {
-        return integrityError(
-            "Runtime profile component differs from its accepted pin.");
-      }
-    } else if (name == "stockbt") {
-      if (version != "1" ||
-          artifactDigest !=
-              value.at("stockbtSourceSha256").get_ref<const std::string &>() ||
-          licenses.size() != 1 || licenses.front() != "Apache-2.0") {
-        return integrityError(
-            "Runtime profile stockbt component metadata is invalid.");
-      }
-    } else {
-      return integrityError(
-          "Runtime profile includes an unapproved component.");
+    const auto valid =
+        validateRuntimeComponent(component, componentNames, stockbtSourceHash);
+    if (!valid.ok()) {
+      return valid.error();
     }
   }
   if (componentNames.size() != pinnedComponents().size() + 1 ||
@@ -366,56 +395,84 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
                            })) {
     return integrityError("Runtime profile is missing a pinned component.");
   }
+  return {};
+}
 
-  const auto pythonExecutable = value.at("pythonExecutable").get<std::string>();
-  if (!isSafeRelativePath(pythonExecutable)) {
+struct RuntimeFileManifest final {
+  std::set<std::string> installedPaths;
+  std::string pythonExecutable;
+  std::optional<std::filesystem::path> timezoneDatabaseRelativePath;
+  bool interpreterIsListed = false;
+};
+
+[[nodiscard]] core::Result<void>
+validateInstalledFile(const std::filesystem::path &canonicalRoot,
+                      const nlohmann::json &file, RuntimeFileManifest &manifest,
+                      std::error_code &error) {
+  static const std::set<std::string> installedFileKeys{"path", "sha256"};
+  if (!hasExactKeys(file, installedFileKeys) || !file.at("path").is_string() ||
+      !file.at("sha256").is_string()) {
+    return integrityError("Runtime installed-file entry is malformed.");
+  }
+  const auto relativePath = file.at("path").get<std::string>();
+  const auto expectedHash = file.at("sha256").get<std::string>();
+  if (!isSafeRelativePath(relativePath) || !isSha256(expectedHash) ||
+      !manifest.installedPaths.insert(relativePath).second) {
+    return integrityError("Runtime installed-file path or digest is invalid.");
+  }
+  const auto candidate = canonicalRoot / std::filesystem::path{relativePath};
+  const auto canonicalCandidate = std::filesystem::canonical(candidate, error);
+  if (error || !isWithinRoot(canonicalRoot, canonicalCandidate) ||
+      !std::filesystem::is_regular_file(canonicalCandidate)) {
+    return integrityError(
+        "A runtime file is missing or resolves outside its profile.");
+  }
+  const auto actualHash = sha256File(canonicalCandidate);
+  if (!actualHash.ok()) {
+    return actualHash.error();
+  }
+  if (actualHash.value() != expectedHash) {
+    return integrityError(
+        "A managed runtime installed-file hash does not match.");
+  }
+  if (relativePath.ends_with("tzdata/zoneinfo/tzdata.zi")) {
+    manifest.timezoneDatabaseRelativePath =
+        std::filesystem::path{relativePath}.parent_path();
+  }
+  manifest.interpreterIsListed =
+      manifest.interpreterIsListed || relativePath == manifest.pythonExecutable;
+  return {};
+}
+
+[[nodiscard]] core::Result<RuntimeFileManifest>
+validateRuntimeFiles(const std::filesystem::path &canonicalRoot,
+                     const nlohmann::json &value) {
+  RuntimeFileManifest manifest;
+  manifest.pythonExecutable = value.at("pythonExecutable").get<std::string>();
+  if (!isSafeRelativePath(manifest.pythonExecutable)) {
     return integrityError(
         "Runtime interpreter path is not a safe relative path.");
   }
-  static const std::set<std::string> installedFileKeys{"path", "sha256"};
-  std::set<std::string> installedPaths;
-  bool interpreterIsListed = false;
-  std::optional<std::filesystem::path> timezoneDatabaseRelativePath;
+  std::error_code error;
   for (const auto &file : value.at("installedFiles")) {
-    if (!hasExactKeys(file, installedFileKeys) ||
-        !file.at("path").is_string() || !file.at("sha256").is_string()) {
-      return integrityError("Runtime installed-file entry is malformed.");
+    const auto valid =
+        validateInstalledFile(canonicalRoot, file, manifest, error);
+    if (!valid.ok()) {
+      return valid.error();
     }
-    const auto relativePath = file.at("path").get<std::string>();
-    const auto expectedHash = file.at("sha256").get<std::string>();
-    if (!isSafeRelativePath(relativePath) || !isSha256(expectedHash) ||
-        !installedPaths.insert(relativePath).second) {
-      return integrityError(
-          "Runtime installed-file path or digest is invalid.");
-    }
-    const auto candidate = canonicalRoot / std::filesystem::path{relativePath};
-    const auto canonicalCandidate =
-        std::filesystem::canonical(candidate, error);
-    if (error || !isWithinRoot(canonicalRoot, canonicalCandidate) ||
-        !std::filesystem::is_regular_file(canonicalCandidate)) {
-      return integrityError(
-          "A runtime file is missing or resolves outside its profile.");
-    }
-    const auto actualHash = sha256File(canonicalCandidate);
-    if (!actualHash.ok()) {
-      return actualHash.error();
-    }
-    if (actualHash.value() != expectedHash) {
-      return integrityError(
-          "A managed runtime installed-file hash does not match.");
-    }
-    if (relativePath.ends_with("tzdata/zoneinfo/tzdata.zi")) {
-      timezoneDatabaseRelativePath =
-          std::filesystem::path{relativePath}.parent_path();
-    }
-    interpreterIsListed =
-        interpreterIsListed || relativePath == pythonExecutable;
   }
-  if (!interpreterIsListed || !timezoneDatabaseRelativePath.has_value()) {
+  if (!manifest.interpreterIsListed ||
+      !manifest.timezoneDatabaseRelativePath.has_value()) {
     return integrityError("Runtime interpreter or pinned timezone database is "
                           "not covered by installed-file hashes.");
   }
+  return manifest;
+}
 
+[[nodiscard]] core::Result<void>
+validateRuntimeFileInventory(const std::filesystem::path &canonicalRoot,
+                             const std::set<std::string> &installedPaths) {
+  std::error_code error;
   std::set<std::string> actualFiles;
   for (std::filesystem::recursive_directory_iterator
            iterator(canonicalRoot, error),
@@ -449,9 +506,20 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
     return integrityError(
         "Runtime profile files differ from the installed-file manifest.");
   }
+  return {};
+}
 
-  const auto executablePath =
-      std::filesystem::canonical(canonicalRoot / pythonExecutable, error);
+struct VerifiedRuntimePaths final {
+  std::filesystem::path executable;
+  std::filesystem::path timezoneDatabase;
+};
+
+[[nodiscard]] core::Result<VerifiedRuntimePaths>
+validateRuntimePaths(const std::filesystem::path &canonicalRoot,
+                     const RuntimeFileManifest &manifest) {
+  std::error_code error;
+  const auto executablePath = std::filesystem::canonical(
+      canonicalRoot / manifest.pythonExecutable, error);
   if (error || !isWithinRoot(canonicalRoot, executablePath)) {
     return integrityError("Managed runtime interpreter path is invalid.");
   }
@@ -464,31 +532,72 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
     return integrityError("Managed runtime interpreter is not executable.");
   }
   const auto timezoneDatabasePath = std::filesystem::canonical(
-      canonicalRoot / *timezoneDatabaseRelativePath, error);
+      canonicalRoot / *manifest.timezoneDatabaseRelativePath, error);
   if (error || !isWithinRoot(canonicalRoot, timezoneDatabasePath) ||
       !std::filesystem::is_directory(timezoneDatabasePath)) {
     return integrityError("Managed timezone database path is invalid.");
   }
+  return VerifiedRuntimePaths{.executable = executablePath,
+                              .timezoneDatabase = timezoneDatabasePath};
+}
 
+[[nodiscard]] std::vector<RuntimePackage>
+runtimePackages(const nlohmann::json &value) {
   std::vector<RuntimePackage> packages;
   packages.reserve(value.at("components").size());
   for (const auto &component : value.at("components")) {
-    packages.push_back({
-        .name = component.at("name").get<std::string>(),
-        .version = component.at("version").get<std::string>(),
-        .artifactHash = component.at("artifactSha256").get<std::string>(),
-    });
+    packages.push_back(
+        {.name = component.at("name").get<std::string>(),
+         .version = component.at("version").get<std::string>(),
+         .artifactHash = component.at("artifactSha256").get<std::string>()});
   }
+  return packages;
+}
+
+} // namespace
+
+core::Result<RuntimeProfile>
+verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
+  auto manifestResult = readCanonicalRuntimeManifest(profileRoot);
+  if (!manifestResult.ok()) {
+    return manifestResult.error();
+  }
+  auto manifest = std::move(manifestResult).value();
+  const auto &value = manifest.value;
+  const auto metadata = validateRuntimeManifestMetadata(value);
+  if (!metadata.ok()) {
+    return metadata.error();
+  }
+  const auto components = validateRuntimeComponents(value);
+  if (!components.ok()) {
+    return components.error();
+  }
+  auto filesResult = validateRuntimeFiles(manifest.root, value);
+  if (!filesResult.ok()) {
+    return filesResult.error();
+  }
+  auto files = std::move(filesResult).value();
+  const auto inventory =
+      validateRuntimeFileInventory(manifest.root, files.installedPaths);
+  if (!inventory.ok()) {
+    return inventory.error();
+  }
+  auto pathsResult = validateRuntimePaths(manifest.root, files);
+  if (!pathsResult.ok()) {
+    return pathsResult.error();
+  }
+  auto paths = std::move(pathsResult).value();
+  auto packages = runtimePackages(value);
   return RuntimeProfile{
-      .root = canonicalRoot,
-      .pythonExecutablePath = executablePath,
-      .timezoneDatabasePath = timezoneDatabasePath,
+      .root = manifest.root,
+      .pythonExecutablePath = paths.executable,
+      .timezoneDatabasePath = paths.timezoneDatabase,
       .profileId = std::string{managedRuntimeProfileId},
-      .manifestHash = core::sha256(manifestBytes.value()),
+      .manifestHash = core::sha256(manifest.bytes),
       .pythonVersion = "3.14.9",
       .pythonAbi = "cp314",
       .stockbtApiVersion = "1",
-      .canonicalManifestJson = manifestBytes.value(),
+      .canonicalManifestJson = std::move(manifest.bytes),
       .stockbtSourceHash = value.at("stockbtSourceSha256").get<std::string>(),
       .packages = std::move(packages),
   };

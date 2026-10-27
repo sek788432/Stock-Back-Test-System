@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -33,7 +34,7 @@ public:
 
   bool number_integer(number_integer_t value) override {
     if (value < -static_cast<number_integer_t>(maximumSafeInteger)) {
-      failure = "JSON integer exceeds the exactly representable range.";
+      failure_ = "JSON integer exceeds the exactly representable range.";
       return false;
     }
     return true;
@@ -41,7 +42,7 @@ public:
 
   bool number_unsigned(number_unsigned_t value) override {
     if (value > maximumSafeInteger) {
-      failure = "JSON integer exceeds the exactly representable range.";
+      failure_ = "JSON integer exceeds the exactly representable range.";
       return false;
     }
     return true;
@@ -49,7 +50,7 @@ public:
 
   bool number_float(number_float_t value, const string_t &) override {
     if (!std::isfinite(value)) {
-      failure = "JSON number is not finite.";
+      failure_ = "JSON number is not finite.";
       return false;
     }
     return true;
@@ -63,24 +64,24 @@ public:
     if (!enterContainer()) {
       return false;
     }
-    objectKeys.emplace_back();
+    objectKeys_.emplace_back();
     return true;
   }
 
   bool key(string_t &value) override {
-    if (objectKeys.empty() || !objectKeys.back().insert(value).second) {
-      failure = "JSON object contains a duplicate property.";
+    if (objectKeys_.empty() || !objectKeys_.back().insert(value).second) {
+      failure_ = "JSON object contains a duplicate property.";
       return false;
     }
     return true;
   }
 
   bool end_object() override {
-    if (objectKeys.empty()) {
+    if (objectKeys_.empty()) {
       return false;
     }
-    objectKeys.pop_back();
-    --depth;
+    objectKeys_.pop_back();
+    --depth_;
     return true;
   }
 
@@ -89,38 +90,38 @@ public:
     return enterContainer();
   }
   bool end_array() override {
-    if (depth == 0) {
+    if (depth_ == 0) {
       return false;
     }
-    --depth;
+    --depth_;
     return true;
   }
 
   bool parse_error(std::size_t, const std::string &,
                    const nlohmann::json::exception &error) override {
-    if (failure.empty()) {
-      failure = error.what();
+    if (failure_.empty()) {
+      failure_ = error.what();
     }
     return false;
   }
 
   [[nodiscard]] const std::string &errorMessage() const noexcept {
-    return failure;
+    return failure_;
   }
 
 private:
   bool enterContainer() {
-    if (depth >= maximumJsonNestingDepth) {
-      failure = "JSON nesting exceeds the supported depth.";
+    if (depth_ >= maximumJsonNestingDepth) {
+      failure_ = "JSON nesting exceeds the supported depth.";
       return false;
     }
-    ++depth;
+    ++depth_;
     return true;
   }
 
-  std::vector<std::unordered_set<std::string>> objectKeys;
-  std::string failure;
-  std::size_t depth = 0;
+  std::vector<std::unordered_set<std::string>> objectKeys_;
+  std::string failure_;
+  std::size_t depth_ = 0;
 };
 
 [[nodiscard]] bool appendUtf16Key(std::string_view utf8,
@@ -181,6 +182,48 @@ private:
   } catch (const nlohmann::json::exception &) {
     return invalidJson("JSON string is not valid UTF-8.");
   }
+}
+
+[[nodiscard]] std::optional<std::string>
+formatFixedNumber(const std::string &digits, const int decimalPosition) {
+  if (decimalPosition > 0 && decimalPosition <= 21) {
+    const auto integralDigits = static_cast<std::size_t>(decimalPosition);
+    std::string result;
+    if (digits.size() <= integralDigits) {
+      result += digits;
+      result.append(integralDigits - digits.size(), '0');
+    } else {
+      result.append(digits.data(), integralDigits);
+      result.push_back('.');
+      result.append(digits.data() + integralDigits,
+                    digits.size() - integralDigits);
+    }
+    return result;
+  }
+  if (decimalPosition <= 0 && decimalPosition >= -5) {
+    std::string result{"0."};
+    result.append(static_cast<std::size_t>(-decimalPosition), '0');
+    result += digits;
+    return result;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::string formatScientificNumber(const std::string &digits,
+                                                 const int decimalPosition) {
+  std::string result;
+  result.push_back(digits.front());
+  if (digits.size() > 1) {
+    result.push_back('.');
+    result.append(digits.begin() + 1, digits.end());
+  }
+  const auto scientificExponent = decimalPosition - 1;
+  result.push_back('e');
+  if (scientificExponent >= 0) {
+    result.push_back('+');
+  }
+  result += std::to_string(scientificExponent);
+  return result;
 }
 
 [[nodiscard]] Result<std::string> serializeNumber(double value) {
@@ -244,42 +287,83 @@ private:
     digits.pop_back();
   }
 
-  std::string result;
+  auto formatted = formatFixedNumber(digits, decimalPosition);
+  auto result = formatted.has_value()
+                    ? std::move(formatted).value()
+                    : formatScientificNumber(digits, decimalPosition);
   if (negative) {
-    result.push_back('-');
+    result.insert(result.begin(), '-');
   }
-  if (decimalPosition > 0 && decimalPosition <= 21) {
-    const auto integralDigits = static_cast<std::size_t>(decimalPosition);
-    if (digits.size() <= integralDigits) {
-      result += digits;
-      result.append(integralDigits - digits.size(), '0');
-    } else {
-      result.append(digits.data(), integralDigits);
-      result.push_back('.');
-      result.append(digits.data() + integralDigits,
-                    digits.size() - integralDigits);
-    }
-    return result;
-  }
-  if (decimalPosition <= 0 && decimalPosition >= -5) {
-    result += "0.";
-    result.append(static_cast<std::size_t>(-decimalPosition), '0');
-    result += digits;
-    return result;
-  }
-
-  result.push_back(digits.front());
-  if (digits.size() > 1) {
-    result.push_back('.');
-    result.append(digits.begin() + 1, digits.end());
-  }
-  const auto scientificExponent = decimalPosition - 1;
-  result.push_back('e');
-  if (scientificExponent >= 0) {
-    result.push_back('+');
-  }
-  result += std::to_string(scientificExponent);
   return result;
+}
+
+[[nodiscard]] Result<void> appendCanonicalJson(const nlohmann::json &value,
+                                               std::string &output,
+                                               std::size_t depth);
+
+[[nodiscard]] Result<void> appendArray(const nlohmann::json &value,
+                                       std::string &output,
+                                       const std::size_t depth) {
+  output.push_back('[');
+  bool first = true;
+  for (const auto &element : value) {
+    if (!first) {
+      output.push_back(',');
+    }
+    first = false;
+    const auto appended = appendCanonicalJson(element, output, depth + 1);
+    if (!appended.ok()) {
+      return appended.error();
+    }
+  }
+  output.push_back(']');
+  return {};
+}
+
+[[nodiscard]] Result<void> appendObject(const nlohmann::json &value,
+                                        std::string &output,
+                                        const std::size_t depth) {
+  struct Property {
+    std::string_view key;
+    const nlohmann::json *value;
+    std::vector<std::uint16_t> utf16;
+  };
+  std::vector<Property> properties;
+  properties.reserve(value.size());
+  for (auto iterator = value.begin(); iterator != value.end(); ++iterator) {
+    Property property{iterator.key(), &iterator.value(), {}};
+    if (!appendUtf16Key(property.key, property.utf16)) {
+      return invalidJson("JSON object key is not valid UTF-8.");
+    }
+    properties.push_back(std::move(property));
+  }
+  std::sort(properties.begin(), properties.end(),
+            [](const Property &left, const Property &right) {
+              return std::lexicographical_compare(
+                  left.utf16.begin(), left.utf16.end(), right.utf16.begin(),
+                  right.utf16.end());
+            });
+  output.push_back('{');
+  bool first = true;
+  for (const auto &property : properties) {
+    if (!first) {
+      output.push_back(',');
+    }
+    first = false;
+    const auto encodedKey = serializeString(property.key);
+    if (!encodedKey.ok()) {
+      return encodedKey.error();
+    }
+    output += encodedKey.value();
+    output.push_back(':');
+    const auto appended =
+        appendCanonicalJson(*property.value, output, depth + 1);
+    if (!appended.ok()) {
+      return appended.error();
+    }
+  }
+  output.push_back('}');
+  return {};
 }
 
 [[nodiscard]] Result<void> appendCanonicalJson(const nlohmann::json &value,
@@ -290,93 +374,53 @@ private:
   }
   if (value.is_null()) {
     output += "null";
-  } else if (value.is_boolean()) {
+    return {};
+  }
+  if (value.is_boolean()) {
     output += value.get<bool>() ? "true" : "false";
-  } else if (value.is_number_unsigned()) {
+    return {};
+  }
+  if (value.is_number_unsigned()) {
     const auto number = value.get<std::uint64_t>();
     if (number > maximumSafeInteger) {
       return invalidJson(
           "JSON integer exceeds the exactly representable range.");
     }
     output += std::to_string(number);
-  } else if (value.is_number_integer()) {
+    return {};
+  }
+  if (value.is_number_integer()) {
     const auto number = value.get<std::int64_t>();
     if (number < -static_cast<std::int64_t>(maximumSafeInteger)) {
       return invalidJson(
           "JSON integer exceeds the exactly representable range.");
     }
     output += std::to_string(number);
-  } else if (value.is_number_float()) {
+    return {};
+  }
+  if (value.is_number_float()) {
     const auto number = serializeNumber(value.get<double>());
     if (!number.ok()) {
       return number.error();
     }
     output += number.value();
-  } else if (value.is_string()) {
+    return {};
+  }
+  if (value.is_string()) {
     const auto encoded = serializeString(value.get_ref<const std::string &>());
     if (!encoded.ok()) {
       return encoded.error();
     }
     output += encoded.value();
-  } else if (value.is_array()) {
-    output.push_back('[');
-    bool first = true;
-    for (const auto &element : value) {
-      if (!first) {
-        output.push_back(',');
-      }
-      first = false;
-      const auto appended = appendCanonicalJson(element, output, depth + 1);
-      if (!appended.ok()) {
-        return appended.error();
-      }
-    }
-    output.push_back(']');
-  } else if (value.is_object()) {
-    struct Property {
-      std::string_view key;
-      const nlohmann::json *value;
-      std::vector<std::uint16_t> utf16;
-    };
-    std::vector<Property> properties;
-    properties.reserve(value.size());
-    for (auto iterator = value.begin(); iterator != value.end(); ++iterator) {
-      Property property{iterator.key(), &iterator.value(), {}};
-      if (!appendUtf16Key(property.key, property.utf16)) {
-        return invalidJson("JSON object key is not valid UTF-8.");
-      }
-      properties.push_back(std::move(property));
-    }
-    std::sort(properties.begin(), properties.end(),
-              [](const Property &left, const Property &right) {
-                return std::lexicographical_compare(
-                    left.utf16.begin(), left.utf16.end(), right.utf16.begin(),
-                    right.utf16.end());
-              });
-    output.push_back('{');
-    bool first = true;
-    for (const auto &property : properties) {
-      if (!first) {
-        output.push_back(',');
-      }
-      first = false;
-      const auto encodedKey = serializeString(property.key);
-      if (!encodedKey.ok()) {
-        return encodedKey.error();
-      }
-      output += encodedKey.value();
-      output.push_back(':');
-      const auto appended =
-          appendCanonicalJson(*property.value, output, depth + 1);
-      if (!appended.ok()) {
-        return appended.error();
-      }
-    }
-    output.push_back('}');
-  } else {
-    return invalidJson("Unsupported JSON value type.");
+    return {};
   }
-  return {};
+  if (value.is_array()) {
+    return appendArray(value, output, depth);
+  }
+  if (value.is_object()) {
+    return appendObject(value, output, depth);
+  }
+  return invalidJson("Unsupported JSON value type.");
 }
 
 } // namespace

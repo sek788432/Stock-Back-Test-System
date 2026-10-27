@@ -7,6 +7,7 @@
 #include <QChar>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDebug>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -42,7 +43,8 @@
 namespace bte::frontend {
 namespace {
 
-constexpr std::size_t maximumStrategySourceBytes = 1024U * 1024U;
+constexpr std::size_t maximumStrategySourceBytes =
+    std::size_t{1024} * std::size_t{1024};
 constexpr auto draftSchemaVersion = 1;
 
 constexpr auto sampleSource = R"PY(import stockbt
@@ -104,7 +106,8 @@ QString normalizedSource(QString source) {
 
 std::optional<StrategyDraft> readDraft(const std::filesystem::path &path) {
   QFile file{QString::fromStdString(path.string())};
-  if (!file.open(QIODevice::ReadOnly) || file.size() > 2 * 1024 * 1024) {
+  if (!file.open(QIODevice::ReadOnly) ||
+      file.size() > qint64{2} * 1024 * 1024) {
     return std::nullopt;
   }
   const auto parsed =
@@ -189,15 +192,51 @@ QString validationErrorText(const core::Error &error) {
   return QString::fromStdString(error.message);
 }
 
+core::Result<void>
+validationWorkerFailure(const char *detail = nullptr) noexcept {
+  try {
+    auto message = std::string{"validation worker failed"};
+    if (detail != nullptr) {
+      message.append(": ");
+      message.append(detail);
+    }
+    return core::Result<void>{
+        core::makeError(core::ErrorCode::internal, std::move(message))};
+  } catch (...) {
+    auto error = core::Error{};
+    error.code = core::ErrorCode::internal;
+    return core::Result<void>{std::move(error)};
+  }
+}
+
+core::Result<void>
+runValidationSafely(const StrategyTab::ValidationRunner &runner,
+                    const bindings::PythonStrategyConfiguration &configuration,
+                    const core::CancellationToken &cancellation) noexcept {
+  try {
+    return runner(configuration, cancellation);
+  } catch (const std::exception &error) {
+    return validationWorkerFailure(error.what());
+  } catch (...) {
+    return validationWorkerFailure();
+  }
+}
+
 } // namespace
 
 struct StrategyTab::State final {
   using ValidationResult = core::Result<void>;
 
+  State() = default;
   ~State() {
     validationCancellation.requestCancellation();
     validationWatcher.waitForFinished();
   }
+
+  State(const State &) = delete;
+  State &operator=(const State &) = delete;
+  State(State &&) = delete;
+  State &operator=(State &&) = delete;
 
   StrategyTab *owner = nullptr;
   std::filesystem::path draftDirectory;
@@ -329,8 +368,13 @@ StrategyTab::StrategyTab(QWidget *parent)
               resources = applicationPath.parent_path() / "Resources";
             }
             const auto bootstrap = resources / "Python" / "worker_bootstrap.py";
-            return bindings::validatePythonStrategy(configuration, resources,
-                                                    bootstrap, cancellation);
+            return bindings::validatePythonStrategy(
+                configuration,
+                bindings::PythonWorkerPaths{
+                    .resourcesRoot = resources,
+                    .workerBootstrapPath = bootstrap,
+                },
+                cancellation);
           },
           {}, parent) {}
 
@@ -342,7 +386,12 @@ StrategyTab::StrategyTab(std::filesystem::path draftDirectory,
   state_->draftDirectory = std::move(draftDirectory);
   state_->validationRunner = std::move(validationRunner);
   state_->consentProvider = std::move(consentProvider);
+  buildUi();
+  connectUi();
+  restoreSavedDraft();
+}
 
+void StrategyTab::buildUi() {
   auto *root = std::make_unique<QVBoxLayout>(this).release();
   root->setContentsMargins(18, 16, 18, 18);
   auto *title = std::make_unique<QLabel>(tr("Python Strategy"), this).release();
@@ -446,203 +495,219 @@ StrategyTab::StrategyTab(std::filesystem::path draftDirectory,
   state_->draftTimer = std::make_unique<QTimer>(this).release();
   state_->draftTimer->setSingleShot(true);
   state_->draftTimer->setInterval(500);
-  QObject::connect(state_->draftTimer, &QTimer::timeout, this, [this] {
-    if (!autosaveDraft()) {
-      state_->status->setText(tr("Cannot save draft to the local data folder"));
-    }
-  });
+}
 
-  const auto markDraftChanged = [this] {
-    if (state_->loadingDraft) {
-      return;
-    }
-    ++state_->draftGeneration;
-    state_->diagnostics->clear();
-    state_->status->setText(tr("Draft has unsaved changes"));
-    state_->draftTimer->start();
-  };
+void StrategyTab::connectUi() {
+  QObject::connect(state_->draftTimer, &QTimer::timeout, this,
+                   &StrategyTab::handleDraftTimerTimeout);
   QObject::connect(state_->editor, &QPlainTextEdit::textChanged, this,
-                   markDraftChanged);
+                   &StrategyTab::markDraftChanged);
   QObject::connect(state_->fastPeriod, qOverload<int>(&QSpinBox::valueChanged),
-                   this, [markDraftChanged](int) { markDraftChanged(); });
+                   this, &StrategyTab::markDraftChanged);
   QObject::connect(state_->slowPeriod, qOverload<int>(&QSpinBox::valueChanged),
-                   this, [markDraftChanged](int) { markDraftChanged(); });
+                   this, &StrategyTab::markDraftChanged);
   QObject::connect(state_->quantity, qOverload<int>(&QSpinBox::valueChanged),
-                   this, [markDraftChanged](int) { markDraftChanged(); });
-
-  auto loadSavedDraft = [this] {
-    const auto currentPath = state_->draftDirectory / "python-draft.json";
-    const auto previousPath =
-        state_->draftDirectory / "python-draft.previous.json";
-    auto draft = readDraft(currentPath);
-    auto warning = QString{};
-    auto preserveUnrecoverableDrafts = false;
-    if (!draft.has_value()) {
-      const auto currentExists = std::filesystem::exists(currentPath);
-      draft = readDraft(previousPath);
-      if (draft.has_value()) {
-        warning = tr("The latest draft was invalid; recovered the previous "
-                     "valid generation.");
-      } else if (currentExists || std::filesystem::exists(previousPath)) {
-        preserveUnrecoverableDrafts = true;
-        warning = tr("Saved drafts could not be validated. The source files "
-                     "were preserved for diagnosis.");
-      }
-    }
-    state_->loadingDraft = true;
-    state_->preserveUnrecoverableDrafts = preserveUnrecoverableDrafts;
-    if (draft.has_value()) {
-      state_->editor->setPlainText(draft->source);
-      state_->fastPeriod->setValue(draft->fastPeriod);
-      state_->slowPeriod->setValue(draft->slowPeriod);
-      state_->quantity->setValue(draft->quantity);
-      state_->savedFingerprint = fingerprint(*draft);
-    } else {
-      if (preserveUnrecoverableDrafts) {
-        state_->editor->clear();
-        state_->savedFingerprint = fingerprint(currentDraft(*state_));
-      } else {
-        state_->editor->setPlainText(QString::fromUtf8(sampleSource));
-        state_->savedFingerprint = {};
-      }
-    }
-    state_->loadingDraft = false;
-    state_->draftGeneration = 0;
-    state_->status->setText(warning.isEmpty() ? tr("Ready") : warning);
-  };
-  loadSavedDraft();
-
-  QObject::connect(state_->saveDraft, &QPushButton::clicked, this, [this] {
-    if (!saveDraft()) {
-      state_->status->setText(tr("Cannot save the Python Strategy draft"));
-    }
-  });
-  QObject::connect(state_->loadSource, &QPushButton::clicked, this, [this] {
-    const auto path = QFileDialog::getOpenFileName(
-        this, tr("Load Python source"), {}, tr("Python files (*.py)"));
-    if (!path.isEmpty()) {
-      static_cast<void>(loadSourceFile(path.toStdString()));
-    }
-  });
-  QObject::connect(state_->exportSource, &QPushButton::clicked, this, [this] {
-    const auto path =
-        QFileDialog::getSaveFileName(this, tr("Export Python source"),
-                                     "strategy.py", tr("Python files (*.py)"));
-    if (!path.isEmpty()) {
-      static_cast<void>(exportSourceFile(path.toStdString()));
-    }
-  });
-  QObject::connect(state_->validate, &QPushButton::clicked, this, [this] {
-    if (!state_->validationRunner || state_->validationWatcher.isRunning()) {
-      state_->status->setText(tr("Managed Python validation is unavailable"));
-      return;
-    }
-    if (state_->fastPeriod->value() >= state_->slowPeriod->value()) {
-      state_->diagnostics->setPlainText(
-          tr("InvalidStrategyParameters: fast_period must be less than "
-             "slow_period."));
-      state_->status->setText(
-          tr("Parameters are invalid; no worker was started"));
-      return;
-    }
-    auto source = normalizedSource(state_->editor->toPlainText());
-    std::string encodedSource;
-    if (!validSource(source, encodedSource)) {
-      state_->diagnostics->setPlainText(
-          tr("InvalidStrategyEncoding or StrategySourceTooLarge: source must "
-             "be valid UTF-8, non-empty, and at most 1 MiB."));
-      state_->status->setText(tr("Source is invalid; no worker was started"));
-      return;
-    }
-    const auto parameters = canonicalParametersJson();
-    if (parameters.empty()) {
-      state_->status->setText(tr("Cannot encode Strategy parameters"));
-      return;
-    }
-    const auto sourceHash = core::sha256(encodedSource);
-    const auto consented = state_->consentProvider
-                               ? state_->consentProvider(sourceHash)
-                               : requestSourceConsent(sourceHash);
-    if (!consented) {
-      state_->status->setText(tr("Consent was not granted"));
-      return;
-    }
-    const auto capturedGeneration = state_->draftGeneration;
-    state_->validationGeneration = capturedGeneration;
-    const auto configuration = bindings::PythonStrategyConfiguration{
-        .sourceUtf8 = std::move(encodedSource),
-        .canonicalParametersJson = parameters,
-        .sourceConsentGranted = true,
-    };
-    state_->validationCancellation = core::CancellationSource{};
-    const auto cancellation = state_->validationCancellation.token();
-    const auto runner = state_->validationRunner;
-    state_->validate->setEnabled(false);
-    state_->cancelValidation->setEnabled(true);
-    state_->status->setText(tr("Validating in a fresh managed worker…"));
-    state_->diagnostics->clear();
-    state_->validationWatcher.setFuture(
-        QtConcurrent::run([runner, configuration, cancellation] {
-          try {
-            return runner(configuration, cancellation);
-          } catch (const std::exception &error) {
-            return State::ValidationResult{core::makeError(
-                core::ErrorCode::internal,
-                std::string{"validation worker failed: "} + error.what())};
-          } catch (...) {
-            return State::ValidationResult{core::makeError(
-                core::ErrorCode::internal, "validation worker failed")};
-          }
-        }));
-  });
+                   this, &StrategyTab::markDraftChanged);
+  QObject::connect(state_->saveDraft, &QPushButton::clicked, this,
+                   &StrategyTab::handleSaveDraft);
+  QObject::connect(state_->loadSource, &QPushButton::clicked, this,
+                   &StrategyTab::chooseSourceFile);
+  QObject::connect(state_->exportSource, &QPushButton::clicked, this,
+                   &StrategyTab::chooseExportSourceFile);
+  QObject::connect(state_->validate, &QPushButton::clicked, this,
+                   &StrategyTab::beginValidation);
   QObject::connect(state_->cancelValidation, &QPushButton::clicked, this,
-                   [this] {
-                     state_->validationCancellation.requestCancellation();
-                     state_->cancelValidation->setEnabled(false);
-                     state_->status->setText(tr("Cancel requested…"));
-                   });
-  QObject::connect(
-      &state_->validationWatcher,
-      &QFutureWatcher<State::ValidationResult>::finished, this, [this] {
-        state_->validate->setEnabled(true);
-        state_->cancelValidation->setEnabled(false);
-        if (state_->validationGeneration != state_->draftGeneration) {
-          state_->status->setText(tr("Draft changed during validation; the "
-                                     "earlier result was ignored."));
-          return;
-        }
-        const auto result = state_->validationWatcher.result();
-        if (!result.ok()) {
-          const auto message = validationErrorText(result.error());
-          state_->diagnostics->setPlainText(message);
-          state_->status->setText(tr("Validation failed"));
-          return;
-        }
-        state_->status->setText(
-            tr("Strategy is valid for API 1 and template 1.0.0"));
-        state_->diagnostics->setPlainText(tr("No Result was created."));
-      });
-  QObject::connect(state_->useInBacktest, &QPushButton::clicked, this, [this] {
-    if (state_->fastPeriod->value() >= state_->slowPeriod->value()) {
-      state_->status->setText(tr("InvalidStrategyParameters: fast_period must "
-                                 "be less than slow_period"));
-      return;
+                   &StrategyTab::requestValidationCancellation);
+  QObject::connect(&state_->validationWatcher,
+                   &QFutureWatcher<State::ValidationResult>::finished, this,
+                   &StrategyTab::finishValidation);
+  QObject::connect(state_->useInBacktest, &QPushButton::clicked, this,
+                   &StrategyTab::useDraftInBacktest);
+}
+
+void StrategyTab::restoreSavedDraft() {
+  const auto currentPath = state_->draftDirectory / "python-draft.json";
+  const auto previousPath =
+      state_->draftDirectory / "python-draft.previous.json";
+  auto draft = readDraft(currentPath);
+  auto warning = QString{};
+  auto preserveUnrecoverableDrafts = false;
+  if (!draft.has_value()) {
+    const auto currentExists = std::filesystem::exists(currentPath);
+    draft = readDraft(previousPath);
+    if (draft.has_value()) {
+      warning = tr("The latest draft was invalid; recovered the previous "
+                   "valid generation.");
+    } else if (currentExists || std::filesystem::exists(previousPath)) {
+      preserveUnrecoverableDrafts = true;
+      warning = tr("Saved drafts could not be validated. The source files "
+                   "were preserved for diagnosis.");
     }
-    auto source = normalizedSource(state_->editor->toPlainText());
-    std::string encodedSource;
-    if (!validSource(source, encodedSource)) {
-      state_->status->setText(
-          tr("Source must be valid UTF-8, non-empty, and at most 1 MiB"));
-      return;
-    }
-    emit useInBacktest(QString::fromStdString(encodedSource),
-                       QString::fromStdString(canonicalParametersJson()));
-  });
+  }
+  state_->loadingDraft = true;
+  state_->preserveUnrecoverableDrafts = preserveUnrecoverableDrafts;
+  if (draft.has_value()) {
+    state_->editor->setPlainText(draft->source);
+    state_->fastPeriod->setValue(draft->fastPeriod);
+    state_->slowPeriod->setValue(draft->slowPeriod);
+    state_->quantity->setValue(draft->quantity);
+    state_->savedFingerprint = fingerprint(*draft);
+  } else if (preserveUnrecoverableDrafts) {
+    state_->editor->clear();
+    state_->savedFingerprint = fingerprint(currentDraft(*state_));
+  } else {
+    state_->editor->setPlainText(QString::fromUtf8(sampleSource));
+    state_->savedFingerprint = {};
+  }
+  state_->loadingDraft = false;
+  state_->draftGeneration = 0;
+  state_->status->setText(warning.isEmpty() ? tr("Ready") : warning);
+}
+
+void StrategyTab::markDraftChanged() {
+  if (state_->loadingDraft) {
+    return;
+  }
+  ++state_->draftGeneration;
+  state_->diagnostics->clear();
+  state_->status->setText(tr("Draft has unsaved changes"));
+  state_->draftTimer->start();
+}
+
+void StrategyTab::handleDraftTimerTimeout() {
+  if (!autosaveDraft()) {
+    state_->status->setText(tr("Cannot save draft to the local data folder"));
+  }
+}
+
+void StrategyTab::handleSaveDraft() {
+  if (!saveDraft()) {
+    state_->status->setText(tr("Cannot save the Python Strategy draft"));
+  }
+}
+
+void StrategyTab::chooseSourceFile() {
+  const auto path = QFileDialog::getOpenFileName(this, tr("Load Python source"),
+                                                 {}, tr("Python files (*.py)"));
+  if (!path.isEmpty()) {
+    static_cast<void>(loadSourceFile(path.toStdString()));
+  }
+}
+
+void StrategyTab::chooseExportSourceFile() {
+  const auto path =
+      QFileDialog::getSaveFileName(this, tr("Export Python source"),
+                                   "strategy.py", tr("Python files (*.py)"));
+  if (!path.isEmpty()) {
+    static_cast<void>(exportSourceFile(path.toStdString()));
+  }
+}
+
+void StrategyTab::beginValidation() {
+  if (!state_->validationRunner || state_->validationWatcher.isRunning()) {
+    state_->status->setText(tr("Managed Python validation is unavailable"));
+    return;
+  }
+  if (state_->fastPeriod->value() >= state_->slowPeriod->value()) {
+    state_->diagnostics->setPlainText(
+        tr("InvalidStrategyParameters: fast_period must be less than "
+           "slow_period."));
+    state_->status->setText(
+        tr("Parameters are invalid; no worker was started"));
+    return;
+  }
+  auto source = normalizedSource(state_->editor->toPlainText());
+  std::string encodedSource;
+  if (!validSource(source, encodedSource)) {
+    state_->diagnostics->setPlainText(
+        tr("InvalidStrategyEncoding or StrategySourceTooLarge: source must "
+           "be valid UTF-8, non-empty, and at most 1 MiB."));
+    state_->status->setText(tr("Source is invalid; no worker was started"));
+    return;
+  }
+  const auto parameters = canonicalParametersJson();
+  if (parameters.empty()) {
+    state_->status->setText(tr("Cannot encode Strategy parameters"));
+    return;
+  }
+  const auto sourceHash = core::sha256(encodedSource);
+  const auto consented = state_->consentProvider
+                             ? state_->consentProvider(sourceHash)
+                             : requestSourceConsent(sourceHash);
+  if (!consented) {
+    state_->status->setText(tr("Consent was not granted"));
+    return;
+  }
+
+  state_->validationGeneration = state_->draftGeneration;
+  const auto configuration = bindings::PythonStrategyConfiguration{
+      .sourceUtf8 = std::move(encodedSource),
+      .canonicalParametersJson = parameters,
+      .sourceConsentGranted = true,
+  };
+  state_->validationCancellation = core::CancellationSource{};
+  const auto cancellation = state_->validationCancellation.token();
+  const auto runner = state_->validationRunner;
+  state_->validate->setEnabled(false);
+  state_->cancelValidation->setEnabled(true);
+  state_->status->setText(tr("Validating in a fresh managed worker…"));
+  state_->diagnostics->clear();
+
+  state_->validationWatcher.setFuture(QtConcurrent::run(
+      runValidationSafely, runner, configuration, cancellation));
+}
+
+void StrategyTab::requestValidationCancellation() {
+  state_->validationCancellation.requestCancellation();
+  state_->cancelValidation->setEnabled(false);
+  state_->status->setText(tr("Cancel requested…"));
+}
+
+void StrategyTab::finishValidation() {
+  state_->validate->setEnabled(true);
+  state_->cancelValidation->setEnabled(false);
+  if (state_->validationGeneration != state_->draftGeneration) {
+    state_->status->setText(tr("Draft changed during validation; the "
+                               "earlier result was ignored."));
+    return;
+  }
+  const auto result = state_->validationWatcher.result();
+  if (!result.ok()) {
+    state_->diagnostics->setPlainText(validationErrorText(result.error()));
+    state_->status->setText(tr("Validation failed"));
+    return;
+  }
+  state_->status->setText(tr("Strategy is valid for API 1 and template 1.0.0"));
+  state_->diagnostics->setPlainText(tr("No Result was created."));
+}
+
+void StrategyTab::useDraftInBacktest() {
+  if (state_->fastPeriod->value() >= state_->slowPeriod->value()) {
+    state_->status->setText(tr("InvalidStrategyParameters: fast_period must "
+                               "be less than slow_period"));
+    return;
+  }
+  auto source = normalizedSource(state_->editor->toPlainText());
+  std::string encodedSource;
+  if (!validSource(source, encodedSource)) {
+    state_->status->setText(
+        tr("Source must be valid UTF-8, non-empty, and at most 1 MiB"));
+    return;
+  }
+  emit useInBacktest(QString::fromStdString(encodedSource),
+                     QString::fromStdString(canonicalParametersJson()));
 }
 
 StrategyTab::~StrategyTab() {
-  if (fingerprint(currentDraft(*state_)) != state_->savedFingerprint) {
-    static_cast<void>(autosaveDraft());
+  try {
+    if (fingerprint(currentDraft(*state_)) != state_->savedFingerprint) {
+      static_cast<void>(autosaveDraft());
+    }
+  } catch (const std::exception &error) {
+    qWarning() << "Failed to autosave Python Strategy draft during shutdown:"
+               << error.what();
+  } catch (...) {
+    qWarning() << "Failed to autosave Python Strategy draft during shutdown";
   }
 }
 

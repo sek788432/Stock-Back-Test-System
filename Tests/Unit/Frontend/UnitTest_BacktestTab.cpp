@@ -1,4 +1,5 @@
 #include "Bte/Frontend/BacktestTab.h"
+#include "Bte/Frontend/StrategyTab.h"
 
 #include "WaitUntil.h"
 
@@ -12,10 +13,12 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMetaObject>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
 
@@ -237,6 +240,7 @@ private slots:
   void workerExceptionIsPresentedAsAnError();
   void unknownWorkerExceptionIsPresentedAsAnError();
   void pythonDraftIsFrozenAndPassedToTheRunWorker();
+  void strategyTabHandoffIsCapturedByTheBacktestRun();
   void reproducibilityVerificationReportsProgressAndCompletion();
   void reproducibilityVerificationCanBeCanceled();
   void defaultRunnerExecutesTrackedBars();
@@ -1049,6 +1053,82 @@ void BacktestTabTest::pythonDraftIsFrozenAndPassedToTheRunWorker() {
       QString{"{\"quantity\":3}"});
   QVERIFY(captured->pythonStrategy->sourceConsentGranted);
   QVERIFY(!captured->selectableStrategy.has_value());
+}
+
+void BacktestTabTest::strategyTabHandoffIsCapturedByTheBacktestRun() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  std::mutex captureMutex;
+  std::optional<bte::bindings::BacktestConfiguration> captured;
+  std::atomic_int calls = 0;
+  bte::frontend::BacktestTab backtest{
+      [&captureMutex, &captured,
+       &calls](bte::bindings::BacktestConfiguration configuration,
+               bte::core::CancellationToken) {
+        {
+          const std::scoped_lock lock{captureMutex};
+          captured = std::move(configuration);
+        }
+        ++calls;
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  backtest.setConsentProvider([](const std::string &) { return true; });
+
+  bte::frontend::StrategyTab strategy{
+      std::filesystem::path{directory.path().toStdString()} / "drafts",
+      {},
+      [](const std::string &) { return true; }};
+  auto *editor =
+      strategy.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *fast =
+      strategy.findChild<QSpinBox *>("pythonStrategyFastPeriodSpinBox");
+  auto *slow =
+      strategy.findChild<QSpinBox *>("pythonStrategySlowPeriodSpinBox");
+  auto *quantity =
+      strategy.findChild<QSpinBox *>("pythonStrategyQuantitySpinBox");
+  auto *use =
+      strategy.findChild<QPushButton *>("pythonStrategyUseInBacktestButton");
+  auto *run = backtest.findChild<QPushButton *>("backtestRunButton");
+  auto *selectedStrategy =
+      backtest.findChild<QComboBox *>("backtestStrategyCombo");
+  QVERIFY(editor != nullptr);
+  QVERIFY(fast != nullptr);
+  QVERIFY(slow != nullptr);
+  QVERIFY(quantity != nullptr);
+  QVERIFY(use != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(selectedStrategy != nullptr);
+
+  const auto source =
+      QString{"def create_strategy(params):\n    return None\n"};
+  editor->setPlainText(source);
+  fast->setValue(7);
+  slow->setValue(13);
+  quantity->setValue(42);
+  connect(&strategy, &bte::frontend::StrategyTab::useInBacktest, &backtest,
+          [&backtest](const QString &sourceUtf8,
+                      const QString &canonicalParametersJson) {
+            backtest.setPythonStrategyDraft(sourceUtf8,
+                                            canonicalParametersJson);
+          });
+
+  QTest::mouseClick(use, Qt::LeftButton);
+  QCOMPARE(selectedStrategy->currentIndex(), 2);
+  QVERIFY(run->isEnabled());
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&calls, run] { return calls.load() == 1 && run->isEnabled(); }));
+
+  const std::scoped_lock lock{captureMutex};
+  QVERIFY(captured.has_value());
+  QVERIFY(captured->pythonStrategy.has_value());
+  QCOMPARE(QString::fromStdString(captured->pythonStrategy->sourceUtf8),
+           source);
+  QCOMPARE(
+      QString::fromStdString(captured->pythonStrategy->canonicalParametersJson),
+      QString{"{\"fast_period\":7,\"quantity\":42,\"slow_period\":13}"});
+  QVERIFY(captured->pythonStrategy->sourceConsentGranted);
 }
 
 void BacktestTabTest::

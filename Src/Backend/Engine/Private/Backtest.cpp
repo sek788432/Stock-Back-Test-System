@@ -162,6 +162,65 @@ sellPriceWithDefaultSlippage(const std::int64_t openNanodollars) {
   return adjusted;
 }
 
+core::Result<void>
+validateActualBars(const std::vector<core::Bar> &bars,
+                   const core::CancellationToken &cancellation) {
+  for (std::size_t index = 0; index < bars.size(); ++index) {
+    if (cancellation.isCancellationRequested()) {
+      return cancelled();
+    }
+    const auto &bar = bars[index];
+    if (!bar.isValid() || !std::isfinite(bar.volume)) {
+      return invalidArgument("all bars must satisfy OHLCV invariants");
+    }
+    for (const auto price :
+         std::array{bar.open, bar.high, bar.low, bar.close}) {
+      if (!checkedPriceNanodollars(price).ok()) {
+        return invalidArgument(
+            "all bar prices must fit the fixed-point engine range");
+      }
+    }
+    if (index > 0 && bars[index - 1].ts >= bar.ts) {
+      return invalidArgument("bars must have strictly increasing timestamps");
+    }
+  }
+  return {};
+}
+
+core::Result<void>
+validateWarmupBars(const std::vector<core::Bar> &bars,
+                   const core::Timestamp firstRunTimestamp,
+                   const core::CancellationToken &cancellation) {
+  if (bars.size() >
+      static_cast<std::size_t>(indicators::maximumIndicatorPeriod)) {
+    return invalidArgument(
+        "strategy warm-up history exceeds 10000 actual bars");
+  }
+  for (std::size_t index = 0; index < bars.size(); ++index) {
+    if (cancellation.isCancellationRequested()) {
+      return cancelled();
+    }
+    const auto &bar = bars[index];
+    if (!bar.isValid() || !std::isfinite(bar.volume)) {
+      return invalidArgument(
+          "all strategy history bars must satisfy OHLCV invariants");
+    }
+    for (const auto price :
+         std::array{bar.open, bar.high, bar.low, bar.close}) {
+      if (!checkedPriceNanodollars(price).ok()) {
+        return invalidArgument("all strategy history prices must fit the "
+                               "fixed-point engine range");
+      }
+    }
+    if (bar.ts >= firstRunTimestamp ||
+        (index > 0 && bars[index - 1].ts >= bar.ts)) {
+      return invalidArgument("strategy history bars must be strictly "
+                             "increasing and precede the run");
+    }
+  }
+  return {};
+}
+
 core::Result<std::int64_t>
 validateRequest(const BacktestRequest &request,
                 const core::CancellationToken &cancellation) {
@@ -178,52 +237,14 @@ validateRequest(const BacktestRequest &request,
   if (request.symbol.empty()) {
     return invalidArgument("backtest symbol is required");
   }
-
-  for (std::size_t index = 0; index < request.bars.size(); ++index) {
-    if (cancellation.isCancellationRequested()) {
-      return cancelled();
-    }
-    const auto &bar = request.bars[index];
-    if (!bar.isValid() || !std::isfinite(bar.volume)) {
-      return invalidArgument("all bars must satisfy OHLCV invariants");
-    }
-    for (const auto price :
-         std::array{bar.open, bar.high, bar.low, bar.close}) {
-      if (!checkedPriceNanodollars(price).ok()) {
-        return invalidArgument(
-            "all bar prices must fit the fixed-point engine range");
-      }
-    }
-    if (index > 0 && request.bars[index - 1].ts >= request.bars[index].ts) {
-      return invalidArgument("bars must have strictly increasing timestamps");
-    }
+  const auto actualBars = validateActualBars(request.bars, cancellation);
+  if (!actualBars.ok()) {
+    return actualBars.error();
   }
-  if (request.historyBars.size() >
-      static_cast<std::size_t>(indicators::maximumIndicatorPeriod)) {
-    return invalidArgument(
-        "strategy warm-up history exceeds 10000 actual bars");
-  }
-  for (std::size_t index = 0; index < request.historyBars.size(); ++index) {
-    if (cancellation.isCancellationRequested()) {
-      return cancelled();
-    }
-    const auto &bar = request.historyBars[index];
-    if (!bar.isValid() || !std::isfinite(bar.volume)) {
-      return invalidArgument(
-          "all strategy history bars must satisfy OHLCV invariants");
-    }
-    for (const auto price :
-         std::array{bar.open, bar.high, bar.low, bar.close}) {
-      if (!checkedPriceNanodollars(price).ok()) {
-        return invalidArgument("all strategy history prices must fit the "
-                               "fixed-point engine range");
-      }
-    }
-    if (bar.ts >= request.bars.front().ts ||
-        (index > 0 && request.historyBars[index - 1].ts >= bar.ts)) {
-      return invalidArgument("strategy history bars must be strictly "
-                             "increasing and precede the run");
-    }
+  const auto historyBars = validateWarmupBars(
+      request.historyBars, request.bars.front().ts, cancellation);
+  if (!historyBars.ok()) {
+    return historyBars.error();
   }
   return request.initialCapitalMicrodollars;
 }
@@ -817,7 +838,7 @@ struct BacktestExecution::Impl final {
   [[nodiscard]] strategy::StrategyContext
   contextFor(std::optional<core::Bar> bar = std::nullopt) const {
     return {.symbol = request.symbol,
-            .bar = std::move(bar),
+            .bar = bar,
             .cashMicrodollars = result.cashMicrodollars,
             .equityMicrodollars = result.equityMicrodollars,
             .positionShares = result.positionShares,
@@ -859,62 +880,130 @@ struct BacktestExecution::Impl final {
   }
 
   [[nodiscard]] core::Result<void>
+  processPendingOrder(const core::Bar &bar,
+                      const core::CancellationToken &cancellation) {
+    if (!pendingOrder.has_value()) {
+      return {};
+    }
+    const auto order = pendingOrder.value();
+    const auto open = checkedPriceNanodollars(bar.open).value();
+    auto execution =
+        executePendingOrder(order.side, result, bar, order.quantityShares);
+    if (!execution.ok()) {
+      return execution.error();
+    }
+    const auto executionResult = std::move(execution).value();
+    rejectedOrder = rejectedOrder || executionResult.rejectedInsufficientCash;
+    if (executionResult.fill.has_value()) {
+      const auto &fill = executionResult.fill.value();
+      recordFill(result, fill);
+      appendFillRecord(result, request, fill);
+      auto cost = appendSlippageCostRecord(result, request, fill, open);
+      // Accepted prices and quantities fit the fixed-point cost operation.
+      // GCOVR_EXCL_START
+      if (!cost.ok()) {
+        return cost.error();
+      }
+      // GCOVR_EXCL_STOP
+      const auto notified =
+          strategy->onFill({.timestamp = fill.timestamp,
+                            .side = fill.side == BacktestOrderSide::buy
+                                        ? strategy::StrategyFillSide::buy
+                                        : strategy::StrategyFillSide::sell,
+                            .quantityShares = fill.quantityShares,
+                            .priceNanodollars = fill.priceNanodollars,
+                            .amountMicrodollars = fill.amountMicrodollars},
+                           contextFor(bar), cancellation);
+      if (!notified.ok()) {
+        return notified.error();
+      }
+      if (cancellation.isCancellationRequested()) {
+        return cancelled();
+      }
+    }
+    pendingOrder.reset();
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  queueBuyCommand(const strategy::StrategyCommand &command,
+                  const core::Bar &bar) {
+    if (command.quantityShares <= 0 ||
+        command.quantityShares > maximumStarterQuantityShares) {
+      return rejectedStrategyCommand(
+          "buy quantity is outside the supported whole-share range");
+    }
+    if (result.positionShares != 0) {
+      return rejectedStrategyCommand("a market buy requires a flat position");
+    }
+    pendingOrder = PendingOrder{.side = BacktestOrderSide::buy,
+                                .quantityShares = command.quantityShares};
+    appendOrderRecord(result, request, bar, pendingOrder->side,
+                      pendingOrder->quantityShares);
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  queueCloseCommand(const strategy::StrategyCommand &command,
+                    const core::Bar &bar) {
+    if (command.quantityShares != 0) {
+      return rejectedStrategyCommand(
+          "a close-position command does not accept a quantity");
+    }
+    if (result.positionShares <= 0) {
+      return rejectedStrategyCommand(
+          "a close-position command requires a long position");
+    }
+    pendingOrder = PendingOrder{.side = BacktestOrderSide::sell,
+                                .quantityShares = result.positionShares};
+    appendOrderRecord(result, request, bar, pendingOrder->side,
+                      pendingOrder->quantityShares);
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  queueStrategyCommands(const strategy::StrategyCommandBatch &commands,
+                        const core::Bar &bar) {
+    if (commands.size() > strategy::maximumCommandsPerMarketCallback) {
+      return rejectedStrategyCommand(
+          "a market callback may submit at most one command");
+    }
+    if (commands.empty()) {
+      return {};
+    }
+    const auto &command = commands.front();
+    if (command.symbol != request.symbol) {
+      return rejectedStrategyCommand(
+          "command symbol must match the selected symbol");
+    }
+    if (command.kind == strategy::StrategyCommandKind::buyMarket) {
+      return queueBuyCommand(command, bar);
+    }
+    if (command.kind == strategy::StrategyCommandKind::closePosition) {
+      return queueCloseCommand(command, bar);
+    }
+    return rejectedStrategyCommand("command kind is unsupported");
+  }
+
+  [[nodiscard]] core::Result<void>
   processMarket(const core::Bar &bar,
                 const core::CancellationToken &cancellation) {
     if (cancellation.isCancellationRequested()) {
       return cancelled();
     }
-    if (pendingOrder.has_value()) {
-      const auto order = pendingOrder.value();
-      const auto open = checkedPriceNanodollars(bar.open).value();
-      auto execution =
-          executePendingOrder(order.side, result, bar, order.quantityShares);
-      if (!execution.ok()) {
-        return execution.error();
-      }
-      const auto executionResult = std::move(execution).value();
-      rejectedOrder = rejectedOrder || executionResult.rejectedInsufficientCash;
-      if (executionResult.fill.has_value()) {
-        const auto &fill = executionResult.fill.value();
-        recordFill(result, fill);
-        appendFillRecord(result, request, fill);
-        auto cost = appendSlippageCostRecord(result, request, fill, open);
-        // Accepted prices and quantities fit the fixed-point cost operation.
-        // GCOVR_EXCL_START
-        if (!cost.ok()) {
-          return cost.error();
-        }
-        // GCOVR_EXCL_STOP
-        const auto notified =
-            strategy->onFill({.timestamp = fill.timestamp,
-                              .side = fill.side == BacktestOrderSide::buy
-                                          ? strategy::StrategyFillSide::buy
-                                          : strategy::StrategyFillSide::sell,
-                              .quantityShares = fill.quantityShares,
-                              .priceNanodollars = fill.priceNanodollars,
-                              .amountMicrodollars = fill.amountMicrodollars},
-                             contextFor(bar), cancellation);
-        if (!notified.ok()) {
-          return notified.error();
-        }
-        if (cancellation.isCancellationRequested()) {
-          return cancelled();
-        }
-      }
-      pendingOrder.reset();
+    const auto executed = processPendingOrder(bar, cancellation);
+    if (!executed.ok()) {
+      return executed.error();
     }
-
     const auto indicatorsUpdated = updateIndicators(bar, cancellation);
     if (!indicatorsUpdated.ok()) {
       return indicatorsUpdated.error();
     }
-
     const auto marked = updatePortfolioMark(result, bar);
     if (!marked.ok()) {
       return marked.error();
     }
     currentMarkPriceNanodollars = result.finalPriceNanodollars;
-
     if (cancellation.isCancellationRequested()) {
       return cancelled();
     }
@@ -922,45 +1011,9 @@ struct BacktestExecution::Impl final {
     if (!decision.ok()) {
       return decision.error();
     }
-    const auto &commands = decision.value();
-    if (commands.size() > strategy::maximumCommandsPerMarketCallback) {
-      return rejectedStrategyCommand(
-          "a market callback may submit at most one command");
-    }
-    if (!commands.empty()) {
-      const auto &command = commands.front();
-      if (command.symbol != request.symbol) {
-        return rejectedStrategyCommand(
-            "command symbol must match the selected symbol");
-      }
-      if (command.kind == strategy::StrategyCommandKind::buyMarket) {
-        if (command.quantityShares <= 0 ||
-            command.quantityShares > maximumStarterQuantityShares) {
-          return rejectedStrategyCommand(
-              "buy quantity is outside the supported whole-share range");
-        }
-        if (result.positionShares != 0) {
-          return rejectedStrategyCommand(
-              "a market buy requires a flat position");
-        }
-        pendingOrder = PendingOrder{.side = BacktestOrderSide::buy,
-                                    .quantityShares = command.quantityShares};
-      } else if (command.kind == strategy::StrategyCommandKind::closePosition) {
-        if (command.quantityShares != 0) {
-          return rejectedStrategyCommand(
-              "a close-position command does not accept a quantity");
-        }
-        if (result.positionShares <= 0) {
-          return rejectedStrategyCommand(
-              "a close-position command requires a long position");
-        }
-        pendingOrder = PendingOrder{.side = BacktestOrderSide::sell,
-                                    .quantityShares = result.positionShares};
-      } else {
-        return rejectedStrategyCommand("command kind is unsupported");
-      }
-      appendOrderRecord(result, request, bar, pendingOrder->side,
-                        pendingOrder->quantityShares);
+    const auto queued = queueStrategyCommands(decision.value(), bar);
+    if (!queued.ok()) {
+      return queued.error();
     }
     const auto diagnostics = collectStrategyDiagnostics(bar.ts, false);
     if (!diagnostics.ok()) {

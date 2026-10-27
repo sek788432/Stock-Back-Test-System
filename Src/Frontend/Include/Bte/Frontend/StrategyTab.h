@@ -48,6 +48,19 @@ signals:
                      const QString &canonicalParametersJson);
 
 private:
+  void buildUi();
+  void connectUi();
+  void restoreSavedDraft();
+  void markDraftChanged();
+  void handleDraftTimerTimeout();
+  void handleSaveDraft();
+  void chooseSourceFile();
+  void chooseExportSourceFile();
+  void beginValidation();
+  void requestValidationCancellation();
+  void finishValidation();
+  void useDraftInBacktest();
+
   std::unique_ptr<State> state_;
 };
 

@@ -32,8 +32,8 @@ constexpr auto factoryDeadline = 10s;
 constexpr auto hookDeadline = 30s;
 constexpr auto shutdownDeadline = 2s;
 constexpr std::size_t maximumStructuredLogEntries = 10'000;
-constexpr std::size_t maximumStructuredLogBytes = 1024U * 1024U;
-constexpr std::size_t maximumLogMessageBytes = 8U * 1024U;
+constexpr std::size_t maximumStructuredLogBytes = std::size_t{1024} * 1024;
+constexpr std::size_t maximumLogMessageBytes = std::size_t{8} * 1024;
 constexpr double microdollarsPerDollar = 1'000'000.0;
 constexpr double nanodollarsPerDollar = 1'000'000'000.0;
 constexpr std::string_view base64Alphabet =
@@ -263,7 +263,7 @@ validateParameters(const nlohmann::json &parameters) {
   if (!serialized.ok()) {
     return serialized.error();
   }
-  if (serialized.value().size() > 64U * 1024U) {
+  if (serialized.value().size() > std::size_t{64} * 1024) {
     return makeStrategyError(core::ErrorCode::invalidArgument,
                              "Python Strategy parameters exceed 64 KiB.");
   }
@@ -278,7 +278,7 @@ validateParameters(const nlohmann::json &parameters) {
     part = random();
   }
   const auto serial = nextId.fetch_add(1, std::memory_order_relaxed);
-  std::string result = core::sha256(
+  const std::string result = core::sha256(
       std::to_string(entropy[0]) + ":" + std::to_string(entropy[1]) + ":" +
       std::to_string(entropy[2]) + ":" + std::to_string(entropy[3]) + ":" +
       std::to_string(serial));
@@ -345,6 +345,71 @@ validateParameters(const nlohmann::json &parameters) {
   return knownErrorCodes.contains(std::string{code});
 }
 
+[[nodiscard]] core::Result<void>
+appendStartupDiagnostics(std::string &messageText,
+                         const nlohmann::json &diagnostics) {
+  static const std::set<std::string> keys{
+      "omittedTracebackBytes", "sourceColumn", "sourceLine", "traceback"};
+  const auto readLocation = [](const nlohmann::json &value,
+                               std::optional<std::uint32_t> &output) {
+    if (value.is_null()) {
+      output.reset();
+      return true;
+    }
+    if (!value.is_number_integer() || value.is_boolean()) {
+      return false;
+    }
+    const auto number = value.get<std::int64_t>();
+    if (number <= 0 || number > std::numeric_limits<std::uint32_t>::max()) {
+      return false;
+    }
+    output = static_cast<std::uint32_t>(number);
+    return true;
+  };
+  const auto omittedValue =
+      diagnostics.is_object() && diagnostics.contains("omittedTracebackBytes")
+          ? diagnostics.at("omittedTracebackBytes")
+          : nlohmann::json{};
+  if (!hasExactKeys(diagnostics, keys) ||
+      !diagnostics.at("traceback").is_string() ||
+      !isStrictUtf8(
+          diagnostics.at("traceback").get_ref<const std::string &>()) ||
+      diagnostics.at("traceback").get_ref<const std::string &>().size() >
+          std::size_t{48} * 1024 ||
+      (!omittedValue.is_number_unsigned() &&
+       !omittedValue.is_number_integer()) ||
+      omittedValue.is_boolean() || omittedValue.get<std::int64_t>() < 0) {
+    return makeStrategyError(
+        core::ErrorCode::strategyProtocolViolation,
+        "Python worker returned malformed startup diagnostics.");
+  }
+  std::optional<std::uint32_t> sourceLine;
+  std::optional<std::uint32_t> sourceColumn;
+  if (!readLocation(diagnostics.at("sourceLine"), sourceLine) ||
+      !readLocation(diagnostics.at("sourceColumn"), sourceColumn)) {
+    return makeStrategyError(
+        core::ErrorCode::strategyProtocolViolation,
+        "Python worker returned an invalid startup source location.");
+  }
+  if (sourceLine.has_value()) {
+    messageText += "\nAt strategy.py:" + std::to_string(*sourceLine);
+    if (sourceColumn.has_value()) {
+      messageText += ":" + std::to_string(*sourceColumn);
+    }
+  }
+  const auto &tracebackText =
+      diagnostics.at("traceback").get_ref<const std::string &>();
+  if (!tracebackText.empty()) {
+    messageText += "\n" + tracebackText;
+  }
+  const auto omitted = omittedValue.get<std::uint64_t>();
+  if (omitted > 0) {
+    messageText +=
+        "\n... " + std::to_string(omitted) + " traceback bytes omitted";
+  }
+  return {};
+}
+
 [[nodiscard]] core::Error
 decodeWorkerError(const ProtocolMessage &message,
                   const core::ErrorCode fallback,
@@ -376,65 +441,10 @@ decodeWorkerError(const ProtocolMessage &message,
     messageText.insert(0, std::string{code} + ": ");
   }
   if (includeStartupDiagnostics && message.payload.contains("diagnostics")) {
-    const auto &diagnostics = message.payload.at("diagnostics");
-    static const std::set<std::string> keys{
-        "omittedTracebackBytes", "sourceColumn", "sourceLine", "traceback"};
-    const auto readLocation = [](const nlohmann::json &value,
-                                 std::optional<std::uint32_t> &output) {
-      if (value.is_null()) {
-        output.reset();
-        return true;
-      }
-      if (!value.is_number_integer() || value.is_boolean()) {
-        return false;
-      }
-      const auto number = value.get<std::int64_t>();
-      if (number <= 0 || number > std::numeric_limits<std::uint32_t>::max()) {
-        return false;
-      }
-      output = static_cast<std::uint32_t>(number);
-      return true;
-    };
-    const auto omittedValue =
-        diagnostics.is_object() && diagnostics.contains("omittedTracebackBytes")
-            ? diagnostics.at("omittedTracebackBytes")
-            : nlohmann::json{};
-    if (!hasExactKeys(diagnostics, keys) ||
-        !diagnostics.at("traceback").is_string() ||
-        !isStrictUtf8(
-            diagnostics.at("traceback").get_ref<const std::string &>()) ||
-        diagnostics.at("traceback").get_ref<const std::string &>().size() >
-            48U * 1024U ||
-        (!omittedValue.is_number_unsigned() &&
-         !omittedValue.is_number_integer()) ||
-        omittedValue.is_boolean() || omittedValue.get<std::int64_t>() < 0) {
-      return makeStrategyError(
-          core::ErrorCode::strategyProtocolViolation,
-          "Python worker returned malformed startup diagnostics.");
-    }
-    std::optional<std::uint32_t> sourceLine;
-    std::optional<std::uint32_t> sourceColumn;
-    if (!readLocation(diagnostics.at("sourceLine"), sourceLine) ||
-        !readLocation(diagnostics.at("sourceColumn"), sourceColumn)) {
-      return makeStrategyError(
-          core::ErrorCode::strategyProtocolViolation,
-          "Python worker returned an invalid startup source location.");
-    }
-    if (sourceLine.has_value()) {
-      messageText += "\nAt strategy.py:" + std::to_string(*sourceLine);
-      if (sourceColumn.has_value()) {
-        messageText += ":" + std::to_string(*sourceColumn);
-      }
-    }
-    const auto &tracebackText =
-        diagnostics.at("traceback").get_ref<const std::string &>();
-    if (!tracebackText.empty()) {
-      messageText += "\n" + tracebackText;
-    }
-    const auto omitted = omittedValue.get<std::uint64_t>();
-    if (omitted > 0) {
-      messageText +=
-          "\n... " + std::to_string(omitted) + " traceback bytes omitted";
+    const auto diagnostics = appendStartupDiagnostics(
+        messageText, message.payload.at("diagnostics"));
+    if (!diagnostics.ok()) {
+      return diagnostics.error();
     }
   }
   return core::makeError(workerErrorCode(code, fallback),
@@ -636,8 +646,14 @@ validateAndStoreLogs(const nlohmann::json &logs,
         .kind = strategy::StrategyDiagnosticKind::log,
         .hook = std::string{hook},
         .level = level,
+        .errorCode = {},
         .message = message,
         .canonicalFieldsJson = fields.value(),
+        .sourceLine = std::nullopt,
+        .sourceColumn = std::nullopt,
+        .traceback = {},
+        .omittedBytes = 0,
+        .omittedEntries = 0,
     });
   }
   return {};
@@ -673,7 +689,7 @@ void recordWorkerOmissions(const std::uint64_t omittedBytes,
       !isStrictUtf8(
           message.payload.at("message").get_ref<const std::string &>()) ||
       message.payload.at("message").get_ref<const std::string &>().size() >
-          64U * 1024U) {
+          std::size_t{64} * 1024) {
     return makeStrategyError(
         core::ErrorCode::strategyProtocolViolation,
         "Python worker returned a malformed error envelope.");
@@ -728,7 +744,7 @@ void recordWorkerOmissions(const std::uint64_t omittedBytes,
       !value.at("traceback").is_string() ||
       !isStrictUtf8(value.at("traceback").get_ref<const std::string &>()) ||
       value.at("traceback").get_ref<const std::string &>().size() >
-          64U * 1024U) {
+          std::size_t{64} * 1024) {
     return makeStrategyError(
         core::ErrorCode::strategyProtocolViolation,
         "Python worker returned malformed hook diagnostics.");
@@ -905,6 +921,174 @@ struct PythonWorkerStrategy::Impl final {
     return receive(timeout, timeoutCode, cancellation);
   }
 
+  [[nodiscard]] core::Result<std::string>
+  validateBootstrap(const bool verifyRuntime,
+                    const core::CancellationToken &cancellation) {
+    const auto bootstrapReady =
+        receive(bootstrapDeadline, core::ErrorCode::workerBootstrapTimeout,
+                cancellation);
+    static const std::set<std::string> readyKeys{"protocolVersion",
+                                                 "pythonVersion"};
+    if (!bootstrapReady.ok()) {
+      terminate();
+      return bootstrapReady.error();
+    }
+    if (bootstrapReady.value().messageType != "bootstrap-ready" ||
+        !hasExactKeys(bootstrapReady.value().payload, readyKeys) ||
+        !bootstrapReady.value()
+             .payload.at("protocolVersion")
+             .is_number_integer() ||
+        bootstrapReady.value().payload.at("protocolVersion").get<int>() !=
+            static_cast<int>(currentProtocolVersion) ||
+        !bootstrapReady.value().payload.at("pythonVersion").is_string()) {
+      terminate();
+      return makeStrategyError(core::ErrorCode::workerStartFailed,
+                               "Python worker bootstrap identity is invalid.");
+    }
+    const auto workerPythonVersion =
+        bootstrapReady.value().payload.at("pythonVersion").get<std::string>();
+    if (verifyRuntime && workerPythonVersion != "3.14.9") {
+      terminate();
+      return makeStrategyError(
+          core::ErrorCode::runtimeIntegrityFailure,
+          "Managed Python interpreter version changed after verification.");
+    }
+    return workerPythonVersion;
+  }
+
+  [[nodiscard]] core::Result<void>
+  validateHandshake(const std::string_view workerPythonVersion,
+                    const core::CancellationToken &cancellation) {
+    auto handshake =
+        exchange("handshake",
+                 nlohmann::json{{"protocolVersion", currentProtocolVersion},
+                                {"stockbtApiVersion", "1"}},
+                 handshakeDeadline, core::ErrorCode::workerHandshakeTimeout,
+                 cancellation);
+    if (!handshake.ok()) {
+      terminate();
+      return handshake.error();
+    }
+    static const std::set<std::string> handshakeKeys{"pythonVersion",
+                                                     "stockbtApiVersion"};
+    if (handshake.value().messageType == "worker-error") {
+      const auto error = decodeWorkerError(
+          handshake.value(), core::ErrorCode::workerHandshakeFailed);
+      terminate();
+      return error;
+    }
+    if (handshake.value().messageType != "handshake-complete" ||
+        !hasExactKeys(handshake.value().payload, handshakeKeys) ||
+        handshake.value().payload.at("stockbtApiVersion") != "1" ||
+        handshake.value().payload.at("pythonVersion") != workerPythonVersion) {
+      terminate();
+      return makeStrategyError(core::ErrorCode::workerHandshakeFailed,
+                               "Python worker handshake response is invalid.");
+    }
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  createStrategy(nlohmann::json parameters,
+                 const core::CancellationToken &cancellation) {
+    auto createdStrategy = exchange(
+        "create-strategy",
+        nlohmann::json{{"parameters", std::move(parameters)}}, factoryDeadline,
+        core::ErrorCode::strategyFactoryTimeout, cancellation);
+    if (!createdStrategy.ok()) {
+      terminate();
+      return createdStrategy.error();
+    }
+    if (createdStrategy.value().messageType == "worker-error") {
+      const auto error =
+          decodeWorkerError(createdStrategy.value(),
+                            core::ErrorCode::strategyFactoryFailed, true);
+      terminate();
+      return error;
+    }
+    static const std::set<std::string> strategyKeys{"indicators",
+                                                    "maxHistoryBars"};
+    std::int64_t maxHistoryBarCount = 0;
+    if (createdStrategy.value().messageType != "strategy-loaded" ||
+        !hasExactKeys(createdStrategy.value().payload, strategyKeys) ||
+        !readWholeInteger(createdStrategy.value().payload.at("maxHistoryBars"),
+                          1, 10'000, maxHistoryBarCount) ||
+        !createdStrategy.value().payload.at("indicators").is_array()) {
+      terminate();
+      return makeStrategyError(
+          core::ErrorCode::strategyContractViolation,
+          "Python worker returned an invalid strategy contract.");
+    }
+    this->maxHistoryBars = static_cast<std::size_t>(maxHistoryBarCount);
+    strategyRequirements.maxHistoryBars = this->maxHistoryBars;
+    std::set<std::string> indicatorNames;
+    for (const auto &indicator :
+         createdStrategy.value().payload.at("indicators")) {
+      static const std::set<std::string> indicatorKeys{"kind", "name",
+                                                       "period"};
+      std::int64_t period = 0;
+      if (!hasExactKeys(indicator, indicatorKeys) ||
+          !indicator.at("kind").is_string() || indicator.at("kind") != "SMA" ||
+          !indicator.at("name").is_string() ||
+          indicator.at("period").is_boolean() ||
+          !readWholeInteger(indicator.at("period"), 1, 10'000, period)) {
+        terminate();
+        return makeStrategyError(
+            core::ErrorCode::strategyContractViolation,
+            "Python Strategy supports only valid SMA registrations.");
+      }
+      const auto name = indicator.at("name").get<std::string>();
+      if (!isStrictUtf8(name) || !isValidSmaName(name) ||
+          !indicatorNames.insert(name).second || period > maxHistoryBarCount) {
+        terminate();
+        return makeStrategyError(core::ErrorCode::strategyContractViolation,
+                                 period > maxHistoryBarCount
+                                     ? "Python Strategy history budget is "
+                                       "smaller than an SMA period."
+                                     : "Python Strategy SMA names must be "
+                                       "unique ASCII identifiers.");
+      }
+      strategyRequirements.indicators.push_back(
+          {.name = name,
+           .definition = {.kind = indicators::IndicatorKind::sma,
+                          .period = static_cast<std::int32_t>(period),
+                          .secondaryPeriod = 0,
+                          .signalPeriod = 0,
+                          .output = indicators::IndicatorOutput::value,
+                          .field = indicators::BarField::close}});
+    }
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  loadWorkerModule(const core::CancellationToken &cancellation) {
+    auto loadedModule = exchange(
+        "load-module",
+        nlohmann::json{{"sourceSha256", sourceMemory.sha256Digest()},
+                       {"stockbtApiVersion", "1"}},
+        moduleDeadline, core::ErrorCode::strategyLoadTimeout, cancellation);
+    if (!loadedModule.ok()) {
+      terminate();
+      return loadedModule.error();
+    }
+    if (loadedModule.value().messageType == "worker-error") {
+      const auto error = decodeWorkerError(
+          loadedModule.value(), core::ErrorCode::strategyLoadFailed, true);
+      terminate();
+      return error;
+    }
+    static const std::set<std::string> moduleKeys{"stockbtApiVersion"};
+    if (loadedModule.value().messageType != "module-loaded" ||
+        !hasExactKeys(loadedModule.value().payload, moduleKeys) ||
+        loadedModule.value().payload.at("stockbtApiVersion") != "1") {
+      terminate();
+      return makeStrategyError(core::ErrorCode::strategyLoadFailed,
+                               "Python worker did not confirm module loading.");
+    }
+    sourceMemory = ReadOnlySharedMemory{};
+    return {};
+  }
+
   [[nodiscard]] core::Result<void>
   captureSuccessfulHook(const nlohmann::json &payload,
                         const std::string_view hook) {
@@ -1036,17 +1220,27 @@ struct PythonWorkerStrategy::Impl final {
     return error;
   }
 
-  ~Impl() { static_cast<void>(shutdown()); }
+  void shutdownNoexcept() noexcept {
+    try {
+      static_cast<void>(shutdown());
+    } catch (...) {
+      terminate(std::chrono::milliseconds{0});
+    }
+  }
+
+  ~Impl() noexcept { shutdownNoexcept(); }
+
+  Impl() = default;
+  Impl(const Impl &) = delete;
+  Impl &operator=(const Impl &) = delete;
+  Impl(Impl &&) = delete;
+  Impl &operator=(Impl &&) = delete;
 };
 
 PythonWorkerStrategy::PythonWorkerStrategy(std::unique_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {}
 
 PythonWorkerStrategy::~PythonWorkerStrategy() = default;
-PythonWorkerStrategy::PythonWorkerStrategy(PythonWorkerStrategy &&) noexcept =
-    default;
-PythonWorkerStrategy &
-PythonWorkerStrategy::operator=(PythonWorkerStrategy &&) noexcept = default;
 
 core::Result<std::unique_ptr<strategy::Strategy>>
 PythonWorkerStrategy::create(const RuntimeProfile &verifiedRuntime,
@@ -1201,147 +1395,27 @@ PythonWorkerStrategy::createInternal(
                              "Python Strategy startup was cancelled.");
   }
 
-  const auto bootstrapReady = impl->receive(
-      bootstrapDeadline, core::ErrorCode::workerBootstrapTimeout, cancellation);
-  static const std::set<std::string> readyKeys{"protocolVersion",
-                                               "pythonVersion"};
-  if (!bootstrapReady.ok()) {
-    impl->terminate();
-    return bootstrapReady.error();
+  auto bootstrapVersion = impl->validateBootstrap(verifyRuntime, cancellation);
+  if (!bootstrapVersion.ok()) {
+    return bootstrapVersion.error();
   }
-  if (bootstrapReady.value().messageType != "bootstrap-ready" ||
-      !hasExactKeys(bootstrapReady.value().payload, readyKeys) ||
-      !bootstrapReady.value()
-           .payload.at("protocolVersion")
-           .is_number_integer() ||
-      bootstrapReady.value().payload.at("protocolVersion").get<int>() !=
-          static_cast<int>(currentProtocolVersion) ||
-      !bootstrapReady.value().payload.at("pythonVersion").is_string()) {
-    impl->terminate();
-    return makeStrategyError(core::ErrorCode::workerStartFailed,
-                             "Python worker bootstrap identity is invalid.");
-  }
-  const auto workerPythonVersion =
-      bootstrapReady.value().payload.at("pythonVersion").get<std::string>();
-  if (verifyRuntime && workerPythonVersion != "3.14.9") {
-    impl->terminate();
-    return makeStrategyError(
-        core::ErrorCode::runtimeIntegrityFailure,
-        "Managed Python interpreter version changed after verification.");
-  }
+  const auto workerPythonVersion = std::move(bootstrapVersion).value();
 
-  auto handshake = impl->exchange(
-      "handshake",
-      nlohmann::json{{"protocolVersion", currentProtocolVersion},
-                     {"stockbtApiVersion", "1"}},
-      handshakeDeadline, core::ErrorCode::workerHandshakeTimeout, cancellation);
+  const auto handshake =
+      impl->validateHandshake(workerPythonVersion, cancellation);
   if (!handshake.ok()) {
-    impl->terminate();
     return handshake.error();
   }
-  static const std::set<std::string> handshakeKeys{"pythonVersion",
-                                                   "stockbtApiVersion"};
-  if (handshake.value().messageType == "worker-error") {
-    const auto error = decodeWorkerError(
-        handshake.value(), core::ErrorCode::workerHandshakeFailed);
-    impl->terminate();
-    return error;
-  }
-  if (handshake.value().messageType != "handshake-complete" ||
-      !hasExactKeys(handshake.value().payload, handshakeKeys) ||
-      handshake.value().payload.at("stockbtApiVersion") != "1" ||
-      handshake.value().payload.at("pythonVersion") != workerPythonVersion) {
-    impl->terminate();
-    return makeStrategyError(core::ErrorCode::workerHandshakeFailed,
-                             "Python worker handshake response is invalid.");
+
+  const auto moduleLoaded = impl->loadWorkerModule(cancellation);
+  if (!moduleLoaded.ok()) {
+    return moduleLoaded.error();
   }
 
-  auto loadedModule = impl->exchange(
-      "load-module",
-      nlohmann::json{{"sourceSha256", impl->sourceMemory.sha256Digest()},
-                     {"stockbtApiVersion", "1"}},
-      moduleDeadline, core::ErrorCode::strategyLoadTimeout, cancellation);
-  if (!loadedModule.ok()) {
-    impl->terminate();
-    return loadedModule.error();
-  }
-  if (loadedModule.value().messageType == "worker-error") {
-    const auto error = decodeWorkerError(
-        loadedModule.value(), core::ErrorCode::strategyLoadFailed, true);
-    impl->terminate();
-    return error;
-  }
-  static const std::set<std::string> moduleKeys{"stockbtApiVersion"};
-  if (loadedModule.value().messageType != "module-loaded" ||
-      !hasExactKeys(loadedModule.value().payload, moduleKeys) ||
-      loadedModule.value().payload.at("stockbtApiVersion") != "1") {
-    impl->terminate();
-    return makeStrategyError(core::ErrorCode::strategyLoadFailed,
-                             "Python worker did not confirm module loading.");
-  }
-  impl->sourceMemory = ReadOnlySharedMemory{};
-
-  auto createdStrategy = impl->exchange(
-      "create-strategy", nlohmann::json{{"parameters", std::move(parameters)}},
-      factoryDeadline, core::ErrorCode::strategyFactoryTimeout, cancellation);
-  if (!createdStrategy.ok()) {
-    impl->terminate();
-    return createdStrategy.error();
-  }
-  if (createdStrategy.value().messageType == "worker-error") {
-    const auto error = decodeWorkerError(
-        createdStrategy.value(), core::ErrorCode::strategyFactoryFailed, true);
-    impl->terminate();
-    return error;
-  }
-  static const std::set<std::string> strategyKeys{"indicators",
-                                                  "maxHistoryBars"};
-  std::int64_t maxHistoryBars = 0;
-  if (createdStrategy.value().messageType != "strategy-loaded" ||
-      !hasExactKeys(createdStrategy.value().payload, strategyKeys) ||
-      !readWholeInteger(createdStrategy.value().payload.at("maxHistoryBars"), 1,
-                        10'000, maxHistoryBars) ||
-      !createdStrategy.value().payload.at("indicators").is_array()) {
-    impl->terminate();
-    return makeStrategyError(
-        core::ErrorCode::strategyContractViolation,
-        "Python worker returned an invalid strategy contract.");
-  }
-  impl->maxHistoryBars = static_cast<std::size_t>(maxHistoryBars);
-  impl->strategyRequirements.maxHistoryBars = impl->maxHistoryBars;
-  std::set<std::string> indicatorNames;
-  for (const auto &indicator :
-       createdStrategy.value().payload.at("indicators")) {
-    static const std::set<std::string> indicatorKeys{"kind", "name", "period"};
-    std::int64_t period = 0;
-    if (!hasExactKeys(indicator, indicatorKeys) ||
-        !indicator.at("kind").is_string() || indicator.at("kind") != "SMA" ||
-        !indicator.at("name").is_string() ||
-        indicator.at("period").is_boolean() ||
-        !readWholeInteger(indicator.at("period"), 1, 10'000, period)) {
-      impl->terminate();
-      return makeStrategyError(
-          core::ErrorCode::strategyContractViolation,
-          "Python Strategy supports only valid SMA registrations.");
-    }
-    const auto name = indicator.at("name").get<std::string>();
-    if (!isStrictUtf8(name) || !isValidSmaName(name) ||
-        !indicatorNames.insert(name).second || period > maxHistoryBars) {
-      impl->terminate();
-      return makeStrategyError(
-          core::ErrorCode::strategyContractViolation,
-          period > maxHistoryBars
-              ? "Python Strategy history budget is smaller than an SMA period."
-              : "Python Strategy SMA names must be unique ASCII identifiers.");
-    }
-    impl->strategyRequirements.indicators.push_back(
-        {.name = name,
-         .definition = {.kind = indicators::IndicatorKind::sma,
-                        .period = static_cast<std::int32_t>(period),
-                        .secondaryPeriod = 0,
-                        .signalPeriod = 0,
-                        .output = indicators::IndicatorOutput::value,
-                        .field = indicators::BarField::close}});
+  const auto strategyCreated =
+      impl->createStrategy(std::move(parameters), cancellation);
+  if (!strategyCreated.ok()) {
+    return strategyCreated.error();
   }
   auto strategyInstance =
       std::make_unique<PythonWorkerStrategy>(std::move(impl));
@@ -1605,7 +1679,7 @@ PythonWorkerStrategy::onFinish(const strategy::StrategyContext &context,
 
 void PythonWorkerStrategy::onCancel() noexcept {
   if (impl_ != nullptr) {
-    static_cast<void>(impl_->shutdown());
+    impl_->shutdownNoexcept();
   }
 }
 
@@ -1636,9 +1710,14 @@ strategy::StrategyDiagnosticBatch PythonWorkerStrategy::takeDiagnostics() {
         .kind = strategy::StrategyDiagnosticKind::log,
         .hook = "worker",
         .level = "warning",
+        .errorCode = {},
         .message = std::string{name},
         .canonicalFieldsJson = canonical.value(),
+        .sourceLine = std::nullopt,
+        .sourceColumn = std::nullopt,
+        .traceback = {},
         .omittedBytes = stream.omittedBytes,
+        .omittedEntries = 0,
     });
     if (stream.omittedBytes > 0) {
       result.complete = false;

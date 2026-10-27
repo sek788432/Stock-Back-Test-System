@@ -106,10 +106,14 @@ runBacktestConfiguration(const BacktestConfiguration &configuration,
     const PersistedBacktestStorage &storage,
     const core::CancellationToken &cancellation = {});
 
+struct PythonWorkerPaths {
+  std::filesystem::path resourcesRoot;
+  std::filesystem::path workerBootstrapPath;
+};
+
 [[nodiscard]] core::Result<void>
 validatePythonStrategy(const PythonStrategyConfiguration &configuration,
-                       const std::filesystem::path &applicationResourcesRoot,
-                       const std::filesystem::path &workerBootstrapPath,
+                       const PythonWorkerPaths &workerPaths,
                        const core::CancellationToken &cancellation = {});
 
 using PythonVerificationProgressObserver =

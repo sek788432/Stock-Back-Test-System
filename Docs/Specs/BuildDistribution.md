@@ -128,8 +128,7 @@ Before publication:
   Windows/Linux, verify that Python Strategy is unavailable without falling
   back to a system interpreter;
 - verify user data survives upgrade and uninstall as documented;
-- run one Selectable Conditions and one Python result workflow when those
-  features are implemented;
+- run the implemented Selectable Conditions and Python result workflows;
 - reopen a stored result without starting the engine or Python;
 - verify packaging is offline and no updater or launcher is installed;
 - verify every included Data Segment is covered by redistribution evidence and

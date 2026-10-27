@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -41,10 +42,11 @@ constexpr std::size_t framePrefixBytes = frameHeaderBytes + sha256DigestBytes;
   return result;
 }
 
-[[nodiscard]] std::uint32_t readBigEndianLength(std::string_view bytes) {
+[[nodiscard]] std::uint32_t
+readBigEndianLength(const std::span<const std::byte> bytes) {
   std::uint32_t value = 0;
   for (std::size_t index = 0; index < frameHeaderBytes; ++index) {
-    value = (value << 8U) | static_cast<std::uint8_t>(bytes[index]);
+    value = (value << 8U) | std::to_integer<std::uint8_t>(bytes[index]);
   }
   return value;
 }
@@ -174,19 +176,20 @@ core::Result<std::string> encodeMessage(const ProtocolMessage &message) {
 }
 
 core::Result<ProtocolMessage>
-decodeMessage(const std::string_view frame,
-              const std::string_view expectedRunId,
+decodeMessage(const std::string &frame, const std::string_view expectedRunId,
               const std::uint64_t expectedSequence) {
   if (frame.size() < framePrefixBytes) {
     return protocolError("Protocol frame is shorter than its header.");
   }
-  const auto payloadLength = readBigEndianLength(frame);
+  const auto prefix = std::as_bytes(std::span{frame.data(), frameHeaderBytes});
+  const auto payloadLength = readBigEndianLength(prefix);
   if (payloadLength > maximumProtocolPayloadBytes ||
       frame.size() != framePrefixBytes + payloadLength) {
     return protocolError(
         "Protocol frame length is invalid or has trailing bytes.");
   }
-  const auto payloadBytes = frame.substr(framePrefixBytes, payloadLength);
+  const auto payloadBytes =
+      std::string_view{frame}.substr(framePrefixBytes, payloadLength);
   const auto expectedDigest = digestBytes(payloadBytes);
   std::uint8_t digestDifference = 0;
   for (std::size_t index = 0; index < sha256DigestBytes; ++index) {
@@ -248,18 +251,15 @@ readMessage(const ProtocolReadSome &readSome,
   if (!headerRead.ok()) {
     return headerRead.error();
   }
-  const auto headerView = std::string_view{
-      reinterpret_cast<const char *>(lengthBytes.data()), lengthBytes.size()};
-  const auto payloadLength = readBigEndianLength(headerView);
+  const auto payloadLength = readBigEndianLength(lengthBytes);
   if (payloadLength > maximumProtocolPayloadBytes) {
     return protocolError("Protocol frame exceeds the payload limit.");
   }
 
   std::string frame(framePrefixBytes + payloadLength, '\0');
   std::memcpy(frame.data(), lengthBytes.data(), lengthBytes.size());
-  auto remainingBytes = std::span<std::byte>{
-      reinterpret_cast<std::byte *>(frame.data() + frameHeaderBytes),
-      frame.size() - frameHeaderBytes};
+  auto remainingBytes = std::as_writable_bytes(std::span{
+      frame.data() + frameHeaderBytes, frame.size() - frameHeaderBytes});
   const auto bodyRead = readExact(readSome, remainingBytes);
   if (!bodyRead.ok()) {
     return bodyRead.error();

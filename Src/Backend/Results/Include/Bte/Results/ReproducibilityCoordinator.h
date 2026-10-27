@@ -40,7 +40,7 @@ public:
          const VerificationProgressObserver &observeProgress = {}) const;
 
 private:
-  VerificationStore &store_;
+  VerificationStore *store_;
 };
 
 } // namespace bte::results

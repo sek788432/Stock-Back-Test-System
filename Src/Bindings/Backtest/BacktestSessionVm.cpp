@@ -235,7 +235,7 @@ applicationWorkerBootstrapPath(const std::filesystem::path &resourcesRoot) {
   if (!overridePath.isEmpty()) {
     return std::filesystem::path{overridePath.toStdString()};
   }
-  const auto packaged = resourcesRoot / "Python" / "worker_bootstrap.py";
+  auto packaged = resourcesRoot / "Python" / "worker_bootstrap.py";
   if (std::filesystem::is_regular_file(packaged)) {
     return packaged;
   }
@@ -250,7 +250,7 @@ applicationWorkerBootstrapPath(const std::filesystem::path &resourcesRoot) {
 core::Result<nlohmann::json>
 canonicalPythonParameters(const PythonStrategyConfiguration &configuration) {
   if (configuration.sourceUtf8.empty() ||
-      configuration.sourceUtf8.size() > 1024U * 1024U ||
+      configuration.sourceUtf8.size() > std::size_t{1024} * 1024 ||
       configuration.sourceUtf8.find('\0') != std::string::npos ||
       configuration.sourceUtf8.find('\r') != std::string::npos ||
       configuration.sourceUtf8.starts_with("\xef\xbb\xbf")) {
@@ -291,7 +291,6 @@ canonicalPythonParameters(const PythonStrategyConfiguration &configuration) {
   }
   const auto maximumQuantity =
       static_cast<std::uint64_t>(engine::maximumStarterQuantityShares);
-  std::int64_t quantityValue = 0;
   if (quantity->is_number_unsigned()) {
     const auto unsignedQuantity = quantity->get<std::uint64_t>();
     if (unsignedQuantity == 0 || unsignedQuantity > maximumQuantity) {
@@ -299,9 +298,8 @@ canonicalPythonParameters(const PythonStrategyConfiguration &configuration) {
           core::ErrorCode::invalidArgument,
           "Python Strategy quantity must be a positive whole number");
     }
-    quantityValue = static_cast<std::int64_t>(unsignedQuantity);
   } else {
-    quantityValue = quantity->get<std::int64_t>();
+    const auto quantityValue = quantity->get<std::int64_t>();
     if (quantityValue < 1 ||
         quantityValue > engine::maximumStarterQuantityShares) {
       return core::makeError(
@@ -383,6 +381,8 @@ results::RunDescriptor makePythonRunDescriptor(
                   strategyConfiguration.canonicalParametersJson,
               .sourceUtf8 = strategyConfiguration.sourceUtf8,
               .sourceHash = sourceHash,
+              .canonicalPlanJson = {},
+              .planHash = {},
               .runtime = resultRuntimeProvenance(runtime),
               .provenanceAvailability = recordedProvenance,
           },
@@ -392,8 +392,7 @@ results::RunDescriptor makePythonRunDescriptor(
 core::Result<PreparedPythonBacktest>
 preparePythonBacktest(const BacktestConfiguration &configuration,
                       const PersistedBacktestStorage &storage,
-                      const std::filesystem::path &resourcesRoot,
-                      const std::filesystem::path &workerBootstrapPath,
+                      const PythonWorkerPaths &workerPaths,
                       const core::CancellationToken &cancellation) {
   if (!configuration.pythonStrategy.has_value() ||
       configuration.schema != "ohlcv-1h" ||
@@ -411,7 +410,7 @@ preparePythonBacktest(const BacktestConfiguration &configuration,
   if (!capital.ok()) {
     return capital.error();
   }
-  auto runtime = python::discoverManagedRuntime(resourcesRoot);
+  auto runtime = python::discoverManagedRuntime(workerPaths.resourcesRoot);
   if (!runtime.ok()) {
     return runtime.error();
   }
@@ -459,18 +458,29 @@ preparePythonBacktest(const BacktestConfiguration &configuration,
       .parameters = std::move(parameters).value(),
       .runtime = std::move(runtime).value(),
       .dataStore = storage.dataStore,
-      .workerBootstrapPath = workerBootstrapPath,
+      .workerBootstrapPath = workerPaths.workerBootstrapPath,
       .startDate = configuration.startDate,
       .symbol = configuration.symbol.toStdString(),
       .quantityShares = quantityShares,
   };
 }
 
+struct PythonWarmupRequest final {
+  std::filesystem::path dataStore;
+  std::string snapshotId;
+  std::string symbol;
+  QDate startDate;
+  std::size_t maximumHistory = 0;
+};
+
 core::Result<std::vector<core::Bar>>
-loadPythonWarmupBars(const std::filesystem::path &dataStore,
-                     const std::string &snapshotId, const std::string &symbol,
-                     const QDate startDate, const std::size_t maximumHistory,
+loadPythonWarmupBars(const PythonWarmupRequest &request,
                      const core::CancellationToken &cancellation) {
+  const auto &dataStore = request.dataStore;
+  const auto &snapshotId = request.snapshotId;
+  const auto &symbol = request.symbol;
+  const auto startDate = request.startDate;
+  const auto maximumHistory = request.maximumHistory;
   if (maximumHistory == 0 || maximumHistory > 10'000) {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Python Strategy history requirement is invalid");
@@ -544,9 +554,13 @@ core::Result<engine::RecordedBacktestOutcome> executePythonAttempt(
     const PersistedBacktestStorage &storage,
     const core::CancellationToken &cancellation,
     const engine::BacktestExecution::RecordedResultObserver &onResultCreated) {
-  auto warmupResult = loadPythonWarmupBars(
-      prepared.dataStore, storage.snapshotId, prepared.symbol,
-      prepared.startDate, 10'000, cancellation);
+  auto warmupResult =
+      loadPythonWarmupBars(PythonWarmupRequest{.dataStore = prepared.dataStore,
+                                               .snapshotId = storage.snapshotId,
+                                               .symbol = prepared.symbol,
+                                               .startDate = prepared.startDate,
+                                               .maximumHistory = 10'000},
+                           cancellation);
   if (!warmupResult.ok()) {
     return warmupResult.error();
   }
@@ -599,123 +613,19 @@ pythonOutcomeSnapshot(const engine::RecordedBacktestOutcome &recorded) {
   return snapshot;
 }
 
-} // namespace
+struct PersistedBacktestData final {
+  QDate exclusiveEnd;
+  std::int64_t initialCapitalMicrodollars = 0;
+  data::SnapshotSelection selection;
+  std::vector<core::Bar> bars;
+  std::optional<strategy::PreviousDataDayClose> previousDataDayClose;
+  std::vector<strategy::PreviousDataDaySummary> previousDataDays;
+};
 
-#if defined(BTE_ENABLE_TEST_HOOKS)
-namespace testing {
-
-void cancelAfterNextDraftStoreOpen(core::CancellationSource &source) noexcept {
-  cancelAfterDraftOpen.store(&source);
-}
-
-void clearDraftStoreOpenHook() noexcept { cancelAfterDraftOpen.store(nullptr); }
-
-core::Result<std::vector<core::Bar>>
-selectPythonWarmupBars(const std::filesystem::path &dataStore,
-                       const std::string &snapshotId, const std::string &symbol,
-                       const QDate startDate, const std::size_t maximumHistory,
-                       const core::CancellationToken &cancellation) {
-  return loadPythonWarmupBars(dataStore, snapshotId, symbol, startDate,
-                              maximumHistory, cancellation);
-}
-
-} // namespace testing
-#endif
-
-core::Result<BacktestSnapshot>
-// The scalar inputs are intentionally kept explicit at this starter seam.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): stable public seam
-runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
-                   const std::int64_t quantityShares,
-                   const core::CancellationToken &cancellation) {
-  return runBacktestSession(std::move(bars), initialCapital, quantityShares,
-                            std::nullopt, cancellation);
-}
-
-core::Result<BacktestSnapshot>
-// The scalar inputs are intentionally kept explicit at this starter seam.
-runBacktestSession(
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): stable public seam
-    std::vector<core::Bar> bars, const double initialCapital,
-    const std::int64_t quantityShares,
-    std::optional<strategy::SelectableStrategyPlan> selectableStrategy,
-    const core::CancellationToken &cancellation) {
-  const auto normalizedCapital = normalizedCapitalMicrodollars(initialCapital);
-  if (!normalizedCapital.ok()) {
-    return normalizedCapital.error();
-  }
-
-  const auto request = engine::BacktestRequest{
-      .bars = std::move(bars),
-      .initialCapitalMicrodollars = normalizedCapital.value(),
-      .quantityShares = quantityShares,
-      .selectableStrategy = std::move(selectableStrategy),
-      .previousDataDayClose = std::nullopt,
-      .previousDataDays = {},
-  };
-  auto engineResult = engine::runBacktest(request, cancellation);
-  if (!engineResult.ok()) {
-    return engineResult.error();
-  }
-
-  return toSnapshot(engineResult.value());
-}
-
-core::Result<BacktestSnapshot>
-runBacktestConfiguration(const BacktestConfiguration &configuration,
-                         const core::CancellationToken &cancellation) {
-  if (configuration.pythonStrategy.has_value()) {
-    return core::makeError(core::ErrorCode::invalidArgument,
-                           "Python Strategy requires persisted Result storage");
-  }
-  auto bars = loadBacktestBars(configuration.symbol, configuration.schema,
-                               configuration.startDate, configuration.endDate,
-                               cancellation);
-  if (!bars.ok()) {
-    return bars.error();
-  }
-  return runBacktestSession(std::move(bars).value(),
-                            configuration.initialCapital,
-                            configuration.quantityShares,
-                            configuration.selectableStrategy, cancellation);
-}
-
-core::Result<BacktestSnapshot>
-runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
-                                  const PersistedBacktestStorage &storage,
-                                  const core::CancellationToken &cancellation) {
-  if (configuration.pythonStrategy.has_value()) {
-    const auto resourcesRoot = applicationResourcesRoot();
-    const auto bootstrap = applicationWorkerBootstrapPath(resourcesRoot);
-    auto prepared = preparePythonBacktest(configuration, storage, resourcesRoot,
-                                          bootstrap, cancellation);
-    if (!prepared.ok()) {
-      return prepared.error();
-    }
-    auto recorded =
-        executePythonAttempt(prepared.value(), storage, cancellation, {});
-    if (!recorded.ok()) {
-      return recorded.error();
-    }
-    auto snapshot = pythonOutcomeSnapshot(recorded.value());
-    if (!snapshot.ok() ||
-        recorded.value().status != results::RunStatus::completed) {
-      return snapshot;
-    }
-    auto verificationStore =
-        results::VerificationStore::open(storage.resultStore);
-    if (!verificationStore.ok()) {
-      return verificationStore.error();
-    }
-    auto verified = verificationStore.value()->hasVerifiedResult(
-        prepared.value().descriptor, recorded.value().persisted);
-    if (!verified.ok()) {
-      return verified.error();
-    }
-    auto output = std::move(snapshot).value();
-    output.reproducibilityVerified = verified.value();
-    return output;
-  }
+[[nodiscard]] core::Result<PersistedBacktestData>
+preparePersistedBacktestData(const BacktestConfiguration &configuration,
+                             const PersistedBacktestStorage &storage,
+                             const core::CancellationToken &cancellation) {
   if (configuration.schema != "ohlcv-1h") {
     return core::makeError(core::ErrorCode::schemaMismatch,
                            "Backtest execution accepts ohlcv-1h only");
@@ -805,6 +715,21 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
         .volume = static_cast<double>(bar.volumeMicroshares) / 1'000'000.0,
     });
   }
+  return PersistedBacktestData{
+      .exclusiveEnd = exclusiveEnd,
+      .initialCapitalMicrodollars = capital.value(),
+      .selection = std::move(selection),
+      .bars = std::move(bars),
+      .previousDataDayClose = previousDataDayClose,
+      .previousDataDays = std::move(previousDataDays),
+  };
+}
+
+[[nodiscard]] core::Result<BacktestSnapshot>
+recordPersistedBacktest(const BacktestConfiguration &configuration,
+                        const PersistedBacktestStorage &storage,
+                        PersistedBacktestData data,
+                        const core::CancellationToken &cancellation) {
   auto store =
       results::ResultStore::open(storage.resultStore, storage.dataStore);
   if (!store.ok()) {
@@ -813,23 +738,25 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
   const auto descriptor = results::RunDescriptor{
       .universe = {configuration.symbol.toStdString()},
       .range = {.start = timestampFromDate(configuration.startDate),
-                .end = timestampFromDate(exclusiveEnd)},
-      .initialCapitalMicrodollars = capital.value(),
+                .end = timestampFromDate(data.exclusiveEnd)},
+      .initialCapitalMicrodollars = data.initialCapitalMicrodollars,
       .strategyId = configuration.selectableStrategy.has_value()
                         ? "selectable-conditions"
                         : "starter",
       .strategyHash =
           strategy::canonicalStrategyHash(configuration.selectableStrategy),
-      .dataSelection = selection.identity,
+      .dataSelection = data.selection.identity,
+      .provenance = {},
   };
   auto recorded = engine::runBacktestAndRecord(
-      {.bars = std::move(bars),
+      {.bars = std::move(data.bars),
+       .historyBars = {},
        .symbol = configuration.symbol.toStdString(),
-       .initialCapitalMicrodollars = capital.value(),
+       .initialCapitalMicrodollars = data.initialCapitalMicrodollars,
        .quantityShares = configuration.quantityShares,
        .selectableStrategy = configuration.selectableStrategy,
-       .previousDataDayClose = previousDataDayClose,
-       .previousDataDays = std::move(previousDataDays)},
+       .previousDataDayClose = data.previousDataDayClose,
+       .previousDataDays = std::move(data.previousDataDays)},
       *store.value(), descriptor, cancellation);
   if (!recorded.ok()) {
     return recorded.error();
@@ -852,10 +779,161 @@ runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
   return snapshot;
 }
 
+[[nodiscard]] core::Result<BacktestSnapshot>
+runPersistedPythonConfiguration(const BacktestConfiguration &configuration,
+                                const PersistedBacktestStorage &storage,
+                                const core::CancellationToken &cancellation) {
+  const auto resourcesRoot = applicationResourcesRoot();
+  const PythonWorkerPaths workerPaths{
+      .resourcesRoot = resourcesRoot,
+      .workerBootstrapPath = applicationWorkerBootstrapPath(resourcesRoot),
+  };
+  auto prepared =
+      preparePythonBacktest(configuration, storage, workerPaths, cancellation);
+  if (!prepared.ok()) {
+    return prepared.error();
+  }
+  auto recorded =
+      executePythonAttempt(prepared.value(), storage, cancellation, {});
+  if (!recorded.ok()) {
+    return recorded.error();
+  }
+  auto snapshot = pythonOutcomeSnapshot(recorded.value());
+  if (!snapshot.ok() ||
+      recorded.value().status != results::RunStatus::completed) {
+    return snapshot;
+  }
+  auto verificationStore =
+      results::VerificationStore::open(storage.resultStore);
+  if (!verificationStore.ok()) {
+    return verificationStore.error();
+  }
+  const auto verified = verificationStore.value()->hasVerifiedResult(
+      prepared.value().descriptor, recorded.value().persisted);
+  if (!verified.ok()) {
+    return verified.error();
+  }
+  auto output = std::move(snapshot).value();
+  output.reproducibilityVerified = verified.value();
+  return output;
+}
+
+[[nodiscard]] core::Result<BacktestSnapshot>
+runPersistedSelectableConfiguration(
+    const BacktestConfiguration &configuration,
+    const PersistedBacktestStorage &storage,
+    const core::CancellationToken &cancellation) {
+  auto data =
+      preparePersistedBacktestData(configuration, storage, cancellation);
+  if (!data.ok()) {
+    return data.error();
+  }
+  return recordPersistedBacktest(configuration, storage,
+                                 std::move(data).value(), cancellation);
+}
+
+} // namespace
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+namespace testing {
+
+void cancelAfterNextDraftStoreOpen(core::CancellationSource &source) noexcept {
+  cancelAfterDraftOpen.store(&source);
+}
+
+void clearDraftStoreOpenHook() noexcept { cancelAfterDraftOpen.store(nullptr); }
+
+core::Result<std::vector<core::Bar>>
+selectPythonWarmupBars(const std::filesystem::path &dataStore,
+                       const std::string &snapshotId, const std::string &symbol,
+                       const QDate startDate, const std::size_t maximumHistory,
+                       const core::CancellationToken &cancellation) {
+  return loadPythonWarmupBars(
+      PythonWarmupRequest{.dataStore = dataStore,
+                          .snapshotId = snapshotId,
+                          .symbol = symbol,
+                          .startDate = startDate,
+                          .maximumHistory = maximumHistory},
+      cancellation);
+}
+
+} // namespace testing
+#endif
+
+core::Result<BacktestSnapshot>
+// The scalar inputs are intentionally kept explicit at this starter seam.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): stable public seam
+runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
+                   const std::int64_t quantityShares,
+                   const core::CancellationToken &cancellation) {
+  return runBacktestSession(std::move(bars), initialCapital, quantityShares,
+                            std::nullopt, cancellation);
+}
+
+core::Result<BacktestSnapshot>
+// The scalar inputs are intentionally kept explicit at this starter seam.
+runBacktestSession(
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): stable public seam
+    std::vector<core::Bar> bars, const double initialCapital,
+    const std::int64_t quantityShares,
+    std::optional<strategy::SelectableStrategyPlan> selectableStrategy,
+    const core::CancellationToken &cancellation) {
+  const auto normalizedCapital = normalizedCapitalMicrodollars(initialCapital);
+  if (!normalizedCapital.ok()) {
+    return normalizedCapital.error();
+  }
+
+  const auto request = engine::BacktestRequest{
+      .bars = std::move(bars),
+      .historyBars = {},
+      .initialCapitalMicrodollars = normalizedCapital.value(),
+      .quantityShares = quantityShares,
+      .selectableStrategy = std::move(selectableStrategy),
+      .previousDataDayClose = std::nullopt,
+      .previousDataDays = {},
+  };
+  auto engineResult = engine::runBacktest(request, cancellation);
+  if (!engineResult.ok()) {
+    return engineResult.error();
+  }
+
+  return toSnapshot(engineResult.value());
+}
+
+core::Result<BacktestSnapshot>
+runBacktestConfiguration(const BacktestConfiguration &configuration,
+                         const core::CancellationToken &cancellation) {
+  if (configuration.pythonStrategy.has_value()) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Python Strategy requires persisted Result storage");
+  }
+  auto bars = loadBacktestBars(configuration.symbol, configuration.schema,
+                               configuration.startDate, configuration.endDate,
+                               cancellation);
+  if (!bars.ok()) {
+    return bars.error();
+  }
+  return runBacktestSession(std::move(bars).value(),
+                            configuration.initialCapital,
+                            configuration.quantityShares,
+                            configuration.selectableStrategy, cancellation);
+}
+
+core::Result<BacktestSnapshot>
+runPersistedBacktestConfiguration(const BacktestConfiguration &configuration,
+                                  const PersistedBacktestStorage &storage,
+                                  const core::CancellationToken &cancellation) {
+  if (configuration.pythonStrategy.has_value()) {
+    return runPersistedPythonConfiguration(configuration, storage,
+                                           cancellation);
+  }
+  return runPersistedSelectableConfiguration(configuration, storage,
+                                             cancellation);
+}
+
 core::Result<void>
 validatePythonStrategy(const PythonStrategyConfiguration &configuration,
-                       const std::filesystem::path &resourcesRoot,
-                       const std::filesystem::path &workerBootstrapPath,
+                       const PythonWorkerPaths &workerPaths,
                        const core::CancellationToken &cancellation) {
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
@@ -865,14 +943,14 @@ validatePythonStrategy(const PythonStrategyConfiguration &configuration,
   if (!parameters.ok()) {
     return parameters.error();
   }
-  auto runtime = python::discoverManagedRuntime(resourcesRoot);
+  auto runtime = python::discoverManagedRuntime(workerPaths.resourcesRoot);
   if (!runtime.ok()) {
     return runtime.error();
   }
   auto strategy = python::PythonWorkerStrategy::create(
-      runtime.value(), workerBootstrapPath, configuration.sourceUtf8,
-      std::move(parameters).value(), configuration.sourceConsentGranted,
-      cancellation);
+      runtime.value(), workerPaths.workerBootstrapPath,
+      configuration.sourceUtf8, std::move(parameters).value(),
+      configuration.sourceConsentGranted, cancellation);
   if (!strategy.ok()) {
     return strategy.error();
   }
@@ -896,8 +974,12 @@ verifyPersistedPythonBacktestConfiguration(
         core::ErrorCode::invalidArgument,
         "Reproducibility verification requires Python Strategy");
   }
-  auto prepared = preparePythonBacktest(configuration, storage, resourcesRoot,
-                                        workerBootstrapPath, cancellation);
+  const PythonWorkerPaths workerPaths{
+      .resourcesRoot = resourcesRoot,
+      .workerBootstrapPath = workerBootstrapPath,
+  };
+  auto prepared =
+      preparePythonBacktest(configuration, storage, workerPaths, cancellation);
   if (!prepared.ok()) {
     return prepared.error();
   }
@@ -906,7 +988,8 @@ verifyPersistedPythonBacktestConfiguration(
   if (!verificationStore.ok()) {
     return verificationStore.error();
   }
-  results::ReproducibilityCoordinator coordinator{*verificationStore.value()};
+  const results::ReproducibilityCoordinator coordinator{
+      *verificationStore.value()};
   const auto &ready = prepared.value();
   const results::VerificationAttemptRunner runAttempt =
       [&ready,

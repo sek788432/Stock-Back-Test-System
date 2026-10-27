@@ -15,8 +15,10 @@
 
 namespace bte::bindings::python {
 
-inline constexpr std::size_t maximumWorkerDiagnosticBytes = 256U * 1024U;
-inline constexpr std::size_t maximumWorkerSourceBytes = 1024U * 1024U;
+inline constexpr std::size_t maximumWorkerDiagnosticBytes =
+    std::size_t{256} * 1024;
+inline constexpr std::size_t maximumWorkerSourceBytes =
+    std::size_t{1024} * 1024;
 
 struct CapturedDiagnosticStream {
   std::string retainedBytes;
@@ -46,8 +48,8 @@ public:
   [[nodiscard]] const std::string &sha256Digest() const noexcept;
 
 private:
-  ReadOnlySharedMemory(int descriptor, std::uint64_t size,
-                       std::string digest) noexcept;
+  ReadOnlySharedMemory(int descriptor, std::string digest,
+                       std::uint64_t size) noexcept;
   void reset() noexcept;
 
   int descriptor_ = -1;

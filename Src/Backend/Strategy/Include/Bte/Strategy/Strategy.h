@@ -95,6 +95,11 @@ struct StrategyDiagnosticBatch final {
 /// command batch. The Engine remains the sole order and accounting authority.
 class Strategy {
 public:
+  Strategy() = default;
+  Strategy(const Strategy &) = delete;
+  Strategy &operator=(const Strategy &) = delete;
+  Strategy(Strategy &&) = delete;
+  Strategy &operator=(Strategy &&) = delete;
   virtual ~Strategy() = default;
 
   [[nodiscard]] virtual const StrategyRequirements &
