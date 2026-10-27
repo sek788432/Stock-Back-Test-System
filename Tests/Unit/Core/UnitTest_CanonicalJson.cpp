@@ -1,5 +1,7 @@
 #include "Bte/Core/CanonicalJson.h"
 
+#include <nlohmann/json.hpp>
+
 #include <gtest/gtest.h>
 
 #include <limits>
