@@ -1669,8 +1669,8 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   QObject::connect(
       verify, &QPushButton::clicked, this,
       [this, verify, run, cancel, status, strategyDiagnostics, strategyCombo,
-       makePythonBacktestConfiguration, verificationWatcher,
-       watcher, beginDraftRefresh] {
+       makePythonBacktestConfiguration, verificationWatcher, watcher,
+       beginDraftRefresh] {
         if (watcher->isRunning() || verificationWatcher->isRunning()) {
           return;
         }

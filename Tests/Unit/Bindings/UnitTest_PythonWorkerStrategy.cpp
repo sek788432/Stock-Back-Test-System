@@ -88,7 +88,8 @@ nlohmann::json parameters() {
 }
 
 #if defined(BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH)
-TEST(PythonWorkerStrategyTest, loadsTheProjectOwnedStockbtFromTheManagedProfile) {
+TEST(PythonWorkerStrategyTest,
+     loadsTheProjectOwnedStockbtFromTheManagedProfile) {
   const auto runtime = bte::bindings::python::verifyRuntimeProfile(
       BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH);
   ASSERT_TRUE(runtime.ok()) << runtime.error().message;
@@ -199,7 +200,8 @@ def create_strategy(params):
   cancellation.requestCancellation();
   ASSERT_EQ(creation.wait_for(std::chrono::seconds{3}),
             std::future_status::ready)
-      << "canceling strategy factory startup must terminate the worker promptly";
+      << "canceling strategy factory startup must terminate the worker "
+         "promptly";
   auto result = creation.get();
   ASSERT_FALSE(result.ok());
   EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
@@ -208,10 +210,9 @@ def create_strategy(params):
 TEST(PythonWorkerStrategyTest, usesOnlyTheConfiguredTimezoneDatabasePath) {
   const auto timezonePath =
       std::filesystem::temp_directory_path() /
-      ("bte-python-timezone-test-" + std::to_string(
-                                         std::chrono::steady_clock::now()
-                                             .time_since_epoch()
-                                             .count()));
+      ("bte-python-timezone-test-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::create_directories(timezonePath);
   struct DirectoryCleanup final {
     std::filesystem::path path;
@@ -1127,8 +1128,8 @@ def create_strategy(params):
 TEST(PythonWorkerStrategyTest,
      validatesPythonOrderQuantityTypesAndPreservesCallbackAtomicity) {
   constexpr std::array<std::string_view, 8> invalidQuantities{
-      "True", "1.0", "1.5", "float('nan')", "float('inf')", "0", "-1",
-      "1000000001"};
+      "True",         "1.0", "1.5", "float('nan')",
+      "float('inf')", "0",   "-1",  "1000000001"};
   for (const auto quantity : invalidQuantities) {
     const auto source =
         std::string{R"PY(STOCKBT_API_VERSION = "1"
@@ -1171,7 +1172,8 @@ class Example:
     EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::failed);
     EXPECT_EQ(execution.value()->result().barsProcessed, 0U);
     EXPECT_TRUE(std::ranges::none_of(
-        execution.value()->result().canonicalRecords, [](const auto &record) {
+        execution.value()->result().canonicalRecords,
+        [](const auto &record) {
           return record.family == bte::results::RecordFamily::order ||
                  record.family == bte::results::RecordFamily::fill ||
                  record.family == bte::results::RecordFamily::portfolio;
@@ -1182,8 +1184,8 @@ class Example:
 
 TEST(PythonWorkerStrategyTest,
      acceptsPythonOrderQuantityAtBothSupportedBoundaries) {
-  constexpr std::array<std::pair<std::string_view, std::int64_t>, 2> quantities{{
-      {"1", 1}, {"1000000000", 1'000'000'000}}};
+  constexpr std::array<std::pair<std::string_view, std::int64_t>, 2> quantities{
+      {{"1", 1}, {"1000000000", 1'000'000'000}}};
   for (const auto &[expression, expected] : quantities) {
     const auto source =
         std::string{R"PY(STOCKBT_API_VERSION = "1"
@@ -1200,8 +1202,8 @@ class Example:
         parameters(), true);
     ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
 
-    const auto commands = strategyResult.value()->onMarket(
-        context(1'700'500'000'000LL));
+    const auto commands =
+        strategyResult.value()->onMarket(context(1'700'500'000'000LL));
 
     ASSERT_TRUE(commands.ok()) << commands.error().message;
     ASSERT_EQ(commands.value().size(), 1U);
@@ -1213,41 +1215,37 @@ class Example:
 TEST(PythonWorkerStrategyTest,
      startupFailuresRetainBoundedStrategySourceLocations) {
   const std::array cases{
-      std::pair{
-          std::string{"STOCKBT_API_VERSION = \"1\"\n"
-                      "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
-                      "def create_strategy(:\n    pass\n"},
-          std::pair{bte::core::ErrorCode::strategyLoadFailed,
-                    std::string{"strategy.py:3:"}}},
-      std::pair{
-          std::string{"STOCKBT_API_VERSION = \"1\"\n"
-                      "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
-                      "import subprocess\n"
-                      "def create_strategy(params): return None\n"},
-          std::pair{bte::core::ErrorCode::strategyLoadFailed,
-                    std::string{"strategy.py:3:"}}},
-      std::pair{
-          std::string{"STOCKBT_API_VERSION = \"1\"\n"
-                      "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
-                      "raise RuntimeError('module boom')\n"
-                      "def create_strategy(params): return None\n"},
-          std::pair{bte::core::ErrorCode::strategyLoadFailed,
-                    std::string{"module boom"}}},
-      std::pair{
-          std::string{"STOCKBT_API_VERSION = \"1\"\n"
-                      "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
-                      "class Example:\n"
-                      "    max_history_bars = 1\n"
-                      "    indicators = {}\n"
-                      "def create_strategy(params):\n"
-                      "    raise ValueError('factory boom')\n"},
-          std::pair{bte::core::ErrorCode::strategyFactoryFailed,
-                    std::string{"factory boom"}}},
+      std::pair{std::string{"STOCKBT_API_VERSION = \"1\"\n"
+                            "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
+                            "def create_strategy(:\n    pass\n"},
+                std::pair{bte::core::ErrorCode::strategyLoadFailed,
+                          std::string{"strategy.py:3:"}}},
+      std::pair{std::string{"STOCKBT_API_VERSION = \"1\"\n"
+                            "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
+                            "import subprocess\n"
+                            "def create_strategy(params): return None\n"},
+                std::pair{bte::core::ErrorCode::strategyLoadFailed,
+                          std::string{"strategy.py:3:"}}},
+      std::pair{std::string{"STOCKBT_API_VERSION = \"1\"\n"
+                            "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
+                            "raise RuntimeError('module boom')\n"
+                            "def create_strategy(params): return None\n"},
+                std::pair{bte::core::ErrorCode::strategyLoadFailed,
+                          std::string{"module boom"}}},
+      std::pair{std::string{"STOCKBT_API_VERSION = \"1\"\n"
+                            "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
+                            "class Example:\n"
+                            "    max_history_bars = 1\n"
+                            "    indicators = {}\n"
+                            "def create_strategy(params):\n"
+                            "    raise ValueError('factory boom')\n"},
+                std::pair{bte::core::ErrorCode::strategyFactoryFailed,
+                          std::string{"factory boom"}}},
   };
   for (const auto &[source, expected] : cases) {
     auto strategyResult = PythonWorkerStrategy::createForTesting(
-        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
-        source, parameters(), true);
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+        parameters(), true);
 
     ASSERT_FALSE(strategyResult.ok());
     EXPECT_EQ(strategyResult.error().code, expected.first);
@@ -1267,8 +1265,8 @@ TEST(PythonWorkerStrategyTest, rejectsInvalidSourceWithoutReturningStrategy) {
   ASSERT_FALSE(strategyResult.ok());
   EXPECT_EQ(strategyResult.error().code,
             bte::core::ErrorCode::strategyLoadFailed);
-  EXPECT_TRUE(strategyResult.error().message.starts_with(
-      "StrategyImportNotAllowed:"));
+  EXPECT_TRUE(
+      strategyResult.error().message.starts_with("StrategyImportNotAllowed:"));
 }
 
 TEST(PythonWorkerStrategyTest, reportsStableSyntaxAndApiVersionErrorCodes) {
@@ -1281,8 +1279,8 @@ TEST(PythonWorkerStrategyTest, reportsStableSyntaxAndApiVersionErrorCodes) {
   }};
   for (const auto &[source, expectedCode] : failures) {
     const auto result = PythonWorkerStrategy::createForTesting(
-        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
-        source, parameters(), true);
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+        parameters(), true);
     ASSERT_FALSE(result.ok());
     EXPECT_EQ(result.error().code, bte::core::ErrorCode::strategyLoadFailed);
     EXPECT_TRUE(result.error().message.starts_with(expectedCode))

@@ -336,8 +336,8 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
       for (const auto &license : licenses) {
         actualLicenses.insert(license.get<std::string>());
       }
-      const std::set<std::string> approvedLicenses(
-          pin->second.licenses.begin(), pin->second.licenses.end());
+      const std::set<std::string> approvedLicenses(pin->second.licenses.begin(),
+                                                   pin->second.licenses.end());
       if (version != pin->second.version ||
           artifactDigest != pin->second.artifactSha256 ||
           actualLicenses.size() != licenses.size() ||
@@ -412,15 +412,17 @@ verifyRuntimeProfile(const std::filesystem::path &profileRoot) {
         interpreterIsListed || relativePath == pythonExecutable;
   }
   if (!interpreterIsListed || !timezoneDatabaseRelativePath.has_value()) {
-    return integrityError(
-        "Runtime interpreter or pinned timezone database is not covered by installed-file hashes.");
+    return integrityError("Runtime interpreter or pinned timezone database is "
+                          "not covered by installed-file hashes.");
   }
 
   std::set<std::string> actualFiles;
-  for (std::filesystem::recursive_directory_iterator iterator(
-           canonicalRoot, error), end;
+  for (std::filesystem::recursive_directory_iterator
+           iterator(canonicalRoot, error),
+       end;
        iterator != end && !error; iterator.increment(error)) {
-    const auto relativePath = iterator->path().lexically_relative(canonicalRoot);
+    const auto relativePath =
+        iterator->path().lexically_relative(canonicalRoot);
     if (relativePath.empty()) {
       return integrityError(
           "Runtime profile entry could not be made relative to its root.");
@@ -497,9 +499,8 @@ discoverManagedRuntime(const std::filesystem::path &applicationResourcesRoot) {
   if (!isSupportedHost()) {
     return unavailableError("Python Strategy is unavailable on this platform.");
   }
-  const auto profileRoot =
-      applicationResourcesRoot / "RuntimeProfiles" /
-      std::string{managedRuntimeProfileId};
+  const auto profileRoot = applicationResourcesRoot / "RuntimeProfiles" /
+                           std::string{managedRuntimeProfileId};
   std::error_code error;
   if (!std::filesystem::exists(profileRoot, error) || error) {
     return unavailableError(

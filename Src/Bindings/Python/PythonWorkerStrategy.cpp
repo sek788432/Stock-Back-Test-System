@@ -345,9 +345,10 @@ validateParameters(const nlohmann::json &parameters) {
   return knownErrorCodes.contains(std::string{code});
 }
 
-[[nodiscard]] core::Error decodeWorkerError(
-    const ProtocolMessage &message, const core::ErrorCode fallback,
-    const bool includeStartupDiagnostics = false) {
+[[nodiscard]] core::Error
+decodeWorkerError(const ProtocolMessage &message,
+                  const core::ErrorCode fallback,
+                  const bool includeStartupDiagnostics = false) {
   static const std::set<std::string> errorKeys{"errorCode", "message"};
   static const std::set<std::string> diagnosticErrorKeys{
       "diagnostics", "errorCode", "message"};
@@ -388,17 +389,16 @@ validateParameters(const nlohmann::json &parameters) {
         return false;
       }
       const auto number = value.get<std::int64_t>();
-      if (number <= 0 ||
-          number > std::numeric_limits<std::uint32_t>::max()) {
+      if (number <= 0 || number > std::numeric_limits<std::uint32_t>::max()) {
         return false;
       }
       output = static_cast<std::uint32_t>(number);
       return true;
     };
-    const auto omittedValue = diagnostics.is_object() &&
-                                      diagnostics.contains("omittedTracebackBytes")
-                                  ? diagnostics.at("omittedTracebackBytes")
-                                  : nlohmann::json{};
+    const auto omittedValue =
+        diagnostics.is_object() && diagnostics.contains("omittedTracebackBytes")
+            ? diagnostics.at("omittedTracebackBytes")
+            : nlohmann::json{};
     if (!hasExactKeys(diagnostics, keys) ||
         !diagnostics.at("traceback").is_string() ||
         !isStrictUtf8(
@@ -433,8 +433,8 @@ validateParameters(const nlohmann::json &parameters) {
     }
     const auto omitted = omittedValue.get<std::uint64_t>();
     if (omitted > 0) {
-      messageText += "\n... " + std::to_string(omitted) +
-                     " traceback bytes omitted";
+      messageText +=
+          "\n... " + std::to_string(omitted) + " traceback bytes omitted";
     }
   }
   return core::makeError(workerErrorCode(code, fallback),
@@ -1077,11 +1077,10 @@ PythonWorkerStrategy::create(const RuntimeProfile &verifiedRuntime,
         core::ErrorCode::runtimeIntegrityFailure,
         "Managed Python runtime changed after verification.");
   }
-  return createInternal(runtime.value().pythonExecutablePath,
-                        workerBootstrapPath, std::move(source),
-                        std::move(parameters), sourceConsentGranted, true,
-                        false, cancellation, warmupHistory,
-                        runtime.value().timezoneDatabasePath);
+  return createInternal(
+      runtime.value().pythonExecutablePath, workerBootstrapPath,
+      std::move(source), std::move(parameters), sourceConsentGranted, true,
+      false, cancellation, warmupHistory, runtime.value().timezoneDatabasePath);
 }
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
@@ -1094,11 +1093,10 @@ PythonWorkerStrategy::createForTesting(
     const core::CancellationToken &cancellation,
     const std::span<const core::Bar> warmupHistory,
     std::filesystem::path timezoneDatabasePath) {
-  return createInternal(pythonExecutable, workerBootstrapPath,
-                        std::move(source), std::move(parameters),
-                        sourceConsentGranted, false, skipNumpySeedForTest,
-                        cancellation, warmupHistory,
-                        std::move(timezoneDatabasePath));
+  return createInternal(
+      pythonExecutable, workerBootstrapPath, std::move(source),
+      std::move(parameters), sourceConsentGranted, false, skipNumpySeedForTest,
+      cancellation, warmupHistory, std::move(timezoneDatabasePath));
 }
 #endif
 
@@ -1203,9 +1201,8 @@ PythonWorkerStrategy::createInternal(
                              "Python Strategy startup was cancelled.");
   }
 
-  const auto bootstrapReady =
-      impl->receive(bootstrapDeadline, core::ErrorCode::workerBootstrapTimeout,
-                    cancellation);
+  const auto bootstrapReady = impl->receive(
+      bootstrapDeadline, core::ErrorCode::workerBootstrapTimeout, cancellation);
   static const std::set<std::string> readyKeys{"protocolVersion",
                                                "pythonVersion"};
   if (!bootstrapReady.ok()) {
@@ -1237,8 +1234,7 @@ PythonWorkerStrategy::createInternal(
       "handshake",
       nlohmann::json{{"protocolVersion", currentProtocolVersion},
                      {"stockbtApiVersion", "1"}},
-      handshakeDeadline, core::ErrorCode::workerHandshakeTimeout,
-      cancellation);
+      handshakeDeadline, core::ErrorCode::workerHandshakeTimeout, cancellation);
   if (!handshake.ok()) {
     impl->terminate();
     return handshake.error();
@@ -1270,9 +1266,8 @@ PythonWorkerStrategy::createInternal(
     return loadedModule.error();
   }
   if (loadedModule.value().messageType == "worker-error") {
-    const auto error = decodeWorkerError(loadedModule.value(),
-                                         core::ErrorCode::strategyLoadFailed,
-                                         true);
+    const auto error = decodeWorkerError(
+        loadedModule.value(), core::ErrorCode::strategyLoadFailed, true);
     impl->terminate();
     return error;
   }

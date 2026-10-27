@@ -181,8 +181,7 @@ TEST(ManagedWorkerProcessTest,
   auto sharedMemory = std::move(sharedMemoryResult).value();
   constexpr std::string_view historyBytes = "binary-history-region";
   auto historyMemoryResult = ReadOnlySharedMemory::create(historyBytes);
-  ASSERT_TRUE(historyMemoryResult.ok())
-      << historyMemoryResult.error().message;
+  ASSERT_TRUE(historyMemoryResult.ok()) << historyMemoryResult.error().message;
   auto historyMemory = std::move(historyMemoryResult).value();
   const auto flags = ::fcntl(sharedMemory.descriptor(), F_GETFL);
   ASSERT_GE(flags, 0);

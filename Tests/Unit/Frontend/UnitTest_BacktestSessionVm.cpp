@@ -503,11 +503,12 @@ void BacktestSessionVmTest::
 
   const auto selected = bte::bindings::testing::selectPythonWarmupBars(
       root / "Data", built.value().snapshotId, "SYN", QDate{2025, 10, 1}, 5);
-  QVERIFY2(selected.ok(), selected.ok() ? "" : selected.error().message.c_str());
+  QVERIFY2(selected.ok(),
+           selected.ok() ? "" : selected.error().message.c_str());
   QCOMPARE(selected.value().size(), 5U);
   QCOMPARE(selected.value().front().ts,
-           bte::core::Timestamp{std::chrono::sys_days{
-               std::chrono::year{2024} / 1 / 1}});
+           bte::core::Timestamp{
+               std::chrono::sys_days{std::chrono::year{2024} / 1 / 1}});
 }
 
 void BacktestSessionVmTest::draftLifecycleBoundariesReturnStructuredResults() {

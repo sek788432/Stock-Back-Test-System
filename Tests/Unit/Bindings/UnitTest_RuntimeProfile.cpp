@@ -92,15 +92,16 @@ nlohmann::json createFixtureManifest(const std::string &interpreterDigest) {
                        "Apache-2.0", "https://example.invalid/tzdata.whl"),
        createComponent("stockbt", "1", bte::core::sha256("stockbt-source"),
                        "Apache-2.0", "local-build:stockbt")});
-  components[3]["licenses"] = nlohmann::json::array(
-      {"Apache-2.0", "BSD-3-Clause"});
+  components[3]["licenses"] =
+      nlohmann::json::array({"Apache-2.0", "BSD-3-Clause"});
   return nlohmann::json{
       {"architecture", "arm64"},
       {"components", std::move(components)},
       {"installedFiles",
        nlohmann::json::array(
            {{{"path", "python/bin/python3"}, {"sha256", interpreterDigest}},
-            {{"path", "python/lib/python3.14/site-packages/tzdata/zoneinfo/tzdata.zi"},
+            {{"path",
+              "python/lib/python3.14/site-packages/tzdata/zoneinfo/tzdata.zi"},
              {"sha256", bte::core::sha256("timezone-database-fixture")}}})},
       {"platform", "macos"},
       {"profileBuilderVersion", "1"},
@@ -122,7 +123,8 @@ void writeFixtureProfile(const std::filesystem::path &root) {
                                std::filesystem::perms::owner_read |
                                    std::filesystem::perms::owner_exec,
                                std::filesystem::perm_options::add);
-  writeText(root / "python/lib/python3.14/site-packages/tzdata/zoneinfo/tzdata.zi",
+  writeText(root /
+                "python/lib/python3.14/site-packages/tzdata/zoneinfo/tzdata.zi",
             "timezone-database-fixture");
 
   const auto manifest = serializeCanonicalJson(

@@ -14,8 +14,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <future>
@@ -218,7 +218,8 @@ void StrategyTabTest::exportsNormalizedUtf8SourceAtomically() {
            std::string{"def create_strategy(params):\n    return None\n"});
 }
 
-void StrategyTabTest::builtInSampleHandlesIncompleteHistoryAndEmitsValidOrder() {
+void StrategyTabTest::
+    builtInSampleHandlesIncompleteHistoryAndEmitsValidOrder() {
   QTemporaryDir directory;
   QVERIFY(directory.isValid());
   bte::frontend::StrategyTab tab{
@@ -226,11 +227,9 @@ void StrategyTabTest::builtInSampleHandlesIncompleteHistoryAndEmitsValidOrder() 
   auto created = bte::bindings::python::PythonWorkerStrategy::createForTesting(
       BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
       tab.sourceUtf8(),
-      nlohmann::json{{"fast_period", 2}, {"slow_period", 3},
-                     {"quantity", 1}},
+      nlohmann::json{{"fast_period", 2}, {"slow_period", 3}, {"quantity", 1}},
       true);
-  QVERIFY2(created.ok(),
-           created.ok() ? "" : created.error().message.c_str());
+  QVERIFY2(created.ok(), created.ok() ? "" : created.error().message.c_str());
   auto strategy = std::move(created).value();
 
   const auto market = [&strategy](const double fast,
@@ -238,25 +237,24 @@ void StrategyTabTest::builtInSampleHandlesIncompleteHistoryAndEmitsValidOrder() 
                                   const std::int64_t timestamp) {
     const auto indicator = [](const double value) {
       return bte::indicators::IndicatorValue{
-          .value = value,
-          .domain = bte::indicators::NumericDomain::scalar};
+          .value = value, .domain = bte::indicators::NumericDomain::scalar};
     };
     const std::array<bte::strategy::StrategyIndicatorValue, 2> indicators{{
         {.name = "fast", .value = indicator(fast)},
         {.name = "slow",
-         .value = slow.has_value()
-                      ? std::optional{indicator(*slow)}
-                      : std::nullopt},
+         .value =
+             slow.has_value() ? std::optional{indicator(*slow)} : std::nullopt},
     }};
     const bte::strategy::StrategyContext context{
         .symbol = "AAPL",
-        .bar = bte::core::Bar{
-            .ts = bte::core::Timestamp{std::chrono::milliseconds{timestamp}},
-            .open = 10.0,
-            .high = 11.0,
-            .low = 9.0,
-            .close = 10.5,
-            .volume = 100.0},
+        .bar =
+            bte::core::Bar{.ts = bte::core::Timestamp{std::chrono::milliseconds{
+                               timestamp}},
+                           .open = 10.0,
+                           .high = 11.0,
+                           .low = 9.0,
+                           .close = 10.5,
+                           .volume = 100.0},
         .cashMicrodollars = 100'000'000,
         .equityMicrodollars = 100'000'000,
         .positionShares = 0,

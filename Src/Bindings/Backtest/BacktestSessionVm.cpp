@@ -466,11 +466,11 @@ preparePythonBacktest(const BacktestConfiguration &configuration,
   };
 }
 
-core::Result<std::vector<core::Bar>> loadPythonWarmupBars(
-    const std::filesystem::path &dataStore, const std::string &snapshotId,
-    const std::string &symbol, const QDate startDate,
-    const std::size_t maximumHistory,
-    const core::CancellationToken &cancellation) {
+core::Result<std::vector<core::Bar>>
+loadPythonWarmupBars(const std::filesystem::path &dataStore,
+                     const std::string &snapshotId, const std::string &symbol,
+                     const QDate startDate, const std::size_t maximumHistory,
+                     const core::CancellationToken &cancellation) {
   if (maximumHistory == 0 || maximumHistory > 10'000) {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Python Strategy history requirement is invalid");
@@ -479,18 +479,17 @@ core::Result<std::vector<core::Bar>> loadPythonWarmupBars(
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Python Strategy warm-up range is invalid");
   }
-  auto reader = data::ReleaseSnapshotReader::open(dataStore, snapshotId,
-                                                   cancellation);
+  auto reader =
+      data::ReleaseSnapshotReader::open(dataStore, snapshotId, cancellation);
   if (!reader.ok()) {
     return reader.error();
   }
   const auto earliestDate = QDate{1, 1, 1};
   const auto availableDays = earliestDate.daysTo(startDate);
   auto lookbackDays = std::min<qint64>(417, availableDays);
-  auto selectedHistory =
-      core::Result<data::SnapshotSelection>{core::makeError(
-          core::ErrorCode::internal,
-          "Python Strategy warm-up selection was not attempted")};
+  auto selectedHistory = core::Result<data::SnapshotSelection>{
+      core::makeError(core::ErrorCode::internal,
+                      "Python Strategy warm-up selection was not attempted")};
   while (true) {
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
@@ -611,11 +610,11 @@ void cancelAfterNextDraftStoreOpen(core::CancellationSource &source) noexcept {
 
 void clearDraftStoreOpenHook() noexcept { cancelAfterDraftOpen.store(nullptr); }
 
-core::Result<std::vector<core::Bar>> selectPythonWarmupBars(
-    const std::filesystem::path &dataStore, const std::string &snapshotId,
-    const std::string &symbol, const QDate startDate,
-    const std::size_t maximumHistory,
-    const core::CancellationToken &cancellation) {
+core::Result<std::vector<core::Bar>>
+selectPythonWarmupBars(const std::filesystem::path &dataStore,
+                       const std::string &snapshotId, const std::string &symbol,
+                       const QDate startDate, const std::size_t maximumHistory,
+                       const core::CancellationToken &cancellation) {
   return loadPythonWarmupBars(dataStore, snapshotId, symbol, startDate,
                               maximumHistory, cancellation);
 }

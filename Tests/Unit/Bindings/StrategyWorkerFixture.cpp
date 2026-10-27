@@ -168,9 +168,8 @@ void writeAll(const int descriptor, const std::string_view bytes) {
               {"history", history},
               {"historySha256Matches",
                mode == "read-history" &&
-                   bte::core::sha256(history) == argumentValue(
-                                                     argc, argv,
-                                                     "--history-data-sha256=")},
+                   bte::core::sha256(history) ==
+                       argumentValue(argc, argv, "--history-data-sha256=")},
               {"source", source},
               {"sourceSha256Matches",
                (mode == "read-source" || mode == "read-history") &&

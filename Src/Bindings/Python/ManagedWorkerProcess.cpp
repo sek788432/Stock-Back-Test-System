@@ -862,8 +862,7 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
   }
   for (const auto &pipe : pipes) {
     for (const auto descriptor : pipe) {
-      if (descriptor > 4 &&
-          !(historyDuplicate.get() >= 0 && descriptor == 5) &&
+      if (descriptor > 4 && !(historyDuplicate.get() >= 0 && descriptor == 5) &&
           actions.addClose(descriptor) != 0) {
         return workerStartError(
             "Could not close inherited parent pipe descriptors.");
@@ -871,8 +870,7 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
     }
   }
   if (launch.readOnlyDataDescriptor > 4 &&
-      !(historyDuplicate.get() >= 0 &&
-        launch.readOnlyDataDescriptor == 5) &&
+      !(historyDuplicate.get() >= 0 && launch.readOnlyDataDescriptor == 5) &&
       actions.addClose(launch.readOnlyDataDescriptor) != 0) {
     return workerStartError("Could not close the inherited source descriptor.");
   }
