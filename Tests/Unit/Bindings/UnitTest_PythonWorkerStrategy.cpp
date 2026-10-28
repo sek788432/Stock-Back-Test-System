@@ -278,6 +278,132 @@ TEST(PythonWorkerStrategyTest, requiresConsentBeforeWorkerCreation) {
             bte::core::ErrorCode::permissionDenied);
 }
 
+TEST(PythonWorkerStrategyTest, rejectsMalformedSourceBeforeStartingAWorker) {
+  const auto startCountBefore =
+      bte::bindings::python::testing::managedWorkerProcessStartCount();
+  const std::array invalidSources{
+      std::string{},
+      std::string{"source\0text", 11},
+      std::string{"\xef\xbb\xbf", 3},
+      std::string{"\xff", 1},
+      std::string(bte::bindings::python::maximumWorkerSourceBytes + 1, 'x'),
+  };
+
+  for (const auto &source : invalidSources) {
+    const auto rejected = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+        parameters(), true);
+    ASSERT_FALSE(rejected.ok());
+    EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::strategyLoadFailed);
+    EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+              startCountBefore);
+  }
+}
+
+TEST(PythonWorkerStrategyTest,
+     normalizesBomAndBothCrLineEndingFormsBeforeModuleLoad) {
+  std::string source{"\xef\xbb\xbf", 3};
+  bool usedLoneCarriageReturn = false;
+  for (const auto character : validStrategySource) {
+    if (character != '\n') {
+      source.push_back(character);
+    } else if (!usedLoneCarriageReturn) {
+      source.push_back('\r');
+      usedLoneCarriageReturn = true;
+    } else {
+      source += "\r\n";
+    }
+  }
+  const auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+
+  const auto market =
+      strategyResult.value()->onMarket(context(1'700'000'000'000LL));
+
+  ASSERT_TRUE(market.ok()) << market.error().message;
+  ASSERT_EQ(market.value().size(), 1U);
+  EXPECT_EQ(market.value().front().kind, StrategyCommandKind::buyMarket);
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsMissingMarketBarsAndInvalidContextValues) {
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  auto missingBar = context(1'700'000'000'000LL);
+  missingBar.bar.reset();
+  const auto missingBarResult = strategyResult.value()->onMarket(missingBar);
+  ASSERT_FALSE(missingBarResult.ok());
+  EXPECT_EQ(missingBarResult.error().code,
+            bte::core::ErrorCode::strategyContractViolation);
+
+  auto emptySymbol = context(1'700'000'000'000LL);
+  emptySymbol.symbol = {};
+  auto invalidUtf8Symbol = context(1'700'000'000'000LL);
+  invalidUtf8Symbol.symbol = std::string{"\xff", 1};
+  const auto invalidContexts = std::array{
+      context(1'700'000'000'000LL, -1),
+      context(1'700'000'000'000LL,
+              bte::strategy::maximumStrategyQuantityShares + 1),
+      emptySymbol,
+      invalidUtf8Symbol,
+  };
+  auto invalidMarkPrice = context(1'700'000'000'000LL);
+  invalidMarkPrice.markPriceNanodollars = 0;
+  for (auto invalidContext : invalidContexts) {
+    const auto freshStrategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(freshStrategy.ok()) << freshStrategy.error().message;
+    const auto result = freshStrategy.value()->onMarket(invalidContext);
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code,
+              bte::core::ErrorCode::strategyContractViolation);
+  }
+  const auto freshStrategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(freshStrategy.ok()) << freshStrategy.error().message;
+  const auto invalidMark = freshStrategy.value()->onMarket(invalidMarkPrice);
+  ASSERT_FALSE(invalidMark.ok());
+  EXPECT_EQ(invalidMark.error().code,
+            bte::core::ErrorCode::strategyContractViolation);
+}
+
+TEST(PythonWorkerStrategyTest, rejectsCommandsDuringStrategyStartup) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_start(self, ctx):
+        ctx.orders.buy_market(ctx.symbol, quantity=1)
+    def on_market(self, ctx):
+        return None
+def create_strategy(params):
+    return Example()
+)python";
+  const auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  const auto started =
+      strategyResult.value()->onStart({.symbol = "AAPL",
+                                       .bar = std::nullopt,
+                                       .cashMicrodollars = 100'000'000,
+                                       .equityMicrodollars = 100'000'000,
+                                       .positionShares = 0,
+                                       .markPriceNanodollars = std::nullopt});
+
+  ASSERT_FALSE(started.ok());
+  EXPECT_EQ(started.error().code,
+            bte::core::ErrorCode::strategyCommandRejected);
+}
+
 TEST(PythonWorkerStrategyTest, preservesHookLogsWhenPythonHookRaises) {
   const std::string source = R"python(
 STOCKBT_API_VERSION = "1"
@@ -320,6 +446,37 @@ def create_strategy(params):
                 .get<std::string>()
                 .find("File \"strategy.py\", line 9"),
             std::string::npos);
+}
+
+TEST(PythonWorkerStrategyTest,
+     marksCallbackDiagnosticsIncompleteWhenTheParentCancels) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        ctx.log.info("before cancellation")
+def create_strategy(params):
+    return Example()
+)python";
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategyResult.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
+
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+  const auto canceled = strategyResult.value()->onMarket(
+      context(1'700'000'000'000LL), cancellation.token());
+
+  ASSERT_FALSE(canceled.ok());
+  EXPECT_EQ(canceled.error().code, bte::core::ErrorCode::cancelled);
+  EXPECT_FALSE(pythonStrategy->diagnostics().complete);
 }
 
 TEST(PythonWorkerStrategyTest, capturesWorkerStdoutAsAnEngineDiagnostic) {

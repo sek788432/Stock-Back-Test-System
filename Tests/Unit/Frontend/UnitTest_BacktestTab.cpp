@@ -3,6 +3,8 @@
 
 #include "WaitUntil.h"
 
+#include <QAbstractButton>
+#include <QApplication>
 #include <QByteArray>
 #include <QCalendarWidget>
 #include <QCheckBox>
@@ -12,15 +14,18 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QMetaObject>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
+#include <QTimer>
 
 #include <algorithm>
 #include <array>
@@ -32,6 +37,7 @@
 #include <optional>
 #include <stdexcept>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -221,6 +227,7 @@ class BacktestTabTest final : public QObject {
   Q_OBJECT
 
 private slots:
+  void initTestCase();
   void exposesAccessibleRunConfiguration();
   void completedDraftEnablesSaveActionsAndReplayUsesPublishedId();
   void invalidDisplayNameDoesNotStartResultPublication();
@@ -240,9 +247,14 @@ private slots:
   void workerExceptionIsPresentedAsAnError();
   void unknownWorkerExceptionIsPresentedAsAnError();
   void pythonDraftIsFrozenAndPassedToTheRunWorker();
+  void pythonActionsExplainWhenNoDraftIsAvailable();
+  void pythonBacktestRequiresConsentBeforeStarting();
   void strategyTabHandoffIsCapturedByTheBacktestRun();
   void reproducibilityVerificationReportsProgressAndCompletion();
   void reproducibilityVerificationCanBeCanceled();
+  void reproducibilityVerificationShowsStatusesAndAttemptDetails();
+  void verificationWorkerFailuresArePresented();
+  void backtestDiagnosticsIncludeTerminalEvidence();
   void defaultRunnerExecutesTrackedBars();
   void applicationConfiguredRunnerUsesEnvironmentStorage();
   void selectableConditionsSubmitTypedPlanToBackend();
@@ -253,6 +265,10 @@ private slots:
   void selectableConditionStatusNamesItsSelectedStrategy();
   void selectableControlsPresentNoSignalAndSellFill();
 };
+
+void BacktestTabTest::initTestCase() {
+  QStandardPaths::setTestModeEnabled(true);
+}
 
 void BacktestTabTest::
     draftNoticesRemainSeparateFromValidRunActionsAndClearOnRefresh() {
@@ -1055,6 +1071,109 @@ void BacktestTabTest::pythonDraftIsFrozenAndPassedToTheRunWorker() {
   QVERIFY(!captured->selectableStrategy.has_value());
 }
 
+void BacktestTabTest::pythonActionsExplainWhenNoDraftIsAvailable() {
+  std::atomic_int runCalls = 0;
+  std::atomic_int verificationCalls = 0;
+  bte::frontend::BacktestTab tab{
+      [&runCalls](const bte::bindings::BacktestConfiguration &,
+                  const bte::core::CancellationToken &) {
+        ++runCalls;
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *verify =
+      tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(strategy != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(verify != nullptr);
+  QVERIFY(status != nullptr);
+
+  strategy->setCurrentText("Python Strategy draft");
+  QVERIFY(!verify->isHidden());
+  QVERIFY(!verify->isEnabled());
+  QTest::mouseClick(run, Qt::LeftButton);
+  QCOMPARE(status->text(), QString{"Choose a Python Strategy draft first"});
+  QCOMPARE(runCalls.load(), 0);
+
+  tab.setVerificationRunner(
+      [&verificationCalls](
+          const bte::bindings::BacktestConfiguration &,
+          const bte::core::CancellationToken &,
+          const bte::bindings::PythonVerificationProgressObserver &) {
+        ++verificationCalls;
+        return bte::core::Result<bte::results::VerificationEvidence>{
+            bte::results::VerificationEvidence{}};
+      });
+  QVERIFY(verify->isEnabled());
+  QTest::mouseClick(verify, Qt::LeftButton);
+  QCOMPARE(status->text(), QString{"Choose a Python Strategy draft first"});
+  QCOMPARE(verificationCalls.load(), 0);
+}
+
+void BacktestTabTest::pythonBacktestRequiresConsentBeforeStarting() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  std::atomic_int calls = 0;
+  auto promptCount = std::make_shared<int>(0);
+  auto informativeText = std::make_shared<QString>();
+  bte::frontend::BacktestTab tab{
+      [&calls](const bte::bindings::BacktestConfiguration &,
+               const bte::core::CancellationToken &) {
+        ++calls;
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  const auto source = QString{"source-%1"}.arg(directory.path());
+  tab.setPythonStrategyDraft(source, "{}");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+
+  const auto scheduleConsentChoice =
+      [promptCount, informativeText](const QString &buttonText) {
+        QTimer::singleShot(0, qApp, [buttonText, promptCount, informativeText] {
+          auto *dialog =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+          if (dialog == nullptr) {
+            return;
+          }
+          ++*promptCount;
+          *informativeText = dialog->informativeText();
+          for (auto *button : dialog->buttons()) {
+            if (button->text() == buttonText) {
+              button->click();
+              return;
+            }
+          }
+        });
+      };
+
+  scheduleConsentChoice("Cancel");
+  QTest::mouseClick(run, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Consent was not granted"),
+                           5000);
+  QCOMPARE(calls.load(), 0);
+  QCOMPARE(*promptCount, 1);
+  QVERIFY(informativeText->contains("API version: 1"));
+  QVERIFY(informativeText->contains("Source SHA-256:"));
+
+  scheduleConsentChoice("Allow this source");
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&calls, run] { return calls.load() == 1 && run->isEnabled(); }));
+  QCOMPARE(*promptCount, 2);
+
+  scheduleConsentChoice("Cancel");
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&calls, run] { return calls.load() == 2 && run->isEnabled(); }));
+  QCOMPARE(*promptCount, 2);
+}
+
 void BacktestTabTest::strategyTabHandoffIsCapturedByTheBacktestRun() {
   QTemporaryDir directory;
   QVERIFY(directory.isValid());
@@ -1229,6 +1348,229 @@ void BacktestTabTest::reproducibilityVerificationCanBeCanceled() {
     return observedCancellation.load() && run->isEnabled() &&
            status->text().contains("verification canceled");
   }));
+}
+
+void BacktestTabTest::
+    reproducibilityVerificationShowsStatusesAndAttemptDetails() {
+  const auto statuses = std::array{
+      std::pair{bte::results::VerificationStatus::running,
+                QString{"attempt 3 of 3"}},
+      std::pair{bte::results::VerificationStatus::verified,
+                QString{"verified across 3 fresh runs"}},
+      std::pair{bte::results::VerificationStatus::mismatch,
+                QString{"mismatch after 1 attempts"}},
+      std::pair{bte::results::VerificationStatus::failed,
+                QString{"failed after 0 attempts"}},
+      std::pair{bte::results::VerificationStatus::canceled,
+                QString{"canceled after 0 attempts"}},
+      std::pair{bte::results::VerificationStatus::interrupted,
+                QString{"was interrupted"}},
+  };
+  std::atomic_int calls = 0;
+  bte::frontend::BacktestTab tab{
+      [](const bte::bindings::BacktestConfiguration &,
+         const bte::core::CancellationToken &) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  tab.setConsentProvider([](const std::string &) { return true; });
+  tab.setPythonStrategyDraft("source", "{}");
+  tab.setVerificationRunner(
+      [&calls,
+       &statuses](const bte::bindings::BacktestConfiguration &,
+                  const bte::core::CancellationToken &,
+                  const bte::bindings::PythonVerificationProgressObserver &) {
+        const auto index = static_cast<std::size_t>(calls.fetch_add(1));
+        bte::results::VerificationEvidence evidence;
+        evidence.verificationId = "verification-id";
+        evidence.status = statuses.at(index).first;
+        evidence.progressOrdinal = index == 0 ? 3U : 0U;
+        if (index == 0) {
+          evidence.attempts = {
+              {.ordinal = 1,
+               .resultId = std::string{"completed-result"},
+               .terminalStatus = bte::results::RunStatus::completed,
+               .canonicalResultHash = std::nullopt,
+               .error = std::nullopt},
+              {.ordinal = 2,
+               .resultId = std::nullopt,
+               .terminalStatus = bte::results::RunStatus::failed,
+               .canonicalResultHash = std::nullopt,
+               .error =
+                   bte::results::VerificationError{
+                       .code = "StrategyRuntimeError",
+                       .message = "worker exited unexpectedly"}},
+              {.ordinal = 3,
+               .resultId = std::string{"interrupted-result"},
+               .terminalStatus = bte::results::RunStatus::interrupted,
+               .canonicalResultHash = std::nullopt,
+               .error = std::nullopt},
+          };
+        } else if (index == 1) {
+          evidence.attempts = {
+              {.ordinal = 1,
+               .resultId = std::string{"canceled-result"},
+               .terminalStatus = bte::results::RunStatus::canceled,
+               .canonicalResultHash = std::nullopt,
+               .error = std::nullopt},
+              {.ordinal = 2,
+               .resultId = std::nullopt,
+               .terminalStatus = bte::results::RunStatus::incomplete,
+               .canonicalResultHash = std::nullopt,
+               .error =
+                   bte::results::VerificationError{.code = "Incomplete",
+                                                   .message =
+                                                       "run did not complete"}},
+              {.ordinal = 3,
+               .resultId = std::string{"running-result"},
+               .terminalStatus = bte::results::RunStatus::running,
+               .canonicalResultHash = std::nullopt,
+               .error = std::nullopt},
+          };
+        } else if (index == 2) {
+          evidence.attempts = {
+              {.ordinal = 1,
+               .resultId = std::nullopt,
+               .terminalStatus = std::nullopt,
+               .canonicalResultHash = std::nullopt,
+               .error = std::nullopt},
+          };
+        }
+        return bte::core::Result<bte::results::VerificationEvidence>{
+            std::move(evidence)};
+      });
+  auto *verify =
+      tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  auto *diagnostics =
+      tab.findChild<QPlainTextEdit *>("backtestStrategyDiagnostics");
+  QVERIFY(verify != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(diagnostics != nullptr);
+
+  for (auto index = std::size_t{}; index < statuses.size(); ++index) {
+    QTest::mouseClick(verify, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil([&calls, &statuses, index, run, status] {
+      return calls.load() == static_cast<int>(index + 1) && run->isEnabled() &&
+             status->text().contains(statuses.at(index).second);
+    }));
+    if (index == 0) {
+      const auto text = diagnostics->toPlainText();
+      QVERIFY(text.contains("verification-id"));
+      QVERIFY(text.contains("completed-result (completed)"));
+      QVERIFY(
+          text.contains("StrategyRuntimeError: worker exited unexpectedly"));
+      QVERIFY(text.contains("interrupted-result (interrupted)"));
+    } else if (index == 1) {
+      const auto text = diagnostics->toPlainText();
+      QVERIFY(text.contains("canceled-result (canceled)"));
+      QVERIFY(text.contains("Incomplete: run did not complete (incomplete)"));
+      QVERIFY(text.contains("running-result (running)"));
+    } else if (index == 2) {
+      QVERIFY(diagnostics->toPlainText().contains("Attempt 1: "));
+    }
+  }
+}
+
+void BacktestTabTest::verificationWorkerFailuresArePresented() {
+  std::atomic_int invocation = 0;
+  bte::frontend::BacktestTab tab{
+      [](const bte::bindings::BacktestConfiguration &,
+         const bte::core::CancellationToken &) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  tab.setConsentProvider([](const std::string &) { return true; });
+  tab.setPythonStrategyDraft("source", "{}");
+  tab.setVerificationRunner(
+      [&invocation](const bte::bindings::BacktestConfiguration &,
+                    const bte::core::CancellationToken &,
+                    const bte::bindings::PythonVerificationProgressObserver &)
+          -> bte::core::Result<bte::results::VerificationEvidence> {
+        switch (invocation.fetch_add(1)) {
+        case 0:
+          return bte::core::Result<bte::results::VerificationEvidence>{
+              bte::core::makeError(bte::core::ErrorCode::internal,
+                                   "stored evidence unavailable")};
+        case 1:
+          throw std::runtime_error{"verification exception"};
+        default:
+          throw 42;
+        }
+      });
+  auto *verify =
+      tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(verify != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+
+  QTest::mouseClick(verify, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&invocation, run, status] {
+    return invocation.load() == 1 && run->isEnabled() &&
+           status->text().contains("stored evidence unavailable");
+  }));
+  QTest::mouseClick(verify, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&invocation, run, status] {
+    return invocation.load() == 2 && run->isEnabled() &&
+           status->text().contains("verification worker failed: "
+                                   "verification exception");
+  }));
+  QTest::mouseClick(verify, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil([&invocation, run, status] {
+    return invocation.load() == 3 && run->isEnabled() &&
+           status->text().contains("Verification could not complete") &&
+           status->text().contains("verification worker failed");
+  }));
+}
+
+void BacktestTabTest::backtestDiagnosticsIncludeTerminalEvidence() {
+  auto snapshot = filledSnapshot();
+  snapshot.resultId = "diagnostic-result-id";
+  snapshot.strategyDiagnostics = {"strategy warning", "order note"};
+  snapshot.terminalReason = "Strategy stopped with a diagnostic.";
+  snapshot.reproducibilityVerified = true;
+  std::atomic_int calls = 0;
+  bte::frontend::BacktestTab tab{
+      [&calls, &snapshot](const bte::bindings::BacktestConfiguration &,
+                          const bte::core::CancellationToken &) {
+        ++calls;
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+      }};
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *diagnostics =
+      tab.findChild<QPlainTextEdit *>("backtestStrategyDiagnostics");
+  auto *drafts = tab.findChild<QComboBox *>("backtestUnsavedRunsCombo");
+  QVERIFY(run != nullptr);
+  QVERIFY(diagnostics != nullptr);
+  QVERIFY(drafts != nullptr);
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&calls, run] { return calls.load() == 1 && run->isEnabled(); }));
+  QCOMPARE(diagnostics->toPlainText(),
+           QString{"strategy warning\norder note\n"
+                   "Strategy stopped with a diagnostic.\n"
+                   "Reproducibility: verified"});
+  QCOMPARE(drafts->count(), 1);
+  QCOMPARE(drafts->currentData().toString(), QString{"diagnostic-result-id"});
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&calls, run] { return calls.load() == 2 && run->isEnabled(); }));
+  QCOMPARE(drafts->count(), 1);
+  snapshot.reproducibilityVerified = false;
+  snapshot.reproducibilityDiagnostic = "verification store could not be read";
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&calls, run] { return calls.load() == 3 && run->isEnabled(); }));
+  QVERIFY(diagnostics->toPlainText().contains(
+      "Reproducibility status unavailable: verification store could not be "
+      "read"));
+  QCOMPARE(drafts->count(), 1);
 }
 
 void BacktestTabTest::defaultRunnerExecutesTrackedBars() {

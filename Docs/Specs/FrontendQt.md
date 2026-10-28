@@ -150,8 +150,11 @@ Validate checks static constraints and the factory in a fresh managed worker
 after hash-scoped consent; it creates no Result. Run freezes and executes one
 source/parameter snapshot. The run panel shows bounded structured logs,
 traceback with source line, terminal error code, fills, and Save Result / Save
-& Replay / Discard actions. A normal run is labeled
-`reproducibilityStatus=unverified`.
+& Replay / Discard actions. A normal run has no verification evidence and is
+not shown with a verified label. The label appears only when matching three-run
+evidence is available. If reading that evidence fails after a completed run,
+the Result remains available and run diagnostics show the verification-status
+warning.
 
 Verify Reproducibility launches three fresh workers sequentially from one
 frozen functional-input identity and shows attempt progress 1/3 through 3/3.
@@ -317,7 +320,7 @@ successful refresh returns no notices.
   call widgets from workers.
 - **Python execution target:** an owned Bindings session carries immutable
   source/configuration values into Engine and owns the associated
-  `PythonStrategyRunner`. A generation ID travels with Validate, Run, Cancel,
+  `PythonWorkerStrategy`. A generation ID travels with Validate, Run, Cancel,
   and Verify completions; a view applies only values for its live request and
   current widget lifetime. Destroying or switching a page cannot deliver a
   stale completion to a replacement draft. Cancel reaches the active parent

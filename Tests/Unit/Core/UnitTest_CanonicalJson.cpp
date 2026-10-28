@@ -4,8 +4,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -75,6 +77,57 @@ TEST(CanonicalJsonTest, rejectsInvalidUtf8InObjectKeysAndStringValues) {
   auto invalidKey = nlohmann::json::object();
   invalidKey[invalidUtf8] = "value";
   EXPECT_FALSE(bte::core::serializeCanonicalJson(invalidKey).ok());
+}
+
+TEST(CanonicalJsonTest, acceptsJsonScalarsAndRejectsMalformedOrUnsafeNumbers) {
+  for (const auto input :
+       {"null", "true", "false", "0", "-1", "1.25", "\"text\"", "[]", "{}"}) {
+    const auto parsed = bte::core::parseCanonicalJson(input);
+    ASSERT_TRUE(parsed.ok()) << input << ": " << parsed.error().message;
+  }
+
+  for (const auto input :
+       {"", "{", "[1,]", "true false", R"({"outer":{"key":1,"key":2}})"}) {
+    EXPECT_FALSE(bte::core::parseCanonicalJson(input).ok()) << input;
+  }
+  EXPECT_FALSE(bte::core::parseCanonicalJson("-9007199254740992").ok());
+  EXPECT_FALSE(bte::core::parseCanonicalJson("1e400").ok());
+}
+
+TEST(CanonicalJsonTest, rejectsUnsafeIntegerBinaryAndExcessivelyNestedValues) {
+  const auto oversizedUnsigned =
+      nlohmann::json::number_unsigned_t{9007199254740992ULL};
+  EXPECT_FALSE(bte::core::serializeCanonicalJson(oversizedUnsigned).ok());
+  EXPECT_FALSE(bte::core::serializeCanonicalJson(
+                   std::numeric_limits<std::int64_t>::min())
+                   .ok());
+  EXPECT_FALSE(
+      bte::core::serializeCanonicalJson(nlohmann::json::binary({0x01U})).ok());
+
+  auto nested = nlohmann::json::array();
+  for (int index = 0; index < 130; ++index) {
+    nested = nlohmann::json::array({std::move(nested)});
+  }
+  EXPECT_FALSE(bte::core::serializeCanonicalJson(nested).ok());
+}
+
+TEST(CanonicalJsonTest, rejectsMalformedUtf8SequencesInObjectKeys) {
+  const std::vector<std::string> invalidKeys{
+      std::string{static_cast<char>(0x80)},
+      std::string{static_cast<char>(0xc2)},
+      std::string{static_cast<char>(0xc2), 'A'},
+      std::string{static_cast<char>(0xe0), static_cast<char>(0x80),
+                  static_cast<char>(0x80)},
+      std::string{static_cast<char>(0xed), static_cast<char>(0xa0),
+                  static_cast<char>(0x80)},
+      std::string{static_cast<char>(0xf4), static_cast<char>(0x90),
+                  static_cast<char>(0x80), static_cast<char>(0x80)},
+  };
+  for (const auto &key : invalidKeys) {
+    auto value = nlohmann::json::object();
+    value[key] = 1;
+    EXPECT_FALSE(bte::core::serializeCanonicalJson(value).ok());
+  }
 }
 
 } // namespace

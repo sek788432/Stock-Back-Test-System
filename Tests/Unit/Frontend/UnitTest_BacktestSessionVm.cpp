@@ -1,5 +1,6 @@
 #include "Bte/Bindings/BacktestSessionVm.h"
 #include "Bte/Bindings/ResultCatalogSnapshot.h"
+#include "Bte/Bindings/ResultReplay.h"
 
 #include "Bte/Core/Bar.h"
 #include "Bte/Data/ReleaseSnapshot.h"
@@ -7,6 +8,7 @@
 #include "BacktestSessionVmTestHooks.h"
 #include "ReleaseSnapshotTestHooks.h"
 
+#include <QByteArray>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -18,6 +20,9 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -33,6 +38,32 @@ bte::core::Bar makeBar(const int day, const double open, const double close) {
       .volume = 1'000'000.0,
   };
 }
+
+class ScopedEnvironmentVariable final {
+public:
+  ScopedEnvironmentVariable(const QByteArray &name, const QByteArray &value)
+      : name_{name}, wasSet_{qEnvironmentVariableIsSet(name.constData())},
+        previous_{qgetenv(name.constData())},
+        setSuccessfully_{qputenv(name.constData(), value)} {}
+
+  ~ScopedEnvironmentVariable() {
+    if (wasSet_) {
+      qputenv(name_.constData(), previous_);
+    } else {
+      qunsetenv(name_.constData());
+    }
+  }
+
+  [[nodiscard]] bool setSuccessfully() const noexcept {
+    return setSuccessfully_;
+  }
+
+private:
+  QByteArray name_;
+  bool wasSet_ = false;
+  QByteArray previous_;
+  bool setSuccessfully_ = false;
+};
 
 class BacktestSessionVmTest final : public QObject {
   Q_OBJECT
@@ -57,6 +88,9 @@ private slots:
   void invalidSelectablePlanPreservesCompileError();
   void configuredRunComposesTrackedDataAndEngine();
   void pythonWarmupSelectsActualBarsBeyondTheInitialCalendarWindow();
+  void pythonWarmupRejectsInvalidHistoryLimitsAndDates();
+  void pythonPreparationRejectsInvalidInputsBeforeRuntimeDiscovery();
+  void persistedPythonRunCanBeSavedAndReplayed();
   void draftLifecycleBoundariesReturnStructuredResults();
   void catalogSnapshotTranslatesEntriesAndEveryRecoveryReason();
   void draftCatalogKeepsRecoveryNoticesWithoutMutatingLegacyFiles();
@@ -477,6 +511,295 @@ void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
 }
 
 void BacktestSessionVmTest::
+    pythonPreparationRejectsInvalidInputsBeforeRuntimeDiscovery() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore = root / "Results",
+      .dataStore = root / "Data",
+      .snapshotId = "missing-snapshot",
+      .strategyHash = {},
+  };
+  const auto validStrategy = bte::bindings::PythonStrategyConfiguration{
+      .sourceUtf8 = "valid source text",
+      .canonicalParametersJson = R"({"quantity":1})",
+      .sourceConsentGranted = true,
+  };
+  const auto makeConfiguration = [&validStrategy] {
+    return bte::bindings::BacktestConfiguration{
+        .symbol = "SYN",
+        .schema = "ohlcv-1h",
+        .startDate = QDate{2024, 1, 2},
+        .endDate = QDate{2024, 1, 3},
+        .initialCapital = 1'000.0,
+        .quantityShares = 1,
+        .selectableStrategy = {},
+        .pythonStrategy = validStrategy,
+    };
+  };
+  const auto resourcesRoot = root / "MissingRuntime";
+  const auto bootstrapPath = root / "worker_bootstrap.py";
+
+  auto nonPersisted = makeConfiguration();
+  const auto nonPersistedResult =
+      bte::bindings::runBacktestConfiguration(nonPersisted);
+  QVERIFY(!nonPersistedResult.ok());
+  QCOMPARE(nonPersistedResult.error().code,
+           bte::core::ErrorCode::invalidArgument);
+
+  auto persistedInvalid = makeConfiguration();
+  persistedInvalid.schema = "ohlcv-5m";
+  const auto persistedInvalidResult =
+      bte::bindings::runPersistedBacktestConfiguration(persistedInvalid,
+                                                       storage);
+  QVERIFY(!persistedInvalidResult.ok());
+  QCOMPARE(persistedInvalidResult.error().code,
+           bte::core::ErrorCode::invalidArgument);
+
+  auto noPythonStrategy = makeConfiguration();
+  noPythonStrategy.pythonStrategy.reset();
+  const auto noPython =
+      bte::bindings::verifyPersistedPythonBacktestConfiguration(
+          noPythonStrategy, storage, resourcesRoot, bootstrapPath);
+  QVERIFY(!noPython.ok());
+  QCOMPARE(noPython.error().code, bte::core::ErrorCode::invalidArgument);
+
+  const std::array<std::tuple<QString, QDate, QDate>, 3> invalidConfigurations{{
+      {QString{"ohlcv-5m"}, QDate{2024, 1, 2}, QDate{2024, 1, 3}},
+      {QString{"ohlcv-1h"}, QDate{}, QDate{2024, 1, 3}},
+      {QString{"ohlcv-1h"}, QDate{2024, 1, 4}, QDate{2024, 1, 3}},
+  }};
+  for (const auto &[schema, startDate, endDate] : invalidConfigurations) {
+    auto configuration = makeConfiguration();
+    configuration.schema = schema;
+    configuration.startDate = startDate;
+    configuration.endDate = endDate;
+    const auto rejected =
+        bte::bindings::verifyPersistedPythonBacktestConfiguration(
+            configuration, storage, resourcesRoot, bootstrapPath);
+    QVERIFY(!rejected.ok());
+    QCOMPARE(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+  }
+
+  auto cancelled = bte::core::CancellationSource{};
+  cancelled.requestCancellation();
+  const auto cancelledValidation = bte::bindings::validatePythonStrategy(
+      validStrategy,
+      {.resourcesRoot = resourcesRoot, .workerBootstrapPath = bootstrapPath},
+      cancelled.token());
+  QVERIFY(!cancelledValidation.ok());
+  QCOMPARE(cancelledValidation.error().code, bte::core::ErrorCode::cancelled);
+
+  auto invalidCapital = makeConfiguration();
+  invalidCapital.initialCapital = 0.0;
+  const auto rejectedCapital =
+      bte::bindings::verifyPersistedPythonBacktestConfiguration(
+          invalidCapital, storage, resourcesRoot, bootstrapPath);
+  QVERIFY(!rejectedCapital.ok());
+  QCOMPARE(rejectedCapital.error().code, bte::core::ErrorCode::invalidArgument);
+  invalidCapital.initialCapital = std::numeric_limits<double>::quiet_NaN();
+  const auto rejectedNonFiniteCapital =
+      bte::bindings::verifyPersistedPythonBacktestConfiguration(
+          invalidCapital, storage, resourcesRoot, bootstrapPath);
+  QVERIFY(!rejectedNonFiniteCapital.ok());
+  QCOMPARE(rejectedNonFiniteCapital.error().code,
+           bte::core::ErrorCode::invalidArgument);
+
+  auto invalidSource = makeConfiguration();
+  const std::array invalidSources{
+      std::string{},
+      std::string{"source\0text", 11},
+      std::string{"source\rtext"},
+      std::string{"\xef\xbb\xbfsource"},
+      std::string{"\xff", 1},
+      std::string(std::size_t{1024} * 1024 + 1, 'x'),
+  };
+  for (const auto &source : invalidSources) {
+    invalidSource.pythonStrategy->sourceUtf8 = source;
+    const auto rejected =
+        bte::bindings::verifyPersistedPythonBacktestConfiguration(
+            invalidSource, storage, resourcesRoot, bootstrapPath);
+    QVERIFY(!rejected.ok());
+    QCOMPARE(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+  }
+
+  auto invalidParameters = makeConfiguration();
+  const std::array invalidParameterJson{
+      std::string{"{"},
+      std::string{"[]"},
+      std::string{"{ \"quantity\":1}"},
+      std::string{"{}"},
+      std::string{R"({"quantity":true})"},
+      std::string{R"({"quantity":0})"},
+      std::string{R"({"quantity":-1})"},
+      std::string{R"({"quantity":1000000001})"},
+  };
+  for (const auto &parameters : invalidParameterJson) {
+    invalidParameters.pythonStrategy->canonicalParametersJson = parameters;
+    const auto rejected =
+        bte::bindings::verifyPersistedPythonBacktestConfiguration(
+            invalidParameters, storage, resourcesRoot, bootstrapPath);
+    QVERIFY(!rejected.ok());
+    QCOMPARE(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+  }
+
+  const auto unavailable =
+      bte::bindings::verifyPersistedPythonBacktestConfiguration(
+          makeConfiguration(), storage, resourcesRoot, bootstrapPath);
+  QVERIFY(!unavailable.ok());
+  QCOMPARE(unavailable.error().code, bte::core::ErrorCode::runtimeUnavailable);
+  QVERIFY(!std::filesystem::exists(storage.resultStore));
+}
+
+void BacktestSessionVmTest::persistedPythonRunCanBeSavedAndReplayed() {
+#if defined(BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH)
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto profileRoot =
+      std::filesystem::path{BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH};
+  const auto resourcesRoot = root / "Resources";
+  const auto runtimeProfiles = resourcesRoot / "RuntimeProfiles";
+  std::filesystem::create_directories(runtimeProfiles);
+  std::error_code symlinkError;
+  std::filesystem::create_directory_symlink(
+      profileRoot, runtimeProfiles / profileRoot.filename(), symlinkError);
+  QVERIFY2(!symlinkError, symlinkError.message().c_str());
+
+  const auto resourceOverride = ScopedEnvironmentVariable{
+      "BTE_PYTHON_RESOURCES_ROOT",
+      QByteArray::fromStdString(resourcesRoot.string())};
+  const auto bootstrapOverride =
+      ScopedEnvironmentVariable{"BTE_PYTHON_WORKER_BOOTSTRAP",
+                                QByteArray{BTE_PYTHON_WORKER_BOOTSTRAP_PATH}};
+  QVERIFY(resourceOverride.setSuccessfully());
+  QVERIFY(bootstrapOverride.setSuccessfully());
+
+  const auto sourceDirectory = root / "Source";
+  std::filesystem::create_directories(sourceDirectory);
+  std::ofstream sourceFile{sourceDirectory / "SYN.csv"};
+  sourceFile << "symbol,ts,open,high,low,close,volume,schemaName\n"
+                "SYN,2024-01-01 00:00:00+00:00,100,101,99,100,1200,ohlcv-1h\n"
+                "SYN,2024-01-01 01:00:00+00:00,100,101,99,100,1200,ohlcv-1h\n"
+                "SYN,2024-01-01 02:00:00+00:00,110,111,109,110,1200,ohlcv-1h\n"
+                "SYN,2024-01-01 03:00:00+00:00,90,91,89,90,1200,ohlcv-1h\n"
+                "SYN,2024-01-01 04:00:00+00:00,80,81,79,80,1200,ohlcv-1h\n";
+  sourceFile.close();
+  const auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = root / "Data",
+      .symbols = {"SYN"},
+      .rowsPerSegment = 2,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  QVERIFY2(built.ok(), built.error().message.c_str());
+
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore = root / "Results",
+      .dataStore = root / "Data",
+      .snapshotId = built.value().snapshotId,
+      .strategyHash = {},
+  };
+  std::filesystem::create_directories(storage.resultStore);
+  std::ofstream verificationBlocker{storage.resultStore / "Verifications"};
+  verificationBlocker << "verification store unavailable";
+  verificationBlocker.close();
+
+  const std::string sampleSource = R"python(import stockbt
+
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+
+def create_strategy(params):
+    fast_period = params["fast_period"]
+    slow_period = params["slow_period"]
+    quantity = params["quantity"]
+
+    class SmaCrossover:
+        max_history_bars = slow_period
+        indicators = {
+            "fast": stockbt.SMA("fast", period=fast_period),
+            "slow": stockbt.SMA("slow", period=slow_period),
+        }
+
+        def __init__(self):
+            self.previous = None
+
+        def on_market(self, ctx):
+            fast = ctx.indicators["fast"]
+            slow = ctx.indicators["slow"]
+            if fast is None or slow is None:
+                return
+            previous = self.previous
+            self.previous = (fast, slow)
+            if previous is None:
+                return
+            previous_fast, previous_slow = previous
+            position = ctx.portfolio.positions.get(ctx.symbol)
+            shares = 0 if position is None else position.quantity_shares
+            if shares == 0 and previous_fast <= previous_slow and fast > slow:
+                ctx.orders.buy_market(ctx.symbol, quantity=quantity)
+            elif shares > 0 and previous_fast >= previous_slow and fast < slow:
+                ctx.orders.close_position(ctx.symbol)
+
+    return SmaCrossover()
+)python";
+  const auto configuration = bte::bindings::BacktestConfiguration{
+      .symbol = "SYN",
+      .schema = "ohlcv-1h",
+      .startDate = QDate{2024, 1, 1},
+      .endDate = QDate{2024, 1, 1},
+      .initialCapital = 1'000.0,
+      .quantityShares = 1,
+      .selectableStrategy = {},
+      .pythonStrategy =
+          bte::bindings::PythonStrategyConfiguration{
+              .sourceUtf8 = sampleSource,
+              .canonicalParametersJson =
+                  R"({"fast_period":1,"quantity":1,"slow_period":2})",
+              .sourceConsentGranted = true,
+          },
+  };
+
+  const auto run =
+      bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
+
+  QVERIFY2(run.ok(), run.error().message.c_str());
+  QCOMPARE(run.value().status, bte::results::RunStatus::completed);
+  QVERIFY(!run.value().reproducibilityVerified);
+  QVERIFY(run.value().reproducibilityDiagnostic.find(
+              "Verification status is unavailable") != std::string::npos);
+  QCOMPARE(run.value().fills.size(), 2U);
+  QCOMPARE(run.value().fills[0].side, bte::bindings::BacktestFillSide::buy);
+  QCOMPARE(run.value().fills[1].side, bte::bindings::BacktestFillSide::sell);
+  QVERIFY(!run.value().resultId.empty());
+  QVERIFY(!run.value().canonicalResultHash.empty());
+
+  const auto published = bte::bindings::publishBacktestDraft(
+      storage, run.value().resultId, "Python SMA integration");
+  QVERIFY2(published.ok(), published.error().message.c_str());
+  const auto replay = bte::bindings::ResultReplay::open(
+      storage.resultStore, storage.dataStore, published.value(),
+      bte::bindings::ResultReplayTimeframe::hourly);
+  QVERIFY2(replay.ok(), replay.error().message.c_str());
+  QCOMPARE(replay.value()->resultId(), published.value());
+  QCOMPARE(replay.value()->totalFrames(), 5U);
+  QVERIFY(replay.value()->seek(3));
+  QVERIFY(replay.value()->current() != nullptr);
+  QCOMPARE(replay.value()->current()->fills.size(), 1U);
+  QVERIFY(replay.value()->current()->fills.front().isBuy);
+  QVERIFY(replay.value()->seek(4));
+  QVERIFY(replay.value()->current() != nullptr);
+  QCOMPARE(replay.value()->current()->fills.size(), 1U);
+  QVERIFY(!replay.value()->current()->fills.front().isBuy);
+#else
+  QSKIP("The managed Python runtime profile is not enabled in this build.");
+#endif
+}
+
+void BacktestSessionVmTest::
     pythonWarmupSelectsActualBarsBeyondTheInitialCalendarWindow() {
   QTemporaryDir directory;
   QVERIFY(directory.isValid());
@@ -509,6 +832,54 @@ void BacktestSessionVmTest::
   QCOMPARE(selected.value().front().ts,
            bte::core::Timestamp{
                std::chrono::sys_days{std::chrono::year{2024} / 1 / 1}});
+
+  const auto bounded = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", built.value().snapshotId, "SYN", QDate{2025, 10, 1}, 2);
+  QVERIFY2(bounded.ok(), bounded.ok() ? "" : bounded.error().message.c_str());
+  QCOMPARE(bounded.value().size(), 2U);
+  QCOMPARE(bounded.value().front().ts,
+           bte::core::Timestamp{
+               std::chrono::sys_days{std::chrono::year{2025} / 4 / 1}});
+}
+
+void BacktestSessionVmTest::pythonWarmupRejectsInvalidHistoryLimitsAndDates() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto sourceDirectory = root / "Source";
+  std::filesystem::create_directories(sourceDirectory);
+  std::ofstream source{sourceDirectory / "SYN.csv"};
+  source << "symbol,ts,open,high,low,close,volume,schemaName\n"
+            "SYN,2024-01-01 00:00:00+00:00,100,101,99,100,1200,ohlcv-1h\n";
+  source.close();
+  const auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = root / "Data",
+      .symbols = {"SYN"},
+      .rowsPerSegment = 1,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  QVERIFY2(built.ok(), built.error().message.c_str());
+
+  const auto zeroHistory = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", built.value().snapshotId, "SYN", QDate{2024, 1, 2}, 0);
+  const auto excessiveHistory = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", built.value().snapshotId, "SYN", QDate{2024, 1, 2},
+      10'001);
+  const auto invalidDate = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", built.value().snapshotId, "SYN", QDate{}, 1);
+  const auto missingSnapshot = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", "missing-snapshot", "SYN", QDate{2024, 1, 2}, 1);
+
+  QVERIFY(!zeroHistory.ok());
+  QCOMPARE(zeroHistory.error().code, bte::core::ErrorCode::invalidArgument);
+  QVERIFY(!excessiveHistory.ok());
+  QCOMPARE(excessiveHistory.error().code,
+           bte::core::ErrorCode::invalidArgument);
+  QVERIFY(!invalidDate.ok());
+  QCOMPARE(invalidDate.error().code, bte::core::ErrorCode::invalidArgument);
+  QVERIFY(!missingSnapshot.ok());
 }
 
 void BacktestSessionVmTest::draftLifecycleBoundariesReturnStructuredResults() {

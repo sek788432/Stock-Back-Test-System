@@ -326,14 +326,14 @@ distinct versioned identity rather than silently changing existing plans.
 
 **Current decision.** Python strategies are trusted local command producers
 behind the same project-owned C++ Engine and Strategy seam as Selectable
-Conditions. Bindings creates one fresh `PythonStrategyRunner` per execution;
-the Runner owns the worker process, dedicated anonymous pipes,
-application-owned read-only shared memory, parent-enforced startup/hook
-deadlines, cancellation, and cleanup. The Engine owns chronology, C++ SMA,
-commands, fills, accounting, records, and replay. The first Python milestone
-supports one symbol, hourly actual bars, whole-share long market entry and
-full-position close, bounded read-only history, and the basic editor/`.py`
-workflow; it does not introduce a Strategy library or Debug Run.
+Conditions. Bindings creates one fresh `PythonWorkerStrategy` per execution;
+the adapter uses `ManagedWorkerProcess` to own the worker process, dedicated
+anonymous pipes, application-owned read-only shared memory, parent-enforced
+startup/hook deadlines, cancellation, and cleanup. The Engine owns chronology,
+C++ SMA, commands, fills, accounting, records, and replay. The first Python
+milestone supports one symbol, hourly actual bars, whole-share long market
+entry and full-position close, bounded read-only history, and the basic
+editor/`.py` workflow; it does not introduce a Strategy library or Debug Run.
 
 The macOS profile is pinned to CPython 3.14.9 from Astral
 `python-build-standalone` release `20261021`, plus project-owned `stockbt`,
@@ -352,7 +352,7 @@ and Result hash frames. C++ parses JSON with the pinned vcpkg `nlohmann/json`
 3.12.0 port revision 2; worker fixtures must prove the Python serializer emits
 the same bytes. `nlohmann/json` is not treated as an RFC 8785 serializer.
 
-Result schema 3 will preserve exact source and canonical parameters, API and
+Result schema 3 preserves exact source and canonical parameters, API and
 template versions, runtime identity, seed, numeric policy, immutable data
 selection, canonical events, and structured diagnostics under a new hash
 framing. Schema 2 remains frozen and readable under its current framing. A

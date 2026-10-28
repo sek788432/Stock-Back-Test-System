@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -28,7 +29,9 @@
 #include <nlohmann/json.hpp>
 #include <ranges>
 #include <span>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -65,6 +68,92 @@ std::int64_t queryInteger(const std::filesystem::path &path,
           rawStatement, &sqlite3_finalize};
   EXPECT_EQ(sqlite3_step(statement.get()), SQLITE_ROW);
   return sqlite3_column_int64(statement.get(), 0);
+}
+
+[[nodiscard]] std::string queryText(const std::filesystem::path &path,
+                                    const std::string &sql) {
+  sqlite3 *rawDatabase = nullptr;
+  if (sqlite3_open_v2(path.string().c_str(), &rawDatabase, SQLITE_OPEN_READONLY,
+                      nullptr) != SQLITE_OK) {
+    return {};
+  }
+  const auto database = std::unique_ptr<sqlite3, decltype(&sqlite3_close)>{
+      rawDatabase, &sqlite3_close};
+  sqlite3_stmt *rawStatement = nullptr;
+  if (sqlite3_prepare_v2(database.get(), sql.c_str(), -1, &rawStatement,
+                         nullptr) != SQLITE_OK) {
+    return {};
+  }
+  const auto statement =
+      std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>{
+          rawStatement, &sqlite3_finalize};
+  if (sqlite3_step(statement.get()) != SQLITE_ROW) {
+    return {};
+  }
+  const auto *const value = sqlite3_column_text(statement.get(), 0);
+  const auto size = sqlite3_column_bytes(statement.get(), 0);
+  if (value == nullptr || size < 0) {
+    return {};
+  }
+  std::string result;
+  result.reserve(static_cast<std::size_t>(size));
+  for (auto index = 0; index < size; ++index) {
+    result.push_back(static_cast<char>(value[index]));
+  }
+  return result;
+}
+
+void executeSqlText(const std::filesystem::path &path, const std::string &sql,
+                    const std::string &value) {
+  sqlite3 *rawDatabase = nullptr;
+  ASSERT_EQ(sqlite3_open(path.string().c_str(), &rawDatabase), SQLITE_OK);
+  const auto database = std::unique_ptr<sqlite3, decltype(&sqlite3_close)>{
+      rawDatabase, &sqlite3_close};
+  sqlite3_stmt *rawStatement = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(database.get(), sql.c_str(), -1, &rawStatement,
+                               nullptr),
+            SQLITE_OK);
+  const auto statement =
+      std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>{
+          rawStatement, &sqlite3_finalize};
+  ASSERT_EQ(sqlite3_bind_text(statement.get(), 1, value.data(),
+                              static_cast<int>(value.size()), SQLITE_TRANSIENT),
+            SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(statement.get()), SQLITE_DONE);
+}
+
+[[nodiscard]] bool rewriteVerificationEvidence(
+    const std::filesystem::path &path,
+    const std::function<void(nlohmann::json &)> &mutate) {
+  std::ifstream input{path, std::ios::binary};
+  if (!input) {
+    return false;
+  }
+  const std::string bytes{std::istreambuf_iterator<char>{input},
+                          std::istreambuf_iterator<char>{}};
+  auto parsed = bte::core::parseCanonicalJson(bytes);
+  if (!parsed.ok()) {
+    return false;
+  }
+  auto document = std::move(parsed).value();
+  mutate(document);
+  document.erase("integrityHash");
+  auto integrityBytes = bte::core::serializeCanonicalJson(document);
+  if (!integrityBytes.ok()) {
+    return false;
+  }
+  document["integrityHash"] = bte::core::sha256(integrityBytes.value());
+  auto serialized = bte::core::serializeCanonicalJson(document);
+  if (!serialized.ok()) {
+    return false;
+  }
+  std::ofstream output{path, std::ios::binary | std::ios::trunc};
+  if (!output) {
+    return false;
+  }
+  output.write(serialized.value().data(),
+               static_cast<std::streamsize>(serialized.value().size()));
+  return output.good();
 }
 
 class ResultStoreFixture : public testing::Test {
@@ -584,6 +673,26 @@ TEST_F(ResultStoreFixture,
       std::filesystem::is_empty(root_ / "MigrationMissingData" / "Staging"));
 }
 
+TEST_F(ResultStoreFixture,
+       schemaTwoMigrationRejectsSchemaThreeAndInvalidResultIdentities) {
+  const auto directory = root_ / "MigrationWrongSchema";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto schemaThree = createSchemaThreeResult(
+      *store.value(), schemaThreeDescriptor(),
+      bte::results::RunStatus::completed, "already schema three");
+  ASSERT_TRUE(schemaThree.ok()) << schemaThree.error().message;
+
+  const auto wrongSchema =
+      store.value()->migrateSchema2Copy(schemaThree.value().resultId);
+  ASSERT_FALSE(wrongSchema.ok());
+  EXPECT_EQ(wrongSchema.error().code, bte::core::ErrorCode::schemaMismatch);
+  const auto invalidId = store.value()->migrateSchema2Copy("invalid");
+  ASSERT_FALSE(invalidId.ok());
+  EXPECT_EQ(invalidId.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_TRUE(std::filesystem::is_empty(directory / "Staging"));
+}
+
 TEST_F(
     ResultStoreFixture,
     reproducibilityEvidencePersistsCanonicalIdentityWithoutPublishingResults) {
@@ -623,6 +732,170 @@ TEST_F(
   const auto listed = store.value()->list();
   ASSERT_TRUE(listed.ok()) << listed.error().message;
   EXPECT_EQ(listed.value().size(), 1U);
+}
+
+TEST_F(ResultStoreFixture,
+       reproducibilityStoreRejectsIncompleteFunctionalInputsBeforeWriting) {
+  using bte::results::ProvenanceAvailabilityState;
+  using bte::results::RunDescriptor;
+  using DescriptorMutation = std::function<void(RunDescriptor &)>;
+
+  auto store = bte::results::VerificationStore::open(root_ / "InvalidInputs");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto valid = schemaThreeDescriptor();
+  const std::vector<DescriptorMutation> invalidMutations{
+      [](auto &value) { value.schemaVersion = 2; },
+      [](auto &value) { value.universe.clear(); },
+      [](auto &value) { value.range.end = value.range.start; },
+      [](auto &value) { value.initialCapitalMicrodollars = 0; },
+      [](auto &value) { value.strategyId.clear(); },
+      [](auto &value) {
+        value.provenance.strategyMode =
+            bte::results::StrategyMode::selectableConditions;
+      },
+      [](auto &value) { value.universe.push_back("SYN"); },
+      [](auto &value) { value.dataSelection.snapshotId = "invalid"; },
+      [](auto &value) { value.dataSelection.calendarHash = "invalid"; },
+      [](auto &value) { value.dataSelection.splitManifestHash = "invalid"; },
+      [](auto &value) { value.dataSelection.timeframe.clear(); },
+      [](auto &value) { value.dataSelection.profile.clear(); },
+      [](auto &value) { value.provenance.engineBuild.reset(); },
+      [](auto &value) { value.provenance.engineBuild = ""; },
+      [](auto &value) { value.provenance.timeframe = "ohlcv-1d"; },
+      [](auto &value) { value.provenance.costProfile.reset(); },
+      [](auto &value) { value.provenance.costProfile = ""; },
+      [](auto &value) {
+        value.provenance.commissionRatePartsPerBillion.reset();
+      },
+      [](auto &value) { value.provenance.commissionRatePartsPerBillion = -1; },
+      [](auto &value) { value.provenance.slippageRatePartsPerBillion.reset(); },
+      [](auto &value) { value.provenance.slippageRatePartsPerBillion = -1; },
+      [](auto &value) { value.provenance.seed.reset(); },
+      [](auto &value) { value.provenance.seed = -1; },
+      [](auto &value) { value.provenance.apiVersion.clear(); },
+      [](auto &value) { value.provenance.templateVersion.clear(); },
+      [](auto &value) { value.provenance.runtime.reset(); },
+      [](auto &value) {
+        value.provenance.runtime->canonicalManifestJson = "{";
+        value.provenance.runtime->manifestHash =
+            bte::core::sha256(value.provenance.runtime->canonicalManifestJson);
+      },
+      [](auto &value) {
+        value.provenance.runtime->canonicalManifestJson = "[]";
+        value.provenance.runtime->manifestHash =
+            bte::core::sha256(value.provenance.runtime->canonicalManifestJson);
+      },
+      [](auto &value) {
+        value.provenance.runtime->canonicalManifestJson += " ";
+        value.provenance.runtime->manifestHash =
+            bte::core::sha256(value.provenance.runtime->canonicalManifestJson);
+      },
+      [](auto &value) { value.provenance.runtime->profileId.clear(); },
+      [](auto &value) { value.provenance.runtime->pythonVersion.clear(); },
+      [](auto &value) { value.provenance.runtime->pythonAbi.clear(); },
+      [](auto &value) {
+        value.provenance.runtime->stockbtSourceHash = "invalid";
+      },
+      [](auto &value) { value.provenance.sourceUtf8.clear(); },
+      [](auto &value) { value.provenance.sourceUtf8 = std::string(1, '\0'); },
+      [](auto &value) { value.provenance.sourceUtf8 = "bad\rsource"; },
+      [](auto &value) { value.provenance.sourceUtf8 = "\xef\xbb\xbfsource"; },
+      [](auto &value) {
+        value.provenance.sourceUtf8 = std::string(1024U * 1024U + 1U, 'x');
+      },
+      [](auto &value) { value.provenance.sourceHash = std::string(64, '0'); },
+      [](auto &value) { value.strategyHash = std::string(64, '0'); },
+      [](auto &value) { value.provenance.provenanceAvailability.clear(); },
+      [](auto &value) {
+        value.provenance.provenanceAvailability.begin()->second =
+            static_cast<ProvenanceAvailabilityState>(99);
+      },
+      [](auto &value) { value.provenance.canonicalParametersJson = "{"; },
+      [](auto &value) { value.provenance.canonicalParametersJson = "null"; },
+      [](auto &value) {
+        value.provenance.canonicalParametersJson =
+            R"({"quantity":1,"fast_period":2,"slow_period":3})";
+      },
+      [](auto &value) {
+        value.provenance.runtime->manifestHash = std::string(64, '0');
+      },
+      [](auto &value) {
+        value.provenance.runtime->packages.front().version = "mismatched";
+      },
+      [](auto &value) { value.provenance.runtime->packages.clear(); },
+      [](auto &value) {
+        value.provenance.runtime->packages.front().name.clear();
+      },
+      [](auto &value) {
+        value.provenance.runtime->packages.front().version.clear();
+      },
+      [](auto &value) {
+        value.provenance.runtime->packages.front().artifactHash = "invalid";
+      },
+      [](auto &value) {
+        value.provenance.runtime->packages.front().name =
+            value.provenance.runtime->packages.back().name;
+      },
+      [](auto &value) { value.dataSelection.spans.clear(); },
+      [](auto &value) {
+        value.dataSelection.spans[1].segmentOrdinal =
+            value.dataSelection.spans[0].segmentOrdinal;
+      },
+      [](auto &value) { value.dataSelection.spans[0].symbol = "OTHER"; },
+      [](auto &value) { value.dataSelection.spans[0].segmentId = "invalid"; },
+      [](auto &value) { value.dataSelection.spans[0].segmentHash = "invalid"; },
+      [](auto &value) { value.dataSelection.spans[0].rowCount = 0; },
+      [](auto &value) {
+        value.dataSelection.spans[0].firstTimestamp =
+            bte::core::time::parseIso8601("2024-01-02 00:00:00+00:00").value();
+        value.dataSelection.spans[0].lastTimestamp =
+            bte::core::time::parseIso8601("2024-01-01 23:00:00+00:00").value();
+      },
+  };
+
+  for (const auto &mutate : invalidMutations) {
+    auto invalid = valid;
+    mutate(invalid);
+    const auto rejected = store.value()->create(invalid);
+    ASSERT_FALSE(rejected.ok());
+    EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+  }
+
+  using ManifestMutation = std::function<void(nlohmann::json &)>;
+  const std::vector<ManifestMutation> invalidManifestMutations{
+      [](auto &manifest) { manifest["profileId"] = "mismatched-profile"; },
+      [](auto &manifest) { manifest["pythonVersion"] = "3.12"; },
+      [](auto &manifest) { manifest["pythonAbi"] = "cp312"; },
+      [](auto &manifest) {
+        manifest["stockbtSourceSha256"] = std::string(64, '0');
+      },
+      [](auto &manifest) { manifest["components"] = "invalid"; },
+      [](auto &manifest) { manifest["components"][0] = "not-an-object"; },
+      [](auto &manifest) { manifest["components"][0]["name"] = 1; },
+      [](auto &manifest) { manifest["components"][0]["version"] = 1; },
+      [](auto &manifest) { manifest["components"][0]["artifactSha256"] = 1; },
+      [](auto &manifest) {
+        manifest["components"].push_back(manifest["components"][0]);
+      },
+  };
+  for (const auto &mutate : invalidManifestMutations) {
+    auto invalid = valid;
+    auto &runtime = invalid.provenance.runtime.value();
+    auto parsed = bte::core::parseCanonicalJson(runtime.canonicalManifestJson);
+    ASSERT_TRUE(parsed.ok()) << parsed.error().message;
+    auto manifest = std::move(parsed).value();
+    mutate(manifest);
+    const auto canonical = bte::core::serializeCanonicalJson(manifest);
+    ASSERT_TRUE(canonical.ok()) << canonical.error().message;
+    runtime.canonicalManifestJson = canonical.value();
+    runtime.manifestHash = bte::core::sha256(canonical.value());
+    const auto rejected = store.value()->create(invalid);
+    ASSERT_FALSE(rejected.ok());
+    EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+  }
+  const auto entries = store.value()->list();
+  ASSERT_TRUE(entries.ok()) << entries.error().message;
+  EXPECT_TRUE(entries.value().empty());
 }
 
 TEST_F(ResultStoreFixture,
@@ -785,6 +1058,135 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
+       reproducibilityCoordinatorContainsRunnerAndObserverFailures) {
+  using namespace bte;
+  const auto directory = root_ / "VerificationCoordinatorFailures";
+  const auto descriptor = schemaThreeDescriptor();
+  auto evidenceStore = results::VerificationStore::open(directory);
+  ASSERT_TRUE(evidenceStore.ok()) << evidenceStore.error().message;
+  results::ReproducibilityCoordinator coordinator{*evidenceStore.value()};
+
+  const auto missingRunner = coordinator.verify(descriptor, {});
+  ASSERT_FALSE(missingRunner.ok());
+  EXPECT_EQ(missingRunner.error().code, core::ErrorCode::invalidArgument);
+
+  auto nestedError = std::optional<core::ErrorCode>{};
+  const auto nested = coordinator.verify(
+      descriptor,
+      [&coordinator,
+       &nestedError](const results::RunDescriptor &attemptDescriptor,
+                     const core::CancellationToken &,
+                     const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> {
+        auto competingVerification =
+            std::async(std::launch::async, [&coordinator, &attemptDescriptor,
+                                            &nestedError] {
+              const auto inner = coordinator.verify(
+                  attemptDescriptor,
+                  [](const results::RunDescriptor &,
+                     const core::CancellationToken &,
+                     const results::VerificationResultIdPublisher &)
+                      -> core::Result<results::VerificationAttemptOutput> {
+                    return core::makeError(
+                        core::ErrorCode::internal,
+                        "The competing runner must not execute");
+                  });
+              if (!inner.ok()) {
+                nestedError = inner.error().code;
+              }
+            });
+        competingVerification.get();
+        return core::makeError(core::ErrorCode::workerStartFailed,
+                               "The outer verification stopped");
+      });
+  ASSERT_TRUE(nested.ok()) << nested.error().message;
+  EXPECT_EQ(nested.value().status, results::VerificationStatus::failed);
+  ASSERT_TRUE(nestedError.has_value());
+  EXPECT_EQ(nestedError.value(), core::ErrorCode::resourceBusy);
+
+  const auto standardException = coordinator.verify(
+      descriptor,
+      [](const results::RunDescriptor &, const core::CancellationToken &,
+         const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> {
+        throw std::runtime_error("runner exception");
+      },
+      {}, [](const results::VerificationEvidence &) { throw 1; });
+  ASSERT_TRUE(standardException.ok()) << standardException.error().message;
+  EXPECT_EQ(standardException.value().status,
+            results::VerificationStatus::failed);
+  ASSERT_EQ(standardException.value().attempts.size(), 1U);
+  EXPECT_NE(standardException.value().attempts.front().error->message.find(
+                "runner exception"),
+            std::string::npos);
+
+  const auto unknownException = coordinator.verify(
+      descriptor,
+      [](const results::RunDescriptor &, const core::CancellationToken &,
+         const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> { throw 7; });
+  ASSERT_TRUE(unknownException.ok()) << unknownException.error().message;
+  EXPECT_EQ(unknownException.value().status,
+            results::VerificationStatus::failed);
+  ASSERT_EQ(unknownException.value().attempts.size(), 1U);
+  EXPECT_EQ(unknownException.value().attempts.front().error->message,
+            "Verification attempt raised an unknown error");
+
+  const auto publicationFailure = coordinator.verify(
+      descriptor,
+      [](const results::RunDescriptor &attemptDescriptor,
+         const core::CancellationToken &,
+         const results::VerificationResultIdPublisher &publishId)
+          -> core::Result<results::VerificationAttemptOutput> {
+        const auto invalidPublication = publishId(std::string(32, 'z'));
+        EXPECT_FALSE(invalidPublication.ok());
+        return results::VerificationAttemptOutput{
+            .descriptor = attemptDescriptor,
+            .result = {.resultId = std::string(32, '1'),
+                       .canonicalResultHash = std::string(64, 'a')},
+            .status = results::RunStatus::completed,
+        };
+      });
+  ASSERT_TRUE(publicationFailure.ok()) << publicationFailure.error().message;
+  EXPECT_EQ(publicationFailure.value().status,
+            results::VerificationStatus::failed);
+  ASSERT_EQ(publicationFailure.value().attempts.size(), 1U);
+  EXPECT_EQ(publicationFailure.value().attempts.front().error->message,
+            "Attempt Result ID is invalid");
+
+  core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+  auto launches = 0;
+  const auto canceledBeforeStart = coordinator.verify(
+      descriptor,
+      [&launches](const results::RunDescriptor &,
+                  const core::CancellationToken &,
+                  const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> {
+        ++launches;
+        return core::makeError(core::ErrorCode::internal,
+                               "A canceled runner must not execute");
+      },
+      cancellation.token());
+  ASSERT_TRUE(canceledBeforeStart.ok()) << canceledBeforeStart.error().message;
+  EXPECT_EQ(canceledBeforeStart.value().status,
+            results::VerificationStatus::canceled);
+  EXPECT_TRUE(canceledBeforeStart.value().attempts.empty());
+  EXPECT_EQ(launches, 0);
+
+  const auto oversizedFailure = coordinator.verify(
+      descriptor,
+      [](const results::RunDescriptor &, const core::CancellationToken &,
+         const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> {
+        return core::makeError(core::ErrorCode::internal,
+                               std::string(2049, 'x'));
+      });
+  ASSERT_FALSE(oversizedFailure.ok());
+  EXPECT_EQ(oversizedFailure.error().code, core::ErrorCode::invalidArgument);
+}
+
+TEST_F(ResultStoreFixture,
        reproducibilityVerificationRequiresThreeIdenticalCompletedResults) {
   const auto directory = root_ / "VerificationMatching";
   const auto value = schemaThreeDescriptor();
@@ -822,6 +1224,29 @@ TEST_F(ResultStoreFixture,
   const auto matches = verifications.value()->hasVerifiedEvidence(value);
   ASSERT_TRUE(matches.ok()) << matches.error().message;
   EXPECT_TRUE(matches.value());
+
+  const auto verifiedResult = bte::results::FinalizedResult{
+      .resultId = created.value().attempts.front().resultId.value(),
+      .canonicalResultHash =
+          created.value().attempts.front().canonicalResultHash.value(),
+  };
+  const auto resultMatches =
+      verifications.value()->hasVerifiedResult(value, verifiedResult);
+  ASSERT_TRUE(resultMatches.ok()) << resultMatches.error().message;
+  EXPECT_TRUE(resultMatches.value());
+
+  auto differentResult = verifiedResult;
+  differentResult.canonicalResultHash = std::string(64, '0');
+  const auto differentHash =
+      verifications.value()->hasVerifiedResult(value, differentResult);
+  ASSERT_TRUE(differentHash.ok()) << differentHash.error().message;
+  EXPECT_FALSE(differentHash.value());
+  differentResult.resultId = std::string(32, 'z');
+  const auto invalidResultId =
+      verifications.value()->hasVerifiedResult(value, differentResult);
+  ASSERT_FALSE(invalidResultId.ok());
+  EXPECT_EQ(invalidResultId.error().code,
+            bte::core::ErrorCode::invalidArgument);
 
   auto changedSource = value;
   changedSource.provenance.sourceUtf8 += "# changed input\n";
@@ -1066,6 +1491,81 @@ TEST_F(
 }
 
 TEST_F(ResultStoreFixture,
+       reproducibilityParserRejectsRehashedInvalidEvidenceStates) {
+  using EvidenceMutation = std::function<void(nlohmann::json &)>;
+  const auto directory = root_ / "VerificationInvalidEvidence";
+  auto verifications = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(verifications.ok()) << verifications.error().message;
+  const auto descriptor = schemaThreeDescriptor();
+  const std::vector<EvidenceMutation> invalidMutations{
+      [](auto &document) { document["schemaVersion"] = 2; },
+      [](auto &document) { document["state"] = "unknown"; },
+      [](auto &document) { document["state"] = 1; },
+      [](auto &document) { document["progressOrdinal"] = 0; },
+      [](auto &document) { document["progressOrdinal"] = 4; },
+      [](auto &document) { document["verificationId"] = std::string(32, '1'); },
+      [](auto &document) { document["identity"] = nlohmann::json::array(); },
+      [](auto &document) { document["identityHash"] = std::string(64, '0'); },
+      [](auto &document) { document["state"] = "verified"; },
+      [](auto &document) { document["attempts"][0]["attemptOrdinal"] = 2; },
+      [](auto &document) {
+        document["attempts"][0]["resultId"] = std::string(33, '1');
+      },
+      [](auto &document) {
+        document["attempts"][0]["resultId"] = std::string(32, 'z');
+      },
+      [](auto &document) {
+        document["attempts"][0]["canonicalResultHash"] = "invalid";
+      },
+      [](auto &document) {
+        document["attempts"][0]["terminalStatus"] = "running";
+      },
+      [](auto &document) {
+        document["attempts"][0]["error"] = {{"code", "only one field"}};
+      },
+      [](auto &document) {
+        document["attempts"][0]["resultId"] = std::string(32, '1');
+        document["attempts"][0]["terminalStatus"] = "completed";
+      },
+      [](auto &document) {
+        document["attempts"][0]["terminalStatus"] = "failed";
+      },
+      [](auto &document) {
+        document["attempts"][0]["error"] = {{"code", ""},
+                                            {"message", "failure"}};
+      },
+      [](auto &document) {
+        document["attempts"].push_back(document["attempts"][0]);
+        document["attempts"][0]["attemptOrdinal"] = 1;
+        document["attempts"][1]["attemptOrdinal"] = 2;
+        document["progressOrdinal"] = 2;
+      },
+  };
+
+  for (const auto &mutate : invalidMutations) {
+    const auto created = verifications.value()->create(descriptor);
+    ASSERT_TRUE(created.ok()) << created.error().message;
+    const auto started =
+        verifications.value()->beginAttempt(created.value().verificationId);
+    ASSERT_TRUE(started.ok()) << started.error().message;
+    const auto evidencePath = directory / "Verifications" /
+                              (created.value().verificationId + ".bteverify");
+    ASSERT_TRUE(rewriteVerificationEvidence(evidencePath, mutate));
+
+    const auto rejected =
+        verifications.value()->load(created.value().verificationId);
+    ASSERT_FALSE(rejected.ok());
+    EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::schemaMismatch);
+  }
+  const auto listed = verifications.value()->list();
+  ASSERT_TRUE(listed.ok()) << listed.error().message;
+  EXPECT_EQ(listed.value().size(), invalidMutations.size());
+  EXPECT_TRUE(std::ranges::all_of(listed.value(), [](const auto &entry) {
+    return !entry.evidence.has_value() && !entry.diagnostic.empty();
+  }));
+}
+
+TEST_F(ResultStoreFixture,
        schemaThreePersistsTypedPythonProvenanceAndMatchesIndependentHash) {
   const auto value = schemaThreeDescriptor();
   auto store =
@@ -1159,6 +1659,187 @@ TEST_F(ResultStoreFixture, schemaThreeRejectsMalformedProvenanceBeforeStaging) {
 }
 
 TEST_F(ResultStoreFixture,
+       schemaThreeRejectsInvalidRuntimeAndStrategyContractsBeforeStaging) {
+  using bte::results::ProvenanceAvailabilityState;
+  using bte::results::RunDescriptor;
+  using DescriptorMutation = std::function<void(RunDescriptor &)>;
+  using ManifestMutation = std::function<void(nlohmann::json &)>;
+
+  auto store = bte::results::ResultStore::open(
+      root_ / "SchemaThreeRuntimeInvalid", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto expectRejected = [&store](const RunDescriptor &invalid) {
+    const auto rejected = store.value()->begin(invalid);
+    EXPECT_FALSE(rejected.ok());
+    if (!rejected.ok()) {
+      EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+    }
+  };
+  const std::vector<DescriptorMutation> invalidDescriptors{
+      [](auto &value) { value.provenance.timeframe = "ohlcv-1d"; },
+      [](auto &value) { value.provenance.engineBuild.reset(); },
+      [](auto &value) { value.provenance.engineBuild = ""; },
+      [](auto &value) { value.provenance.seed.reset(); },
+      [](auto &value) { value.provenance.costProfile = std::string{}; },
+      [](auto &value) { value.provenance.commissionRatePartsPerBillion = -1; },
+      [](auto &value) { value.provenance.slippageRatePartsPerBillion = -1; },
+      [](auto &value) {
+        value.provenance.strategyMode =
+            static_cast<bte::results::StrategyMode>(99);
+      },
+      [](auto &value) {
+        value.provenance.provenanceAvailability["costs"] =
+            ProvenanceAvailabilityState::legacyUnrecorded;
+      },
+      [](auto &value) {
+        value.provenance.provenanceAvailability["unknown"] =
+            ProvenanceAvailabilityState::recorded;
+      },
+      [](auto &value) { value.provenance.canonicalParametersJson = "null"; },
+      [](auto &value) {
+        value.provenance.canonicalParametersJson =
+            std::string(64U * 1024U + 1U, 'x');
+      },
+      [](auto &value) { value.provenance.sourceUtf8 = "source\rwith-cr"; },
+      [](auto &value) { value.provenance.sourceUtf8 = "\xef\xbb\xbfsource"; },
+      [](auto &value) { value.provenance.sourceUtf8 = std::string(1, '\0'); },
+      [](auto &value) {
+        value.provenance.sourceUtf8 = std::string(1024U * 1024U + 1U, 'x');
+      },
+      [](auto &value) {
+        value.provenance.sourceUtf8 = std::string(1, static_cast<char>(0xff));
+        value.provenance.sourceHash =
+            bte::core::sha256(value.provenance.sourceUtf8);
+        value.strategyHash = value.provenance.sourceHash;
+      },
+      [](auto &value) { value.provenance.sourceHash = std::string(64, '0'); },
+      [](auto &value) { value.provenance.canonicalPlanJson = "{}"; },
+      [](auto &value) { value.provenance.planHash = "invalid"; },
+      [](auto &value) { value.provenance.runtime.reset(); },
+      [](auto &value) { value.provenance.runtime->profileId.clear(); },
+      [](auto &value) { value.provenance.runtime->pythonVersion.clear(); },
+      [](auto &value) { value.provenance.runtime->pythonAbi.clear(); },
+      [](auto &value) {
+        value.provenance.runtime->stockbtSourceHash = std::string(64, '0');
+      },
+      [](auto &value) {
+        value.provenance.runtime->packages.front().name = "stockbt";
+      },
+      [](auto &value) {
+        value.provenance.runtime->packages.front().artifactHash = "invalid";
+      },
+      [](auto &value) {
+        value.provenance.runtime->packages.erase(std::ranges::find(
+            value.provenance.runtime->packages, std::string{"stockbt"},
+            &bte::results::RuntimePackageIdentity::name));
+      },
+      [](auto &value) {
+        value.provenance.runtime->packages.front().name =
+            value.provenance.runtime->packages.back().name;
+      },
+  };
+
+  for (const auto &mutate : invalidDescriptors) {
+    auto invalid = schemaThreeDescriptor();
+    mutate(invalid);
+    expectRejected(invalid);
+  }
+
+  auto selectable = schemaThreeDescriptor();
+  selectable.provenance.strategyMode =
+      bte::results::StrategyMode::selectableConditions;
+  selectable.provenance.sourceUtf8.clear();
+  selectable.provenance.sourceHash.clear();
+  selectable.provenance.canonicalPlanJson = R"({"version":1})";
+  selectable.provenance.planHash =
+      bte::core::sha256(selectable.provenance.canonicalPlanJson);
+  selectable.provenance.runtime.reset();
+  expectRejected([&] {
+    auto invalid = selectable;
+    invalid.provenance.canonicalPlanJson = "{";
+    return invalid;
+  }());
+  expectRejected([&] {
+    auto invalid = selectable;
+    invalid.provenance.canonicalPlanJson = "null";
+    invalid.provenance.planHash =
+        bte::core::sha256(invalid.provenance.canonicalPlanJson);
+    return invalid;
+  }());
+  expectRejected([&] {
+    auto invalid = selectable;
+    invalid.provenance.canonicalPlanJson = R"({"version":1,"condition":"buy"})";
+    invalid.provenance.planHash =
+        bte::core::sha256(invalid.provenance.canonicalPlanJson);
+    return invalid;
+  }());
+  auto validSelectable = store.value()->begin(selectable);
+  ASSERT_TRUE(validSelectable.ok()) << validSelectable.error().message;
+  ASSERT_TRUE(validSelectable.value()->append(records()).ok());
+  const auto selectableResult = validSelectable.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(selectableResult.ok()) << selectableResult.error().message;
+  const auto reopenedSelectable =
+      store.value()->openResult(selectableResult.value().resultId);
+  ASSERT_TRUE(reopenedSelectable.ok()) << reopenedSelectable.error().message;
+  EXPECT_EQ(reopenedSelectable.value().descriptor.provenance.strategyMode,
+            bte::results::StrategyMode::selectableConditions);
+  EXPECT_EQ(reopenedSelectable.value().descriptor.provenance.planHash,
+            selectable.provenance.planHash);
+
+  const std::vector<ManifestMutation> invalidManifests{
+      [](auto &manifest) { manifest["schemaVersion"] = 2; },
+      [](auto &manifest) { manifest["platform"] = "linux"; },
+      [](auto &manifest) { manifest["architecture"] = "x86_64"; },
+      [](auto &manifest) { manifest["stockbtApiVersion"] = "2"; },
+      [](auto &manifest) { manifest["profileBuilderVersion"] = ""; },
+      [](auto &manifest) { manifest["pythonExecutable"] = ""; },
+      [](auto &manifest) {
+        manifest["installedFiles"] = nlohmann::json::array();
+      },
+      [](auto &manifest) { manifest["profileId"] = "wrong-profile"; },
+      [](auto &manifest) { manifest["pythonVersion"] = "3.12"; },
+      [](auto &manifest) { manifest["pythonAbi"] = "cp312"; },
+      [](auto &manifest) {
+        manifest["stockbtSourceSha256"] = std::string(64, '0');
+      },
+      [](auto &manifest) { manifest["installedFiles"][0] = "not-an-object"; },
+      [](auto &manifest) { manifest["installedFiles"][0].erase("path"); },
+      [](auto &manifest) { manifest["installedFiles"][0]["path"] = ""; },
+      [](auto &manifest) {
+        manifest["installedFiles"][0]["sha256"] = "invalid";
+      },
+      [](auto &manifest) {
+        manifest["installedFiles"].push_back(manifest["installedFiles"][0]);
+      },
+      [](auto &manifest) { manifest["components"][0] = "not-an-object"; },
+      [](auto &manifest) {
+        manifest["components"][0]["licenses"] = nlohmann::json::array();
+      },
+      [](auto &manifest) { manifest["components"][0].erase("upstreamUrl"); },
+      [](auto &manifest) { manifest["components"] = nlohmann::json::array(); },
+  };
+  for (const auto &mutate : invalidManifests) {
+    auto invalid = schemaThreeDescriptor();
+    auto parsed = bte::core::parseCanonicalJson(
+        invalid.provenance.runtime->canonicalManifestJson);
+    ASSERT_TRUE(parsed.ok()) << parsed.error().message;
+    auto manifest = std::move(parsed).value();
+    mutate(manifest);
+    const auto canonical = bte::core::serializeCanonicalJson(manifest);
+    ASSERT_TRUE(canonical.ok()) << canonical.error().message;
+    invalid.provenance.runtime->canonicalManifestJson = canonical.value();
+    invalid.provenance.runtime->manifestHash =
+        bte::core::sha256(canonical.value());
+    expectRejected(invalid);
+  }
+
+  EXPECT_TRUE(std::filesystem::is_empty(root_ / "SchemaThreeRuntimeInvalid" /
+                                        "Staging"));
+}
+
+TEST_F(ResultStoreFixture,
        schemaThreeRejectsTamperedProvenanceAndUnknownMajorVersion) {
   auto store = bte::results::ResultStore::open(root_ / "SchemaThreeTamper",
                                                root_ / "Data");
@@ -1191,6 +1872,62 @@ TEST_F(ResultStoreFixture,
   const auto unknownMajor = store.value()->openResult(unknownMajorId);
   ASSERT_FALSE(unknownMajor.ok());
   EXPECT_EQ(unknownMajor.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST_F(ResultStoreFixture,
+       schemaThreeRejectsMalformedPersistedProvenanceFields) {
+  using ProvenanceMutation = std::function<void(nlohmann::json &)>;
+  const auto directory = root_ / "SchemaThreeMalformedStoredProvenance";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const std::vector<ProvenanceMutation> invalidMutations{
+      [](auto &document) { document["strategyMode"] = "unknown"; },
+      [](auto &document) { document["apiVersion"] = 1; },
+      [](auto &document) { document.erase("engineBuild"); },
+      [](auto &document) { document["costProfile"] = nlohmann::json::array(); },
+      [](auto &document) { document["commissionRatePartsPerBillion"] = "01"; },
+      [](auto &document) {
+        document["provenanceAvailability"]["costs"] = false;
+      },
+      [](auto &document) {
+        document["provenanceAvailability"]["costs"] = "unknown";
+      },
+      [](auto &document) { document["runtime"].erase("manifest"); },
+      [](auto &document) {
+        document["runtime"]["packages"][0]["extra"] = "field";
+      },
+      [](auto &document) {
+        document["runtime"]["packages"][0]["artifactHash"] = 1;
+      },
+      [](auto &document) { document["runtime"]["packages"] = "invalid"; },
+      [](auto &document) { document["runtime"] = false; },
+      [](auto &document) { document["unexpected"] = true; },
+  };
+
+  for (const auto &mutate : invalidMutations) {
+    const auto result = createSchemaThreeResult(
+        *store.value(), schemaThreeDescriptor(),
+        bte::results::RunStatus::completed, "stored provenance validation");
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    const auto resultPath =
+        directory / "Results" / (result.value().resultId + ".bteresult");
+    const auto provenanceBytes =
+        queryText(resultPath, "SELECT canonical_json FROM schema3_provenance");
+    ASSERT_FALSE(provenanceBytes.empty());
+    auto provenance = bte::core::parseCanonicalJson(provenanceBytes);
+    ASSERT_TRUE(provenance.ok()) << provenance.error().message;
+    auto document = std::move(provenance).value();
+    mutate(document);
+    const auto serialized = bte::core::serializeCanonicalJson(document);
+    ASSERT_TRUE(serialized.ok()) << serialized.error().message;
+    executeSqlText(resultPath,
+                   "UPDATE schema3_provenance SET canonical_json=?1",
+                   serialized.value());
+
+    const auto rejected = store.value()->openResult(result.value().resultId);
+    ASSERT_FALSE(rejected.ok());
+    EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::schemaMismatch);
+  }
 }
 
 TEST_F(ResultStoreFixture,

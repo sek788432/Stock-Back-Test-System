@@ -713,6 +713,26 @@ def _validate_source(source: str) -> object:
                         message=message,
                     ),
                 )
+        elif (
+            isinstance(node, ast.Name)
+            and node.id in {"__builtins__", "__import__"}
+        ) or (
+            isinstance(node, ast.Attribute)
+            and node.attr in {"__builtins__", "__import__"}
+        ) or (
+            isinstance(node, ast.Constant)
+            and node.value in {"__builtins__", "__import__"}
+        ):
+            message = "dynamic import access is not permitted"
+            raise WorkerFailure(
+                "StrategyImportNotAllowed",
+                message,
+                _startup_diagnostics(
+                    source_line=node.lineno,
+                    source_column=node.col_offset + 1,
+                    message=message,
+                ),
+            )
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id in {"__import__", "eval", "exec", "compile"}:
                 message = f"dynamic code operation {node.func.id!r} is not permitted"

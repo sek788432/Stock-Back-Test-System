@@ -537,6 +537,17 @@ if(BTE_BUILD_QT_APP)
       "${CMAKE_SOURCE_DIR}/Src/Bindings/Backtest"
       "${CMAKE_SOURCE_DIR}/Src/Backend/Data/Private")
 
+  if(BTE_BUNDLE_MANAGED_PYTHON_RUNTIME)
+    target_compile_definitions(
+      bte_backtest_vm_tests
+      PRIVATE
+        BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH="${BTE_PYTHON_RUNTIME_PROFILE_OUTPUT_DIR}"
+        BTE_PYTHON_WORKER_BOOTSTRAP_PATH="${PROJECT_SOURCE_DIR}/Src/Bindings/Python/worker_bootstrap.py")
+    add_dependencies(
+      bte_backtest_vm_tests
+      bte_python_runtime_profile)
+  endif()
+
   add_test(
     NAME bte_backtest_vm_tests
     COMMAND bte_backtest_vm_tests)

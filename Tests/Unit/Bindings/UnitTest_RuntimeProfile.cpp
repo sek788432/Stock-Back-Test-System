@@ -9,7 +9,10 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -131,6 +134,13 @@ void writeFixtureProfile(const std::filesystem::path &root) {
       createFixtureManifest(bte::core::sha256(executableBytes)));
   ASSERT_TRUE(manifest.ok()) << manifest.error().message;
   writeText(root / "manifest.json", manifest.value());
+}
+
+void writeCanonicalManifest(const std::filesystem::path &root,
+                            const nlohmann::json &manifest) {
+  const auto canonical = serializeCanonicalJson(manifest);
+  ASSERT_TRUE(canonical.ok()) << canonical.error().message;
+  writeText(root / "manifest.json", canonical.value());
 }
 
 TEST(RuntimeProfileTest, verifiesCanonicalManifestAndInstalledFileHashes) {
@@ -271,6 +281,215 @@ TEST(RuntimeProfileTest, rejectsAdditionalUnapprovedPackages) {
 
   ASSERT_FALSE(extra.ok());
   EXPECT_EQ(extra.error().code, bte::core::ErrorCode::runtimeIntegrityFailure);
+}
+
+TEST(RuntimeProfileTest,
+     rejectsMalformedProfileMetadataAndDuplicateOrInvalidComponents) {
+  using Mutation =
+      std::pair<std::string, std::function<void(nlohmann::json &)>>;
+  const std::vector<Mutation> mutations{
+      {"unsupported platform",
+       [](nlohmann::json &manifest) { manifest["platform"] = "linux"; }},
+      {"unsupported schema",
+       [](nlohmann::json &manifest) { manifest["schemaVersion"] = 2; }},
+      {"empty builder version",
+       [](nlohmann::json &manifest) {
+         manifest["profileBuilderVersion"] = "";
+       }},
+      {"malformed stockbt source hash",
+       [](nlohmann::json &manifest) {
+         manifest["stockbtSourceSha256"] = "not-a-sha256";
+       }},
+      {"empty component list",
+       [](nlohmann::json &manifest) {
+         manifest["components"] = nlohmann::json::array();
+       }},
+      {"empty installed-file list",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"] = nlohmann::json::array();
+       }},
+      {"non-string interpreter path",
+       [](nlohmann::json &manifest) { manifest["pythonExecutable"] = 7; }},
+      {"missing manifest key",
+       [](nlohmann::json &manifest) { manifest.erase("pythonAbi"); }},
+      {"additional manifest key",
+       [](nlohmann::json &manifest) { manifest["unexpected"] = true; }},
+      {"duplicate component",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1] = manifest["components"][0];
+       }},
+      {"invalid component digest",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1]["artifactSha256"] = "ABC";
+       }},
+      {"empty component name",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1]["name"] = "";
+       }},
+      {"empty component version",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1]["version"] = "";
+       }},
+      {"empty component URL",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1]["upstreamUrl"] = "";
+       }},
+      {"non-string license",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1]["licenses"] = nlohmann::json::array({1});
+       }},
+      {"empty license list",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1]["licenses"] = nlohmann::json::array();
+       }},
+      {"component with missing key",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1].erase("upstreamUrl");
+       }},
+      {"component with additional key",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1]["unexpected"] = true;
+       }},
+      {"duplicate approved licenses",
+       [](nlohmann::json &manifest) {
+         manifest["components"][3]["licenses"] =
+             nlohmann::json::array({"Apache-2.0", "Apache-2.0"});
+       }},
+      {"mismatched pinned version",
+       [](nlohmann::json &manifest) {
+         manifest["components"][1]["version"] = "2.5.5";
+       }},
+      {"invalid stockbt component",
+       [](nlohmann::json &manifest) {
+         manifest["components"][6]["version"] = "2";
+       }},
+  };
+
+  for (const auto &[label, mutate] : mutations) {
+    TemporaryDirectory directory;
+    writeFixtureProfile(directory.path());
+    auto manifest =
+        createFixtureManifest(bte::core::sha256("managed-python-fixture"));
+    mutate(manifest);
+    writeCanonicalManifest(directory.path(), manifest);
+
+    const auto rejected = verifyRuntimeProfile(directory.path());
+
+    EXPECT_FALSE(rejected.ok()) << label;
+    EXPECT_EQ(rejected.error().code,
+              bte::core::ErrorCode::runtimeIntegrityFailure)
+        << label;
+  }
+}
+
+TEST(RuntimeProfileTest,
+     rejectsInvalidInstalledFileEntriesAndUncoveredRuntimePaths) {
+  using Mutation =
+      std::pair<std::string, std::function<void(nlohmann::json &)>>;
+  const std::vector<Mutation> mutations{
+      {"absolute installed-file path",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][0]["path"] = "/outside/python";
+       }},
+      {"backslash installed-file path",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][0]["path"] = "python\\bin\\python3";
+       }},
+      {"invalid installed-file digest",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][0]["sha256"] = "wrong";
+       }},
+      {"duplicate installed-file path",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][1]["path"] =
+             manifest["installedFiles"][0]["path"];
+         manifest["installedFiles"][1]["sha256"] =
+             manifest["installedFiles"][0]["sha256"];
+       }},
+      {"missing interpreter file",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"] =
+             nlohmann::json::array({manifest["installedFiles"][1]});
+       }},
+      {"missing timezone database",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"] =
+             nlohmann::json::array({manifest["installedFiles"][0]});
+       }},
+      {"unsafe interpreter path",
+       [](nlohmann::json &manifest) {
+         manifest["pythonExecutable"] = "../python";
+       }},
+      {"component path segment",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][0]["path"] = "python/./bin/python3";
+       }},
+      {"missing installed file",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][0]["path"] = "python/bin/missing";
+       }},
+      {"file digest mismatch",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][0]["sha256"] = bte::core::sha256("other");
+       }},
+  };
+
+  for (const auto &[label, mutate] : mutations) {
+    TemporaryDirectory directory;
+    writeFixtureProfile(directory.path());
+    auto manifest =
+        createFixtureManifest(bte::core::sha256("managed-python-fixture"));
+    mutate(manifest);
+    writeCanonicalManifest(directory.path(), manifest);
+
+    const auto rejected = verifyRuntimeProfile(directory.path());
+
+    EXPECT_FALSE(rejected.ok()) << label;
+    EXPECT_EQ(rejected.error().code,
+              bte::core::ErrorCode::runtimeIntegrityFailure)
+        << label;
+  }
+}
+
+TEST(RuntimeProfileTest, rejectsNonExecutableInterpreterAndMissingManifest) {
+  TemporaryDirectory directory;
+  writeFixtureProfile(directory.path());
+  std::filesystem::permissions(directory.path() / "python/bin/python3",
+                               std::filesystem::perms::owner_read,
+                               std::filesystem::perm_options::replace);
+
+  const auto nonExecutable = verifyRuntimeProfile(directory.path());
+
+  ASSERT_FALSE(nonExecutable.ok());
+  EXPECT_EQ(nonExecutable.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+
+  TemporaryDirectory missingManifest;
+  std::filesystem::create_directories(missingManifest.path());
+  const auto missing = verifyRuntimeProfile(missingManifest.path());
+  ASSERT_FALSE(missing.ok());
+  EXPECT_EQ(missing.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+}
+
+TEST(RuntimeProfileTest, rejectsInstalledFileSymlinksEscapingTheProfile) {
+  TemporaryDirectory directory;
+  TemporaryDirectory outside;
+  writeFixtureProfile(directory.path());
+  const auto outsideFile = outside.path() / "external-python";
+  writeText(outsideFile, "managed-python-fixture");
+  const auto executable = directory.path() / "python/bin/python3";
+  std::filesystem::remove(executable);
+  std::filesystem::create_symlink(outsideFile, executable);
+  auto manifest =
+      createFixtureManifest(bte::core::sha256("managed-python-fixture"));
+  writeCanonicalManifest(directory.path(), manifest);
+
+  const auto rejected = verifyRuntimeProfile(directory.path());
+
+  ASSERT_FALSE(rejected.ok());
+  EXPECT_EQ(rejected.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
 }
 
 } // namespace

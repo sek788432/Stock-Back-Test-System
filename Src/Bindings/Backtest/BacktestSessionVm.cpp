@@ -807,17 +807,21 @@ runPersistedPythonConfiguration(const BacktestConfiguration &configuration,
       recorded.value().status != results::RunStatus::completed) {
     return snapshot;
   }
+  auto output = std::move(snapshot).value();
   auto verificationStore =
       results::VerificationStore::open(storage.resultStore);
   if (!verificationStore.ok()) {
-    return verificationStore.error();
+    output.reproducibilityDiagnostic = "Verification status is unavailable: " +
+                                       verificationStore.error().message;
+    return output;
   }
   const auto verified = verificationStore.value()->hasVerifiedResult(
       prepared.value().descriptor, recorded.value().persisted);
   if (!verified.ok()) {
-    return verified.error();
+    output.reproducibilityDiagnostic =
+        "Verification status is unavailable: " + verified.error().message;
+    return output;
   }
-  auto output = std::move(snapshot).value();
   output.reproducibilityVerified = verified.value();
   return output;
 }

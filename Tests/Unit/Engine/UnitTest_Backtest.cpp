@@ -14,8 +14,10 @@
 #include <cstdint>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -102,7 +104,249 @@ void expectNoPreRangeRecords(const bte::engine::BacktestResult &result,
   }
 }
 
+class RequirementsProbeStrategy final : public bte::strategy::Strategy {
+public:
+  explicit RequirementsProbeStrategy(
+      bte::strategy::StrategyRequirements requirements)
+      : requirements_(std::move(requirements)) {}
+
+  [[nodiscard]] const bte::strategy::StrategyRequirements &
+  requirements() const noexcept override {
+    return requirements_;
+  }
+
+  [[nodiscard]] bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &context,
+           const bte::core::CancellationToken &) override {
+    observedHistorySizes.push_back(context.warmupHistory.size());
+    observedBars.push_back(context.bar.has_value());
+    if (context.indicatorValues.empty() ||
+        !context.indicatorValues.front().value.has_value()) {
+      observedIndicatorValues.push_back(std::nullopt);
+    } else {
+      observedIndicatorValues.push_back(
+          context.indicatorValues.front().value->value);
+    }
+    return bte::strategy::StrategyCommandBatch{};
+  }
+
+  std::vector<std::size_t> observedHistorySizes;
+  std::vector<bool> observedBars;
+  std::vector<std::optional<double>> observedIndicatorValues;
+
+private:
+  bte::strategy::StrategyRequirements requirements_;
+};
+
+class DiagnosticProbeStrategy final : public bte::strategy::Strategy {
+public:
+  explicit DiagnosticProbeStrategy(bte::strategy::StrategyDiagnosticBatch batch)
+      : batch_(std::move(batch)) {}
+
+  [[nodiscard]] bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &,
+           const bte::core::CancellationToken &) override {
+    return bte::strategy::StrategyCommandBatch{};
+  }
+
+  [[nodiscard]] bte::strategy::StrategyDiagnosticBatch
+  takeDiagnostics() override {
+    auto result = std::move(batch_);
+    batch_ = {};
+    return result;
+  }
+
+private:
+  bte::strategy::StrategyDiagnosticBatch batch_;
+};
+
 } // namespace
+
+TEST(BacktestTest, validatesStrategyHistoryBudgetsAndIndicatorRegistrations) {
+  using Registration = bte::strategy::StrategyIndicatorRegistration;
+  using Definition = bte::indicators::IndicatorDefinition;
+  const auto registration = [](std::string name, Definition definition) {
+    return Registration{.name = std::move(name), .definition = definition};
+  };
+  const Definition validDefinition{};
+  const std::vector<bte::strategy::StrategyRequirements> invalidRequirements{
+      {.maxHistoryBars = 10'001},
+      {.maxHistoryBars = 2, .indicators = {registration("", validDefinition)}},
+      {.maxHistoryBars = 2,
+       .indicators = {registration("1sma", validDefinition)}},
+      {.maxHistoryBars = 2,
+       .indicators = {registration("sma-name", validDefinition)}},
+      {.maxHistoryBars = 2,
+       .indicators = {registration(std::string(65, 's'), validDefinition)}},
+      {.maxHistoryBars = 2,
+       .indicators = {registration("sma", validDefinition),
+                      registration("sma", validDefinition)}},
+      {.maxHistoryBars = 14,
+       .indicators = {registration(
+           "ema", Definition{.kind = bte::indicators::IndicatorKind::ema})}},
+      {.maxHistoryBars = 14,
+       .indicators = {registration(
+           "signal",
+           Definition{.output = bte::indicators::IndicatorOutput::signal})}},
+      {.maxHistoryBars = 14,
+       .indicators = {registration(
+           "open", Definition{.field = bte::indicators::BarField::open})}},
+      {.maxHistoryBars = 14,
+       .indicators = {registration("zero", Definition{.period = 0})}},
+      {.maxHistoryBars = 10'000,
+       .indicators = {registration("long", Definition{.period = 10'001})}},
+      {.maxHistoryBars = 13,
+       .indicators = {registration("short", Definition{.period = 14})}},
+  };
+  const auto bars = std::vector{makeFlatBar(2, 10.0), makeFlatBar(3, 11.0)};
+
+  for (const auto &requirements : invalidRequirements) {
+    auto execution = bte::engine::BacktestExecution::start(
+        {.bars = bars,
+         .initialCapitalMicrodollars = 1'000'000'000,
+         .quantityShares = 1,
+         .previousDataDays = {}},
+        std::make_unique<RequirementsProbeStrategy>(requirements));
+    ASSERT_FALSE(execution.ok());
+    EXPECT_EQ(execution.error().code, bte::core::ErrorCode::invalidArgument);
+  }
+
+  auto insufficientHistory = bte::engine::BacktestExecution::start(
+      {.bars = bars,
+       .historyBars = {makeFlatBar(1, 9.0)},
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1,
+       .previousDataDays = {}},
+      std::make_unique<RequirementsProbeStrategy>(
+          bte::strategy::StrategyRequirements{.maxHistoryBars = 0}));
+  ASSERT_FALSE(insufficientHistory.ok());
+  EXPECT_EQ(insufficientHistory.error().code,
+            bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(BacktestTest, boundedHistorySeedsDeclaredStreamingIndicators) {
+  auto requirements = bte::strategy::StrategyRequirements{
+      .maxHistoryBars = 2,
+      .indicators = {{.name = "close_sma",
+                      .definition = bte::indicators::IndicatorDefinition{
+                          .kind = bte::indicators::IndicatorKind::sma,
+                          .period = 2,
+                          .output = bte::indicators::IndicatorOutput::value,
+                          .field = bte::indicators::BarField::close}}}};
+  auto strategy =
+      std::make_unique<RequirementsProbeStrategy>(std::move(requirements));
+  auto *observer = strategy.get();
+  const auto request = bte::engine::BacktestRequest{
+      .bars = {makeBar(3, 30.0, 30.0), makeBar(4, 40.0, 40.0)},
+      .historyBars = {makeBar(1, 10.0, 10.0), makeBar(2, 20.0, 20.0)},
+      .symbol = "SYN",
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+      .previousDataDays = {},
+  };
+
+  auto execution =
+      bte::engine::BacktestExecution::start(request, std::move(strategy));
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+  ASSERT_TRUE(execution.value()->runToCompletion().ok());
+  ASSERT_EQ(observer->observedIndicatorValues.size(), 2U);
+  EXPECT_EQ(observer->observedHistorySizes, (std::vector<std::size_t>{2, 2}));
+  EXPECT_EQ(observer->observedBars, (std::vector<bool>{true, true}));
+  EXPECT_DOUBLE_EQ(observer->observedIndicatorValues[0].value(), 25.0);
+  EXPECT_DOUBLE_EQ(observer->observedIndicatorValues[1].value(), 35.0);
+  EXPECT_EQ(execution.value()->result().barsProcessed, request.bars.size());
+  EXPECT_EQ(std::ranges::count_if(
+                execution.value()->result().canonicalRecords,
+                [](const auto &record) {
+                  return record.family == bte::results::RecordFamily::portfolio;
+                }),
+            request.bars.size());
+}
+
+TEST(BacktestTest, preservesStructuredAndTerminalStrategyDiagnostics) {
+  auto diagnostics = bte::strategy::StrategyDiagnosticBatch{
+      .records = {{.kind = bte::strategy::StrategyDiagnosticKind::log,
+                   .hook = "on_market",
+                   .level = "warning",
+                   .message = "risk threshold reached",
+                   .canonicalFieldsJson = R"({"drawdown":4.5})"},
+                  {.kind = bte::strategy::StrategyDiagnosticKind::terminal,
+                   .hook = "on_market",
+                   .level = "error",
+                   .errorCode = "strategyRuntimeError",
+                   .message = "script stopped",
+                   .sourceLine = 42,
+                   .sourceColumn = 7,
+                   .traceback = "ValueError: script stopped",
+                   .omittedBytes = 7,
+                   .omittedEntries = 2}},
+      .omittedLogBytes = 23,
+      .omittedLogEntries = 1,
+      .complete = false};
+  auto execution = bte::engine::BacktestExecution::start(
+      {.bars = {makeFlatBar(2, 10.0)},
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1,
+       .previousDataDays = {}},
+      std::make_unique<DiagnosticProbeStrategy>(std::move(diagnostics)));
+
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+  ASSERT_TRUE(execution.value()->runToCompletion().ok());
+  const auto &result = execution.value()->result();
+  EXPECT_EQ(result.status, bte::results::RunStatus::completed);
+  EXPECT_FALSE(result.diagnosticsComplete);
+  const auto log =
+      std::ranges::find_if(result.canonicalRecords, [](const auto &record) {
+        return record.family == bte::results::RecordFamily::log &&
+               record.text.find("risk threshold reached") != std::string::npos;
+      });
+  ASSERT_NE(log, result.canonicalRecords.end());
+  EXPECT_NE(log->text.find(R"("drawdown":4.5)"), std::string::npos);
+  const auto truncation =
+      std::ranges::find_if(result.canonicalRecords, [](const auto &record) {
+        return record.family == bte::results::RecordFamily::log &&
+               record.text.find("DiagnosticsTruncated") != std::string::npos;
+      });
+  ASSERT_NE(truncation, result.canonicalRecords.end());
+  EXPECT_NE(truncation->text.find(R"("omitted_bytes":"30")"),
+            std::string::npos);
+  EXPECT_NE(truncation->text.find(R"("omitted_entries":"1")"),
+            std::string::npos);
+  const auto terminal =
+      std::ranges::find_if(result.canonicalRecords, [](const auto &record) {
+        return record.family == bte::results::RecordFamily::terminalDiagnostic;
+      });
+  ASSERT_NE(terminal, result.canonicalRecords.end());
+  EXPECT_NE(terminal->text.find(R"("sourceColumn":7)"), std::string::npos);
+  EXPECT_NE(terminal->text.find(R"("sourceLine":42)"), std::string::npos);
+  EXPECT_NE(terminal->text.find(R"("omittedEntries":2)"), std::string::npos);
+  EXPECT_NE(terminal->text.find("ValueError: script stopped"),
+            std::string::npos);
+}
+
+TEST(BacktestTest, malformedStructuredStrategyDiagnosticFailsTheRun) {
+  auto execution = bte::engine::BacktestExecution::start(
+      {.bars = {makeFlatBar(2, 10.0)},
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1,
+       .previousDataDays = {}},
+      std::make_unique<DiagnosticProbeStrategy>(
+          bte::strategy::StrategyDiagnosticBatch{
+              .records = {{.kind = bte::strategy::StrategyDiagnosticKind::log,
+                           .hook = "on_market",
+                           .level = "error",
+                           .message = "malformed fields",
+                           .canonicalFieldsJson = "[]"}}}));
+
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+  const auto advanced = execution.value()->advance();
+  ASSERT_FALSE(advanced.ok());
+  EXPECT_EQ(advanced.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+  EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::failed);
+  EXPECT_EQ(execution.value()->result().barsProcessed, 0U);
+  EXPECT_FALSE(execution.value()->result().diagnosticsComplete);
+}
 
 TEST(BacktestTest, starterMarketBuyFillsAtNextBarOpenAndMarksFinalEquity) {
   const bte::engine::BacktestRequest request{

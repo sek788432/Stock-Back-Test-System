@@ -4451,6 +4451,10 @@ promoteMigratedCopy(const MigrationPromotion &promotion) {
 
 core::Result<FinalizedResult>
 ResultStore::migrateSchema2Copy(const std::string &resultId) const {
+  if (!validResultId(resultId)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Result ID is invalid");
+  }
   auto sourceLease = mutationLease({root_, dataStore_}, resultId);
   if (!sourceLease.ok()) {
     return sourceLease.error();

@@ -1458,7 +1458,7 @@ PythonWorkerStrategy::onStart(const strategy::StrategyContext &context,
                      {"hook", "on_start"}},
       hookDeadline, core::ErrorCode::strategyHookTimeout, cancellation);
   if (!response.ok()) {
-    impl_->captureCallbackFailure(response.error(), "on_start");
+    impl_->captureCallbackFailure(response.error(), "on_start", true);
     impl_->stopAfterCallbackError(response.error());
     return response.error();
   }
@@ -1482,7 +1482,7 @@ PythonWorkerStrategy::onStart(const strategy::StrategyContext &context,
     const auto error = makeStrategyError(
         core::ErrorCode::strategyProtocolViolation,
         "Python worker returned a malformed callback response.");
-    impl_->captureCallbackFailure(error, "on_start");
+    impl_->captureCallbackFailure(error, "on_start", true);
     impl_->terminate(shutdownDeadline);
     return error;
   }
@@ -1492,7 +1492,7 @@ PythonWorkerStrategy::onStart(const strategy::StrategyContext &context,
                                  context.symbol, false);
   if (!captured.ok() || !commands.ok()) {
     const auto &error = !captured.ok() ? captured.error() : commands.error();
-    impl_->captureCallbackFailure(error, "on_start");
+    impl_->captureCallbackFailure(error, "on_start", !captured.ok());
     impl_->terminate(shutdownDeadline);
     return error;
   }
@@ -1527,7 +1527,7 @@ PythonWorkerStrategy::onMarket(const strategy::StrategyContext &context,
                      {"hook", "on_market"}},
       hookDeadline, core::ErrorCode::strategyHookTimeout, cancellation);
   if (!response.ok()) {
-    impl_->captureCallbackFailure(response.error(), "on_market");
+    impl_->captureCallbackFailure(response.error(), "on_market", true);
     impl_->stopAfterCallbackError(response.error());
     return response.error();
   }
@@ -1551,7 +1551,7 @@ PythonWorkerStrategy::onMarket(const strategy::StrategyContext &context,
     const auto error = makeStrategyError(
         core::ErrorCode::strategyProtocolViolation,
         "Python worker returned a malformed callback response.");
-    impl_->captureCallbackFailure(error, "on_market");
+    impl_->captureCallbackFailure(error, "on_market", true);
     impl_->terminate(shutdownDeadline);
     return error;
   }
@@ -1561,7 +1561,7 @@ PythonWorkerStrategy::onMarket(const strategy::StrategyContext &context,
                                  context.symbol, true);
   if (!captured.ok() || !commands.ok()) {
     const auto &error = !captured.ok() ? captured.error() : commands.error();
-    impl_->captureCallbackFailure(error, "on_market");
+    impl_->captureCallbackFailure(error, "on_market", !captured.ok());
     impl_->terminate(shutdownDeadline);
     return error;
   }

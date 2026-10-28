@@ -52,12 +52,13 @@ Strategy storage is deferred until after first-milestone acceptance.
 
 The draft is autosaved atomically after a 500 ms idle debounce, before page
 handoff, and on orderly shutdown. One previous valid generation is retained
-for crash recovery. Load accepts strict UTF-8 `.py` source up to 1 MiB, strips
-one leading UTF-8 BOM, normalizes CRLF/CR to LF, and leaves the current buffer
-unchanged if decoding or size checks fail. Export writes the exact normalized
-source as UTF-8/LF with an atomic replace. Dirty-buffer replacement offers
-**Save Draft**, **Discard**, and **Cancel**; replacing never silently destroys
-the current recoverable generation.
+for crash recovery. Load accepts `.py` files up to 1 MiB of raw bytes, then
+requires strict UTF-8, strips one leading BOM, normalizes CRLF/CR to LF, and
+checks the normalized source against the same limit. It leaves the current
+buffer unchanged if decoding or either size check fails. Export writes the
+exact normalized source as UTF-8/LF with an atomic replace. Dirty-buffer
+replacement offers **Save Draft**, **Discard**, and **Cancel**; replacing never
+silently destroys the current recoverable generation.
 
 **Use in Backtest** copies draft source and parameters into Backtest setup and
 switches pages without consent or execution. At **Run** or **Verify
@@ -108,17 +109,21 @@ The run panel displays progress, bounded structured logs, source-line
 traceback, terminal error code, fills, and the normal Result draft actions.
 The Python runtime process never fills orders or owns portfolio values.
 
-A normal run records `reproducibilityStatus=unverified`. **Verify
-Reproducibility** freezes the same functional inputs and runs three fresh
-workers sequentially, showing attempt progress 1/3 through 3/3. It stops on
-first mismatch, failure, cancellation, or interruption and records every
-available attempt Result ID/status/hash. Only three completed, identical
-canonical functional hashes for the same frozen identity produce a verified
-label. Verification evidence is stored separately and never changes Result
-hashes or automatically publishes attempt drafts. Each attempt remains subject
-to explicit Save Result / Save & Replay / Discard. Editing the draft while
-verification is active cannot change the frozen identity or transfer its
-verified label to the edited source.
+Normal runs create no verification evidence and are not shown with a verified
+label. The UI displays **Reproducibility: verified** only when matching
+three-run evidence is available for the Result. A failure to read verification
+evidence after a completed run leaves the Result available to save and replay
+and displays a separate status warning. **Verify Reproducibility** freezes the
+same functional inputs and runs three fresh workers sequentially, showing
+attempt progress 1/3 through 3/3. It stops on first mismatch, failure,
+cancellation, or interruption and records every available attempt Result
+ID/status/hash. Only three completed, identical canonical functional hashes
+for the same frozen identity produce a verified label. Verification evidence
+is stored separately and never changes Result hashes or automatically
+publishes attempt drafts. Each attempt remains subject to explicit Save Result
+/ Save & Replay / Discard. Editing the draft while verification is active
+cannot change the frozen identity or transfer its verified label to the edited
+source.
 
 At widths of at least 1100 px, buy and sell groups appear side by side; at
 narrower widths they stack. Each group has a compact sticky header and Add

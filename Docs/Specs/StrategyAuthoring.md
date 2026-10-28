@@ -238,11 +238,12 @@ nesting depth 8, and finite JSON numbers only. The first UI supplies exactly
 `quantity` as integers; defaults are 5, 20, and 1, periods are 1–10,000 with
 `fast_period < slow_period`, and quantity is 1–1,000,000,000. Parameters are
 validated before a run and frozen with source before consent or worker launch.
-The strategy source limit is 1 MiB after strict UTF-8 decoding and LF newline
-normalization. A single leading UTF-8 BOM is accepted on `.py` import and
-removed; malformed UTF-8, NUL bytes, and larger files are rejected without
-replacing the current editor buffer. The execution source is the normalized
-UTF-8 text shown in the editor, and that exact text is embedded in Results.
+Imported `.py` files are limited to 1 MiB of raw bytes before decoding. After
+strict UTF-8 decoding, optional removal of one leading BOM, and LF newline
+normalization, the execution source is limited to 1 MiB again. Malformed UTF-8,
+NUL bytes, and files exceeding either limit are rejected without replacing the
+current editor buffer. The execution source is the normalized UTF-8 text shown
+in the editor, and that exact text is embedded in Results.
 
 Source consent is keyed to the SHA-256 of the exact normalized execution
 source plus API version. The consent dialog shows that identity and states
@@ -425,9 +426,11 @@ does not expose Engine objects or process handles.
   `functools`, `operator`, `bisect`, `heapq`, `dataclasses`, `enum`, `typing`,
   `random`, and `json`. Dynamic imports and non-allowlisted system, process,
   filesystem, native-extension, introspection, and network modules are
-  rejected by validation. Dependencies imported internally by the immutable
-  runtime are not user-import permissions. This allowlist is a
-  reproducibility boundary, not a security sandbox.
+  rejected by validation. Direct or reflective access to `__builtins__` or
+  `__import__` and dynamic code operations such as `eval`, `exec`, and
+  `compile` are rejected before module evaluation. Dependencies imported
+  internally by the immutable runtime are not user-import permissions. This
+  allowlist is a reproducibility boundary, not a security sandbox.
 - Each immutable runtime manifest records exact package versions, upstream
   URLs, SHA-256 values, license identifiers/notices, platform, architecture,
   Python ABI, stockbt API and source hash, installed-file hashes, and profile

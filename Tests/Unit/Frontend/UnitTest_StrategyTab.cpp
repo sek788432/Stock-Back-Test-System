@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -26,7 +27,10 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 
 namespace {
 
@@ -60,6 +64,7 @@ class StrategyTabTest final : public QObject {
   Q_OBJECT
 
 private slots:
+  void initTestCase();
   void exposesSampleAndPersistsRecoverableDrafts();
   void importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles();
   void acceptsSourceAtTheOneMiBLimit();
@@ -68,12 +73,22 @@ private slots:
   void discardsDirtyDraftBeforeLoadingReplacementWhenRequested();
   void keepsDirtyDraftWhenReplacementIsCanceled();
   void validatesWithFrozenParametersAndConsent();
+  void rejectsInvalidDraftsBeforeValidationOrHandoff();
+  void asksForConsentBeforeValidatingTrustedSource();
+  void reportsValidationWorkerFailures();
+  void explainsWhenManagedValidationIsUnavailable();
+  void cancellationReachesTheValidationWorker();
+  void cannotSaveDraftWhenItsDestinationIsUnavailable();
   void ignoresValidationForAnEditedDraft();
   void useInBacktestEmitsTheCurrentSourceAndParameters();
   void exportsNormalizedUtf8SourceAtomically();
   void builtInSampleHandlesIncompleteHistoryAndEmitsValidOrder();
   void preservesUnrecoverableDraftsWhenTheTabCloses();
 };
+
+void StrategyTabTest::initTestCase() {
+  QStandardPaths::setTestModeEnabled(true);
+}
 
 void StrategyTabTest::exposesSampleAndPersistsRecoverableDrafts() {
   QTemporaryDir directory;
@@ -312,6 +327,266 @@ void StrategyTabTest::validatesWithFrozenParametersAndConsent() {
   QCOMPARE(calls.load(), 1);
 }
 
+void StrategyTabTest::rejectsInvalidDraftsBeforeValidationOrHandoff() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  std::atomic_int validationCalls = 0;
+  std::atomic_int consentCalls = 0;
+  bte::frontend::StrategyTab tab{
+      std::filesystem::path{directory.path().toStdString()},
+      [&validationCalls](const bte::bindings::PythonStrategyConfiguration &,
+                         const bte::core::CancellationToken &) {
+        ++validationCalls;
+        return bte::core::Result<void>{};
+      },
+      [&consentCalls](const std::string &) {
+        ++consentCalls;
+        return false;
+      }};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *fast = tab.findChild<QSpinBox *>("pythonStrategyFastPeriodSpinBox");
+  auto *slow = tab.findChild<QSpinBox *>("pythonStrategySlowPeriodSpinBox");
+  auto *validate = tab.findChild<QPushButton *>("pythonStrategyValidateButton");
+  auto *use = tab.findChild<QPushButton *>("pythonStrategyUseInBacktestButton");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  auto *diagnostics =
+      tab.findChild<QPlainTextEdit *>("pythonStrategyDiagnostics");
+  QVERIFY(editor != nullptr);
+  QVERIFY(fast != nullptr);
+  QVERIFY(slow != nullptr);
+  QVERIFY(validate != nullptr);
+  QVERIFY(use != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(diagnostics != nullptr);
+  QSignalSpy handoff{&tab, &bte::frontend::StrategyTab::useInBacktest};
+
+  editor->setPlainText("def create_strategy(params):\n    return None\n");
+  fast->setValue(20);
+  slow->setValue(20);
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QVERIFY(status->text().contains("Parameters are invalid"));
+  QVERIFY(diagnostics->toPlainText().contains("InvalidStrategyParameters"));
+  QTest::mouseClick(use, Qt::LeftButton);
+  QVERIFY(status->text().contains("fast_period must be less than slow_period"));
+  QCOMPARE(handoff.size(), 0);
+
+  fast->setValue(5);
+  slow->setValue(20);
+  editor->clear();
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QVERIFY(status->text().contains("Source is invalid"));
+  QVERIFY(diagnostics->toPlainText().contains("valid UTF-8, non-empty"));
+  QTest::mouseClick(use, Qt::LeftButton);
+  QVERIFY(status->text().contains("Source must be valid UTF-8, non-empty"));
+  QCOMPARE(handoff.size(), 0);
+
+  editor->setPlainText(QString(1024 * 1024 + 1, QChar{u'x'}));
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QVERIFY(status->text().contains("Source is invalid"));
+  QTest::mouseClick(use, Qt::LeftButton);
+  QVERIFY(status->text().contains("at most 1 MiB"));
+  QCOMPARE(handoff.size(), 0);
+
+  editor->setPlainText("def create_strategy(params):\n    return None\n");
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QVERIFY(status->text().contains("Consent was not granted"));
+  QCOMPARE(consentCalls.load(), 1);
+  QCOMPARE(validationCalls.load(), 0);
+  QCOMPARE(handoff.size(), 0);
+}
+
+void StrategyTabTest::asksForConsentBeforeValidatingTrustedSource() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  std::atomic_int validationCalls = 0;
+  auto promptCount = std::make_shared<int>(0);
+  auto informativeText = std::make_shared<QString>();
+  bte::frontend::StrategyTab tab{
+      std::filesystem::path{directory.path().toStdString()},
+      [&validationCalls](const bte::bindings::PythonStrategyConfiguration &,
+                         const bte::core::CancellationToken &) {
+        ++validationCalls;
+        return bte::core::Result<void>{};
+      }};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *validate = tab.findChild<QPushButton *>("pythonStrategyValidateButton");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  QVERIFY(editor != nullptr);
+  QVERIFY(validate != nullptr);
+  QVERIFY(status != nullptr);
+  const auto source =
+      QString{
+          "# consent test %1\ndef create_strategy(params):\n    return None\n"}
+          .arg(directory.path());
+  editor->setPlainText(source);
+
+  const auto scheduleConsentChoice =
+      [promptCount, informativeText](const QString &buttonText) {
+        QTimer::singleShot(0, qApp, [buttonText, promptCount, informativeText] {
+          auto *dialog =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+          if (dialog == nullptr) {
+            return;
+          }
+          ++*promptCount;
+          *informativeText = dialog->informativeText();
+          for (auto *button : dialog->buttons()) {
+            if (button->text() == buttonText) {
+              button->click();
+              return;
+            }
+          }
+        });
+      };
+
+  scheduleConsentChoice("Cancel");
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Consent was not granted"),
+                           5000);
+  QCOMPARE(validationCalls.load(), 0);
+  QCOMPARE(*promptCount, 1);
+  QVERIFY(informativeText->contains("API version: 1"));
+  QVERIFY(informativeText->contains("Source SHA-256:"));
+
+  scheduleConsentChoice("Allow this source");
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Strategy is valid"), 5000);
+  QCOMPARE(validationCalls.load(), 1);
+  QCOMPARE(*promptCount, 2);
+
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(validationCalls.load() == 2, 5000);
+  QTRY_VERIFY_WITH_TIMEOUT(validate->isEnabled(), 5000);
+  QCOMPARE(*promptCount, 2);
+
+  editor->setPlainText(source + "# edited source identity\n");
+  scheduleConsentChoice("Cancel");
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Consent was not granted"),
+                           5000);
+  QCOMPARE(validationCalls.load(), 2);
+  QCOMPARE(*promptCount, 3);
+}
+
+void StrategyTabTest::reportsValidationWorkerFailures() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  std::atomic_int invocation = 0;
+  bte::frontend::StrategyTab tab{
+      std::filesystem::path{directory.path().toStdString()},
+      [&invocation](
+          const bte::bindings::PythonStrategyConfiguration &,
+          const bte::core::CancellationToken &) -> bte::core::Result<void> {
+        switch (invocation.fetch_add(1)) {
+        case 0:
+          return bte::core::Result<void>{bte::core::makeError(
+              bte::core::ErrorCode::invalidArgument, "strategy rejected")};
+        case 1:
+          throw std::runtime_error{"worker exception"};
+        default:
+          throw 42;
+        }
+      },
+      [](const std::string &) { return true; }};
+  tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor")
+      ->setPlainText("def create_strategy(params):\n    return None\n");
+  auto *validate = tab.findChild<QPushButton *>("pythonStrategyValidateButton");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  auto *diagnostics =
+      tab.findChild<QPlainTextEdit *>("pythonStrategyDiagnostics");
+  QVERIFY(validate != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(diagnostics != nullptr);
+
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text() == "Validation failed", 5000);
+  QCOMPARE(diagnostics->toPlainText(), QString{"strategy rejected"});
+
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text() == "Validation failed", 5000);
+  QCOMPARE(diagnostics->toPlainText(),
+           QString{"validation worker failed: worker exception"});
+
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text() == "Validation failed", 5000);
+  QCOMPARE(diagnostics->toPlainText(), QString{"validation worker failed"});
+  QCOMPARE(invocation.load(), 3);
+}
+
+void StrategyTabTest::explainsWhenManagedValidationIsUnavailable() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  bte::frontend::StrategyTab tab{
+      std::filesystem::path{directory.path().toStdString()}, {}};
+  auto *validate = tab.findChild<QPushButton *>("pythonStrategyValidateButton");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  QVERIFY(validate != nullptr);
+  QVERIFY(status != nullptr);
+
+  QTest::mouseClick(validate, Qt::LeftButton);
+
+  QCOMPARE(status->text(), QString{"Managed Python validation is unavailable"});
+  QVERIFY(validate->isEnabled());
+}
+
+void StrategyTabTest::cancellationReachesTheValidationWorker() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  std::atomic_bool started = false;
+  std::atomic_bool observedCancellation = false;
+  bte::frontend::StrategyTab tab{
+      std::filesystem::path{directory.path().toStdString()},
+      [&started, &observedCancellation](
+          const bte::bindings::PythonStrategyConfiguration &,
+          const bte::core::CancellationToken &cancellation) {
+        started.store(true);
+        while (!cancellation.isCancellationRequested()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+        observedCancellation.store(true);
+        return bte::core::Result<void>{bte::core::makeError(
+            bte::core::ErrorCode::cancelled, "validation canceled")};
+      },
+      [](const std::string &) { return true; }};
+  auto *validate = tab.findChild<QPushButton *>("pythonStrategyValidateButton");
+  auto *cancel =
+      tab.findChild<QPushButton *>("pythonStrategyCancelValidationButton");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  auto *diagnostics =
+      tab.findChild<QPlainTextEdit *>("pythonStrategyDiagnostics");
+  QVERIFY(validate != nullptr);
+  QVERIFY(cancel != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(diagnostics != nullptr);
+
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(started.load(), 5000);
+  QVERIFY(cancel->isEnabled());
+  QTest::mouseClick(cancel, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(observedCancellation.load() && validate->isEnabled(),
+                           5000);
+  QCOMPARE(status->text(), QString{"Validation failed"});
+  QCOMPARE(diagnostics->toPlainText(), QString{"validation canceled"});
+  QVERIFY(!cancel->isEnabled());
+}
+
+void StrategyTabTest::cannotSaveDraftWhenItsDestinationIsUnavailable() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto draftDirectory = root / "drafts";
+  QVERIFY(std::filesystem::create_directories(draftDirectory));
+  const auto blockedDraftPath = draftDirectory / "python-draft.json";
+  QVERIFY(std::filesystem::create_directory(blockedDraftPath));
+  bte::frontend::StrategyTab tab{draftDirectory, {}};
+  tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor")
+      ->setPlainText("def create_strategy(params):\n    return None\n");
+  QVERIFY(!tab.saveDraft());
+  QVERIFY(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
+              ->text()
+              .contains("Cannot atomically write the Strategy draft"));
+}
+
 void StrategyTabTest::ignoresValidationForAnEditedDraft() {
   QTemporaryDir directory;
   QVERIFY(directory.isValid());
@@ -392,9 +667,10 @@ void StrategyTabTest::
   QVERIFY2(created.ok(), created.ok() ? "" : created.error().message.c_str());
   auto strategy = std::move(created).value();
 
-  const auto market = [&strategy](const double fast,
-                                  const std::optional<double> slow,
-                                  const std::int64_t timestamp) {
+  auto positionShares = std::int64_t{};
+  const auto market = [&strategy, &positionShares](
+                          const double fast, const std::optional<double> slow,
+                          const std::int64_t timestamp) {
     const auto indicator = [](const double value) {
       return bte::indicators::IndicatorValue{
           .value = value, .domain = bte::indicators::NumericDomain::scalar};
@@ -417,7 +693,7 @@ void StrategyTabTest::
                            .volume = 100.0},
         .cashMicrodollars = 100'000'000,
         .equityMicrodollars = 100'000'000,
-        .positionShares = 0,
+        .positionShares = positionShares,
         .markPriceNanodollars = 10'500'000'000,
         .indicatorValues = indicators};
     return strategy->onMarket(context);
@@ -440,6 +716,14 @@ void StrategyTabTest::
   QCOMPARE(crossover.value().front().kind,
            bte::strategy::StrategyCommandKind::buyMarket);
   QCOMPARE(crossover.value().front().quantityShares, 1);
+  positionShares = 1;
+
+  const auto downCross = market(1.0, 2.0, 1'700'000'010'800'000LL);
+  QVERIFY2(downCross.ok(),
+           downCross.ok() ? "" : downCross.error().message.c_str());
+  QCOMPARE(downCross.value().size(), 1U);
+  QCOMPARE(downCross.value().front().kind,
+           bte::strategy::StrategyCommandKind::closePosition);
 }
 
 void StrategyTabTest::preservesUnrecoverableDraftsWhenTheTabCloses() {

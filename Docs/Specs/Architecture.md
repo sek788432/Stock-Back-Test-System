@@ -36,7 +36,7 @@ App ──► Frontend ──► Bindings ──► Engine ──► Strategy �
                          │         ├──────────► Data ────────────────────┤
                          │         ├──────────► Metrics ─────────────────┤
                          │         └──────────► Results ─────────────────┘
-                         └────► PythonStrategyRunner ──► Strategy + Core
+                         └────► PythonWorkerStrategy ──► Strategy + Core
 SnapshotBuilder ──► Data + Core
 ```
 
@@ -47,11 +47,11 @@ SnapshotBuilder ──► Data + Core
   Conditions and Python worker commands. Its public context, callback, and
   command values contain no Qt or process handles.
 - **Engine** owns event order, execution, portfolio, risk, and run lifecycle.
-- **PythonStrategyRunner** is constructed and owned by Bindings for one
-  execution. It owns the fresh worker, pipes, read-only shared-memory handles,
-  startup and hook deadlines, cancellation, and cleanup. It implements the
-  Strategy callback seam; Engine has no dependency on this module and never
-  creates or supervises an OS process.
+- **PythonWorkerStrategy** is constructed and owned by Bindings for one
+  execution. It implements the Strategy callback seam and uses
+  **ManagedWorkerProcess** to own the fresh worker, pipes, read-only shared
+  memory, deadlines, cancellation, and cleanup. Engine has no dependency on
+  these Bindings classes and never creates or supervises an OS process.
 - **Metrics** derives values from canonical engine records.
 - **Results** owns transactional `.bteresult` persistence and snapshot references.
 - **Bindings** translates backend values to queued Qt-facing values; Frontend never reaches into engine internals.
@@ -86,7 +86,7 @@ The C++ engine is canonical. A Strategy observes a `MarketSlice` and returns com
 | Engine worker | Run state, orders, positions, accounting | Immutable snapshots/events |
 | Data worker(s) | Prefetch buffers and snapshot readers | Owned buffers with cancellation |
 | Python worker | User strategy object and Python runtime | Versioned IPC only |
-| PythonStrategyRunner | One worker process, its pipes, and shared-memory leases | Owned by the active Bindings execution; reports immutable callback values |
+| PythonWorkerStrategy / ManagedWorkerProcess | One strategy adapter and its worker process, pipes, and shared-memory leases | Owned by the active Bindings execution; reports immutable callback values |
 
 Rules:
 

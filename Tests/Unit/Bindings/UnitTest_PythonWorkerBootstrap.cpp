@@ -4,7 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -364,6 +366,50 @@ TEST(PythonWorkerBootstrapTest,
             "StrategyImportNotAllowed");
   EXPECT_FALSE(std::filesystem::exists(marker));
   std::filesystem::remove(marker, ignored);
+}
+
+TEST(PythonWorkerBootstrapTest,
+     rejectsReflectiveDynamicImportsBeforeExecutingTheModule) {
+  const std::array<std::string, 3> dynamicImports{
+      "getattr(__builtins__, '__import__')('os')",
+      "vars(__builtins__)['__import__']('os')",
+      "__builtins__.__import__('os')",
+  };
+  for (std::size_t index = 0; index < dynamicImports.size(); ++index) {
+    const auto marker =
+        std::filesystem::temp_directory_path() /
+        ("bte-python-reflective-import-marker-" + std::to_string(index));
+    std::error_code ignored;
+    std::filesystem::remove(marker, ignored);
+    const auto source = "open(" + nlohmann::json(marker.string()).dump() +
+                        ", 'w').write('executed')\n" + dynamicImports[index] +
+                        "\nSTOCKBT_API_VERSION = '1'\n"
+                        "STOCKBT_TEMPLATE_VERSION = '1.0.0'\n";
+    auto workerResult = WorkerHarness::start(source);
+    ASSERT_TRUE(workerResult.ok()) << workerResult.error().message;
+    auto worker = std::move(workerResult).value();
+    ASSERT_TRUE(worker.handshake().ok());
+
+    const auto sent = worker.process().sendMessage(
+        ProtocolMessage{
+            .protocolVersion = 1,
+            .runId = "python-bootstrap-test",
+            .sequence = 1,
+            .messageType = "load-module",
+            .payload = nlohmann::json{{"sourceSha256", sourceDigest(source)},
+                                      {"stockbtApiVersion", "1"}}},
+        5s, bte::core::ErrorCode::strategyLoadTimeout);
+    ASSERT_TRUE(sent.ok()) << sent.error().message;
+    const auto rejected = worker.process().receiveMessage(
+        "python-bootstrap-test", 2, 5s,
+        bte::core::ErrorCode::strategyLoadTimeout);
+    ASSERT_TRUE(rejected.ok()) << rejected.error().message;
+    EXPECT_EQ(rejected.value().messageType, "worker-error");
+    EXPECT_EQ(rejected.value().payload.at("errorCode"),
+              "StrategyImportNotAllowed");
+    EXPECT_FALSE(std::filesystem::exists(marker));
+    std::filesystem::remove(marker, ignored);
+  }
 }
 
 TEST(PythonWorkerBootstrapTest,

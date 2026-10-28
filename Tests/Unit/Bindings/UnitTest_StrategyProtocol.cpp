@@ -3,13 +3,16 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -22,6 +25,7 @@ using bte::bindings::python::parseCanonicalJson;
 using bte::bindings::python::ProtocolMessage;
 using bte::bindings::python::readMessage;
 using bte::bindings::python::serializeCanonicalJson;
+using bte::bindings::python::writeMessage;
 
 TEST(StrategyProtocolTest, canonicalizesIeee754NumbersAndJcsStringEscapes) {
   const auto value = parseCanonicalJson(
@@ -79,6 +83,12 @@ TEST(StrategyProtocolTest, framesAtTheExactPayloadBoundary) {
   ASSERT_TRUE(exact.ok()) << exact.error().message;
   EXPECT_EQ(exact.value().size(), maximumProtocolPayloadBytes + 36);
   EXPECT_FALSE(over.ok());
+  EXPECT_FALSE(
+      parseCanonicalJson(std::string(maximumProtocolPayloadBytes + 1, ' '))
+          .ok());
+  EXPECT_FALSE(
+      serializeCanonicalJson(std::string(maximumProtocolPayloadBytes + 1, 'x'))
+          .ok());
 }
 
 TEST(StrategyProtocolTest, encodesAndChecksClosedEnvelopeIdentityAndSequence) {
@@ -133,6 +143,183 @@ TEST(StrategyProtocolTest, rejectsFrameDigestLengthAndTrailingByteViolations) {
   auto trailing = frame.value();
   trailing.push_back(0);
   EXPECT_FALSE(decodeMessage(trailing, "run-123", 0).ok());
+}
+
+TEST(StrategyProtocolTest,
+     rejectsInvalidEnvelopeTypesVersionsSequencesAndIdentity) {
+  const auto makeFrame = [](nlohmann::json envelope) {
+    const auto payload = serializeCanonicalJson(envelope);
+    if (!payload.ok()) {
+      return bte::core::Result<std::string>{payload.error()};
+    }
+    return frameCanonicalPayload(payload.value());
+  };
+  const auto baseEnvelope = [] {
+    return nlohmann::json{{"messageType", "ready"},
+                          {"payload", nlohmann::json::object()},
+                          {"protocolVersion", 1},
+                          {"runId", "run-123"},
+                          {"sequence", 0}};
+  };
+  const std::array<
+      std::pair<std::string_view, std::function<void(nlohmann::json &)>>, 8>
+      invalidEnvelopes{{
+          {"negative version",
+           [](nlohmann::json &value) { value["protocolVersion"] = -1; }},
+          {"string version",
+           [](nlohmann::json &value) { value["protocolVersion"] = "1"; }},
+          {"unsupported version",
+           [](nlohmann::json &value) { value["protocolVersion"] = 2; }},
+          {"negative sequence",
+           [](nlohmann::json &value) { value["sequence"] = -1; }},
+          {"string sequence",
+           [](nlohmann::json &value) { value["sequence"] = "0"; }},
+          {"non-string run id",
+           [](nlohmann::json &value) { value["runId"] = 123; }},
+          {"non-string message type",
+           [](nlohmann::json &value) { value["messageType"] = false; }},
+          {"empty message type",
+           [](nlohmann::json &value) { value["messageType"] = ""; }},
+      }};
+
+  for (const auto &[label, mutate] : invalidEnvelopes) {
+    auto envelope = baseEnvelope();
+    mutate(envelope);
+    const auto frame = makeFrame(std::move(envelope));
+    ASSERT_TRUE(frame.ok()) << label << ": " << frame.error().message;
+    const auto decoded = decodeMessage(frame.value(), "run-123", 0);
+    EXPECT_FALSE(decoded.ok()) << label;
+    EXPECT_EQ(decoded.error().code,
+              bte::core::ErrorCode::strategyProtocolViolation)
+        << label;
+  }
+
+  const auto valid = makeFrame(baseEnvelope());
+  ASSERT_TRUE(valid.ok()) << valid.error().message;
+  EXPECT_FALSE(decodeMessage(valid.value(), "other-run", 0).ok());
+  EXPECT_FALSE(decodeMessage(valid.value(), "run-123", 1).ok());
+  EXPECT_FALSE(decodeMessage(valid.value(), "run-123",
+                             std::numeric_limits<std::uint64_t>::max())
+                   .ok());
+
+  EXPECT_FALSE(encodeMessage({.protocolVersion = 2,
+                              .runId = "run-123",
+                              .sequence = 0,
+                              .messageType = "ready",
+                              .payload = nlohmann::json::object()})
+                   .ok());
+  EXPECT_FALSE(encodeMessage({.protocolVersion = 1,
+                              .runId = "",
+                              .sequence = 0,
+                              .messageType = "ready",
+                              .payload = nlohmann::json::object()})
+                   .ok());
+  EXPECT_FALSE(encodeMessage({.protocolVersion = 1,
+                              .runId = "run-123",
+                              .sequence = 0,
+                              .messageType = "",
+                              .payload = nlohmann::json::object()})
+                   .ok());
+  EXPECT_FALSE(
+      encodeMessage({.protocolVersion = 1,
+                     .runId = "run-123",
+                     .sequence = std::numeric_limits<std::uint64_t>::max(),
+                     .messageType = "ready",
+                     .payload = nlohmann::json::object()})
+          .ok());
+}
+
+TEST(StrategyProtocolTest, rejectsMalformedFramesAndUnconfiguredStreams) {
+  EXPECT_FALSE(decodeMessage("short", "run-123", 0).ok());
+
+  const auto invalidJson = frameCanonicalPayload("not-json");
+  ASSERT_TRUE(invalidJson.ok()) << invalidJson.error().message;
+  EXPECT_FALSE(decodeMessage(invalidJson.value(), "run-123", 0).ok());
+
+  const std::string oversizedHeader{"\0\x10\0\x01", 4};
+  std::size_t headerOffset = 0;
+  const auto oversizedReader =
+      [&oversizedHeader, &headerOffset](const std::span<std::byte> destination)
+      -> bte::core::Result<std::size_t> {
+    const auto count =
+        std::min(destination.size(), oversizedHeader.size() - headerOffset);
+    std::memcpy(destination.data(), oversizedHeader.data() + headerOffset,
+                count);
+    headerOffset += count;
+    return count;
+  };
+  const auto oversized = readMessage(oversizedReader, "run-123", 0);
+  ASSERT_FALSE(oversized.ok());
+  EXPECT_EQ(oversized.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+
+  EXPECT_FALSE(readMessage({}, "run-123", 0).ok());
+  const auto failingReader =
+      [](const std::span<std::byte>) -> bte::core::Result<std::size_t> {
+    return bte::core::makeError(bte::core::ErrorCode::internal,
+                                "injected read failure");
+  };
+  const auto readFailure = readMessage(failingReader, "run-123", 0);
+  ASSERT_FALSE(readFailure.ok());
+  EXPECT_EQ(readFailure.error().code, bte::core::ErrorCode::internal);
+
+  const auto zeroReader =
+      [](const std::span<std::byte>) -> bte::core::Result<std::size_t> {
+    return std::size_t{0};
+  };
+  const auto earlyEof = readMessage(zeroReader, "run-123", 0);
+  ASSERT_FALSE(earlyEof.ok());
+  EXPECT_EQ(earlyEof.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+  const auto oversizedRead = [](const std::span<std::byte> destination)
+      -> bte::core::Result<std::size_t> { return destination.size() + 1; };
+  EXPECT_FALSE(readMessage(oversizedRead, "run-123", 0).ok());
+}
+
+TEST(StrategyProtocolTest, rejectsInvalidWriterProgressAndPropagatesIoErrors) {
+  const ProtocolMessage message{.protocolVersion = 1,
+                                .runId = "run-123",
+                                .sequence = 0,
+                                .messageType = "ready",
+                                .payload = nlohmann::json::object()};
+  EXPECT_FALSE(writeMessage({}, message).ok());
+
+  const auto failingWriter =
+      [](const std::span<const std::byte>) -> bte::core::Result<std::size_t> {
+    return bte::core::makeError(bte::core::ErrorCode::internal,
+                                "injected write failure");
+  };
+  const auto writeFailure = writeMessage(failingWriter, message);
+  ASSERT_FALSE(writeFailure.ok());
+  EXPECT_EQ(writeFailure.error().code, bte::core::ErrorCode::internal);
+
+  const auto zeroWriter =
+      [](const std::span<const std::byte>) -> bte::core::Result<std::size_t> {
+    return std::size_t{0};
+  };
+  const auto noProgress = writeMessage(zeroWriter, message);
+  ASSERT_FALSE(noProgress.ok());
+  EXPECT_EQ(noProgress.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+
+  const auto excessiveWriter = [](const std::span<const std::byte> bytes)
+      -> bte::core::Result<std::size_t> { return bytes.size() + 1; };
+  const auto excessiveProgress = writeMessage(excessiveWriter, message);
+  ASSERT_FALSE(excessiveProgress.ok());
+  EXPECT_EQ(excessiveProgress.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+
+  const ProtocolMessage invalidMessage{.protocolVersion = 2,
+                                       .runId = "run-123",
+                                       .sequence = 0,
+                                       .messageType = "ready",
+                                       .payload = nlohmann::json::object()};
+  const auto encodedInvalidMessage = encodeMessage(invalidMessage);
+  ASSERT_FALSE(encodedInvalidMessage.ok());
+  const auto encodingFailure = writeMessage(zeroWriter, invalidMessage);
+  ASSERT_FALSE(encodingFailure.ok());
+  EXPECT_EQ(encodingFailure.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
 }
 
 TEST(StrategyProtocolTest, readsAndWritesFragmentedStreamsAndRejectsEarlyEof) {

@@ -8,9 +8,11 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -63,6 +65,29 @@ public:
 private:
   std::string key_;
   std::optional<std::string> original_;
+};
+
+class TemporaryDirectory final {
+public:
+  TemporaryDirectory() {
+    const auto stamp =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    path_ = std::filesystem::temp_directory_path() /
+            ("bte-managed-worker-test-" + std::to_string(stamp));
+    std::filesystem::create_directories(path_);
+  }
+
+  ~TemporaryDirectory() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path_, ignored);
+  }
+
+  [[nodiscard]] const std::filesystem::path &path() const noexcept {
+    return path_;
+  }
+
+private:
+  std::filesystem::path path_;
 };
 #endif
 
@@ -130,6 +155,141 @@ TEST(ManagedWorkerProcessTest,
 #else
   GTEST_SKIP()
       << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     rejectsInvalidExecutablesArgumentsAndSharedDataMetadata) {
+#if defined(__unix__) || defined(__APPLE__)
+  const auto emptyPath = ManagedWorkerProcess::start(WorkerProcessLaunch{});
+  ASSERT_FALSE(emptyPath.ok());
+  EXPECT_EQ(emptyPath.error().code, bte::core::ErrorCode::workerStartFailed);
+
+  const auto missing = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath().parent_path() / "missing-worker"});
+  ASSERT_FALSE(missing.ok());
+  EXPECT_EQ(missing.error().code, bte::core::ErrorCode::workerStartFailed);
+
+  TemporaryDirectory directory;
+  const auto nonExecutablePath = directory.path() / "worker.txt";
+  {
+    std::ofstream file{nonExecutablePath};
+    file << "not executable";
+  }
+  const auto nonExecutable = ManagedWorkerProcess::start(
+      WorkerProcessLaunch{.executable = nonExecutablePath});
+  ASSERT_FALSE(nonExecutable.ok());
+  EXPECT_NE(nonExecutable.error().message.find("not executable"),
+            std::string::npos);
+
+  const auto embeddedNull = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(),
+      .arguments = {std::string{"bad\0argument", 12}},
+  });
+  ASSERT_FALSE(embeddedNull.ok());
+  EXPECT_EQ(embeddedNull.error().message,
+            "Managed worker arguments are malformed or too large.");
+
+  const auto oversizedTotal = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(),
+      .arguments = {std::string(32U * 1024U, 'a'),
+                    std::string(32U * 1024U, 'b')},
+  });
+  ASSERT_FALSE(oversizedTotal.ok());
+  EXPECT_EQ(oversizedTotal.error().message,
+            "Managed worker arguments are malformed or too large.");
+
+  const auto dataMetadataWithoutDescriptor =
+      ManagedWorkerProcess::start(WorkerProcessLaunch{
+          .executable = fixturePath(), .readOnlyDataLength = 1});
+  ASSERT_FALSE(dataMetadataWithoutDescriptor.ok());
+  EXPECT_NE(dataMetadataWithoutDescriptor.error().message.find(
+                "metadata has no descriptor"),
+            std::string::npos);
+
+  const auto historyMetadataWithoutDescriptor =
+      ManagedWorkerProcess::start(WorkerProcessLaunch{
+          .executable = fixturePath(),
+          .readOnlyHistorySha256 = std::string(64, 'a'),
+      });
+  ASSERT_FALSE(historyMetadataWithoutDescriptor.ok());
+  EXPECT_NE(historyMetadataWithoutDescriptor.error().message.find(
+                "metadata has no descriptor"),
+            std::string::npos);
+
+  auto memory = ReadOnlySharedMemory::create("shared-data");
+  ASSERT_TRUE(memory.ok()) << memory.error().message;
+  const auto invalidDataLength =
+      ManagedWorkerProcess::start(WorkerProcessLaunch{
+          .executable = fixturePath(),
+          .readOnlyDataDescriptor = memory.value().descriptor(),
+          .readOnlyDataLength = bte::bindings::python::maximumWorkerSourceBytes,
+          .readOnlyDataSha256 = memory.value().sha256Digest(),
+      });
+  ASSERT_FALSE(invalidDataLength.ok());
+  EXPECT_NE(invalidDataLength.error().message.find("size does not match"),
+            std::string::npos);
+
+  const auto invalidHistoryDigest =
+      ManagedWorkerProcess::start(WorkerProcessLaunch{
+          .executable = fixturePath(),
+          .readOnlyHistoryDescriptor = memory.value().descriptor(),
+          .readOnlyHistoryLength = memory.value().size(),
+          .readOnlyHistorySha256 = "short",
+      });
+  ASSERT_FALSE(invalidHistoryDigest.ok());
+  EXPECT_NE(invalidHistoryDigest.error().message.find("invalid or writable"),
+            std::string::npos);
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest, rejectsInvalidSharedMemorySizeBoundaries) {
+  EXPECT_FALSE(ReadOnlySharedMemory::create("").ok());
+  const auto oversized =
+      std::string(bte::bindings::python::maximumWorkerSourceBytes + 1, 'x');
+  const auto rejected = ReadOnlySharedMemory::create(oversized);
+  ASSERT_FALSE(rejected.ok());
+  EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(ManagedWorkerProcessTest, emptyProcessReportsClosedStateAndNoDiagnostics) {
+  ManagedWorkerProcess process;
+  const ProtocolMessage message{.protocolVersion = 1,
+                                .runId = "fixture-run",
+                                .sequence = 0,
+                                .messageType = "start",
+                                .payload = nlohmann::json::object()};
+  EXPECT_FALSE(process.isRunning());
+  EXPECT_EQ(process.processId(), -1);
+#if defined(__unix__) || defined(__APPLE__)
+  EXPECT_TRUE(process.waitForExit(0ms).ok());
+  EXPECT_TRUE(process.terminateProcessTree(0ms).ok());
+
+  const auto sent = process.sendMessage(
+      message, 0ms, bte::core::ErrorCode::workerHandshakeTimeout);
+  ASSERT_FALSE(sent.ok());
+  EXPECT_EQ(sent.error().code, bte::core::ErrorCode::workerHandshakeFailed);
+  const auto received = process.receiveMessage(
+      "fixture-run", 0, 0ms, bte::core::ErrorCode::workerHandshakeTimeout);
+  ASSERT_FALSE(received.ok());
+  EXPECT_EQ(received.error().code, bte::core::ErrorCode::workerHandshakeFailed);
+  EXPECT_TRUE(process.diagnostics().standardOutput.retainedBytes.empty());
+#else
+  EXPECT_EQ(process.waitForExit(0ms).error().code,
+            bte::core::ErrorCode::runtimeUnavailable);
+  EXPECT_EQ(process.terminateProcessTree(0ms).error().code,
+            bte::core::ErrorCode::runtimeUnavailable);
+  const auto sent = process.sendMessage(
+      message, 0ms, bte::core::ErrorCode::workerHandshakeTimeout);
+  ASSERT_FALSE(sent.ok());
+  EXPECT_EQ(sent.error().code, bte::core::ErrorCode::runtimeUnavailable);
+  const auto received = process.receiveMessage(
+      "fixture-run", 0, 0ms, bte::core::ErrorCode::workerHandshakeTimeout);
+  ASSERT_FALSE(received.ok());
+  EXPECT_EQ(received.error().code, bte::core::ErrorCode::runtimeUnavailable);
 #endif
 }
 
@@ -267,6 +427,9 @@ TEST(ManagedWorkerProcessTest,
   ASSERT_FALSE(timedOut.ok());
   EXPECT_EQ(timedOut.error().code,
             bte::core::ErrorCode::workerHandshakeTimeout);
+  const auto exitTimedOut = hangingWorker.waitForExit(20ms);
+  ASSERT_FALSE(exitTimedOut.ok());
+  EXPECT_EQ(exitTimedOut.error().code, bte::core::ErrorCode::timeout);
   ASSERT_TRUE(hangingWorker.terminateProcessTree(50ms).ok());
   EXPECT_FALSE(hangingWorker.isRunning());
 
@@ -278,6 +441,46 @@ TEST(ManagedWorkerProcessTest,
       "fixture-run", 0, 2s, bte::core::ErrorCode::workerHandshakeTimeout);
   ASSERT_FALSE(invalid.ok());
   EXPECT_EQ(invalid.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest, cancellationInterruptsAWorkerPipeWait) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto started = ManagedWorkerProcess::start(
+      WorkerProcessLaunch{.executable = fixturePath(), .arguments = {"hang"}});
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+
+  const auto received = worker.receiveMessage(
+      "fixture-run", 0, 2s, bte::core::ErrorCode::workerHandshakeTimeout,
+      cancellation.token());
+
+  ASSERT_FALSE(received.ok());
+  EXPECT_EQ(received.error().code, bte::core::ErrorCode::cancelled);
+  ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest, rejectsUnexpectedProtocolBytesWhileWorkerExits) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(), .arguments = {"invalid-frame"}});
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+
+  const auto exited = worker.waitForExit(2s);
+
+  ASSERT_FALSE(exited.ok());
+  EXPECT_EQ(exited.error().code,
             bte::core::ErrorCode::strategyProtocolViolation);
 #else
   GTEST_SKIP()

@@ -1439,7 +1439,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   root->addWidget(status);
   auto *strategyDiagnostics = std::make_unique<QPlainTextEdit>(this).release();
   strategyDiagnostics->setObjectName("backtestStrategyDiagnostics");
-  strategyDiagnostics->setAccessibleName(tr("Python Strategy diagnostics"));
+  strategyDiagnostics->setAccessibleName(tr("Backtest run diagnostics"));
   strategyDiagnostics->setReadOnly(true);
   strategyDiagnostics->setMaximumHeight(110);
   root->addWidget(strategyDiagnostics);
@@ -1744,6 +1744,14 @@ void BacktestTab::handleBacktestFinished(
   }
   if (snapshot.reproducibilityVerified) {
     diagnostics.append(tr("\nReproducibility: verified"));
+  }
+  if (!snapshot.reproducibilityDiagnostic.empty()) {
+    if (!diagnostics.isEmpty()) {
+      diagnostics.append('\n');
+    }
+    diagnostics.append(
+        tr("Reproducibility status unavailable: %1")
+            .arg(QString::fromStdString(snapshot.reproducibilityDiagnostic)));
   }
   strategyDiagnostics->setPlainText(diagnostics);
   const auto resultId = QString::fromStdString(snapshot.resultId);
