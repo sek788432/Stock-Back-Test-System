@@ -706,6 +706,12 @@ void BacktestSessionVmTest::persistedPythonRunCanBeSavedAndReplayed() {
   const auto resourcesRoot = root / "Resources";
   const auto runtimeProfiles = resourcesRoot / "RuntimeProfiles";
   std::filesystem::create_directories(runtimeProfiles);
+  const auto packagedPythonDirectory = resourcesRoot / "Python";
+  std::filesystem::create_directories(packagedPythonDirectory);
+  const auto packagedBootstrap =
+      packagedPythonDirectory / "worker_bootstrap.py";
+  std::filesystem::copy_file(BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+                             packagedBootstrap);
   std::error_code symlinkError;
   std::filesystem::create_directory_symlink(
       profileRoot, runtimeProfiles / profileRoot.filename(), symlinkError);
@@ -715,8 +721,7 @@ void BacktestSessionVmTest::persistedPythonRunCanBeSavedAndReplayed() {
       "BTE_PYTHON_RESOURCES_ROOT",
       QByteArray::fromStdString(resourcesRoot.string())};
   const auto bootstrapOverride =
-      ScopedEnvironmentVariable{"BTE_PYTHON_WORKER_BOOTSTRAP",
-                                QByteArray{BTE_PYTHON_WORKER_BOOTSTRAP_PATH}};
+      ScopedEnvironmentVariable{"BTE_PYTHON_WORKER_BOOTSTRAP", QByteArray{}};
   QVERIFY(resourceOverride.setSuccessfully());
   QVERIFY(bootstrapOverride.setSuccessfully());
 
@@ -807,6 +812,13 @@ def create_strategy(params):
           },
   };
 
+  const auto validation = bte::bindings::validatePythonStrategy(
+      *configuration.pythonStrategy,
+      {.resourcesRoot = resourcesRoot,
+       .workerBootstrapPath = packagedBootstrap});
+  QVERIFY2(validation.ok(),
+           validation.ok() ? "" : validation.error().message.c_str());
+
   const auto run =
       bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
 
@@ -820,6 +832,30 @@ def create_strategy(params):
   QCOMPARE(run.value().fills[1].side, bte::bindings::BacktestFillSide::sell);
   QVERIFY(!run.value().resultId.empty());
   QVERIFY(!run.value().canonicalResultHash.empty());
+
+  QVERIFY(std::filesystem::remove(storage.resultStore / "Verifications"));
+  std::vector<std::size_t> verificationProgress;
+  const auto verification =
+      bte::bindings::verifyPersistedPythonBacktestConfiguration(
+          configuration, storage, resourcesRoot,
+          std::filesystem::path{BTE_PYTHON_WORKER_BOOTSTRAP_PATH},
+          [&verificationProgress](
+              const bte::results::VerificationEvidence &evidence) {
+            verificationProgress.push_back(evidence.progressOrdinal);
+          });
+  QVERIFY2(verification.ok(),
+           verification.ok() ? "" : verification.error().message.c_str());
+  QCOMPARE(verification.value().status,
+           bte::results::VerificationStatus::verified);
+  QCOMPARE(verification.value().attempts.size(), 3U);
+  QVERIFY(!verificationProgress.empty());
+  QCOMPARE(verificationProgress.back(), 3U);
+
+  const auto verifiedRun =
+      bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
+  QVERIFY2(verifiedRun.ok(),
+           verifiedRun.ok() ? "" : verifiedRun.error().message.c_str());
+  QVERIFY(verifiedRun.value().reproducibilityVerified);
 
   const auto published = bte::bindings::publishBacktestDraft(
       storage, run.value().resultId, "Python SMA integration");

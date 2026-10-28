@@ -449,6 +449,41 @@ TEST(PythonWorkerStrategyTest,
             bte::core::ErrorCode::strategyContractViolation);
 }
 
+TEST(PythonWorkerStrategyTest,
+     rejectsDuplicateInvalidOrNonFiniteEngineIndicators) {
+  const std::array invalidNames{bte::strategy::StrategyIndicatorValue{
+      .name = "fast-name", .value = std::nullopt}};
+  const std::array duplicateNames{bte::strategy::StrategyIndicatorValue{
+                                      .name = "fast", .value = std::nullopt},
+                                  bte::strategy::StrategyIndicatorValue{
+                                      .name = "fast", .value = std::nullopt}};
+  const std::array nonFiniteValues{bte::strategy::StrategyIndicatorValue{
+      .name = "fast",
+      .value = bte::indicators::IndicatorValue{
+          .value = std::numeric_limits<double>::quiet_NaN()}}};
+  auto invalidNameContext = context(1'700'000'000'000LL);
+  invalidNameContext.indicatorValues = invalidNames;
+  auto duplicateNameContext = context(1'700'000'000'000LL);
+  duplicateNameContext.indicatorValues = duplicateNames;
+  auto nonFiniteContext = context(1'700'000'000'000LL);
+  nonFiniteContext.indicatorValues = nonFiniteValues;
+  const std::array invalidContexts{invalidNameContext, duplicateNameContext,
+                                   nonFiniteContext};
+
+  for (const auto &invalidContext : invalidContexts) {
+    auto strategyResult = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+
+    const auto result = strategyResult.value()->onMarket(invalidContext);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code,
+              bte::core::ErrorCode::strategyContractViolation);
+  }
+}
+
 TEST(PythonWorkerStrategyTest, rejectsCommandsDuringStrategyStartup) {
   const std::string source = R"python(
 STOCKBT_API_VERSION = "1"
@@ -1944,31 +1979,122 @@ TEST(PythonWorkerStrategyTest,
 
 TEST(PythonWorkerStrategyTest,
      rejectsInvalidEngineFillBeforeSendingTheCallback) {
+  const auto timestamp = context(1'700'000'000'000LL).bar->ts;
+  const std::array invalidFills{
+      bte::strategy::StrategyFill{.timestamp = timestamp,
+                                  .side = bte::strategy::StrategyFillSide::buy,
+                                  .quantityShares = 0,
+                                  .priceNanodollars = 1'000'000'000,
+                                  .amountMicrodollars = 1'000'000},
+      bte::strategy::StrategyFill{
+          .timestamp = timestamp,
+          .side = static_cast<bte::strategy::StrategyFillSide>(255),
+          .quantityShares = 1,
+          .priceNanodollars = 1'000'000'000,
+          .amountMicrodollars = 1'000'000},
+      bte::strategy::StrategyFill{.timestamp = timestamp,
+                                  .side = bte::strategy::StrategyFillSide::sell,
+                                  .quantityShares = 1,
+                                  .priceNanodollars = 0,
+                                  .amountMicrodollars = 1'000'000},
+      bte::strategy::StrategyFill{.timestamp = timestamp,
+                                  .side = bte::strategy::StrategyFillSide::sell,
+                                  .quantityShares = 1,
+                                  .priceNanodollars = 1'000'000'000,
+                                  .amountMicrodollars = 0},
+  };
+
+  for (const auto &invalidFill : invalidFills) {
+    auto strategyResult = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+        validStrategySource, parameters(), true);
+    ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+
+    const auto result = strategyResult.value()->onFill(
+        invalidFill, context(1'700'000'000'000LL));
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.error().code,
+              bte::core::ErrorCode::strategyContractViolation);
+    const auto diagnostics = strategyResult.value()->takeDiagnostics();
+    const auto terminal =
+        std::ranges::find_if(diagnostics.records, [](const auto &record) {
+          return record.kind == bte::strategy::StrategyDiagnosticKind::terminal;
+        });
+    ASSERT_NE(terminal, diagnostics.records.end());
+    EXPECT_EQ(terminal->hook, "on_fill");
+    EXPECT_EQ(terminal->errorCode, "WorkerCallbackFailure");
+  }
+}
+
+TEST(PythonWorkerStrategyTest,
+     serializesSellFillsAndOptionalMarketContextFields) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        position = ctx.portfolio.positions.get(ctx.symbol)
+        ctx.log.info("market-context", fast=ctx.indicators["fast"],
+                     slow=ctx.indicators["slow"],
+                     mark_price=None if position is None else position.mark_price,
+                     quantity=0 if position is None else position.quantity_shares)
+    def on_fill(self, fill, ctx):
+        ctx.log.info("fill-context", side=fill["side"],
+                     quantity=fill["quantity_shares"], amount=fill["amount"])
+def create_strategy(params):
+    return Example()
+)python";
   auto strategyResult = PythonWorkerStrategy::createForTesting(
-      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
-      validStrategySource, parameters(), true);
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
   ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
-  const bte::strategy::StrategyFill invalidFill{
-      .timestamp = context(1'700'000'000'000LL).bar->ts,
-      .side = bte::strategy::StrategyFillSide::buy,
-      .quantityShares = 0,
-      .priceNanodollars = 1'000'000'000,
-      .amountMicrodollars = 1'000'000};
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategyResult.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
 
-  const auto result =
-      strategyResult.value()->onFill(invalidFill, context(1'700'000'000'000LL));
+  const std::array indicators{
+      bte::strategy::StrategyIndicatorValue{
+          .name = "fast",
+          .value =
+              bte::indicators::IndicatorValue{
+                  .value = 101.25,
+                  .domain = bte::indicators::NumericDomain::price}},
+      bte::strategy::StrategyIndicatorValue{.name = "slow",
+                                            .value = std::nullopt}};
+  auto marketContext = context(1'700'000'000'000LL, 3);
+  marketContext.markPriceNanodollars.reset();
+  marketContext.indicatorValues = indicators;
 
-  ASSERT_FALSE(result.ok());
-  EXPECT_EQ(result.error().code,
-            bte::core::ErrorCode::strategyContractViolation);
-  const auto diagnostics = strategyResult.value()->takeDiagnostics();
-  const auto terminal =
-      std::ranges::find_if(diagnostics.records, [](const auto &record) {
-        return record.kind == bte::strategy::StrategyDiagnosticKind::terminal;
-      });
-  ASSERT_NE(terminal, diagnostics.records.end());
-  EXPECT_EQ(terminal->hook, "on_fill");
-  EXPECT_EQ(terminal->errorCode, "WorkerCallbackFailure");
+  const auto market = strategyResult.value()->onMarket(marketContext);
+  ASSERT_TRUE(market.ok()) << market.error().message;
+  EXPECT_TRUE(market.value().empty());
+
+  const auto fill =
+      bte::strategy::StrategyFill{.timestamp = marketContext.bar->ts,
+                                  .side = bte::strategy::StrategyFillSide::sell,
+                                  .quantityShares = 2,
+                                  .priceNanodollars = 11'000'000'000,
+                                  .amountMicrodollars = 22'000'000};
+  ASSERT_TRUE(strategyResult.value()->onFill(fill, marketContext).ok());
+  auto finishContext = marketContext;
+  finishContext.bar.reset();
+  finishContext.markPriceNanodollars.reset();
+  ASSERT_TRUE(strategyResult.value()->onFinish(finishContext).ok());
+
+  const auto diagnostics = pythonStrategy->diagnostics();
+  ASSERT_EQ(diagnostics.structuredLogs.size(), 2U);
+  const auto &marketFields = diagnostics.structuredLogs[0].at("fields");
+  EXPECT_EQ(marketFields.at("fast"), 101.25);
+  EXPECT_TRUE(marketFields.at("slow").is_null());
+  EXPECT_TRUE(marketFields.at("mark_price").is_null());
+  EXPECT_EQ(marketFields.at("quantity"), 3);
+  const auto &fillFields = diagnostics.structuredLogs[1].at("fields");
+  EXPECT_EQ(fillFields.at("side"), "sell");
+  EXPECT_EQ(fillFields.at("quantity"), 2);
+  EXPECT_DOUBLE_EQ(fillFields.at("amount"), 22.0);
 }
 
 TEST(PythonWorkerStrategyTest,

@@ -297,7 +297,21 @@ fi
 
 echo "== Changed-code coverage: ${base}..${head} =="
 cmake -E remove_directory Output/coverage
-cmake --preset coverage -DBTE_BUILD_QT_APP=ON
+coverage_arguments=(-DBTE_BUILD_QT_APP=ON)
+if [[ "$operating_system" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+  runtime_artifacts_dir="${BTE_PYTHON_RUNTIME_ARTIFACTS_DIR:-${ROOT}/Output/PythonRuntimeArtifacts}"
+  if "$quality_python" Tools/BuildPythonRuntime.py \
+    --verify-artifacts --artifacts-dir "$runtime_artifacts_dir"; then
+    echo "Including verified managed Python runtime in coverage."
+    coverage_arguments+=(
+      -DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON
+      "-DBTE_PYTHON_RUNTIME_ARTIFACTS_DIR=$runtime_artifacts_dir"
+    )
+  else
+    echo "Skipping managed Python runtime coverage: locked runtime artifacts are unavailable."
+  fi
+fi
+cmake --preset coverage "${coverage_arguments[@]}"
 cmake --build --preset coverage --parallel
 ctest --preset coverage --no-tests=error
 
