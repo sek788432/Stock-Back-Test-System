@@ -322,6 +322,11 @@ if [[ -n "${BTE_GCOV_EXECUTABLE:-}" ]]; then
   gcov_arguments+=(--gcov-executable "$BTE_GCOV_EXECUTABLE")
 elif [[ "$operating_system" == "Darwin" ]]; then
   gcov_arguments+=(--gcov-executable "xcrun llvm-cov gcov")
+  # llvm-cov gcov can emit overflowed hit counts that gcovr misclassifies.
+  gcov_arguments+=(
+    --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file
+    --gcov-ignore-parse-errors negative_hits.warn_once_per_file
+  )
 fi
 
 "$quality_python" -m gcovr \
