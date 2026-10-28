@@ -34,7 +34,10 @@ struct BacktestRequest {
   std::vector<core::Bar> bars;
   /// Optional actual pre-range bars for a strategy's bounded warm-up/history.
   /// They are never executed, persisted, or shown in Replay.
-  std::vector<core::Bar> historyBars{};
+  std::vector<core::Bar>
+      historyBars{}; // NOLINT(readability-redundant-member-init):
+                     // avoids -Wmissing-field-initializers
+                     // at partial aggregate call sites.
   std::string symbol = "PRIMARY";
   std::int64_t initialCapitalMicrodollars = 0;
   std::int64_t quantityShares = 0;
@@ -44,7 +47,10 @@ struct BacktestRequest {
   std::optional<strategy::PreviousDataDayClose> previousDataDayClose =
       std::nullopt;
   /// Bounded immutable UTC data-day history; warm-up summaries are never bars.
-  std::vector<strategy::PreviousDataDaySummary> previousDataDays{};
+  std::vector<strategy::PreviousDataDaySummary>
+      previousDataDays{}; // NOLINT(readability-redundant-member-init): avoids
+                          // -Wmissing-field-initializers at partial aggregate
+                          // call sites.
   /// When supplied, a different last actual bar produces an Incomplete
   /// StaleFinalMark diagnostic instead of eligible final metrics.
   std::optional<core::Timestamp> requiredFinalMarkTimestamp = std::nullopt;

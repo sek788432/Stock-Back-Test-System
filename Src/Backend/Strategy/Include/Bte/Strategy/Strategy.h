@@ -46,7 +46,10 @@ struct StrategyIndicatorRegistration final {
 
 struct StrategyRequirements final {
   std::size_t maxHistoryBars = 0;
-  std::vector<StrategyIndicatorRegistration> indicators{};
+  std::vector<StrategyIndicatorRegistration>
+      indicators{}; // NOLINT(readability-redundant-member-init): avoids
+                    // -Wmissing-field-initializers at partial aggregate call
+                    // sites.
 };
 
 struct StrategyIndicatorValue final {
@@ -55,15 +58,23 @@ struct StrategyIndicatorValue final {
 };
 
 struct StrategyContext final {
-  std::string_view symbol{};
+  std::string_view
+      symbol{}; // NOLINT(readability-redundant-member-init): avoids
+                // -Wmissing-field-initializers at partial aggregate call sites.
   std::optional<core::Bar> bar = std::nullopt;
   std::int64_t cashMicrodollars = 0;
   std::int64_t equityMicrodollars = 0;
   std::int64_t positionShares = 0;
   std::optional<std::int64_t> markPriceNanodollars = std::nullopt;
   /// Pre-range actual bars are available to the adapter only for initial seed.
-  std::span<const core::Bar> warmupHistory{};
-  std::span<const StrategyIndicatorValue> indicatorValues{};
+  std::span<const core::Bar>
+      warmupHistory{}; // NOLINT(readability-redundant-member-init): avoids
+                       // -Wmissing-field-initializers at partial aggregate call
+                       // sites.
+  std::span<const StrategyIndicatorValue>
+      indicatorValues{}; // NOLINT(readability-redundant-member-init): avoids
+                         // -Wmissing-field-initializers at partial aggregate
+                         // call sites.
 };
 
 enum class StrategyDiagnosticKind : std::uint8_t { log, terminal };
@@ -72,14 +83,24 @@ enum class StrategyDiagnosticKind : std::uint8_t { log, terminal };
 /// remain canonical JSON text so the Strategy module does not own a JSON ABI.
 struct StrategyDiagnostic final {
   StrategyDiagnosticKind kind = StrategyDiagnosticKind::log;
-  std::string hook{};
-  std::string level{};
-  std::string errorCode{};
-  std::string message{};
+  std::string
+      hook{}; // NOLINT(readability-redundant-member-init): avoids
+              // -Wmissing-field-initializers at partial aggregate call sites.
+  std::string
+      level{}; // NOLINT(readability-redundant-member-init): avoids
+               // -Wmissing-field-initializers at partial aggregate call sites.
+  std::string errorCode{}; // NOLINT(readability-redundant-member-init): avoids
+                           // -Wmissing-field-initializers at partial aggregate
+                           // call sites.
+  std::string message{};   // NOLINT(readability-redundant-member-init): avoids
+                           // -Wmissing-field-initializers at partial aggregate
+                           // call sites.
   std::string canonicalFieldsJson = "{}";
   std::optional<std::uint32_t> sourceLine = std::nullopt;
   std::optional<std::uint32_t> sourceColumn = std::nullopt;
-  std::string traceback{};
+  std::string traceback{}; // NOLINT(readability-redundant-member-init): avoids
+                           // -Wmissing-field-initializers at partial aggregate
+                           // call sites.
   std::uint64_t omittedBytes = 0;
   std::uint64_t omittedEntries = 0;
 };
