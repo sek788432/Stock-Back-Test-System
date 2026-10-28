@@ -280,6 +280,34 @@ TEST(PythonWorkerStrategyTest, requiresConsentBeforeWorkerCreation) {
             bte::core::ErrorCode::permissionDenied);
 }
 
+TEST(PythonWorkerStrategyTest,
+     rejectsMissingInterpreterAndBootstrapBeforeStartingWorker) {
+  const auto missingExecutable =
+      std::filesystem::temp_directory_path() / "bte-missing-python-executable";
+  const auto missingBootstrap = std::filesystem::temp_directory_path() /
+                                "bte-missing-python-bootstrap.py";
+  ASSERT_FALSE(std::filesystem::exists(missingExecutable));
+  ASSERT_FALSE(std::filesystem::exists(missingBootstrap));
+  const auto startCountBefore =
+      bte::bindings::python::testing::managedWorkerProcessStartCount();
+
+  const auto missingRuntime = PythonWorkerStrategy::createForTesting(
+      missingExecutable, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, validStrategySource,
+      parameters(), true);
+  ASSERT_FALSE(missingRuntime.ok());
+  EXPECT_EQ(missingRuntime.error().code,
+            bte::core::ErrorCode::runtimeUnavailable);
+
+  const auto missingWorker = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, missingBootstrap, validStrategySource,
+      parameters(), true);
+  ASSERT_FALSE(missingWorker.ok());
+  EXPECT_EQ(missingWorker.error().code,
+            bte::core::ErrorCode::workerStartFailed);
+  EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+            startCountBefore);
+}
+
 TEST(PythonWorkerStrategyTest, rejectsMalformedSourceBeforeStartingAWorker) {
   const auto startCountBefore =
       bte::bindings::python::testing::managedWorkerProcessStartCount();
@@ -386,6 +414,37 @@ TEST(PythonWorkerStrategyTest,
   ASSERT_FALSE(nonFiniteBarResult.ok());
   EXPECT_EQ(nonFiniteBarResult.error().code,
             bte::core::ErrorCode::strategyProtocolViolation);
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsInvalidContextBeforeOnFillAndOnFinishCallbacks) {
+  auto invalidContext = context(1'700'000'000'000LL);
+  invalidContext.symbol = std::string{"\xff", 1};
+  const auto validFill = bte::strategy::StrategyFill{
+      .timestamp = context(1'700'000'000'000LL).bar->ts,
+      .side = bte::strategy::StrategyFillSide::buy,
+      .quantityShares = 1,
+      .priceNanodollars = 1'000'000'000,
+      .amountMicrodollars = 1'000'000};
+
+  auto fillStrategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(fillStrategy.ok()) << fillStrategy.error().message;
+  const auto fillResult =
+      fillStrategy.value()->onFill(validFill, invalidContext);
+  ASSERT_FALSE(fillResult.ok());
+  EXPECT_EQ(fillResult.error().code,
+            bte::core::ErrorCode::strategyContractViolation);
+
+  auto finishStrategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(finishStrategy.ok()) << finishStrategy.error().message;
+  const auto finishResult = finishStrategy.value()->onFinish(invalidContext);
+  ASSERT_FALSE(finishResult.ok());
+  EXPECT_EQ(finishResult.error().code,
+            bte::core::ErrorCode::strategyContractViolation);
 }
 
 TEST(PythonWorkerStrategyTest, rejectsCommandsDuringStrategyStartup) {
@@ -701,6 +760,9 @@ TEST(PythonWorkerStrategyTest,
           {"fast_period", 1}, {"slow_period", 2}, {"quantity", 1'000'000'001}},
       nlohmann::json{{"fast_period", 1}, {"slow_period", 2}, {"quantity", 1.5}},
       nlohmann::json{{"fast_period", 1.5}, {"slow_period", 2}, {"quantity", 1}},
+      nlohmann::json{{"fast_period", 1},
+                     {"slow_period", 2},
+                     {"quantity", std::numeric_limits<std::uint64_t>::max()}},
       nlohmann::json{
           {"fast_period", true}, {"slow_period", 2}, {"quantity", 1}},
   };

@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QByteArray>
 #include <QFile>
+#include <QFileDialog>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
@@ -60,6 +61,29 @@ std::shared_ptr<bool> chooseReplacementButton(const QString &buttonText) {
   return clicked;
 }
 
+std::shared_ptr<bool> chooseFileDialogPath(const QString &path) {
+  const auto selected = std::make_shared<bool>(false);
+  QTimer::singleShot(0, qApp, [path, selected] {
+    auto *dialog =
+        qobject_cast<QFileDialog *>(QApplication::activeModalWidget());
+    if (dialog == nullptr) {
+      return;
+    }
+    dialog->selectFile(path);
+    *selected =
+        QMetaObject::invokeMethod(dialog, "accept", Qt::QueuedConnection);
+  });
+  QTimer::singleShot(5000, qApp, [selected] {
+    if (!*selected) {
+      if (auto *const dialog = QApplication::activeModalWidget();
+          dialog != nullptr) {
+        dialog->close();
+      }
+    }
+  });
+  return selected;
+}
+
 class StrategyTabTest final : public QObject {
   Q_OBJECT
 
@@ -67,7 +91,9 @@ private slots:
   void initTestCase();
   void exposesSampleAndPersistsRecoverableDrafts();
   void invalidDraftsRemainUntouchedAndFallBackToEmptyEditor();
+  void saveDraftButtonReportsInvalidSource();
   void importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles();
+  void fileDialogButtonsLoadAndExportPythonSource();
   void acceptsSourceAtTheOneMiBLimit();
   void autosavesAfterFiveHundredMillisecondsOfIdle();
   void savesDirtyDraftBeforeLoadingReplacementWhenRequested();
@@ -78,6 +104,7 @@ private slots:
   void asksForConsentBeforeValidatingTrustedSource();
   void reportsValidationWorkerFailures();
   void explainsWhenManagedValidationIsUnavailable();
+  void usesDefaultManagedValidationRunnerFromApplicationResources();
   void cancellationReachesTheValidationWorker();
   void cannotSaveDraftWhenItsDestinationIsUnavailable();
   void autosaveReportsWhenItsDraftDirectoryIsUnavailable();
@@ -157,6 +184,12 @@ void StrategyTabTest::invalidDraftsRemainUntouchedAndFallBackToEmptyEditor() {
           R"({"fastPeriod":5,"quantity":0,"schemaVersion":1,"slowPeriod":20,"source":"valid"})"},
       QByteArray{
           R"({"fastPeriod":20,"quantity":1,"schemaVersion":1,"slowPeriod":20,"source":"valid"})"},
+      QByteArray{
+          R"({"fastPeriod":-1,"quantity":1,"schemaVersion":1,"slowPeriod":20,"source":"valid"})"},
+      QByteArray{
+          R"({"fastPeriod":5,"quantity":1,"schemaVersion":1,"slowPeriod":-1,"source":"valid"})"},
+      QByteArray{
+          R"({"fastPeriod":5,"quantity":-1,"schemaVersion":1,"slowPeriod":20,"source":"valid"})"},
   };
 
   for (std::size_t index = 0; index < invalidDrafts.size(); ++index) {
@@ -175,6 +208,36 @@ void StrategyTabTest::invalidDraftsRemainUntouchedAndFallBackToEmptyEditor() {
     QVERIFY(preserved.open(QIODevice::ReadOnly));
     QCOMPARE(preserved.readAll(), invalidDrafts[index]);
   }
+}
+
+void StrategyTabTest::saveDraftButtonReportsInvalidSource() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto drafts =
+      std::filesystem::path{directory.path().toStdString()} / "drafts";
+  bte::frontend::StrategyTab tab{drafts, {}};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *save = tab.findChild<QPushButton *>("pythonStrategySaveDraftButton");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  QVERIFY(editor != nullptr);
+  QVERIFY(save != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(tab.saveDraft());
+
+  QFile original{
+      QString::fromStdString((drafts / "python-draft.json").string())};
+  QVERIFY(original.open(QIODevice::ReadOnly));
+  const auto originalContents = original.readAll();
+  original.close();
+
+  editor->clear();
+  QTest::mouseClick(save, Qt::LeftButton);
+
+  QVERIFY(status->text().contains("Cannot save the Python Strategy draft"));
+  QFile preserved{
+      QString::fromStdString((drafts / "python-draft.json").string())};
+  QVERIFY(preserved.open(QIODevice::ReadOnly));
+  QCOMPARE(preserved.readAll(), originalContents);
 }
 
 void StrategyTabTest::importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles() {
@@ -225,6 +288,37 @@ void StrategyTabTest::importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles() {
   QVERIFY(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
               ->text()
               .contains("Only .py files can be loaded"));
+}
+
+void StrategyTabTest::fileDialogButtonsLoadAndExportPythonSource() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto sourcePath = root / "loaded.py";
+  const auto exportPath = root / "exported.py";
+  QVERIFY(writeSourceFile(sourcePath, QByteArray{"# loaded through UI\r\n"}));
+
+  bte::frontend::StrategyTab tab{root / "drafts", {}};
+  QVERIFY(tab.saveDraft());
+  auto *load = tab.findChild<QPushButton *>("pythonStrategyLoadButton");
+  auto *exportSource =
+      tab.findChild<QPushButton *>("pythonStrategyExportButton");
+  QVERIFY(load != nullptr);
+  QVERIFY(exportSource != nullptr);
+
+  const auto loadSelection =
+      chooseFileDialogPath(QString::fromStdString(sourcePath.string()));
+  QTest::mouseClick(load, Qt::LeftButton);
+  QVERIFY(*loadSelection);
+  QCOMPARE(tab.sourceUtf8(), std::string{"# loaded through UI\n"});
+
+  const auto exportSelection =
+      chooseFileDialogPath(QString::fromStdString(exportPath.string()));
+  QTest::mouseClick(exportSource, Qt::LeftButton);
+  QVERIFY(*exportSelection);
+  QFile exported{QString::fromStdString(exportPath.string())};
+  QVERIFY(exported.open(QIODevice::ReadOnly));
+  QCOMPARE(exported.readAll(), QByteArray{"# loaded through UI\n"});
 }
 
 void StrategyTabTest::acceptsSourceAtTheOneMiBLimit() {
@@ -445,6 +539,29 @@ void StrategyTabTest::rejectsInvalidDraftsBeforeValidationOrHandoff() {
   QVERIFY(status->text().contains("at most 1 MiB"));
   QCOMPARE(handoff.size(), 0);
 
+  auto malformedUtf16 = QString{"# malformed source: "};
+  malformedUtf16.append(QChar{char16_t{0xd800}});
+  malformedUtf16.append("\ndef create_strategy(params):\n    return None\n");
+  editor->setPlainText(malformedUtf16);
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QVERIFY(status->text().contains("Source is invalid"));
+  QTest::mouseClick(use, Qt::LeftButton);
+  QVERIFY(status->text().contains("Source must be valid UTF-8, non-empty"));
+  QCOMPARE(handoff.size(), 0);
+
+  auto orphanedLowSurrogate = QString{"# malformed source: "};
+  orphanedLowSurrogate.append(QChar{char16_t{0xdc00}});
+  orphanedLowSurrogate.append(
+      "\ndef create_strategy(params):\n    return None\n");
+  editor->setPlainText(orphanedLowSurrogate);
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QVERIFY(status->text().contains("Source is invalid"));
+  QTest::mouseClick(use, Qt::LeftButton);
+  QVERIFY(status->text().contains("Source must be valid UTF-8, non-empty"));
+  QCOMPARE(handoff.size(), 0);
+  QCOMPARE(consentCalls.load(), 0);
+  QCOMPARE(validationCalls.load(), 0);
+
   editor->setPlainText("def create_strategy(params):\n    return None\n");
   QTest::mouseClick(validate, Qt::LeftButton);
   QVERIFY(status->text().contains("Consent was not granted"));
@@ -585,6 +702,33 @@ void StrategyTabTest::explainsWhenManagedValidationIsUnavailable() {
 
   QCOMPARE(status->text(), QString{"Managed Python validation is unavailable"});
   QVERIFY(validate->isEnabled());
+}
+
+void StrategyTabTest::
+    usesDefaultManagedValidationRunnerFromApplicationResources() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  bte::frontend::StrategyTab tab;
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *validate = tab.findChild<QPushButton *>("pythonStrategyValidateButton");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  auto *diagnostics =
+      tab.findChild<QPlainTextEdit *>("pythonStrategyDiagnostics");
+  QVERIFY(editor != nullptr);
+  QVERIFY(validate != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(diagnostics != nullptr);
+  editor->setPlainText(
+      QString{"# unique validation source %1\n"
+              "def create_strategy(params):\n    return None\n"}
+          .arg(directory.path()));
+
+  const auto consent = chooseReplacementButton("Allow this source");
+  QTest::mouseClick(validate, Qt::LeftButton);
+
+  QTRY_VERIFY_WITH_TIMEOUT(status->text() == "Validation failed", 5000);
+  QVERIFY(*consent);
+  QVERIFY(diagnostics->toPlainText().contains("runtime"));
 }
 
 void StrategyTabTest::cancellationReachesTheValidationWorker() {

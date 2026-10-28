@@ -1542,6 +1542,46 @@ TEST_F(ResultStoreFixture,
   ASSERT_TRUE(canceledAttempt.ok()) << canceledAttempt.error().message;
   EXPECT_EQ(canceledAttempt.value().status,
             bte::results::VerificationStatus::canceled);
+  const auto reopenedCanceled =
+      verifications.value()->load(canceledDuring.value().verificationId);
+  ASSERT_TRUE(reopenedCanceled.ok()) << reopenedCanceled.error().message;
+  EXPECT_EQ(reopenedCanceled.value().status,
+            bte::results::VerificationStatus::canceled);
+  ASSERT_EQ(reopenedCanceled.value().attempts.size(), 1U);
+  EXPECT_EQ(reopenedCanceled.value().attempts.front().terminalStatus,
+            bte::results::RunStatus::canceled);
+}
+
+TEST_F(ResultStoreFixture, verificationStoreRejectsSymlinkedLockFile) {
+#if defined(__APPLE__) || defined(__linux__)
+  const auto resultStoreRoot = root_ / "VerificationSymlinkLock";
+  const auto directory = resultStoreRoot / "Verifications";
+  std::filesystem::create_directories(directory);
+  const auto target = root_ / "VerificationLockTarget";
+  {
+    std::ofstream contents{target};
+    ASSERT_TRUE(contents.is_open());
+    contents << "preserve target";
+  }
+  const auto lockPath = directory / ".verification-store.lock";
+  std::filesystem::create_symlink(target, lockPath);
+
+  const auto store = bte::results::VerificationStore::open(resultStoreRoot);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto created = store.value()->create(schemaThreeDescriptor());
+
+  ASSERT_FALSE(created.ok());
+  EXPECT_EQ(created.error().code, bte::core::ErrorCode::permissionDenied);
+  EXPECT_TRUE(std::filesystem::is_symlink(lockPath));
+  std::ifstream preserved{target};
+  ASSERT_TRUE(preserved.is_open());
+  const auto preservedContents =
+      std::string{std::istreambuf_iterator<char>{preserved},
+                  std::istreambuf_iterator<char>{}};
+  EXPECT_EQ(preservedContents, "preserve target");
+#else
+  GTEST_SKIP() << "The verification lock uses O_NOFOLLOW on POSIX.";
+#endif
 }
 
 TEST_F(ResultStoreFixture,

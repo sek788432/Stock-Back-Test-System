@@ -511,6 +511,20 @@ TEST(RuntimeProfileTest, rejectsOversizedManifestBeforeParsing) {
             bte::core::ErrorCode::runtimeIntegrityFailure);
 }
 
+TEST(RuntimeProfileTest, rejectsMissingProfileRootAndMalformedManifest) {
+  TemporaryDirectory directory;
+  const auto missingRoot = verifyRuntimeProfile(directory.path() / "missing");
+  ASSERT_FALSE(missingRoot.ok());
+  EXPECT_EQ(missingRoot.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+
+  writeText(directory.path() / "manifest.json", "{malformed");
+  const auto malformed = verifyRuntimeProfile(directory.path());
+  ASSERT_FALSE(malformed.ok());
+  EXPECT_EQ(malformed.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+}
+
 #if defined(__unix__) || defined(__APPLE__)
 TEST(RuntimeProfileTest, rejectsUnsupportedFilesystemEntries) {
   TemporaryDirectory directory;

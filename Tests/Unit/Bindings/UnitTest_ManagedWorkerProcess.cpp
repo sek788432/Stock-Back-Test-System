@@ -348,6 +348,10 @@ TEST(ManagedWorkerProcessTest,
 
   ASSERT_TRUE(response.ok()) << response.error().message;
   EXPECT_EQ(response.value().messageType, "ready");
+  const auto followup = worker.sendMessage(
+      request(), 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+  ASSERT_FALSE(followup.ok());
+  EXPECT_EQ(followup.error().message, "Managed worker process already exited.");
 #else
   GTEST_SKIP()
       << "POSIX worker process fixture is unavailable on this platform.";
