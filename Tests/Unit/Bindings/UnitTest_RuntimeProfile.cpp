@@ -556,6 +556,22 @@ TEST(RuntimeProfileTest, discoversTheInstalledProfileFromApplicationResources) {
 
   ASSERT_TRUE(discovered.ok()) << discovered.error().message;
   EXPECT_EQ(discovered.value().root, std::filesystem::canonical(profileRoot));
+
+  TemporaryDirectory invalidResources;
+  const auto invalidProfileRoot =
+      invalidResources.path() / "RuntimeProfiles" /
+      std::string{bte::bindings::python::managedRuntimeProfileId};
+  writeFixtureProfile(invalidProfileRoot);
+  auto invalidManifest =
+      createFixtureManifest(bte::core::sha256("managed-python-fixture"));
+  invalidManifest["stockbtSourceSha256"] = "not-a-sha256";
+  writeCanonicalManifest(invalidProfileRoot, invalidManifest);
+
+  const auto invalid = discoverManagedRuntime(invalidResources.path());
+
+  ASSERT_FALSE(invalid.ok());
+  EXPECT_EQ(invalid.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
 #else
   GTEST_SKIP() << "Managed runtime discovery requires macOS arm64.";
 #endif

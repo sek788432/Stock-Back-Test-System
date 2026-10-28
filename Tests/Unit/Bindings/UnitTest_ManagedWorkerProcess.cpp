@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -526,6 +527,65 @@ TEST(ManagedWorkerProcessTest,
     EXPECT_EQ(openDescriptorSnapshot(), descriptorsBefore);
     EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
               startCountBefore);
+  }
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     releasesSourceAndHistoryMemoryWhenDescriptorDuplicationFails) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto sourceResult = ReadOnlySharedMemory::create("strategy source");
+  ASSERT_TRUE(sourceResult.ok()) << sourceResult.error().message;
+  auto source = std::move(sourceResult).value();
+  auto historyResult = ReadOnlySharedMemory::create("warmup history");
+  ASSERT_TRUE(historyResult.ok()) << historyResult.error().message;
+  auto history = std::move(historyResult).value();
+
+  struct ExpectedFailure final {
+    std::string_view name;
+    std::uint32_t successfulDuplicates;
+    bool includeHistory;
+    std::string_view message;
+  };
+  const std::array failures{
+      ExpectedFailure{
+          "source", 4, false,
+          "Could not prepare the read-only shared-data descriptor."},
+      ExpectedFailure{
+          "history", 5, true,
+          "Could not prepare the read-only shared-history descriptor."},
+  };
+
+  const auto startCountBefore =
+      bte::bindings::python::testing::managedWorkerProcessStartCount();
+  for (const auto &failure : failures) {
+    const auto descriptorsBefore = openDescriptorSnapshot();
+    ManagedWorkerSystemCallFailure inject{
+        ManagedWorkerSystemCall::duplicateDescriptor,
+        failure.successfulDuplicates, EMFILE};
+    const auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+        .executable = fixturePath(),
+        .readOnlyDataDescriptor = source.descriptor(),
+        .readOnlyDataLength = source.size(),
+        .readOnlyDataSha256 = source.sha256Digest(),
+        .readOnlyHistoryDescriptor =
+            failure.includeHistory ? history.descriptor() : -1,
+        .readOnlyHistoryLength = failure.includeHistory ? history.size() : 0,
+        .readOnlyHistorySha256 =
+            failure.includeHistory ? history.sha256Digest() : std::string{},
+    });
+
+    ASSERT_FALSE(started.ok()) << failure.name;
+    EXPECT_EQ(started.error().code, bte::core::ErrorCode::workerStartFailed)
+        << failure.name;
+    EXPECT_EQ(started.error().message, failure.message) << failure.name;
+    EXPECT_EQ(openDescriptorSnapshot(), descriptorsBefore) << failure.name;
+    EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+              startCountBefore)
+        << failure.name;
   }
 #else
   GTEST_SKIP()

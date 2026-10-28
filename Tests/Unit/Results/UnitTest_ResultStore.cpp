@@ -1748,6 +1748,95 @@ TEST_F(ResultStoreFixture,
             bte::results::RunStatus::incomplete);
 }
 
+TEST_F(ResultStoreFixture,
+       reproducibilityCompletionPersistsFunctionalMismatchAndInterruption) {
+  using bte::results::FinalizedResult;
+  using bte::results::RunStatus;
+  using bte::results::VerificationStatus;
+
+  const auto directory = root_ / "VerificationCompletionMismatchAndInterrupt";
+  const auto descriptor = schemaThreeDescriptor();
+  auto store = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+
+  auto mismatchEvidence = store.value()->create(descriptor);
+  ASSERT_TRUE(mismatchEvidence.ok()) << mismatchEvidence.error().message;
+  const auto mismatchId = mismatchEvidence.value().verificationId;
+  ASSERT_TRUE(store.value()->beginAttempt(mismatchId).ok());
+
+  auto changedDescriptor = descriptor;
+  changedDescriptor.provenance.sourceUtf8 += "# changed attempt input\n";
+  changedDescriptor.provenance.sourceHash =
+      bte::core::sha256(changedDescriptor.provenance.sourceUtf8);
+  changedDescriptor.strategyHash = changedDescriptor.provenance.sourceHash;
+  const FinalizedResult mismatchResult{
+      .resultId = std::string(32, '4'),
+      .canonicalResultHash = std::string(64, 'c'),
+  };
+  const auto mismatch = store.value()->completeAttempt(
+      mismatchId, changedDescriptor, mismatchResult, RunStatus::completed);
+  ASSERT_TRUE(mismatch.ok()) << mismatch.error().message;
+  EXPECT_EQ(mismatch.value().status, VerificationStatus::mismatch);
+  ASSERT_EQ(mismatch.value().attempts.size(), 1U);
+  EXPECT_EQ(mismatch.value().attempts.front().terminalStatus,
+            RunStatus::completed);
+  EXPECT_EQ(mismatch.value().attempts.front().resultId,
+            mismatchResult.resultId);
+  ASSERT_TRUE(mismatch.value().attempts.front().error.has_value());
+  EXPECT_EQ(mismatch.value().attempts.front().error->code,
+            "functionalInputMismatch");
+  const auto persistedMismatch = store.value()->load(mismatchId);
+  ASSERT_TRUE(persistedMismatch.ok()) << persistedMismatch.error().message;
+  EXPECT_EQ(persistedMismatch.value(), mismatch.value());
+
+  auto interruptedEvidence = store.value()->create(descriptor);
+  ASSERT_TRUE(interruptedEvidence.ok()) << interruptedEvidence.error().message;
+  const auto interruptedId = interruptedEvidence.value().verificationId;
+  ASSERT_TRUE(store.value()->beginAttempt(interruptedId).ok());
+  const FinalizedResult interruptedResult{
+      .resultId = std::string(32, '5'),
+      .canonicalResultHash = std::string(64, 'd'),
+  };
+  const auto interrupted = store.value()->completeAttempt(
+      interruptedId, descriptor, interruptedResult, RunStatus::interrupted);
+  ASSERT_TRUE(interrupted.ok()) << interrupted.error().message;
+  EXPECT_EQ(interrupted.value().status, VerificationStatus::interrupted);
+  ASSERT_EQ(interrupted.value().attempts.size(), 1U);
+  EXPECT_EQ(interrupted.value().attempts.front().terminalStatus,
+            RunStatus::interrupted);
+  EXPECT_EQ(interrupted.value().attempts.front().resultId,
+            interruptedResult.resultId);
+  EXPECT_EQ(interrupted.value().attempts.front().canonicalResultHash,
+            interruptedResult.canonicalResultHash);
+  const auto persistedInterruption = store.value()->load(interruptedId);
+  ASSERT_TRUE(persistedInterruption.ok())
+      << persistedInterruption.error().message;
+  EXPECT_EQ(persistedInterruption.value(), interrupted.value());
+
+  const auto unknownVerification = std::string(32, 'f');
+  auto invalidResult = FinalizedResult{
+      .resultId = "invalid",
+      .canonicalResultHash = std::string(64, 'a'),
+  };
+  const auto invalidId = store.value()->completeAttempt(
+      unknownVerification, descriptor, invalidResult, RunStatus::completed);
+  ASSERT_FALSE(invalidId.ok());
+  EXPECT_EQ(invalidId.error().code, bte::core::ErrorCode::invalidArgument);
+
+  invalidResult.resultId = std::string(32, '6');
+  invalidResult.canonicalResultHash = "invalid";
+  const auto invalidHash = store.value()->completeAttempt(
+      unknownVerification, descriptor, invalidResult, RunStatus::completed);
+  ASSERT_FALSE(invalidHash.ok());
+  EXPECT_EQ(invalidHash.error().code, bte::core::ErrorCode::invalidArgument);
+
+  invalidResult.canonicalResultHash = std::string(64, 'a');
+  const auto nonTerminal = store.value()->completeAttempt(
+      unknownVerification, descriptor, invalidResult, RunStatus::running);
+  ASSERT_FALSE(nonTerminal.ok());
+  EXPECT_EQ(nonTerminal.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
 TEST_F(
     ResultStoreFixture,
     reproducibilityVerificationRecoversInterruptedAndPreservesCorruptEvidence) {

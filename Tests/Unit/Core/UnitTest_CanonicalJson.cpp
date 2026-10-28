@@ -84,6 +84,26 @@ TEST(CanonicalJsonTest,
   EXPECT_EQ(serialized.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
+TEST(CanonicalJsonTest, enforcesNestingLimitForObjects) {
+  const auto makeNestedObject = [](const std::size_t depth) {
+    std::string json;
+    json.reserve(depth * 8U + 1U);
+    for (std::size_t index = 0; index < depth; ++index) {
+      json += R"json({"nested":)json";
+    }
+    json += "0";
+    json.append(depth, '}');
+    return json;
+  };
+
+  const auto atLimit = bte::core::parseCanonicalJson(makeNestedObject(128));
+  ASSERT_TRUE(atLimit.ok()) << atLimit.error().message;
+  const auto aboveLimit = bte::core::parseCanonicalJson(makeNestedObject(129));
+  ASSERT_FALSE(aboveLimit.ok());
+  EXPECT_EQ(aboveLimit.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_NE(aboveLimit.error().message.find("nesting"), std::string::npos);
+}
+
 TEST(CanonicalJsonTest, rejectsInvalidUtf8InObjectKeysAndStringValues) {
   const std::string invalidUtf8(1, static_cast<char>(0x80));
   auto invalidValue = nlohmann::json::object();

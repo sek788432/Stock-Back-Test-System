@@ -91,6 +91,7 @@ private slots:
   void initTestCase();
   void exposesSampleAndPersistsRecoverableDrafts();
   void invalidDraftsRemainUntouchedAndFallBackToEmptyEditor();
+  void restoresLegacyDraftsWithNormalizedLineEndings();
   void saveDraftButtonReportsInvalidSource();
   void importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles();
   void fileDialogButtonsLoadAndExportPythonSource();
@@ -113,6 +114,7 @@ private slots:
   void useInBacktestEmitsTheCurrentSourceAndParameters();
   void exportsNormalizedUtf8SourceAtomically();
   void reportsWhenThePythonExportDestinationCannotBeWritten();
+  void rejectsUnpairedSurrogatesBeforeValidationOrExport();
   void builtInSampleHandlesIncompleteHistoryAndEmitsValidOrder();
   void preservesUnrecoverableDraftsWhenTheTabCloses();
 };
@@ -208,6 +210,20 @@ void StrategyTabTest::invalidDraftsRemainUntouchedAndFallBackToEmptyEditor() {
     QVERIFY(preserved.open(QIODevice::ReadOnly));
     QCOMPARE(preserved.readAll(), invalidDrafts[index]);
   }
+}
+
+void StrategyTabTest::restoresLegacyDraftsWithNormalizedLineEndings() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto draftPath = root / "python-draft.json";
+  const QByteArray legacyDraft{
+      R"({"fastPeriod":5,"quantity":1,"schemaVersion":1,"slowPeriod":20,"source":"first\r\nsecond\r"})"};
+  QVERIFY(writeSourceFile(draftPath, legacyDraft));
+
+  bte::frontend::StrategyTab tab{root, {}};
+
+  QCOMPARE(tab.sourceUtf8(), std::string{"first\nsecond\n"});
 }
 
 void StrategyTabTest::saveDraftButtonReportsInvalidSource() {
@@ -919,6 +935,42 @@ void StrategyTabTest::reportsWhenThePythonExportDestinationCannotBeWritten() {
   QVERIFY(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
               ->text()
               .contains("Cannot write Python source file"));
+}
+
+void StrategyTabTest::rejectsUnpairedSurrogatesBeforeValidationOrExport() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  std::atomic_int validationCalls = 0;
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  bte::frontend::StrategyTab tab{
+      root,
+      [&validationCalls](const bte::bindings::PythonStrategyConfiguration &,
+                         const bte::core::CancellationToken &) {
+        ++validationCalls;
+        return bte::core::Result<void>{};
+      },
+      [](const std::string &) { return true; }};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *validate = tab.findChild<QPushButton *>("pythonStrategyValidateButton");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  QVERIFY(editor != nullptr);
+  QVERIFY(validate != nullptr);
+  QVERIFY(status != nullptr);
+
+  editor->setPlainText(QString{QChar{0xd800}});
+  QCOMPARE(editor->toPlainText().size(), 1);
+  QCOMPARE(editor->toPlainText().front().unicode(), ushort{0xd800});
+  QTest::mouseClick(validate, Qt::LeftButton);
+  QCOMPARE(validationCalls.load(), 0);
+  QVERIFY(status->text().contains("Source is invalid"));
+
+  editor->setPlainText(QString{QChar{0xdc00}});
+  QCOMPARE(editor->toPlainText().size(), 1);
+  QCOMPARE(editor->toPlainText().front().unicode(), ushort{0xdc00});
+  const auto exportPath = root / "invalid-surrogate.py";
+  QVERIFY(!tab.exportSourceFile(exportPath));
+  QVERIFY(status->text().contains("Source must be valid UTF-8"));
+  QVERIFY(!std::filesystem::exists(exportPath));
 }
 
 void StrategyTabTest::

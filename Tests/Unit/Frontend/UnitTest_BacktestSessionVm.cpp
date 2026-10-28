@@ -91,6 +91,7 @@ private slots:
   void pythonWarmupSelectsActualBarsBeyondTheInitialCalendarWindow();
   void pythonWarmupRejectsInvalidHistoryLimitsAndDates();
   void pythonPreparationRejectsInvalidInputsBeforeRuntimeDiscovery();
+  void persistedPythonRunReportsUnavailableRuntimeBeforeOpeningResults();
   void persistedPythonRunCanBeSavedAndReplayed();
   void draftLifecycleBoundariesReturnStructuredResults();
   void catalogSnapshotTranslatesEntriesAndEveryRecoveryReason();
@@ -552,6 +553,49 @@ void BacktestSessionVmTest::configuredRunComposesTrackedDataAndEngine() {
   QCOMPARE(result.value().positionShares, 7);
   QVERIFY(result.value().barsProcessed > 1U);
   QVERIFY(result.value().fill.has_value());
+}
+
+void BacktestSessionVmTest::
+    persistedPythonRunReportsUnavailableRuntimeBeforeOpeningResults() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto resourcesOverride = ScopedEnvironmentVariable{
+      "BTE_PYTHON_RESOURCES_ROOT",
+      QByteArray::fromStdString((root / "MissingResources").string())};
+  const auto bootstrapOverride =
+      ScopedEnvironmentVariable{"BTE_PYTHON_WORKER_BOOTSTRAP", QByteArray{}};
+  QVERIFY(resourcesOverride.setSuccessfully());
+  QVERIFY(bootstrapOverride.setSuccessfully());
+
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore = root / "Results",
+      .dataStore = root / "Data",
+      .snapshotId = "missing-snapshot",
+      .strategyHash = {},
+  };
+  const auto configuration = bte::bindings::BacktestConfiguration{
+      .symbol = "SYN",
+      .schema = "ohlcv-1h",
+      .startDate = QDate{2024, 1, 2},
+      .endDate = QDate{2024, 1, 3},
+      .initialCapital = 1'000.0,
+      .quantityShares = 1,
+      .selectableStrategy = {},
+      .pythonStrategy =
+          bte::bindings::PythonStrategyConfiguration{
+              .sourceUtf8 = "def create_strategy(params):\n    return None\n",
+              .canonicalParametersJson = R"({"quantity":1})",
+              .sourceConsentGranted = true,
+          },
+  };
+
+  const auto result =
+      bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
+
+  QVERIFY(!result.ok());
+  QCOMPARE(result.error().code, bte::core::ErrorCode::runtimeUnavailable);
+  QVERIFY(!std::filesystem::exists(storage.resultStore));
 }
 
 void BacktestSessionVmTest::
