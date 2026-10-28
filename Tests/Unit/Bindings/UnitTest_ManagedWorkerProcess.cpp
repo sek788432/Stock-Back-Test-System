@@ -35,11 +35,43 @@ using bte::bindings::python::ManagedWorkerProcess;
 using bte::bindings::python::ProtocolMessage;
 using bte::bindings::python::ReadOnlySharedMemory;
 using bte::bindings::python::WorkerProcessLaunch;
+using bte::bindings::python::testing::ManagedWorkerSystemCall;
 
 #if defined(__unix__) || defined(__APPLE__)
 [[nodiscard]] std::filesystem::path fixturePath() {
   return std::filesystem::path{BTE_WORKER_FIXTURE_PATH};
 }
+
+[[nodiscard]] std::vector<int> openDescriptorSnapshot() {
+  std::vector<int> descriptors;
+  for (int descriptor = 0; descriptor < 256; ++descriptor) {
+    const auto duplicate = ::dup(descriptor);
+    if (duplicate >= 0) {
+      descriptors.emplace_back(descriptor);
+      static_cast<void>(::close(duplicate));
+    }
+  }
+  return descriptors;
+}
+
+class ManagedWorkerSystemCallFailure final {
+public:
+  ManagedWorkerSystemCallFailure(const ManagedWorkerSystemCall systemCall,
+                                 const std::uint32_t skippedCalls,
+                                 const int errorNumber) {
+    bte::bindings::python::testing::failNextManagedWorkerSystemCall(
+        systemCall, skippedCalls, errorNumber);
+  }
+
+  ~ManagedWorkerSystemCallFailure() {
+    bte::bindings::python::testing::clearManagedWorkerSystemCallFailure();
+  }
+
+  ManagedWorkerSystemCallFailure(const ManagedWorkerSystemCallFailure &) =
+      delete;
+  ManagedWorkerSystemCallFailure &
+  operator=(const ManagedWorkerSystemCallFailure &) = delete;
+};
 
 [[nodiscard]] bool
 waitForProcessExitWithoutReaping(const ManagedWorkerProcess &worker,
@@ -426,6 +458,81 @@ TEST(ManagedWorkerProcessTest, rejectsInvalidSharedMemorySizeBoundaries) {
   EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
+TEST(ManagedWorkerProcessTest,
+     reportsSharedMemorySystemCallFailuresAndReleasesDescriptors) {
+#if defined(__unix__) || defined(__APPLE__)
+  struct ExpectedFailure final {
+    ManagedWorkerSystemCall systemCall;
+    std::string_view message;
+  };
+  const auto failures = std::vector<ExpectedFailure>{
+      {ManagedWorkerSystemCall::sharedMemoryCreate,
+       "Could not create a shared-memory object for strategy source:"},
+      {ManagedWorkerSystemCall::sharedMemoryTruncate,
+       "Could not size shared memory for strategy source."},
+      {ManagedWorkerSystemCall::sharedMemoryMap,
+       "Could not map shared memory for strategy source."},
+      {ManagedWorkerSystemCall::sharedMemoryReadOnlyOpen,
+       "Could not reopen strategy source as read-only memory."},
+      {ManagedWorkerSystemCall::sharedMemoryStat,
+       "Read-only strategy memory has an unexpected size"},
+  };
+
+  for (const auto &failure : failures) {
+    const auto descriptorsBefore = openDescriptorSnapshot();
+    ManagedWorkerSystemCallFailure inject{failure.systemCall, 0, EIO};
+    const auto memory = ReadOnlySharedMemory::create("source bytes");
+
+    ASSERT_FALSE(memory.ok());
+    EXPECT_EQ(memory.error().code, bte::core::ErrorCode::workerStartFailed);
+    EXPECT_NE(memory.error().message.find(failure.message), std::string::npos);
+    EXPECT_EQ(openDescriptorSnapshot(), descriptorsBefore);
+  }
+#else
+  GTEST_SKIP() << "POSIX shared memory is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     closesPartialPipeAndDuplicateSetupWhenSystemCallsFail) {
+#if defined(__unix__) || defined(__APPLE__)
+  struct ExpectedFailure final {
+    ManagedWorkerSystemCall systemCall;
+    std::uint32_t skippedCalls;
+    std::string_view message;
+  };
+  const auto failures = std::vector<ExpectedFailure>{
+      {ManagedWorkerSystemCall::pipeCreate, 2,
+       "Could not create managed worker pipes."},
+      {ManagedWorkerSystemCall::closeOnExec, 2,
+       "Could not isolate managed worker pipe descriptors."},
+      {ManagedWorkerSystemCall::duplicateDescriptor, 2,
+       "Could not prepare worker protocol descriptors."},
+  };
+
+  const auto startCountBefore =
+      bte::bindings::python::testing::managedWorkerProcessStartCount();
+  for (const auto &failure : failures) {
+    const auto descriptorsBefore = openDescriptorSnapshot();
+    ManagedWorkerSystemCallFailure inject{failure.systemCall,
+                                          failure.skippedCalls, EMFILE};
+    const auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+        .executable = fixturePath(),
+    });
+
+    ASSERT_FALSE(started.ok());
+    EXPECT_EQ(started.error().code, bte::core::ErrorCode::workerStartFailed);
+    EXPECT_EQ(started.error().message, std::string{failure.message});
+    EXPECT_EQ(openDescriptorSnapshot(), descriptorsBefore);
+    EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+              startCountBefore);
+  }
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
 TEST(ManagedWorkerProcessTest, acceptsSharedMemoryAtTheMaximumSourceSize) {
 #if defined(__unix__) || defined(__APPLE__)
   const auto source =
@@ -806,6 +913,104 @@ TEST(ManagedWorkerProcessTest,
 #else
   GTEST_SKIP()
       << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     classifiesPollAndProtocolReadSystemCallFailures) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto hangingStart = ManagedWorkerProcess::start(
+      WorkerProcessLaunch{.executable = fixturePath(), .arguments = {"hang"}});
+  ASSERT_TRUE(hangingStart.ok()) << hangingStart.error().message;
+  auto hangingWorker = std::move(hangingStart).value();
+  {
+    ManagedWorkerSystemCallFailure inject{ManagedWorkerSystemCall::poll, 0,
+                                          EIO};
+    const auto received = hangingWorker.receiveMessage(
+        "fixture-run", 0, 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+    ASSERT_FALSE(received.ok());
+    EXPECT_EQ(received.error().code,
+              bte::core::ErrorCode::workerHandshakeFailed);
+    EXPECT_EQ(received.error().message, "Could not poll managed worker pipes.");
+  }
+  ASSERT_TRUE(hangingWorker.terminateProcessTree(50ms).ok());
+  EXPECT_FALSE(hangingWorker.isRunning());
+
+  auto exitingStart = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(), .arguments = {"exit-output"}});
+  ASSERT_TRUE(exitingStart.ok()) << exitingStart.error().message;
+  auto exitingWorker = std::move(exitingStart).value();
+  ASSERT_TRUE(exitingWorker
+                  .sendMessage(request(), 2s,
+                               bte::core::ErrorCode::workerHandshakeTimeout)
+                  .ok());
+  {
+    ManagedWorkerSystemCallFailure inject{ManagedWorkerSystemCall::protocolRead,
+                                          0, EIO};
+    const auto received = exitingWorker.receiveMessage(
+        "fixture-run", 0, 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+    ASSERT_FALSE(received.ok());
+    EXPECT_EQ(received.error().code,
+              bte::core::ErrorCode::workerHandshakeFailed);
+    EXPECT_EQ(received.error().message,
+              "Could not read a managed worker protocol frame.");
+  }
+  const auto terminated = exitingWorker.terminateProcessTree(50ms);
+  ASSERT_TRUE(terminated.ok()) << terminated.error().message;
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     classifiesProtocolWriteFailureAndLeavesTheWorkerTerminable) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto started = ManagedWorkerProcess::start(
+      WorkerProcessLaunch{.executable = fixturePath(), .arguments = {"hang"}});
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+  {
+    ManagedWorkerSystemCallFailure inject{
+        ManagedWorkerSystemCall::protocolWrite, 0, EIO};
+    const auto sent = worker.sendMessage(
+        request(), 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+    ASSERT_FALSE(sent.ok());
+    EXPECT_EQ(sent.error().code, bte::core::ErrorCode::workerHandshakeFailed);
+    EXPECT_EQ(sent.error().message,
+              "Could not write a managed worker protocol frame.");
+  }
+  ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
+  EXPECT_FALSE(worker.isRunning());
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     reportsProcessTreeSignalFailureWithoutLosingTheWorkerHandle) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto started = ManagedWorkerProcess::start(
+      WorkerProcessLaunch{.executable = fixturePath(), .arguments = {"hang"}});
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+  {
+    ManagedWorkerSystemCallFailure inject{
+        ManagedWorkerSystemCall::terminateSignal, 0, EPERM};
+    const auto terminated = worker.terminateProcessTree(0ms);
+    ASSERT_FALSE(terminated.ok());
+    EXPECT_EQ(terminated.error().code,
+              bte::core::ErrorCode::workerHandshakeFailed);
+    EXPECT_EQ(terminated.error().message,
+              "Could not request managed worker process-tree shutdown.");
+  }
+  EXPECT_TRUE(worker.isRunning());
+  ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
+  EXPECT_FALSE(worker.isRunning());
+#else
+  GTEST_SKIP()
+      << "POSIX process-group support is unavailable on this platform.";
 #endif
 }
 

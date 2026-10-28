@@ -53,6 +53,36 @@ std::atomic_uint64_t &workerProcessStartCountStorage() {
   static std::atomic_uint64_t value{0};
   return value;
 }
+
+std::atomic_uint64_t &workerProcessSystemCallFailureStorage() {
+  static std::atomic_uint64_t value{0};
+  return value;
+}
+
+[[nodiscard]] int injectedSystemCallError(
+    const testing::ManagedWorkerSystemCall systemCall) noexcept {
+  auto &failure = workerProcessSystemCallFailureStorage();
+  auto state = failure.load(std::memory_order_relaxed);
+  while (state != 0) {
+    const auto configuredCall = static_cast<std::uint8_t>(state >> 56U);
+    if (configuredCall != static_cast<std::uint8_t>(systemCall)) {
+      return 0;
+    }
+    const auto skippedCalls = (state >> 32U) & 0x00ff'ffffU;
+    if (skippedCalls > 0) {
+      const auto next = state - (std::uint64_t{1} << 32U);
+      if (failure.compare_exchange_weak(state, next,
+                                        std::memory_order_relaxed)) {
+        return 0;
+      }
+      continue;
+    }
+    if (failure.compare_exchange_weak(state, 0, std::memory_order_relaxed)) {
+      return static_cast<int>(state & 0xffff'ffffU);
+    }
+  }
+  return 0;
+}
 #endif
 
 [[nodiscard]] core::Error workerStartError(std::string message) {
@@ -221,6 +251,14 @@ private:
 };
 
 [[nodiscard]] int duplicateCloseOnExec(const int descriptor) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::duplicateDescriptor);
+      injectedError != 0) {
+    errno = injectedError;
+    return -1;
+  }
+#endif
   return ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
                   // F_DUPFD_CLOEXEC takes the minimum target descriptor
                   // variadically.
@@ -228,6 +266,14 @@ private:
 }
 
 [[nodiscard]] int setCloseOnExec(const int descriptor) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::closeOnExec);
+      injectedError != 0) {
+    errno = injectedError;
+    return -1;
+  }
+#endif
   const auto flags =
       ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX F_GETFD reads
                // descriptor flags without an optional variadic argument.
@@ -307,6 +353,26 @@ struct DiagnosticEvents final {
 std::uint64_t testing::managedWorkerProcessStartCount() noexcept {
   return workerProcessStartCountStorage().load(std::memory_order_relaxed);
 }
+
+void testing::failNextManagedWorkerSystemCall(
+    const testing::ManagedWorkerSystemCall systemCall,
+    const std::uint32_t successfulCallsBeforeFailure,
+    const int errorNumber) noexcept {
+  constexpr auto maximumSkippedCalls = std::uint32_t{0x00ff'ffffU};
+  const auto skippedCalls =
+      std::min(successfulCallsBeforeFailure, maximumSkippedCalls);
+  const auto errorCode =
+      static_cast<std::uint32_t>(errorNumber > 0 ? errorNumber : EIO);
+  const auto state = (static_cast<std::uint64_t>(systemCall) << 56U) |
+                     (static_cast<std::uint64_t>(skippedCalls) << 32U) |
+                     errorCode;
+  workerProcessSystemCallFailureStorage().store(state,
+                                                std::memory_order_relaxed);
+}
+
+void testing::clearManagedWorkerSystemCallFailure() noexcept {
+  workerProcessSystemCallFailureStorage().store(0, std::memory_order_relaxed);
+}
 #endif
 
 ReadOnlySharedMemory::ReadOnlySharedMemory() noexcept = default;
@@ -360,11 +426,22 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
           "/bte-" + std::string{nonceBuffer.data(),
                                 static_cast<std::size_t>(encodedNonce.ptr -
                                                          nonceBuffer.data())};
-      writableDescriptor.reset(
-          ::shm_open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
-                      // shm_open requires this mode because O_CREAT is set.
-              sharedName.c_str(), O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC,
-              S_IRUSR | S_IWUSR));
+      int sharedMemoryDescriptor = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+      if (const auto injectedError = injectedSystemCallError(
+              testing::ManagedWorkerSystemCall::sharedMemoryCreate);
+          injectedError != 0) {
+        errno = injectedError;
+      } else
+#endif
+      {
+        sharedMemoryDescriptor =
+            ::shm_open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
+                        // shm_open requires this mode because O_CREAT is set.
+                sharedName.c_str(), O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC,
+                S_IRUSR | S_IWUSR);
+      }
+      writableDescriptor.reset(sharedMemoryDescriptor);
       if (writableDescriptor.get() < 0 && errno != EEXIST) {
         break;
       }
@@ -383,14 +460,35 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
       static_cast<void>(::shm_unlink(sharedName.c_str()));
     }
   };
-  if (::ftruncate(writableDescriptor.get(), static_cast<off_t>(bytes.size())) !=
-      0) {
+  int truncateResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::sharedMemoryTruncate);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    truncateResult =
+        ::ftruncate(writableDescriptor.get(), static_cast<off_t>(bytes.size()));
+  }
+  if (truncateResult != 0) {
     removeName();
     return workerStartError(
         "Could not size shared memory for strategy source.");
   }
-  auto *writableMapping = ::mmap(nullptr, bytes.size(), PROT_READ | PROT_WRITE,
-                                 MAP_SHARED, writableDescriptor.get(), 0);
+  void *writableMapping = MAP_FAILED;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::sharedMemoryMap);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    writableMapping = ::mmap(nullptr, bytes.size(), PROT_READ | PROT_WRITE,
+                             MAP_SHARED, writableDescriptor.get(), 0);
+  }
   if (writableMapping == MAP_FAILED) {
     removeName();
     return workerStartError("Could not map shared memory for strategy source.");
@@ -403,15 +501,37 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
         "Could not seal the shared strategy source mapping.");
   }
 
-  UniqueDescriptor readOnlyDescriptor(
-      ::shm_open(sharedName.c_str(), O_RDONLY | O_CLOEXEC, 0));
+  int readOnlyMemoryDescriptor = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::sharedMemoryReadOnlyOpen);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    readOnlyMemoryDescriptor =
+        ::shm_open(sharedName.c_str(), O_RDONLY | O_CLOEXEC, 0);
+  }
+  UniqueDescriptor readOnlyDescriptor(readOnlyMemoryDescriptor);
   removeName();
   if (readOnlyDescriptor.get() < 0) {
     return workerStartError(
         "Could not reopen strategy source as read-only memory.");
   }
   struct stat status {};
-  if (::fstat(readOnlyDescriptor.get(), &status) != 0 || status.st_size < 0 ||
+  int statResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::sharedMemoryStat);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    statResult = ::fstat(readOnlyDescriptor.get(), &status);
+  }
+  if (statResult != 0 || status.st_size < 0 ||
       static_cast<std::uint64_t>(status.st_size) < bytes.size()) {
     return workerStartError(
         "Read-only strategy memory has an unexpected size (actual " +
@@ -606,8 +726,18 @@ struct ManagedWorkerProcess::Impl final {
                  .events = POLLIN,
                  .revents = 0},
       }};
-      const auto pollResult =
-          ::poll(descriptors.data(), descriptors.size(), boundedWait);
+      int pollResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+      if (const auto injectedError =
+              injectedSystemCallError(testing::ManagedWorkerSystemCall::poll);
+          injectedError != 0) {
+        errno = injectedError;
+      } else
+#endif
+      {
+        pollResult =
+            ::poll(descriptors.data(), descriptors.size(), boundedWait);
+      }
       if (pollResult < 0) {
         if (errno == EINTR) {
           continue;
@@ -639,8 +769,18 @@ struct ManagedWorkerProcess::Impl final {
       if (!events.ok()) {
         return events.error();
       }
-      const auto count =
-          ::read(protocolOutput.get(), destination.data(), destination.size());
+      ssize_t count = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+      if (const auto injectedError = injectedSystemCallError(
+              testing::ManagedWorkerSystemCall::protocolRead);
+          injectedError != 0) {
+        errno = injectedError;
+      } else
+#endif
+      {
+        count = ::read(protocolOutput.get(), destination.data(),
+                       destination.size());
+      }
       if (count > 0) {
         return static_cast<std::size_t>(count);
       }
@@ -665,8 +805,18 @@ struct ManagedWorkerProcess::Impl final {
       if (!events.ok()) {
         return events.error();
       }
-      const auto count = writeWithoutSigpipe(protocolInput.get(), source.data(),
-                                             source.size());
+      ssize_t count = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+      if (const auto injectedError = injectedSystemCallError(
+              testing::ManagedWorkerSystemCall::protocolWrite);
+          injectedError != 0) {
+        errno = injectedError;
+      } else
+#endif
+      {
+        count = writeWithoutSigpipe(protocolInput.get(), source.data(),
+                                    source.size());
+      }
       if (count > 0) {
         return static_cast<std::size_t>(count);
       }
@@ -683,7 +833,18 @@ struct ManagedWorkerProcess::Impl final {
     if (processGroup <= 0) {
       return {};
     }
-    if (::kill(-processGroup, SIGTERM) != 0 && errno != ESRCH) {
+    int terminateResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::terminateSignal);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      terminateResult = ::kill(-processGroup, SIGTERM);
+    }
+    if (terminateResult != 0 && errno != ESRCH) {
       return workerIoError(
           "Could not request managed worker process-tree shutdown.");
     }
@@ -882,7 +1043,18 @@ void closeWorkerPipes(const std::array<std::array<int, 2>, 4> &pipes) {
     pipe = {-1, -1};
   }
   for (auto &pipe : workerPipes.descriptors) {
-    if (::pipe(pipe.data()) != 0) {
+    int pipeResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::pipeCreate);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      pipeResult = ::pipe(pipe.data());
+    }
+    if (pipeResult != 0) {
       closeWorkerPipes(workerPipes.descriptors);
       return workerStartError("Could not create managed worker pipes.");
     }

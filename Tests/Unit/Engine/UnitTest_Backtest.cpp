@@ -2,6 +2,8 @@
 
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Cancellation.h"
+#include "Bte/Core/Time.h"
+#include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
 #include "Bte/Strategy/SelectableStrategy.h"
 
@@ -12,15 +14,38 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 namespace {
+
+class ScopedTemporaryDirectory final {
+public:
+  explicit ScopedTemporaryDirectory(std::string name)
+      : path_(std::filesystem::temp_directory_path() / std::move(name)) {
+    std::filesystem::remove_all(path_);
+  }
+
+  ~ScopedTemporaryDirectory() {
+    std::error_code error;
+    std::filesystem::remove_all(path_, error);
+  }
+
+  [[nodiscard]] const std::filesystem::path &path() const noexcept {
+    return path_;
+  }
+
+private:
+  std::filesystem::path path_;
+};
 
 bte::core::Bar makeBar(const int day, const double open, const double close) {
   return bte::core::Bar{
@@ -158,6 +183,31 @@ public:
 
 private:
   bte::strategy::StrategyDiagnosticBatch batch_;
+};
+
+class DelayedMalformedDiagnosticStrategy final
+    : public bte::strategy::Strategy {
+public:
+  [[nodiscard]] bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &,
+           const bte::core::CancellationToken &) override {
+    return bte::strategy::StrategyCommandBatch{};
+  }
+
+  [[nodiscard]] bte::strategy::StrategyDiagnosticBatch
+  takeDiagnostics() override {
+    if (diagnosticCalls_++ == 0) {
+      return {};
+    }
+    return {.records = {{.kind = bte::strategy::StrategyDiagnosticKind::log,
+                         .hook = "on_market",
+                         .level = "error",
+                         .message = "malformed final diagnostic",
+                         .canonicalFieldsJson = "[]"}}};
+  }
+
+private:
+  std::size_t diagnosticCalls_ = 0;
 };
 
 class CommandBatchProbeStrategy final : public bte::strategy::Strategy {
@@ -444,6 +494,138 @@ TEST(BacktestTest, finishFailureProducesFailedTerminalResult) {
   ASSERT_TRUE(execution.value()->terminalError().has_value());
   EXPECT_EQ(execution.value()->terminalError()->code,
             bte::core::ErrorCode::internal);
+}
+
+TEST(BacktestTest, rejectsMissingOrConflictingCallerSuppliedStrategy) {
+  const auto bars = std::vector{makeFlatBar(2, 10.0)};
+  const auto request = bte::engine::BacktestRequest{
+      .bars = bars,
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+      .previousDataDays = {},
+  };
+
+  auto conflictingRequest = request;
+  conflictingRequest.selectableStrategy =
+      bte::strategy::SelectableStrategyPlan{};
+  auto conflicting = bte::engine::BacktestExecution::start(
+      std::move(conflictingRequest),
+      std::make_unique<RequirementsProbeStrategy>(
+          bte::strategy::StrategyRequirements{}));
+
+  ASSERT_FALSE(conflicting.ok());
+  EXPECT_EQ(conflicting.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(conflicting.error().message,
+            "a caller-supplied Strategy cannot also use a Selectable plan");
+
+  auto missing = bte::engine::BacktestExecution::start(
+      request, std::unique_ptr<bte::strategy::Strategy>{});
+
+  ASSERT_FALSE(missing.ok());
+  EXPECT_EQ(missing.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(missing.error().message, "a caller-supplied Strategy is required");
+}
+
+TEST(BacktestTest,
+     staleFinalMarkRemainsIncompleteWhenItsStrategyDiagnosticIsMalformed) {
+  const auto bars = std::vector{makeFlatBar(2, 10.0)};
+  auto execution = bte::engine::BacktestExecution::start(
+      {.bars = bars,
+       .symbol = "SYN",
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1,
+       .previousDataDays = {},
+       .requiredFinalMarkTimestamp = makeFlatBar(3, 10.0).ts},
+      std::make_unique<DelayedMalformedDiagnosticStrategy>());
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+
+  const auto advanced = execution.value()->advance();
+
+  ASSERT_TRUE(advanced.ok()) << advanced.error().message;
+  EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::incomplete);
+  ASSERT_TRUE(execution.value()->terminalError().has_value());
+  EXPECT_EQ(execution.value()->terminalError()->code,
+            bte::core::ErrorCode::dataUnavailable);
+  EXPECT_EQ(execution.value()->terminalError()->message, "StaleFinalMark");
+  EXPECT_FALSE(execution.value()->result().diagnosticsComplete);
+  const auto terminal = std::ranges::find_if(
+      execution.value()->result().canonicalRecords, [](const auto &record) {
+        return record.family == bte::results::RecordFamily::terminalDiagnostic;
+      });
+  ASSERT_NE(terminal, execution.value()->result().canonicalRecords.end());
+  EXPECT_NE(terminal->text.find("StaleFinalMark"), std::string::npos);
+}
+
+TEST(BacktestTest, resultCreationObserverFailureStopsTheTypedRun) {
+  ScopedTemporaryDirectory temporaryDirectory{
+      "bte-backtest-observer-" +
+      std::string{
+          testing::UnitTest::GetInstance()->current_test_info()->name()}};
+  const auto root = temporaryDirectory.path();
+  const auto sourceDirectory = root / "Source";
+  std::filesystem::create_directories(sourceDirectory);
+  {
+    std::ofstream source{sourceDirectory / "SYN.csv"};
+    ASSERT_TRUE(source.is_open());
+    source << "symbol,ts,open,high,low,close,volume,schemaName\n"
+              "SYN,2024-01-02 00:00:00+00:00,10,11,9,10,1000000,ohlcv-1h\n";
+  }
+
+  const auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = root / "Data",
+      .symbols = {"SYN"},
+      .rowsPerSegment = 1,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      root / "Data", built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+  const auto request = bte::engine::BacktestRequest{
+      .bars = {makeBar(2, 10.0, 10.0)},
+      .symbol = "SYN",
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+      .previousDataDays = {},
+  };
+  const auto range = bte::core::DateRange{
+      .start = request.bars.front().ts,
+      .end = makeFlatBar(3, 10.0).ts,
+  };
+  const auto selection = reader.value()->select(
+      {.symbols = {"SYN"}, .range = range, .timeframe = "ohlcv-1h"});
+  ASSERT_TRUE(selection.ok()) << selection.error().message;
+  const auto descriptor = bte::results::RunDescriptor{
+      .universe = {"SYN"},
+      .range = range,
+      .initialCapitalMicrodollars = request.initialCapitalMicrodollars,
+      .strategyId = "typed-fixture",
+      .strategyHash = std::string(64, 'c'),
+      .dataSelection = selection.value().identity,
+  };
+  auto store = bte::results::ResultStore::open(root / "Results", root / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+
+  bool observerCalled = false;
+  const auto recorded = bte::engine::runBacktestAndRecord(
+      request,
+      std::make_unique<RequirementsProbeStrategy>(
+          bte::strategy::StrategyRequirements{}),
+      *store.value(), descriptor, {},
+      [&](const std::string &resultId) -> bte::core::Result<void> {
+        observerCalled = true;
+        EXPECT_FALSE(resultId.empty());
+        return bte::core::makeError(bte::core::ErrorCode::internal,
+                                    "observer rejected result identity");
+      });
+
+  ASSERT_FALSE(recorded.ok());
+  EXPECT_TRUE(observerCalled);
+  EXPECT_EQ(recorded.error().code, bte::core::ErrorCode::internal);
+  EXPECT_EQ(recorded.error().message, "observer rejected result identity");
 }
 
 TEST(BacktestTest, boundedHistorySeedsDeclaredStreamingIndicators) {

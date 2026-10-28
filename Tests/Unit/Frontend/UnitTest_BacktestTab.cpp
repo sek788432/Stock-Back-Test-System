@@ -1,6 +1,9 @@
 #include "Bte/Frontend/BacktestTab.h"
 #include "Bte/Frontend/StrategyTab.h"
 
+#include <Bte/Bindings/ResultReplay.h>
+#include <Bte/Data/ReleaseSnapshot.h>
+
 #include "WaitUntil.h"
 
 #include <QAbstractButton>
@@ -31,11 +34,14 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -234,6 +240,10 @@ private slots:
   void savingOneOfMultipleDraftsKeepsReplayOnThatResult();
   void saveFailureKeepsDraftAvailableAndNeverNavigates();
   void draftWorkerExceptionsRemainVisibleAndRetryable();
+#if defined(BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH) &&                          \
+    defined(BTE_PYTHON_WORKER_BOOTSTRAP_PATH)
+  void managedPythonRunCanBeSavedAndReplayedThroughTheGui();
+#endif
   void nonPersistedTestConstructorsRejectSaveAndDiscard();
   void draftActionsIgnoreUnavailableAndReentrantSignals();
   void unsavedRunsLoadSurviveNewRunsAndCanBeDiscarded();
@@ -2288,6 +2298,151 @@ void BacktestTabTest::selectableControlsPresentNoSignalAndSellFill() {
   QCOMPARE(trades->rowCount(), 1);
   QCOMPARE(trades->item(0, 1)->text(), QString{"Sell"});
 }
+
+#if defined(BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH) &&                          \
+    defined(BTE_PYTHON_WORKER_BOOTSTRAP_PATH)
+void BacktestTabTest::managedPythonRunCanBeSavedAndReplayedThroughTheGui() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto resourcesRoot = root / "Resources";
+  const auto profileRoot =
+      std::filesystem::path{BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH};
+  const auto runtimeProfiles = resourcesRoot / "RuntimeProfiles";
+  std::filesystem::create_directories(runtimeProfiles);
+  std::error_code symlinkError;
+  std::filesystem::create_directory_symlink(
+      profileRoot, runtimeProfiles / profileRoot.filename(), symlinkError);
+  QVERIFY2(!symlinkError, symlinkError.message().c_str());
+
+  const auto bootstrapDirectory = resourcesRoot / "Python";
+  std::filesystem::create_directories(bootstrapDirectory);
+  const auto packagedBootstrap = bootstrapDirectory / "worker_bootstrap.py";
+  std::filesystem::copy_file(BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+                             packagedBootstrap);
+  ScopedEnvironmentRestore resourcesOverride{"BTE_PYTHON_RESOURCES_ROOT"};
+  ScopedEnvironmentRestore bootstrapOverride{"BTE_PYTHON_WORKER_BOOTSTRAP"};
+  QVERIFY(qputenv("BTE_PYTHON_RESOURCES_ROOT",
+                  QByteArray::fromStdString(resourcesRoot.string())));
+  QVERIFY(qputenv("BTE_PYTHON_WORKER_BOOTSTRAP", QByteArray{}));
+
+  const auto sourceDirectory = root / "Source";
+  std::filesystem::create_directories(sourceDirectory);
+  std::ofstream sourceFile{sourceDirectory / "AAPL.csv"};
+  sourceFile
+      << "symbol,ts,open,high,low,close,volume,schemaName\n"
+         "AAPL,2024-01-02 00:00:00+00:00,100,101,99,100,1200,ohlcv-1h\n"
+         "AAPL,2024-01-02 01:00:00+00:00,101,102,100,101,1200,ohlcv-1h\n"
+         "AAPL,2024-01-02 02:00:00+00:00,102,103,101,102,1200,ohlcv-1h\n";
+  sourceFile.close();
+  const auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = root / "Data",
+      .symbols = {"AAPL"},
+      .rowsPerSegment = 2,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  QVERIFY2(built.ok(), built.error().message.c_str());
+
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore = root / "Results",
+      .dataStore = root / "Data",
+      .snapshotId = built.value().snapshotId,
+      .strategyHash = {},
+  };
+  const std::string source = R"python(import stockbt
+
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+
+class Example:
+    max_history_bars = 1
+    indicators = {}
+
+    def on_market(self, ctx):
+        if ctx.bar.close == 100.0:
+            ctx.orders.buy_market(ctx.symbol, quantity=2)
+
+def create_strategy(params):
+    return Example()
+)python";
+  const auto runPersisted =
+      [storage](const bte::bindings::BacktestConfiguration &configuration,
+                const bte::core::CancellationToken &cancellation) {
+        return bte::bindings::runPersistedBacktestConfiguration(
+            configuration, storage, cancellation);
+      };
+  const auto publish =
+      [storage](const std::string &resultId, const std::string &displayName,
+                const bte::core::CancellationToken &cancellation) {
+        return bte::bindings::publishBacktestDraft(storage, resultId,
+                                                   displayName, cancellation);
+      };
+  bte::frontend::BacktestTab tab{runPersisted, publish};
+  tab.setConsentProvider([](const std::string &) { return true; });
+  tab.setPythonStrategyDraft(
+      QString::fromStdString(source),
+      QString::fromLatin1(
+          R"json({"fast_period":1,"quantity":2,"slow_period":2})json"));
+  auto *start = tab.findChild<QDateEdit *>("backtestStartDateEdit");
+  auto *end = tab.findChild<QDateEdit *>("backtestEndDateEdit");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *saveAndReplay =
+      tab.findChild<QPushButton *>("backtestSaveAndReplayButton");
+  auto *trades = tab.findChild<QTableWidget *>("backtestTradeLogTable");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(start != nullptr);
+  QVERIFY(end != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(saveAndReplay != nullptr);
+  QVERIFY(trades != nullptr);
+  QVERIFY(status != nullptr);
+  start->setDate(QDate{2024, 1, 2});
+  end->setDate(QDate{2024, 1, 2});
+  QSignalSpy opened{&tab, &bte::frontend::BacktestTab::openResultInReplay};
+  std::unique_ptr<bte::bindings::ResultReplay> replay;
+  QString replayError;
+  QObject::connect(
+      &tab, &bte::frontend::BacktestTab::openResultInReplay, &tab,
+      [&](const QString &resultId) {
+        auto openedReplay = bte::bindings::ResultReplay::open(
+            storage.resultStore, storage.dataStore, resultId.toStdString(),
+            bte::bindings::ResultReplayTimeframe::hourly);
+        if (!openedReplay.ok()) {
+          replayError = QString::fromStdString(openedReplay.error().message);
+          return;
+        }
+        replay = std::move(openedReplay).value();
+      });
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY2(bte::test::waitUntil(
+               [saveAndReplay, status] {
+                 return saveAndReplay->isEnabled() ||
+                        !status->text().contains("Running");
+               },
+               std::chrono::milliseconds{30'000}),
+           qPrintable(status->text()));
+  QVERIFY2(saveAndReplay->isEnabled(), qPrintable(status->text()));
+  QVERIFY2(bte::test::waitUntil([trades] { return trades->rowCount() == 1; },
+                                std::chrono::milliseconds{5'000}),
+           qPrintable(status->text()));
+  QCOMPARE(trades->item(0, 1)->text(), QString{"Buy"});
+  QTest::mouseClick(saveAndReplay, Qt::LeftButton);
+  QVERIFY2(bte::test::waitUntil([&opened] { return opened.count() == 1; },
+                                std::chrono::milliseconds{10'000}),
+           qPrintable(status->text()));
+  QVERIFY2(replay != nullptr, qPrintable(replayError));
+  QCOMPARE(replay->resultId(), opened.first().first().toString().toStdString());
+  QCOMPARE(replay->totalFrames(), 3U);
+  QVERIFY(replay->seek(1));
+  QVERIFY(replay->current() != nullptr);
+  QCOMPARE(replay->current()->fills.size(), 1U);
+  QVERIFY(replay->current()->fills.front().isBuy);
+  QCOMPARE(replay->current()->fills.front().quantityShares, 2);
+}
+#endif
 
 } // namespace
 

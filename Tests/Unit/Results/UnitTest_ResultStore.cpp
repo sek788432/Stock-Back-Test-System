@@ -1573,10 +1573,35 @@ TEST_F(ResultStoreFixture, verificationStoreRejectsSymlinkedLockFile) {
 
   const auto store = bte::results::VerificationStore::open(resultStoreRoot);
   ASSERT_TRUE(store.ok()) << store.error().message;
-  const auto created = store.value()->create(schemaThreeDescriptor());
+  const auto verificationId = std::string(32, '1');
+  const auto descriptor = schemaThreeDescriptor();
+  const auto finalized = bte::results::FinalizedResult{
+      .resultId = std::string(32, '2'),
+      .canonicalResultHash = std::string(64, 'a'),
+  };
+  const auto expectLockFailure = [](const auto &result) {
+    EXPECT_FALSE(result.ok());
+    if (!result.ok()) {
+      EXPECT_EQ(result.error().code, bte::core::ErrorCode::permissionDenied);
+    }
+  };
 
-  ASSERT_FALSE(created.ok());
-  EXPECT_EQ(created.error().code, bte::core::ErrorCode::permissionDenied);
+  expectLockFailure(store.value()->create(descriptor));
+  expectLockFailure(store.value()->load(verificationId));
+  expectLockFailure(store.value()->list());
+  expectLockFailure(store.value()->beginAttempt(verificationId));
+  expectLockFailure(
+      store.value()->attachResultId(verificationId, finalized.resultId));
+  expectLockFailure(
+      store.value()->completeAttempt(verificationId, descriptor, finalized,
+                                     bte::results::RunStatus::completed));
+  expectLockFailure(
+      store.value()->failAttempt(verificationId, "workerFailed", "failed"));
+  expectLockFailure(store.value()->cancelAttempt(verificationId, "canceled"));
+  expectLockFailure(store.value()->cancel(verificationId));
+  expectLockFailure(store.value()->recoverInterrupted());
+  expectLockFailure(store.value()->hasVerifiedEvidence(descriptor));
+  expectLockFailure(store.value()->hasVerifiedResult(descriptor, finalized));
   EXPECT_TRUE(std::filesystem::is_symlink(lockPath));
   std::ifstream preserved{target};
   ASSERT_TRUE(preserved.is_open());
@@ -1587,6 +1612,20 @@ TEST_F(ResultStoreFixture, verificationStoreRejectsSymlinkedLockFile) {
 #else
   GTEST_SKIP() << "The verification lock uses O_NOFOLLOW on POSIX.";
 #endif
+}
+
+TEST_F(ResultStoreFixture, verificationStoreRejectsAFileAsItsRootDirectory) {
+  const auto rootFile = root_ / "VerificationRootFile";
+  {
+    std::ofstream contents{rootFile, std::ios::binary};
+    ASSERT_TRUE(contents.is_open());
+    contents << "not a directory";
+  }
+
+  const auto store = bte::results::VerificationStore::open(rootFile);
+
+  ASSERT_FALSE(store.ok());
+  EXPECT_EQ(store.error().code, bte::core::ErrorCode::permissionDenied);
 }
 
 TEST_F(ResultStoreFixture,
@@ -1756,13 +1795,45 @@ TEST_F(
   const std::string originalBytes{std::istreambuf_iterator<char>{input},
                                   std::istreambuf_iterator<char>{}};
   input.close();
+  const auto writeEvidenceBytes =
+      [&evidencePath](const std::string_view bytes) {
+        std::ofstream output{evidencePath, std::ios::binary | std::ios::trunc};
+        if (!output.is_open()) {
+          return false;
+        }
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        output.close();
+        return !output.fail();
+      };
+
+  const auto noncanonicalBytes = originalBytes + " ";
+  ASSERT_TRUE(writeEvidenceBytes(noncanonicalBytes));
+  const auto noncanonicalRead =
+      reopened.value()->load(evidence.value().verificationId);
+  ASSERT_FALSE(noncanonicalRead.ok());
+  EXPECT_EQ(noncanonicalRead.error().code,
+            bte::core::ErrorCode::schemaMismatch);
+
+  auto originalDocument = bte::core::parseCanonicalJson(originalBytes);
+  ASSERT_TRUE(originalDocument.ok()) << originalDocument.error().message;
+  auto invalidIntegrity = std::move(originalDocument).value();
+  invalidIntegrity["integrityHash"] = std::string(64, '0');
+  const auto invalidIntegrityBytes =
+      bte::core::serializeCanonicalJson(invalidIntegrity);
+  ASSERT_TRUE(invalidIntegrityBytes.ok())
+      << invalidIntegrityBytes.error().message;
+  ASSERT_TRUE(writeEvidenceBytes(invalidIntegrityBytes.value()));
+  const auto invalidIntegrityRead =
+      reopened.value()->load(evidence.value().verificationId);
+  ASSERT_FALSE(invalidIntegrityRead.ok());
+  EXPECT_EQ(invalidIntegrityRead.error().code,
+            bte::core::ErrorCode::schemaMismatch);
+  ASSERT_TRUE(writeEvidenceBytes(originalBytes));
+
   auto corruptedBytes = originalBytes;
   ASSERT_FALSE(corruptedBytes.empty());
   corruptedBytes.back() = 'x';
-  std::ofstream output{evidencePath, std::ios::binary | std::ios::trunc};
-  output.write(corruptedBytes.data(),
-               static_cast<std::streamsize>(corruptedBytes.size()));
-  output.close();
+  ASSERT_TRUE(writeEvidenceBytes(corruptedBytes));
 
   const auto corruptRead =
       reopened.value()->load(evidence.value().verificationId);

@@ -104,6 +104,136 @@ nlohmann::json parameters() {
       {"fast_period", 2}, {"slow_period", 3}, {"quantity", 2}};
 }
 
+struct TemporaryWorkerDirectory final {
+  explicit TemporaryWorkerDirectory(const std::string_view name) {
+    path = std::filesystem::temp_directory_path() /
+           ("bte-python-worker-" + std::string{name} + "-" +
+            std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(path);
+  }
+
+  ~TemporaryWorkerDirectory() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path, ignored);
+  }
+
+  TemporaryWorkerDirectory(const TemporaryWorkerDirectory &) = delete;
+  TemporaryWorkerDirectory &
+  operator=(const TemporaryWorkerDirectory &) = delete;
+
+  std::filesystem::path path;
+};
+
+std::string hexEncode(const std::string_view bytes) {
+  static constexpr std::string_view digits = "0123456789abcdef";
+  std::string result;
+  result.reserve(bytes.size() * 2U);
+  for (const auto character : bytes) {
+    const auto byte = static_cast<unsigned char>(character);
+    result.push_back(digits[byte >> 4U]);
+    result.push_back(digits[byte & 0x0fU]);
+  }
+  return result;
+}
+
+std::filesystem::path
+writeScriptedWorkerBootstrap(const std::filesystem::path &directory,
+                             const std::string_view responseStage,
+                             const std::string_view responseType,
+                             const nlohmann::json &responsePayload) {
+  const auto bootstrapPath = directory / "worker.py";
+  const nlohmann::json configuration{
+      {"responsePayload", responsePayload},
+      {"responseStage", responseStage},
+      {"responseType", responseType},
+  };
+  std::ofstream file{bootstrapPath};
+  file << R"python(
+import hashlib
+import json
+import os
+import struct
+import sys
+
+run_id = next(argument.split("=", 1)[1] for argument in sys.argv
+              if argument.startswith("--run-id="))
+sequence = 0
+)python";
+  file << "configuration = json.loads(bytes.fromhex(\""
+       << hexEncode(configuration.dump()) << "\").decode(\"utf-8\"))\n";
+  file << R"python(
+def read_exact(descriptor, size):
+    result = bytearray()
+    while len(result) < size:
+        chunk = os.read(descriptor, size - len(result))
+        if not chunk:
+            raise EOFError("protocol input closed")
+        result.extend(chunk)
+    return bytes(result)
+
+def receive():
+    size = struct.unpack(">I", read_exact(0, 4))[0]
+    read_exact(0, 32)
+    return json.loads(read_exact(0, size))
+
+def send(message_type, payload):
+    global sequence
+    envelope = {
+        "messageType": message_type,
+        "payload": payload,
+        "protocolVersion": 1,
+        "runId": run_id,
+        "sequence": sequence,
+    }
+    content = json.dumps(envelope, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")).encode("utf-8")
+    frame = struct.pack(">I", len(content)) + hashlib.sha256(content).digest() + content
+    offset = 0
+    while offset < len(frame):
+        offset += os.write(3, frame[offset:])
+    sequence += 1
+
+def send_test_response(stage):
+    if configuration["responseStage"] == stage:
+        send(configuration["responseType"], configuration["responsePayload"])
+        sys.exit(0)
+
+python_version = ".".join(str(part) for part in sys.version_info[:3])
+send_test_response("bootstrap")
+send("bootstrap-ready", {"protocolVersion": 1, "pythonVersion": python_version})
+receive()
+send_test_response("handshake")
+send("handshake-complete", {
+    "pythonVersion": python_version,
+    "stockbtApiVersion": "1",
+})
+receive()
+send_test_response("module")
+send("module-loaded", {"stockbtApiVersion": "1"})
+receive()
+send_test_response("factory")
+send("strategy-loaded", {"indicators": [], "maxHistoryBars": 1})
+
+while True:
+    request = receive()
+    if request["messageType"] == "history-seed":
+        send("history-seeded", {})
+    elif request["messageType"] == "callback":
+        send_test_response("callback")
+        send("callback-result", {
+            "commands": [],
+            "logs": [],
+            "omittedLogBytes": 0,
+            "omittedLogEntries": 0,
+        })
+    elif request["messageType"] == "shutdown":
+        send("shutdown-complete", {})
+        break
+)python";
+  return bootstrapPath;
+}
+
 #if defined(BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH)
 TEST(PythonWorkerStrategyTest,
      loadsTheProjectOwnedStockbtFromTheManagedProfile) {
@@ -1007,6 +1137,285 @@ send("worker-error", {
   GTEST_SKIP()
       << "POSIX worker process support is unavailable on this platform.";
 #endif
+}
+
+TEST(PythonWorkerStrategyTest, mapsWorkerErrorDuringProtocolHandshake) {
+  TemporaryWorkerDirectory temporaryDirectory{"handshake-error"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "handshake", "worker-error",
+      nlohmann::json{{"errorCode", "WorkerHandshakeFailed"},
+                     {"message", "fixture handshake rejection"}});
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::workerHandshakeFailed);
+  EXPECT_EQ(strategy.error().message, "fixture handshake rejection");
+}
+
+TEST(PythonWorkerStrategyTest, rejectsInvalidBootstrapIdentityFromWorker) {
+  TemporaryWorkerDirectory temporaryDirectory{"bootstrap-identity"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "bootstrap", "bootstrap-ready",
+      nlohmann::json{{"protocolVersion", 2}, {"pythonVersion", "3.14.9"}});
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::workerStartFailed);
+  EXPECT_NE(strategy.error().message.find("bootstrap identity is invalid"),
+            std::string::npos);
+}
+
+TEST(PythonWorkerStrategyTest, mapsWorkerErrorDuringModuleLoad) {
+  TemporaryWorkerDirectory temporaryDirectory{"module-load-error"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "module", "worker-error",
+      nlohmann::json{{"errorCode", "StrategySyntaxError"},
+                     {"message", "fixture syntax failure"}});
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::strategyLoadFailed);
+  EXPECT_EQ(strategy.error().message,
+            "StrategySyntaxError: fixture syntax failure");
+}
+
+TEST(PythonWorkerStrategyTest, rejectsMalformedFactoryStartupDiagnostics) {
+  TemporaryWorkerDirectory temporaryDirectory{"factory-diagnostics"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "factory", "worker-error",
+      nlohmann::json{{"diagnostics", nlohmann::json::object()},
+                     {"errorCode", "StrategyFactoryFailed"},
+                     {"message", "fixture factory failure"}});
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+  EXPECT_NE(strategy.error().message.find("malformed startup diagnostics"),
+            std::string::npos);
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsMalformedCallbackLogsAndOmissionCountsFromWorker) {
+  struct MalformedDiagnosticsCase final {
+    std::string_view name;
+    nlohmann::json logs;
+    nlohmann::json omittedLogBytes;
+    nlohmann::json omittedLogEntries;
+    bte::core::ErrorCode expectedError;
+  };
+  const std::array cases{
+      MalformedDiagnosticsCase{
+          .name = "logs-not-array",
+          .logs = "not-an-array",
+          .omittedLogBytes = 0,
+          .omittedLogEntries = 0,
+          .expectedError = bte::core::ErrorCode::strategyProtocolViolation,
+      },
+      MalformedDiagnosticsCase{
+          .name = "log-entry-missing-message",
+          .logs = nlohmann::json::array({nlohmann::json{
+              {"fields", nlohmann::json::object()}, {"level", "info"}}}),
+          .omittedLogBytes = 0,
+          .omittedLogEntries = 0,
+          .expectedError = bte::core::ErrorCode::strategyProtocolViolation,
+      },
+      MalformedDiagnosticsCase{
+          .name = "invalid-log-level",
+          .logs = nlohmann::json::array(
+              {nlohmann::json{{"fields", nlohmann::json::object()},
+                              {"level", "trace"},
+                              {"message", "bad level"}}}),
+          .omittedLogBytes = 0,
+          .omittedLogEntries = 0,
+          .expectedError = bte::core::ErrorCode::strategyContractViolation,
+      },
+      MalformedDiagnosticsCase{
+          .name = "negative-omitted-entry-count",
+          .logs = nlohmann::json::array(),
+          .omittedLogBytes = 0,
+          .omittedLogEntries = -1,
+          .expectedError = bte::core::ErrorCode::strategyProtocolViolation,
+      },
+  };
+
+  for (const auto &testCase : cases) {
+    TemporaryWorkerDirectory temporaryDirectory{testCase.name};
+    const auto bootstrapPath = writeScriptedWorkerBootstrap(
+        temporaryDirectory.path, "callback", "callback-result",
+        nlohmann::json{{"commands", nlohmann::json::array()},
+                       {"logs", testCase.logs},
+                       {"omittedLogBytes", testCase.omittedLogBytes},
+                       {"omittedLogEntries", testCase.omittedLogEntries}});
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+    auto *pythonStrategy =
+        dynamic_cast<PythonWorkerStrategy *>(strategy.value().get());
+    ASSERT_NE(pythonStrategy, nullptr);
+
+    const auto result =
+        strategy.value()->onMarket(context(1'700'000'000'000LL), {});
+
+    ASSERT_FALSE(result.ok()) << testCase.name;
+    EXPECT_EQ(result.error().code, testCase.expectedError) << testCase.name;
+    const auto diagnostics = pythonStrategy->diagnostics();
+    EXPECT_FALSE(diagnostics.complete) << testCase.name;
+    ASSERT_EQ(diagnostics.structuredErrors.size(), 1U) << testCase.name;
+    EXPECT_EQ(diagnostics.structuredErrors.front().at("hook"), "on_market")
+        << testCase.name;
+  }
+}
+
+TEST(PythonWorkerStrategyTest, rejectsInvalidCommandsReturnedByWorker) {
+  struct InvalidCommandCase final {
+    std::string_view name;
+    nlohmann::json commands;
+    std::string_view expectedMessage;
+  };
+  const auto validBuy = nlohmann::json{
+      {"kind", "buy_market"}, {"quantity_shares", 1}, {"symbol", "AAPL"}};
+  const std::array cases{
+      InvalidCommandCase{"commands-not-array", nlohmann::json::object(),
+                         "unsupported command batch"},
+      InvalidCommandCase{"too-many-commands",
+                         nlohmann::json::array({validBuy, validBuy}),
+                         "unsupported command batch"},
+      InvalidCommandCase{"missing-command-field",
+                         nlohmann::json::array({nlohmann::json{
+                             {"quantity_shares", 1}, {"symbol", "AAPL"}}}),
+                         "malformed command"},
+      InvalidCommandCase{
+          "boolean-quantity",
+          nlohmann::json::array({nlohmann::json{{"kind", "buy_market"},
+                                                {"quantity_shares", true},
+                                                {"symbol", "AAPL"}}}),
+          "malformed command"},
+      InvalidCommandCase{
+          "wrong-symbol",
+          nlohmann::json::array({nlohmann::json{{"kind", "buy_market"},
+                                                {"quantity_shares", 1},
+                                                {"symbol", "MSFT"}}}),
+          "symbol does not match"},
+      InvalidCommandCase{"oversized-quantity",
+                         nlohmann::json::array({nlohmann::json{
+                             {"kind", "buy_market"},
+                             {"quantity_shares",
+                              bte::strategy::maximumStrategyQuantityShares + 1},
+                             {"symbol", "AAPL"}}}),
+                         "quantity is invalid"},
+      InvalidCommandCase{
+          "unknown-kind",
+          nlohmann::json::array({nlohmann::json{{"kind", "sell_market"},
+                                                {"quantity_shares", 1},
+                                                {"symbol", "AAPL"}}}),
+          "kind or quantity is invalid"},
+  };
+
+  for (const auto &testCase : cases) {
+    TemporaryWorkerDirectory temporaryDirectory{testCase.name};
+    const auto bootstrapPath = writeScriptedWorkerBootstrap(
+        temporaryDirectory.path, "callback", "callback-result",
+        nlohmann::json{{"commands", testCase.commands},
+                       {"logs", nlohmann::json::array()},
+                       {"omittedLogBytes", 0},
+                       {"omittedLogEntries", 0}});
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+    auto *pythonStrategy =
+        dynamic_cast<PythonWorkerStrategy *>(strategy.value().get());
+    ASSERT_NE(pythonStrategy, nullptr);
+
+    const auto result =
+        strategy.value()->onMarket(context(1'700'000'000'000LL), {});
+
+    ASSERT_FALSE(result.ok()) << testCase.name;
+    EXPECT_EQ(result.error().code,
+              bte::core::ErrorCode::strategyCommandRejected)
+        << testCase.name;
+    EXPECT_NE(result.error().message.find(testCase.expectedMessage),
+              std::string::npos)
+        << testCase.name << ": " << result.error().message;
+    const auto diagnostics = pythonStrategy->diagnostics();
+    ASSERT_EQ(diagnostics.structuredErrors.size(), 1U) << testCase.name;
+    EXPECT_EQ(diagnostics.structuredErrors.front().at("errorCode"),
+              "StrategyCommandRejected")
+        << testCase.name;
+  }
+}
+
+TEST(PythonWorkerStrategyTest,
+     retainsCallbackFailureWithoutWorkerDiagnosticEnvelope) {
+  TemporaryWorkerDirectory temporaryDirectory{"callback-error"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "callback", "worker-error",
+      nlohmann::json{{"errorCode", "strategyRuntimeError"},
+                     {"message", "fixture callback failure"}});
+  auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategy.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
+
+  const auto result =
+      strategy.value()->onMarket(context(1'700'000'000'000LL), {});
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::strategyRuntimeError);
+  EXPECT_EQ(result.error().message, "fixture callback failure");
+  const auto diagnostics = pythonStrategy->diagnostics();
+  ASSERT_EQ(diagnostics.structuredErrors.size(), 1U);
+  EXPECT_EQ(diagnostics.structuredErrors.front().at("hook"), "on_market");
+  EXPECT_EQ(diagnostics.structuredErrors.front().at("message"),
+            "fixture callback failure");
+  EXPECT_TRUE(diagnostics.complete);
+}
+
+TEST(PythonWorkerStrategyTest, rejectsMalformedWorkerCallbackErrorDiagnostics) {
+  TemporaryWorkerDirectory temporaryDirectory{"callback-error-diagnostics"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "callback", "worker-error",
+      nlohmann::json{{"diagnostics", nlohmann::json{{"hook", "on_fill"}}},
+                     {"errorCode", "strategyRuntimeError"},
+                     {"message", "fixture callback failure"}});
+  auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategy.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
+
+  const auto result =
+      strategy.value()->onMarket(context(1'700'000'000'000LL), {});
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+  EXPECT_NE(result.error().message.find("malformed hook diagnostics"),
+            std::string::npos);
+  const auto diagnostics = pythonStrategy->diagnostics();
+  EXPECT_FALSE(diagnostics.complete);
+  ASSERT_EQ(diagnostics.structuredErrors.size(), 1U);
+  EXPECT_EQ(diagnostics.structuredErrors.front().at("errorCode"),
+            "StrategyProtocolViolation");
 }
 
 TEST(PythonWorkerStrategyTest, marksResultIncompleteAfterBoundedLogTruncation) {

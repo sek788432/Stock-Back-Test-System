@@ -275,6 +275,17 @@ if(BTE_BUILD_QT_APP)
       Qt6::Test
       Qt6::Widgets)
 
+  if(BTE_BUNDLE_MANAGED_PYTHON_RUNTIME)
+    target_compile_definitions(
+      bte_backtest_frontend_tests
+      PRIVATE
+        BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH="${BTE_PYTHON_RUNTIME_PROFILE_OUTPUT_DIR}"
+        BTE_PYTHON_WORKER_BOOTSTRAP_PATH="${PROJECT_SOURCE_DIR}/Src/Bindings/Python/worker_bootstrap.py")
+    add_dependencies(
+      bte_backtest_frontend_tests
+      bte_python_runtime_profile)
+  endif()
+
   add_test(
     NAME bte_backtest_frontend_tests
     COMMAND bte_backtest_frontend_tests -platform offscreen)
