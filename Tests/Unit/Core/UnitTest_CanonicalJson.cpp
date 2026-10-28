@@ -24,6 +24,22 @@ TEST(CanonicalJsonTest, serializesRfc8785NumberAndStringVectors) {
       R"json({"large":1e+30,"negativeZero":0,"number":333333333.3333333,"small":0.000001,"text":"€$\u000f\nA'B\"\\\"/","tiny":1e-7,"whole":1})json");
 }
 
+TEST(CanonicalJsonTest, normalizesSignedFixedAndScientificBinary64Values) {
+  const nlohmann::json value{
+      {"negativeFixed", -12.5},
+      {"negativeScientific", -1.25e-7},
+      {"positiveScientific", 1.25e30},
+      {"smallFixed", 0.0000012},
+  };
+
+  const auto bytes = bte::core::serializeCanonicalJson(value);
+
+  ASSERT_TRUE(bytes.ok()) << bytes.error().message;
+  EXPECT_EQ(
+      bytes.value(),
+      R"json({"negativeFixed":-12.5,"negativeScientific":-1.25e-7,"positiveScientific":1.25e+30,"smallFixed":0.0000012})json");
+}
+
 TEST(CanonicalJsonTest, sortsObjectKeysByUtf16CodeUnits) {
   const auto value = bte::core::parseCanonicalJson(
       R"json({"€":"Euro","\r":"Carriage","﮳":"Hebrew","1":"One","😀":"Emoji","\u0080":"Control","ö":"Latin"})json");

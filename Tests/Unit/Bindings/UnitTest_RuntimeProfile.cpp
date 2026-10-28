@@ -14,6 +14,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/stat.h>
+#endif
+
 namespace {
 
 using bte::bindings::python::discoverManagedRuntime;
@@ -156,6 +160,25 @@ TEST(RuntimeProfileTest, verifiesCanonicalManifestAndInstalledFileHashes) {
   EXPECT_EQ(verified.value().manifestHash.size(), 64U);
   EXPECT_EQ(verified.value().pythonExecutablePath.filename(), "python3");
   EXPECT_EQ(verified.value().timezoneDatabasePath.filename(), "zoneinfo");
+}
+
+TEST(RuntimeProfileTest, verifiesHashesForEmptyInstalledFiles) {
+  TemporaryDirectory directory;
+  writeFixtureProfile(directory.path());
+  constexpr std::string_view emptyFilePath =
+      "python/lib/python3.14/site-packages/empty.marker";
+  writeText(directory.path() / emptyFilePath, "");
+  auto manifest =
+      createFixtureManifest(bte::core::sha256("managed-python-fixture"));
+  manifest["installedFiles"].push_back(
+      {{"path", emptyFilePath}, {"sha256", bte::core::sha256("")}});
+  writeCanonicalManifest(directory.path(), manifest);
+
+  const auto verified = verifyRuntimeProfile(directory.path());
+
+  ASSERT_TRUE(verified.ok()) << verified.error().message;
+  EXPECT_EQ(verified.value().profileId,
+            "macos-arm64-cpython-3.14.9-stockbt-v1");
 }
 
 TEST(RuntimeProfileTest, rejectsUnmanifestedRuntimeFiles) {
@@ -399,6 +422,10 @@ TEST(RuntimeProfileTest,
        [](nlohmann::json &manifest) {
          manifest["installedFiles"][0]["sha256"] = "wrong";
        }},
+      {"non-string installed-file path",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][0]["path"] = 7;
+       }},
       {"duplicate installed-file path",
        [](nlohmann::json &manifest) {
          manifest["installedFiles"][1]["path"] =
@@ -470,6 +497,54 @@ TEST(RuntimeProfileTest, rejectsNonExecutableInterpreterAndMissingManifest) {
   ASSERT_FALSE(missing.ok());
   EXPECT_EQ(missing.error().code,
             bte::core::ErrorCode::runtimeIntegrityFailure);
+}
+
+TEST(RuntimeProfileTest, rejectsOversizedManifestBeforeParsing) {
+  TemporaryDirectory directory;
+  writeText(directory.path() / "manifest.json",
+            std::string(1024U * 1024U + 1U, 'x'));
+
+  const auto rejected = verifyRuntimeProfile(directory.path());
+
+  ASSERT_FALSE(rejected.ok());
+  EXPECT_EQ(rejected.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+TEST(RuntimeProfileTest, rejectsUnsupportedFilesystemEntries) {
+  TemporaryDirectory directory;
+  writeFixtureProfile(directory.path());
+  const auto fifo = directory.path() / "unsupported-entry";
+  ASSERT_EQ(::mkfifo(fifo.c_str(), 0600), 0);
+
+  const auto rejected = verifyRuntimeProfile(directory.path());
+
+  ASSERT_FALSE(rejected.ok());
+  EXPECT_EQ(rejected.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+}
+#endif
+
+TEST(RuntimeProfileTest, discoversTheInstalledProfileFromApplicationResources) {
+#if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
+  TemporaryDirectory resources;
+  const auto missing = discoverManagedRuntime(resources.path());
+  ASSERT_FALSE(missing.ok());
+  EXPECT_EQ(missing.error().code, bte::core::ErrorCode::runtimeUnavailable);
+
+  const auto profileRoot =
+      resources.path() / "RuntimeProfiles" /
+      std::string{bte::bindings::python::managedRuntimeProfileId};
+  writeFixtureProfile(profileRoot);
+
+  const auto discovered = discoverManagedRuntime(resources.path());
+
+  ASSERT_TRUE(discovered.ok()) << discovered.error().message;
+  EXPECT_EQ(discovered.value().root, std::filesystem::canonical(profileRoot));
+#else
+  GTEST_SKIP() << "Managed runtime discovery requires macOS arm64.";
+#endif
 }
 
 TEST(RuntimeProfileTest, rejectsInstalledFileSymlinksEscapingTheProfile) {

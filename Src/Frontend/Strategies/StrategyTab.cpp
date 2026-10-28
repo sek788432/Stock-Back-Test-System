@@ -143,7 +143,8 @@ std::optional<StrategyDraft> readDraft(const std::filesystem::path &path) {
          const std::int64_t maximum) -> std::optional<std::int64_t> {
     if (value.is_number_unsigned()) {
       const auto number = value.get<std::uint64_t>();
-      if (number > static_cast<std::uint64_t>(maximum)) {
+      if (maximum < 0 || number > static_cast<std::uint64_t>(maximum) ||
+          (minimum > 0 && number < static_cast<std::uint64_t>(minimum))) {
         return std::nullopt;
       }
       return static_cast<std::int64_t>(number);

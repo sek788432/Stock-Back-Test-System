@@ -280,11 +280,11 @@ Imports are untrusted data. The UI validates them without executing embedded
 source. **Open Replay** remains disabled with a structured reason when the
 result or referenced data is invalid or unavailable.
 
-The current **View Details** pane lists every schema-2 Result capability as
-Supported or Unavailable using the persisted capability metadata. It also
-shows persisted warning records as selectable plain text; when no warning was
-recorded it says so explicitly. Unavailable families remain unavailable and
-are not represented by synthesized values.
+The current **View Details** pane lists the persisted capabilities for schema-2
+and schema-3 Results as Supported or Unavailable. It also shows persisted
+warning records as selectable plain text; when no warning was recorded it says
+so explicitly. Unavailable families remain unavailable and are not represented
+by synthesized values.
 
 ---
 
@@ -394,9 +394,9 @@ persisted result values rather than asking the chart to execute engine logic.
 
 | What | Location contract | Format/status |
 |---|---|---|
-| Strategies | `QStandardPaths::AppLocalDataLocation/Strategies/{Active,Trash}` | UUIDv7 `.btestrategy` typed plan or Python source plus versioned metadata |
-| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Staging,Drafts,Results,Trash,Quarantine}` | Implemented limited schema-2 `.bteresult` artifacts named by opaque 32-digit lowercase hexadecimal Result IDs; limited management UI exists, complete management remains planned |
-| Data and runtimes | `QStandardPaths::AppLocalDataLocation/{DataSegments,RuntimeProfiles}` | Limited immutable referenced segments are implemented; complete release profiles remain planned |
+| Strategies | `QStandardPaths::AppLocalDataLocation/Strategies/PythonDraft` | One recoverable `python-draft.json` plus its previous recovery copy; users can import and export source as `.py`. A saved Strategy library is not implemented. |
+| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Staging,Drafts,Results,Trash,Quarantine,Leases}` | Schema-2 and schema-3 `.bteresult` artifacts use opaque 32-digit lowercase hexadecimal Result IDs. The limited management UI supports the implemented catalog actions; the complete page remains planned. |
+| Data and runtimes | Immutable release snapshots are under `QStandardPaths::AppLocalDataLocation/Data`; the managed runtime is bundled under app `Resources/RuntimeProfiles/{profileId}`. | Referenced immutable data segments and the optional pinned macOS runtime bundle are implemented. Runtime profiles are not stored in a user-writable app-data directory. |
 | Settings and layout | OS-appropriate application data directory | Planned UI-only state; never a mutable market-data path |
 
 One future Core path resolver owns these locations and is redirectable in tests.

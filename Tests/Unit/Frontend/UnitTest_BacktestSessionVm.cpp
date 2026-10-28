@@ -80,6 +80,7 @@ private slots:
   void configuredRunPreservesDataSourceError();
   void persistedRunPreservesHistoryLookupCancellation();
   void persistedRunUsesPreviousUtcDataDayCloseFromSnapshot();
+  void persistedRunRejectsAnEmptySnapshotSelection();
   void persistedRunPreservesHistoricalDataDayLookupCancellation();
   void filledSnapshotPreservesNextBarTimestamp();
   void capitalUsesHalfEvenRoundingAtTheMinimumBoundary();
@@ -337,6 +338,49 @@ void BacktestSessionVmTest::
                std::chrono::sys_days{std::chrono::year{2024} / 1 / 2} +
                std::chrono::hours{1}});
   QVERIFY(result.value().fill->price > 96.0);
+}
+
+void BacktestSessionVmTest::persistedRunRejectsAnEmptySnapshotSelection() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto sourceDirectory = root / "Source";
+  std::filesystem::create_directories(sourceDirectory);
+  std::ofstream source{sourceDirectory / "SYN.csv"};
+  source << "symbol,ts,open,high,low,close,volume,schemaName\n"
+            "SYN,2024-01-02 00:00:00+00:00,100,101,99,100,1200,ohlcv-1h\n";
+  source.close();
+  const auto built = bte::data::buildReleaseSnapshot({
+      .sourceDirectory = sourceDirectory,
+      .storeDirectory = root / "Data",
+      .symbols = {"SYN"},
+      .rowsPerSegment = 1,
+      .calendarHash = std::string(64, 'a'),
+      .splitManifestHash = std::string(64, 'b'),
+  });
+  QVERIFY2(built.ok(), built.error().message.c_str());
+  const auto storage = bte::bindings::PersistedBacktestStorage{
+      .resultStore = root / "Results",
+      .dataStore = root / "Data",
+      .snapshotId = built.value().snapshotId,
+      .strategyHash = {},
+  };
+  const auto configuration = bte::bindings::BacktestConfiguration{
+      .symbol = "ABSENT",
+      .schema = "ohlcv-1h",
+      .startDate = QDate{2024, 1, 2},
+      .endDate = QDate{2024, 1, 2},
+      .initialCapital = 1'000.0,
+      .quantityShares = 1,
+      .selectableStrategy = {},
+  };
+
+  const auto result =
+      bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
+
+  QVERIFY(!result.ok());
+  QCOMPARE(result.error().code, bte::core::ErrorCode::dataUnavailable);
+  QVERIFY(!std::filesystem::exists(storage.resultStore));
 }
 
 void BacktestSessionVmTest::
@@ -880,6 +924,20 @@ void BacktestSessionVmTest::pythonWarmupRejectsInvalidHistoryLimitsAndDates() {
   QVERIFY(!invalidDate.ok());
   QCOMPARE(invalidDate.error().code, bte::core::ErrorCode::invalidArgument);
   QVERIFY(!missingSnapshot.ok());
+
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+  const auto canceled = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", built.value().snapshotId, "SYN", QDate{2024, 1, 2}, 1,
+      cancellation.token());
+  QVERIFY(!canceled.ok());
+  QCOMPARE(canceled.error().code, bte::core::ErrorCode::cancelled);
+
+  const auto noHistory = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", built.value().snapshotId, "ABSENT", QDate{2024, 1, 2}, 1);
+  QVERIFY2(noHistory.ok(),
+           noHistory.ok() ? "" : noHistory.error().message.c_str());
+  QVERIFY(noHistory.value().empty());
 }
 
 void BacktestSessionVmTest::draftLifecycleBoundariesReturnStructuredResults() {

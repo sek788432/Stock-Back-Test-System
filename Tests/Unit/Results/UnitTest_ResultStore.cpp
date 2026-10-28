@@ -1187,6 +1187,131 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
+       reproducibilityCoordinatorPropagatesVerificationStoreFailures) {
+  using namespace bte;
+
+  const auto createDirectory = root_ / "VerificationCreateFailure";
+  auto createStore = results::VerificationStore::open(createDirectory);
+  ASSERT_TRUE(createStore.ok()) << createStore.error().message;
+  results::ReproducibilityCoordinator createCoordinator{*createStore.value()};
+  auto invalidDescriptor = schemaThreeDescriptor();
+  invalidDescriptor.provenance.sourceHash = std::string(64, '0');
+  auto createRunnerCalls = 0;
+  const auto createFailure = createCoordinator.verify(
+      invalidDescriptor,
+      [&createRunnerCalls](const results::RunDescriptor &,
+                           const core::CancellationToken &,
+                           const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> {
+        ++createRunnerCalls;
+        return core::makeError(core::ErrorCode::internal,
+                               "The invalid descriptor must not run");
+      });
+  ASSERT_FALSE(createFailure.ok());
+  EXPECT_EQ(createFailure.error().code, core::ErrorCode::invalidArgument);
+  EXPECT_EQ(createRunnerCalls, 0);
+
+  const auto beginDirectory = root_ / "VerificationBeginFailure";
+  auto beginStore = results::VerificationStore::open(beginDirectory);
+  ASSERT_TRUE(beginStore.ok()) << beginStore.error().message;
+  results::ReproducibilityCoordinator beginCoordinator{*beginStore.value()};
+  auto beginEvidenceRemoved = false;
+  auto beginRunnerCalls = 0;
+  const auto beginFailure = beginCoordinator.verify(
+      schemaThreeDescriptor(),
+      [&beginRunnerCalls](const results::RunDescriptor &,
+                          const core::CancellationToken &,
+                          const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> {
+        ++beginRunnerCalls;
+        return core::makeError(core::ErrorCode::internal,
+                               "The removed evidence must not run");
+      },
+      {},
+      [&beginDirectory,
+       &beginEvidenceRemoved](const results::VerificationEvidence &evidence) {
+        if (evidence.attempts.empty()) {
+          beginEvidenceRemoved =
+              std::filesystem::remove(beginDirectory / "Verifications" /
+                                      (evidence.verificationId + ".bteverify"));
+        }
+      });
+  ASSERT_FALSE(beginFailure.ok());
+  EXPECT_EQ(beginFailure.error().code, core::ErrorCode::notFound);
+  EXPECT_TRUE(beginEvidenceRemoved);
+  EXPECT_EQ(beginRunnerCalls, 0);
+
+  const auto completeDirectory = root_ / "VerificationCompleteFailure";
+  auto completeStore = results::VerificationStore::open(completeDirectory);
+  ASSERT_TRUE(completeStore.ok()) << completeStore.error().message;
+  results::ReproducibilityCoordinator completeCoordinator{
+      *completeStore.value()};
+  std::string completeVerificationId;
+  auto completeEvidenceCorrupted = false;
+  const auto completeFailure = completeCoordinator.verify(
+      schemaThreeDescriptor(),
+      [&completeDirectory, &completeVerificationId, &completeEvidenceCorrupted](
+          const results::RunDescriptor &attemptDescriptor,
+          const core::CancellationToken &,
+          const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> {
+        const auto evidencePath = completeDirectory / "Verifications" /
+                                  (completeVerificationId + ".bteverify");
+        std::ofstream output{evidencePath, std::ios::binary | std::ios::trunc};
+        output << "{";
+        output.close();
+        completeEvidenceCorrupted = output.good();
+        return results::VerificationAttemptOutput{
+            .descriptor = attemptDescriptor,
+            .result = {.resultId = std::string(32, '1'),
+                       .canonicalResultHash = std::string(64, 'a')},
+            .status = results::RunStatus::completed,
+        };
+      },
+      {},
+      [&completeVerificationId](const results::VerificationEvidence &evidence) {
+        if (evidence.attempts.empty()) {
+          completeVerificationId = evidence.verificationId;
+        }
+      });
+  ASSERT_FALSE(completeFailure.ok());
+  EXPECT_TRUE(completeEvidenceCorrupted);
+  EXPECT_EQ(completeFailure.error().code, core::ErrorCode::schemaMismatch);
+
+  const auto cancelDirectory = root_ / "VerificationCancelFailure";
+  auto cancelStore = results::VerificationStore::open(cancelDirectory);
+  ASSERT_TRUE(cancelStore.ok()) << cancelStore.error().message;
+  results::ReproducibilityCoordinator cancelCoordinator{*cancelStore.value()};
+  core::CancellationSource cancellation;
+  auto cancelEvidenceRemoved = false;
+  auto cancelRunnerCalls = 0;
+  const auto cancelFailure = cancelCoordinator.verify(
+      schemaThreeDescriptor(),
+      [&cancelRunnerCalls](const results::RunDescriptor &,
+                           const core::CancellationToken &,
+                           const results::VerificationResultIdPublisher &)
+          -> core::Result<results::VerificationAttemptOutput> {
+        ++cancelRunnerCalls;
+        return core::makeError(core::ErrorCode::internal,
+                               "A canceled run must not start");
+      },
+      cancellation.token(),
+      [&cancelDirectory, &cancelEvidenceRemoved,
+       &cancellation](const results::VerificationEvidence &evidence) {
+        if (evidence.attempts.empty()) {
+          cancelEvidenceRemoved =
+              std::filesystem::remove(cancelDirectory / "Verifications" /
+                                      (evidence.verificationId + ".bteverify"));
+          cancellation.requestCancellation();
+        }
+      });
+  ASSERT_FALSE(cancelFailure.ok());
+  EXPECT_EQ(cancelFailure.error().code, core::ErrorCode::notFound);
+  EXPECT_TRUE(cancelEvidenceRemoved);
+  EXPECT_EQ(cancelRunnerCalls, 0);
+}
+
+TEST_F(ResultStoreFixture,
        reproducibilityVerificationRequiresThreeIdenticalCompletedResults) {
   const auto directory = root_ / "VerificationMatching";
   const auto value = schemaThreeDescriptor();
@@ -1419,6 +1544,126 @@ TEST_F(ResultStoreFixture,
             bte::results::VerificationStatus::canceled);
 }
 
+TEST_F(ResultStoreFixture,
+       reproducibilityAttemptResultIdAssignmentsAreStableAndValidated) {
+  const auto directory = root_ / "VerificationResultIdAssignment";
+  auto store = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto evidence = store.value()->create(schemaThreeDescriptor());
+  ASSERT_TRUE(evidence.ok()) << evidence.error().message;
+  ASSERT_TRUE(
+      store.value()->beginAttempt(evidence.value().verificationId).ok());
+
+  const auto invalidId =
+      store.value()->attachResultId(evidence.value().verificationId, "invalid");
+  ASSERT_FALSE(invalidId.ok());
+  EXPECT_EQ(invalidId.error().code, bte::core::ErrorCode::invalidArgument);
+
+  const auto assignedId = std::string(32, '1');
+  const auto attached = store.value()->attachResultId(
+      evidence.value().verificationId, assignedId);
+  ASSERT_TRUE(attached.ok()) << attached.error().message;
+  const auto sameId = store.value()->attachResultId(
+      evidence.value().verificationId, assignedId);
+  ASSERT_TRUE(sameId.ok()) << sameId.error().message;
+  const auto conflictingId = store.value()->attachResultId(
+      evidence.value().verificationId, std::string(32, '2'));
+  ASSERT_FALSE(conflictingId.ok());
+  EXPECT_EQ(conflictingId.error().code, bte::core::ErrorCode::invalidArgument);
+
+  const auto persisted = store.value()->load(evidence.value().verificationId);
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+  ASSERT_EQ(persisted.value().attempts.size(), 1U);
+  EXPECT_EQ(persisted.value().attempts.front().resultId, assignedId);
+  EXPECT_FALSE(persisted.value().attempts.front().terminalStatus.has_value());
+}
+
+TEST_F(ResultStoreFixture,
+       reproducibilityCompletionPersistsMismatchedAttemptResultIdentity) {
+  const auto directory = root_ / "VerificationResultIdMismatch";
+  const auto value = schemaThreeDescriptor();
+  auto store = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto evidence = store.value()->create(value);
+  ASSERT_TRUE(evidence.ok()) << evidence.error().message;
+  ASSERT_TRUE(
+      store.value()->beginAttempt(evidence.value().verificationId).ok());
+  const auto assignedId = std::string(32, '1');
+  ASSERT_TRUE(store.value()
+                  ->attachResultId(evidence.value().verificationId, assignedId)
+                  .ok());
+
+  const auto mismatched = store.value()->completeAttempt(
+      evidence.value().verificationId, value,
+      {.resultId = std::string(32, '2'),
+       .canonicalResultHash = std::string(64, 'a')},
+      bte::results::RunStatus::completed);
+  ASSERT_TRUE(mismatched.ok()) << mismatched.error().message;
+  EXPECT_EQ(mismatched.value().status,
+            bte::results::VerificationStatus::mismatch);
+  ASSERT_EQ(mismatched.value().attempts.size(), 1U);
+  EXPECT_EQ(mismatched.value().attempts.front().resultId, assignedId);
+  EXPECT_EQ(mismatched.value().attempts.front().terminalStatus,
+            bte::results::RunStatus::completed);
+  ASSERT_TRUE(mismatched.value().attempts.front().error.has_value());
+  EXPECT_EQ(mismatched.value().attempts.front().error->code,
+            "attemptResultIdMismatch");
+
+  const auto reopened = store.value()->load(evidence.value().verificationId);
+  ASSERT_TRUE(reopened.ok()) << reopened.error().message;
+  EXPECT_EQ(reopened.value().status,
+            bte::results::VerificationStatus::mismatch);
+  EXPECT_EQ(reopened.value().attempts.front().resultId, assignedId);
+  ASSERT_TRUE(reopened.value().attempts.front().error.has_value());
+  EXPECT_EQ(reopened.value().attempts.front().error->code,
+            "attemptResultIdMismatch");
+}
+
+TEST_F(ResultStoreFixture,
+       reproducibilityPersistsMaximumFailureDetailsAndIncompleteRunStatus) {
+  const auto directory = root_ / "VerificationTerminalBoundaries";
+  const auto value = schemaThreeDescriptor();
+  auto store = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+
+  auto failed = store.value()->create(value);
+  ASSERT_TRUE(failed.ok()) << failed.error().message;
+  ASSERT_TRUE(store.value()->beginAttempt(failed.value().verificationId).ok());
+  const auto maxDetails =
+      store.value()->failAttempt(failed.value().verificationId,
+                                 std::string(128, 'e'), std::string(2048, 'x'));
+  ASSERT_TRUE(maxDetails.ok()) << maxDetails.error().message;
+  const auto persistedFailure =
+      store.value()->load(failed.value().verificationId);
+  ASSERT_TRUE(persistedFailure.ok()) << persistedFailure.error().message;
+  ASSERT_TRUE(persistedFailure.value().attempts.front().error.has_value());
+  EXPECT_EQ(persistedFailure.value().attempts.front().error->code.size(), 128U);
+  EXPECT_EQ(persistedFailure.value().attempts.front().error->message.size(),
+            2048U);
+
+  auto incomplete = store.value()->create(value);
+  ASSERT_TRUE(incomplete.ok()) << incomplete.error().message;
+  ASSERT_TRUE(
+      store.value()->beginAttempt(incomplete.value().verificationId).ok());
+  const auto incompleteResult = store.value()->completeAttempt(
+      incomplete.value().verificationId, value,
+      {.resultId = std::string(32, '3'),
+       .canonicalResultHash = std::string(64, 'b')},
+      bte::results::RunStatus::incomplete);
+  ASSERT_TRUE(incompleteResult.ok()) << incompleteResult.error().message;
+  EXPECT_EQ(incompleteResult.value().status,
+            bte::results::VerificationStatus::failed);
+  ASSERT_EQ(incompleteResult.value().attempts.size(), 1U);
+  EXPECT_EQ(incompleteResult.value().attempts.front().terminalStatus,
+            bte::results::RunStatus::incomplete);
+  const auto reopenedIncomplete =
+      store.value()->load(incomplete.value().verificationId);
+  ASSERT_TRUE(reopenedIncomplete.ok()) << reopenedIncomplete.error().message;
+  ASSERT_EQ(reopenedIncomplete.value().attempts.size(), 1U);
+  EXPECT_EQ(reopenedIncomplete.value().attempts.front().terminalStatus,
+            bte::results::RunStatus::incomplete);
+}
+
 TEST_F(
     ResultStoreFixture,
     reproducibilityVerificationRecoversInterruptedAndPreservesCorruptEvidence) {
@@ -1491,6 +1736,43 @@ TEST_F(
 }
 
 TEST_F(ResultStoreFixture,
+       reproducibilityRecoveryPreservesAnAttemptWithoutPublishedResultId) {
+  const auto directory = root_ / "VerificationRecoveryWithoutResult";
+  auto store = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto evidence = store.value()->create(schemaThreeDescriptor());
+  ASSERT_TRUE(evidence.ok()) << evidence.error().message;
+  const auto verificationId = evidence.value().verificationId;
+  const auto started = store.value()->beginAttempt(verificationId);
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  ASSERT_FALSE(started.value().attempts.back().resultId.has_value());
+
+  auto reopened = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(reopened.ok()) << reopened.error().message;
+  const auto recovered = reopened.value()->recoverInterrupted();
+
+  ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+  ASSERT_EQ(recovered.value().size(), 1U);
+  EXPECT_EQ(recovered.value().front().status,
+            bte::results::VerificationStatus::interrupted);
+  ASSERT_EQ(recovered.value().front().attempts.size(), 1U);
+  const auto &attempt = recovered.value().front().attempts.front();
+  EXPECT_FALSE(attempt.resultId.has_value());
+  EXPECT_FALSE(attempt.terminalStatus.has_value());
+  ASSERT_TRUE(attempt.error.has_value());
+  EXPECT_EQ(attempt.error->code, "applicationInterrupted");
+
+  const auto persisted = reopened.value()->load(verificationId);
+  ASSERT_TRUE(persisted.ok()) << persisted.error().message;
+  ASSERT_EQ(persisted.value().attempts.size(), 1U);
+  EXPECT_FALSE(persisted.value().attempts.front().resultId.has_value());
+  EXPECT_FALSE(persisted.value().attempts.front().terminalStatus.has_value());
+  ASSERT_TRUE(persisted.value().attempts.front().error.has_value());
+  EXPECT_EQ(persisted.value().attempts.front().error->code,
+            "applicationInterrupted");
+}
+
+TEST_F(ResultStoreFixture,
        reproducibilityParserRejectsRehashedInvalidEvidenceStates) {
   using EvidenceMutation = std::function<void(nlohmann::json &)>;
   const auto directory = root_ / "VerificationInvalidEvidence";
@@ -1514,11 +1796,22 @@ TEST_F(ResultStoreFixture,
       [](auto &document) {
         document["attempts"][0]["resultId"] = std::string(32, 'z');
       },
+      [](auto &document) { document["attempts"][0]["resultId"] = 1; },
       [](auto &document) {
         document["attempts"][0]["canonicalResultHash"] = "invalid";
       },
       [](auto &document) {
+        document["attempts"][0]["canonicalResultHash"] = std::string(65, 'a');
+      },
+      [](auto &document) {
         document["attempts"][0]["terminalStatus"] = "running";
+      },
+      [](auto &document) {
+        document["attempts"][0]["terminalStatus"] = std::string(33, 'x');
+      },
+      [](auto &document) {
+        document["attempts"][0]["error"] = {{"code", 1},
+                                            {"message", "failure"}};
       },
       [](auto &document) {
         document["attempts"][0]["error"] = {{"code", "only one field"}};
@@ -1533,6 +1826,18 @@ TEST_F(ResultStoreFixture,
       [](auto &document) {
         document["attempts"][0]["error"] = {{"code", ""},
                                             {"message", "failure"}};
+      },
+      [](auto &document) {
+        document["attempts"][0]["error"] = {
+            {"code", "workerFailed"}, {"message", std::string(2049, 'x')}};
+      },
+      [](auto &document) {
+        document["attempts"][0]["error"] = {
+            {"code", "stillRunning"}, {"message", "attempt has not ended"}};
+      },
+      [](auto &document) {
+        document["attempts"][0]["resultId"] = std::string(32, '1');
+        document["attempts"][0]["terminalStatus"] = "failed";
       },
       [](auto &document) {
         document["attempts"].push_back(document["attempts"][0]);
@@ -1837,6 +2142,32 @@ TEST_F(ResultStoreFixture,
 
   EXPECT_TRUE(std::filesystem::is_empty(root_ / "SchemaThreeRuntimeInvalid" /
                                         "Staging"));
+}
+
+TEST_F(ResultStoreFixture,
+       schemaThreeRequiresRuntimeStockbtHashToMatchThePackageIdentity) {
+  const auto directory = root_ / "SchemaThreeStockbtHashMismatch";
+  auto store = bte::results::ResultStore::open(directory, root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto invalid = schemaThreeDescriptor();
+  auto parsed = bte::core::parseCanonicalJson(
+      invalid.provenance.runtime->canonicalManifestJson);
+  ASSERT_TRUE(parsed.ok()) << parsed.error().message;
+  auto manifest = std::move(parsed).value();
+  const auto mismatchedHash = std::string(64, '0');
+  manifest["stockbtSourceSha256"] = mismatchedHash;
+  const auto canonical = bte::core::serializeCanonicalJson(manifest);
+  ASSERT_TRUE(canonical.ok()) << canonical.error().message;
+  invalid.provenance.runtime->stockbtSourceHash = mismatchedHash;
+  invalid.provenance.runtime->canonicalManifestJson = canonical.value();
+  invalid.provenance.runtime->manifestHash =
+      bte::core::sha256(canonical.value());
+
+  const auto rejected = store.value()->begin(invalid);
+
+  ASSERT_FALSE(rejected.ok());
+  EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_TRUE(std::filesystem::is_empty(directory / "Staging"));
 }
 
 TEST_F(ResultStoreFixture,

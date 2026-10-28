@@ -254,9 +254,11 @@ private slots:
   void reproducibilityVerificationCanBeCanceled();
   void reproducibilityVerificationShowsStatusesAndAttemptDetails();
   void verificationWorkerFailuresArePresented();
+  void unknownVerificationAndRunStatusesUseFallbackLabels();
   void backtestDiagnosticsIncludeTerminalEvidence();
   void defaultRunnerExecutesTrackedBars();
   void applicationConfiguredRunnerUsesEnvironmentStorage();
+  void applicationConfiguredRunnerWiresPersistedVerification();
   void selectableConditionsSubmitTypedPlanToBackend();
   void selectableMetricsSubmitTypedPlansToBackend();
   void previousDataDayCloseMetricUsesPositiveDownUpAndExplainsUtcSource();
@@ -1527,6 +1529,52 @@ void BacktestTabTest::verificationWorkerFailuresArePresented() {
   }));
 }
 
+void BacktestTabTest::unknownVerificationAndRunStatusesUseFallbackLabels() {
+  bte::frontend::BacktestTab tab{
+      [](const bte::bindings::BacktestConfiguration &,
+         const bte::core::CancellationToken &) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  tab.setConsentProvider([](const std::string &) { return true; });
+  tab.setPythonStrategyDraft("source", "{\"quantity\":1}");
+  tab.setVerificationRunner(
+      [](const bte::bindings::BacktestConfiguration &,
+         const bte::core::CancellationToken &,
+         const bte::bindings::PythonVerificationProgressObserver &) {
+        auto evidence = bte::results::VerificationEvidence{};
+        evidence.verificationId = "unknown-status";
+        evidence.status = static_cast<bte::results::VerificationStatus>(255);
+        evidence.attempts = {
+            {.ordinal = 1,
+             .resultId = std::string{"result-with-unknown-status"},
+             .terminalStatus = static_cast<bte::results::RunStatus>(255),
+             .canonicalResultHash = std::nullopt,
+             .error = std::nullopt},
+        };
+        return bte::core::Result<bte::results::VerificationEvidence>{
+            std::move(evidence)};
+      });
+  auto *verify =
+      tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  auto *diagnostics =
+      tab.findChild<QPlainTextEdit *>("backtestStrategyDiagnostics");
+  QVERIFY(verify != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(diagnostics != nullptr);
+
+  QTest::mouseClick(verify, Qt::LeftButton);
+
+  QVERIFY(bte::test::waitUntil([run, status] {
+    return run->isEnabled() && status->text().contains("status is unavailable");
+  }));
+  QVERIFY(diagnostics->toPlainText().contains(
+      "result-with-unknown-status (unknown)"));
+}
+
 void BacktestTabTest::backtestDiagnosticsIncludeTerminalEvidence() {
   auto snapshot = filledSnapshot();
   snapshot.resultId = "diagnostic-result-id";
@@ -1616,6 +1664,37 @@ void BacktestTabTest::applicationConfiguredRunnerUsesEnvironmentStorage() {
   QVERIFY(run->isEnabled());
   QVERIFY(!std::filesystem::exists(configuredRoot / "Results" / "Results"));
   std::filesystem::remove_all(configuredRoot);
+}
+
+void BacktestTabTest::applicationConfiguredRunnerWiresPersistedVerification() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const ScopedEnvironmentRestore resultStoreRestore{"BTE_RESULT_STORE"};
+  const ScopedEnvironmentRestore dataStoreRestore{"BTE_DATA_STORE"};
+  const ScopedEnvironmentRestore snapshotRestore{"BTE_DATA_SNAPSHOT_ID"};
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  QVERIFY(qputenv("BTE_RESULT_STORE", (root / "Results").string().c_str()));
+  QVERIFY(qputenv("BTE_DATA_STORE", (root / "Data").string().c_str()));
+  QVERIFY(qputenv("BTE_DATA_SNAPSHOT_ID", std::string(64, 'e').c_str()));
+  auto tab = bte::frontend::BacktestTab::createApplicationConfigured();
+  tab->setConsentProvider([](const std::string &) { return true; });
+  tab->setPythonStrategyDraft("def create_strategy(params):\n    return None\n",
+                              "{\"quantity\":1}");
+  auto *verify =
+      tab->findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *run = tab->findChild<QPushButton *>("backtestRunButton");
+  auto *status = tab->findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(verify != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(verify->isEnabled());
+
+  QTest::mouseClick(verify, Qt::LeftButton);
+
+  QVERIFY(bte::test::waitUntil([run, status] {
+    return run->isEnabled() &&
+           status->text().startsWith("Verification could not complete");
+  }));
 }
 
 void BacktestTabTest::selectableConditionsSubmitTypedPlanToBackend() {

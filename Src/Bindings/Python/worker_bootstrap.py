@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import hashlib
 import hmac
 import json
@@ -33,6 +34,57 @@ MAXIMUM_COMMANDS_PER_CALLBACK = 1
 MAXIMUM_CALLBACK_LOG_BYTES = 512 * 1024
 MAXIMUM_TRACEBACK_BYTES = 64 * 1024
 MAXIMUM_STARTUP_DIAGNOSTIC_BYTES = 48 * 1024
+FORBIDDEN_IMPORT_POLICY_NAMES = frozenset(
+    {
+        "__builtins__",
+        "__import__",
+        "globals",
+        "locals",
+        "vars",
+        "getattr",
+        "hasattr",
+        "setattr",
+        "delattr",
+        "dir",
+        "get_type_hints",
+        "evaluate_forward_ref",
+    }
+)
+FORBIDDEN_IMPORT_POLICY_ATTRIBUTES = frozenset(
+    {
+        "__builtins__",
+        "__import__",
+        "__dict__",
+        "__class__",
+        "__mro__",
+        "__bases__",
+        "__base__",
+        "__subclasses__",
+        "__globals__",
+        "__getattribute__",
+        "attrgetter",
+        "methodcaller",
+        "ForwardRef",
+        "evaluate_forward_ref",
+        "get_type_hints",
+        "_eval_type",
+        "_evaluate",
+    }
+)
+FORBIDDEN_IMPORT_POLICY_CONSTANTS = frozenset(
+    {
+        "__builtins__",
+        "__import__",
+        "__dict__",
+        "__class__",
+        "__mro__",
+        "__bases__",
+        "__base__",
+        "__subclasses__",
+        "__globals__",
+        "__getattribute__",
+    }
+)
 ALLOWED_IMPORT_ROOTS = frozenset(
     {
         "stockbt",
@@ -690,7 +742,8 @@ def _validate_source(source: str) -> object:
             for imported in node.names:
                 if imported.name.split(".", 1)[0] not in ALLOWED_IMPORT_ROOTS:
                     message = (
-                        f"import of {imported.name!r} is not permitted by the strategy profile"
+                        f"import of {imported.name!r} is not permitted by the "
+                        "worker import allowlist"
                     )
                     raise WorkerFailure(
                         "StrategyImportNotAllowed",
@@ -702,8 +755,24 @@ def _validate_source(source: str) -> object:
                         ),
                     )
         elif isinstance(node, ast.ImportFrom):
-            if node.level != 0 or node.module is None or node.module.split(".", 1)[0] not in ALLOWED_IMPORT_ROOTS:
-                message = "relative or non-allowlisted imports are not permitted"
+            if (
+                node.level != 0
+                or node.module is None
+                or node.module.split(".", 1)[0] not in ALLOWED_IMPORT_ROOTS
+                or any(
+                    alias.name == "*"
+                    or alias.name in FORBIDDEN_IMPORT_POLICY_ATTRIBUTES
+                    or (
+                        alias.name.startswith("__")
+                        and alias.name.endswith("__")
+                    )
+                    for alias in node.names
+                )
+            ):
+                message = (
+                    "relative, reflective, star, or non-allowlisted imports "
+                    "are not permitted"
+                )
                 raise WorkerFailure(
                     "StrategyImportNotAllowed",
                     message,
@@ -715,15 +784,18 @@ def _validate_source(source: str) -> object:
                 )
         elif (
             isinstance(node, ast.Name)
-            and node.id in {"__builtins__", "__import__"}
+            and node.id in FORBIDDEN_IMPORT_POLICY_NAMES
         ) or (
             isinstance(node, ast.Attribute)
-            and node.attr in {"__builtins__", "__import__"}
+            and (
+                node.attr in FORBIDDEN_IMPORT_POLICY_ATTRIBUTES
+                or (node.attr.startswith("__") and node.attr.endswith("__"))
+            )
         ) or (
             isinstance(node, ast.Constant)
-            and node.value in {"__builtins__", "__import__"}
+            and node.value in FORBIDDEN_IMPORT_POLICY_CONSTANTS
         ):
-            message = "dynamic import access is not permitted"
+            message = "dynamic import and namespace reflection are not permitted"
             raise WorkerFailure(
                 "StrategyImportNotAllowed",
                 message,
@@ -746,6 +818,25 @@ def _validate_source(source: str) -> object:
                     ),
                 )
     return compile(tree, "strategy.py", "exec", dont_inherit=True, optimize=0)
+
+
+def _strategy_import(
+    name: str,
+    global_namespace: object = None,
+    local_namespace: object = None,
+    fromlist: object = (),
+    level: int = 0,
+) -> object:
+    if (
+        not isinstance(name, str)
+        or not name
+        or level != 0
+        or name.split(".", 1)[0] not in ALLOWED_IMPORT_ROOTS
+    ):
+        raise ImportError("import is not permitted by the worker import allowlist")
+    return builtins.__import__(
+        name, global_namespace, local_namespace, fromlist, level
+    )
 
 
 def _immutable_parameters(value: object, depth: int = 0) -> object:
@@ -799,7 +890,9 @@ def _evaluate_module(source_descriptor: int, source_length: int, source_digest: 
     module = types.ModuleType("_bte_python_strategy")
     module.__file__ = "<python-strategy>"
     module.__package__ = ""
-    module.__dict__["__builtins__"] = __builtins__
+    strategy_builtins = builtins.__dict__.copy()
+    strategy_builtins["__import__"] = _strategy_import
+    module.__dict__["__builtins__"] = strategy_builtins
     try:
         exec(code, module.__dict__, module.__dict__)
     except BaseException as error:

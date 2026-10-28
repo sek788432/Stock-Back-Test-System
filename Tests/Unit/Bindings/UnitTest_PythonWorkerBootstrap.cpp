@@ -233,6 +233,7 @@ private:
 
 const std::string validStrategySource = R"python(
 import math
+from math import isfinite
 
 STOCKBT_API_VERSION = "1"
 STOCKBT_TEMPLATE_VERSION = "1.0.0"
@@ -250,6 +251,7 @@ class Example:
     def on_market(self, ctx):
         assert self.started
         assert math.isclose(ctx.bar.close, 101.0)
+        assert isfinite(ctx.bar.close)
         assert ctx.portfolio.positions.get(ctx.symbol) is None
         ctx.orders.buy_market(ctx.symbol, quantity=2)
         ctx.log.info("entry signal", timestamp=ctx.timestamp_utc_ms)
@@ -333,47 +335,110 @@ TEST(PythonWorkerBootstrapTest,
 
 TEST(PythonWorkerBootstrapTest,
      rejectsForbiddenImportsBeforeExecutingTheModule) {
-  const auto marker = std::filesystem::temp_directory_path() /
-                      "bte-python-forbidden-import-marker";
-  std::error_code ignored;
-  std::filesystem::remove(marker, ignored);
-  const std::string source = "open(" + nlohmann::json(marker.string()).dump() +
-                             ", 'w').write('executed')\n"
-                             "import os\n"
-                             "STOCKBT_API_VERSION = '1'\n"
-                             "STOCKBT_TEMPLATE_VERSION = '1.0.0'\n";
-  auto workerResult = WorkerHarness::start(source);
-  ASSERT_TRUE(workerResult.ok()) << workerResult.error().message;
-  auto worker = std::move(workerResult).value();
-  ASSERT_TRUE(worker.handshake().ok());
+  const std::array<std::string, 4> forbiddenImports{
+      "import os",
+      "from os import path",
+      "from .local import x",
+      "from operator import *",
+  };
+  for (std::size_t index = 0; index < forbiddenImports.size(); ++index) {
+    const auto marker =
+        std::filesystem::temp_directory_path() /
+        ("bte-python-forbidden-import-marker-" + std::to_string(index));
+    std::error_code ignored;
+    std::filesystem::remove(marker, ignored);
+    const std::string source =
+        "open(" + nlohmann::json(marker.string()).dump() +
+        ", 'w').write('executed')\n" + forbiddenImports[index] +
+        "\nSTOCKBT_API_VERSION = '1'\n"
+        "STOCKBT_TEMPLATE_VERSION = '1.0.0'\n";
+    auto workerResult = WorkerHarness::start(source);
+    ASSERT_TRUE(workerResult.ok()) << workerResult.error().message;
+    auto worker = std::move(workerResult).value();
+    ASSERT_TRUE(worker.handshake().ok());
 
-  const auto sent = worker.process().sendMessage(
-      ProtocolMessage{.protocolVersion = 1,
-                      .runId = "python-bootstrap-test",
-                      .sequence = 1,
-                      .messageType = "load-module",
-                      .payload =
-                          nlohmann::json{{"sourceSha256", sourceDigest(source)},
-                                         {"stockbtApiVersion", "1"}}},
-      5s, bte::core::ErrorCode::strategyLoadTimeout);
-  ASSERT_TRUE(sent.ok()) << sent.error().message;
-  const auto rejected = worker.process().receiveMessage(
-      "python-bootstrap-test", 2, 5s,
-      bte::core::ErrorCode::strategyLoadTimeout);
-  ASSERT_TRUE(rejected.ok()) << rejected.error().message;
-  EXPECT_EQ(rejected.value().messageType, "worker-error");
-  EXPECT_EQ(rejected.value().payload.at("errorCode"),
-            "StrategyImportNotAllowed");
-  EXPECT_FALSE(std::filesystem::exists(marker));
-  std::filesystem::remove(marker, ignored);
+    const auto sent = worker.process().sendMessage(
+        ProtocolMessage{
+            .protocolVersion = 1,
+            .runId = "python-bootstrap-test",
+            .sequence = 1,
+            .messageType = "load-module",
+            .payload = nlohmann::json{{"sourceSha256", sourceDigest(source)},
+                                      {"stockbtApiVersion", "1"}}},
+        5s, bte::core::ErrorCode::strategyLoadTimeout);
+    ASSERT_TRUE(sent.ok()) << sent.error().message;
+    const auto rejected = worker.process().receiveMessage(
+        "python-bootstrap-test", 2, 5s,
+        bte::core::ErrorCode::strategyLoadTimeout);
+    ASSERT_TRUE(rejected.ok()) << rejected.error().message;
+    EXPECT_EQ(rejected.value().messageType, "worker-error");
+    EXPECT_EQ(rejected.value().payload.at("errorCode"),
+              "StrategyImportNotAllowed");
+    EXPECT_FALSE(std::filesystem::exists(marker));
+    std::filesystem::remove(marker, ignored);
+  }
 }
 
 TEST(PythonWorkerBootstrapTest,
      rejectsReflectiveDynamicImportsBeforeExecutingTheModule) {
-  const std::array<std::string, 3> dynamicImports{
+  const std::array<std::string, 14> dynamicImports{
       "getattr(__builtins__, '__import__')('os')",
       "vars(__builtins__)['__import__']('os')",
       "__builtins__.__import__('os')",
+      "_builtins = '_' * 2 + 'builtins' + '_' * 2\n"
+      "_import = '_' * 2 + 'import' + '_' * 2\n"
+      "_namespace = globals()\n"
+      "_module_builtins = _namespace[_builtins]\n"
+      "_importer = (_module_builtins[_import] if isinstance(_module_builtins, "
+      "dict) "
+      "else getattr(_module_builtins, _import))\n"
+      "_importer('os')",
+      "import json as _json\n"
+      "_builtins = '_' * 2 + 'builtins' + '_' * 2\n"
+      "_import = '_' * 2 + 'import' + '_' * 2\n"
+      "_json.__dict__[_builtins][_import]('os')",
+      "import json as _json\n"
+      "import operator as _operator\n"
+      "_builtins = '_' * 2 + 'builtins' + '_' * 2\n"
+      "_import = '_' * 2 + 'import' + '_' * 2\n"
+      "_dictionary = '_' * 2 + 'dict' + '_' * 2\n"
+      "_operator.attrgetter(_dictionary)(_json)[_builtins][_import]('os')",
+      "import json as _json\n"
+      "import operator as _operator\n"
+      "_builtins = '_' * 2 + 'builtins' + '_' * 2\n"
+      "_import = '_' * 2 + 'import' + '_' * 2\n"
+      "_dictionary = '_' * 2 + 'dict' + '_' * 2\n"
+      "_getattribute = '_' * 2 + 'getattribute' + '_' * 2\n"
+      "_operator.methodcaller(_getattribute, _dictionary)(_json)"
+      "[_builtins][_import]('os')",
+      "from json import __builtins__ as _module_builtins\n"
+      "_import = '_' * 2 + 'import' + '_' * 2\n"
+      "_module_builtins[_import]('os')",
+      "from json import __builtins__ as _module_builtins\n"
+      "import json as _json\n"
+      "from operator import attrgetter as _attribute\n"
+      "_import = '_' * 2 + 'import' + '_' * 2\n"
+      "_module_dictionary = '_' * 2 + 'dict' + '_' * 2\n"
+      "_builtins = '_' * 2 + 'builtins' + '_' * 2\n"
+      "_attribute(_module_dictionary)(_json)[_builtins][_import]('os')",
+      "import json as _json\n"
+      "from operator import methodcaller as _method\n"
+      "_import = '_' * 2 + 'import' + '_' * 2\n"
+      "_module_dictionary = '_' * 2 + 'dict' + '_' * 2\n"
+      "_builtins = '_' * 2 + 'builtins' + '_' * 2\n"
+      "_getattribute = '_' * 2 + 'getattribute' + '_' * 2\n"
+      "_method(_getattribute, _module_dictionary)(_json)"
+      "[_builtins][_import]('os')",
+      "import typing as _typing\n"
+      "_typing.ForwardRef(\"__import__('os')\").evaluate()",
+      "from typing import ForwardRef as _forward_ref\n"
+      "_forward_ref(\"__import__('os')\").evaluate()",
+      "import typing as _typing\n"
+      "def _annotated(value: \"__import__('os')\"): pass\n"
+      "_typing.get_type_hints(_annotated, globalns={}, localns={})",
+      "from typing import get_type_hints as _hints\n"
+      "def _annotated(value: \"__import__('os')\"): pass\n"
+      "_hints(_annotated, globalns={}, localns={})",
   };
   for (std::size_t index = 0; index < dynamicImports.size(); ++index) {
     const auto marker =

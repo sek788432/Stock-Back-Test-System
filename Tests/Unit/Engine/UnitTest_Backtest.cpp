@@ -160,6 +160,72 @@ private:
   bte::strategy::StrategyDiagnosticBatch batch_;
 };
 
+enum class CancellationPoint { none, onStart, onMarket, onFill, onFinish };
+
+class LifecycleProbeStrategy final : public bte::strategy::Strategy {
+public:
+  LifecycleProbeStrategy(bte::core::CancellationSource &cancellation,
+                         const CancellationPoint cancellationPoint,
+                         const bool submitBuy = false,
+                         const bool failFinish = false)
+      : cancellation_(cancellation), cancellationPoint_(cancellationPoint),
+        submitBuy_(submitBuy), failFinish_(failFinish) {}
+
+  [[nodiscard]] bte::core::Result<void>
+  onStart(const bte::strategy::StrategyContext &,
+          const bte::core::CancellationToken &) override {
+    cancelIf(CancellationPoint::onStart);
+    return {};
+  }
+
+  [[nodiscard]] bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &context,
+           const bte::core::CancellationToken &) override {
+    cancelIf(CancellationPoint::onMarket);
+    if (!submitBuy_ || submitted_) {
+      return bte::strategy::StrategyCommandBatch{};
+    }
+    submitted_ = true;
+    return bte::strategy::StrategyCommandBatch{{
+        .kind = bte::strategy::StrategyCommandKind::buyMarket,
+        .symbol = std::string{context.symbol},
+        .quantityShares = 1,
+    }};
+  }
+
+  [[nodiscard]] bte::core::Result<void>
+  onFill(const bte::strategy::StrategyFill &,
+         const bte::strategy::StrategyContext &,
+         const bte::core::CancellationToken &) override {
+    cancelIf(CancellationPoint::onFill);
+    return {};
+  }
+
+  [[nodiscard]] bte::core::Result<void>
+  onFinish(const bte::strategy::StrategyContext &,
+           const bte::core::CancellationToken &) override {
+    if (failFinish_) {
+      return bte::core::makeError(bte::core::ErrorCode::internal,
+                                  "simulated finish failure");
+    }
+    cancelIf(CancellationPoint::onFinish);
+    return {};
+  }
+
+private:
+  void cancelIf(const CancellationPoint point) {
+    if (cancellationPoint_ == point) {
+      cancellation_.requestCancellation();
+    }
+  }
+
+  bte::core::CancellationSource &cancellation_;
+  CancellationPoint cancellationPoint_ = CancellationPoint::none;
+  bool submitBuy_ = false;
+  bool failFinish_ = false;
+  bool submitted_ = false;
+};
+
 } // namespace
 
 TEST(BacktestTest, validatesStrategyHistoryBudgetsAndIndicatorRegistrations) {
@@ -222,6 +288,142 @@ TEST(BacktestTest, validatesStrategyHistoryBudgetsAndIndicatorRegistrations) {
   ASSERT_FALSE(insufficientHistory.ok());
   EXPECT_EQ(insufficientHistory.error().code,
             bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(BacktestTest, rejectsInvalidWarmupHistoryBeforeStartingStrategy) {
+  const auto actualBars = std::vector{makeFlatBar(20, 10.0)};
+  const auto validHistory =
+      std::vector{makeFlatBar(18, 9.0), makeFlatBar(19, 9.5)};
+  const auto startWithHistory = [&](std::vector<bte::core::Bar> history) {
+    return bte::engine::BacktestExecution::start(
+        {.bars = actualBars,
+         .historyBars = std::move(history),
+         .initialCapitalMicrodollars = 1'000'000'000,
+         .quantityShares = 1,
+         .previousDataDays = {}},
+        std::make_unique<RequirementsProbeStrategy>(
+            bte::strategy::StrategyRequirements{.maxHistoryBars = 10'000}));
+  };
+
+  auto tooManyBars = std::vector<bte::core::Bar>{};
+  tooManyBars.reserve(10'001);
+  for (int day = 1; day <= 10'001; ++day) {
+    tooManyBars.push_back(makeFlatBar(day, 9.0));
+  }
+  const auto excessive = startWithHistory(std::move(tooManyBars));
+
+  auto invalidOhlcv = validHistory;
+  invalidOhlcv.front().volume = std::numeric_limits<double>::infinity();
+  const auto invalidVolume = startWithHistory(std::move(invalidOhlcv));
+
+  auto unrepresentablePrice = validHistory;
+  unrepresentablePrice.back() = makeFlatBar(19, 10'000'000'000.0);
+  const auto invalidPrice = startWithHistory(std::move(unrepresentablePrice));
+
+  auto runDateHistory = validHistory;
+  runDateHistory.back() = makeFlatBar(20, 9.5);
+  const auto historyAtRunStart = startWithHistory(std::move(runDateHistory));
+
+  auto decreasingHistory = validHistory;
+  std::ranges::reverse(decreasingHistory);
+  const auto outOfOrder = startWithHistory(std::move(decreasingHistory));
+
+  for (const auto *result : {&excessive, &invalidVolume, &invalidPrice,
+                             &historyAtRunStart, &outOfOrder}) {
+    ASSERT_FALSE(result->ok());
+    EXPECT_EQ(result->error().code, bte::core::ErrorCode::invalidArgument);
+  }
+}
+
+TEST(BacktestTest, cancellationDuringStrategyCallbacksRollsBackCurrentSlice) {
+  const auto oneBar = std::vector{makeFlatBar(2, 10.0)};
+  const auto twoBars = std::vector{makeFlatBar(2, 10.0), makeFlatBar(3, 11.0)};
+  const auto makeRequest = [](const std::vector<bte::core::Bar> &bars) {
+    return bte::engine::BacktestRequest{
+        .bars = bars,
+        .symbol = "SYN",
+        .initialCapitalMicrodollars = 1'000'000'000,
+        .quantityShares = 1,
+        .previousDataDays = {},
+    };
+  };
+
+  bte::core::CancellationSource onStartCancellation;
+  auto onStart = bte::engine::BacktestExecution::start(
+      makeRequest(oneBar),
+      std::make_unique<LifecycleProbeStrategy>(onStartCancellation,
+                                               CancellationPoint::onStart));
+  ASSERT_TRUE(onStart.ok()) << onStart.error().message;
+  const auto canceledAtStart =
+      onStart.value()->advance(onStartCancellation.token());
+  EXPECT_FALSE(canceledAtStart.ok());
+  EXPECT_EQ(onStart.value()->status(), bte::results::RunStatus::canceled);
+  EXPECT_EQ(onStart.value()->result().barsProcessed, 0U);
+
+  bte::core::CancellationSource onMarketCancellation;
+  auto onMarket = bte::engine::BacktestExecution::start(
+      makeRequest(oneBar),
+      std::make_unique<LifecycleProbeStrategy>(onMarketCancellation,
+                                               CancellationPoint::onMarket));
+  ASSERT_TRUE(onMarket.ok()) << onMarket.error().message;
+  const auto canceledAtMarket =
+      onMarket.value()->advance(onMarketCancellation.token());
+  EXPECT_FALSE(canceledAtMarket.ok());
+  EXPECT_EQ(onMarket.value()->status(), bte::results::RunStatus::canceled);
+  EXPECT_EQ(onMarket.value()->result().barsProcessed, 0U);
+  EXPECT_EQ(std::ranges::count_if(
+                onMarket.value()->result().canonicalRecords,
+                [](const auto &record) {
+                  return record.family == bte::results::RecordFamily::portfolio;
+                }),
+            0);
+
+  bte::core::CancellationSource onFillCancellation;
+  auto onFill = bte::engine::BacktestExecution::start(
+      makeRequest(twoBars),
+      std::make_unique<LifecycleProbeStrategy>(
+          onFillCancellation, CancellationPoint::onFill, true));
+  ASSERT_TRUE(onFill.ok()) << onFill.error().message;
+  ASSERT_TRUE(onFill.value()->advance().ok());
+  const auto canceledAtFill =
+      onFill.value()->advance(onFillCancellation.token());
+  EXPECT_FALSE(canceledAtFill.ok());
+  EXPECT_EQ(onFill.value()->status(), bte::results::RunStatus::canceled);
+  EXPECT_EQ(onFill.value()->result().barsProcessed, 1U);
+  EXPECT_TRUE(onFill.value()->result().fills.empty());
+
+  bte::core::CancellationSource onFinishCancellation;
+  auto onFinish = bte::engine::BacktestExecution::start(
+      makeRequest(oneBar),
+      std::make_unique<LifecycleProbeStrategy>(onFinishCancellation,
+                                               CancellationPoint::onFinish));
+  ASSERT_TRUE(onFinish.ok()) << onFinish.error().message;
+  const auto canceledAtFinish =
+      onFinish.value()->advance(onFinishCancellation.token());
+  EXPECT_FALSE(canceledAtFinish.ok());
+  EXPECT_EQ(onFinish.value()->status(), bte::results::RunStatus::canceled);
+  EXPECT_EQ(onFinish.value()->result().barsProcessed, 1U);
+}
+
+TEST(BacktestTest, finishFailureProducesFailedTerminalResult) {
+  bte::core::CancellationSource cancellation;
+  auto execution = bte::engine::BacktestExecution::start(
+      {.bars = {makeFlatBar(2, 10.0)},
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1,
+       .previousDataDays = {}},
+      std::make_unique<LifecycleProbeStrategy>(
+          cancellation, CancellationPoint::none, false, true));
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+
+  const auto finished = execution.value()->advance();
+
+  ASSERT_FALSE(finished.ok());
+  EXPECT_EQ(finished.error().message, "simulated finish failure");
+  EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::failed);
+  ASSERT_TRUE(execution.value()->terminalError().has_value());
+  EXPECT_EQ(execution.value()->terminalError()->code,
+            bte::core::ErrorCode::internal);
 }
 
 TEST(BacktestTest, boundedHistorySeedsDeclaredStreamingIndicators) {

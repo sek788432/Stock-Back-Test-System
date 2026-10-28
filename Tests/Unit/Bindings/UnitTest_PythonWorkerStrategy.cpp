@@ -17,7 +17,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
+#include <limits>
 #include <memory>
 #include <ranges>
 #include <string>
@@ -371,6 +373,19 @@ TEST(PythonWorkerStrategyTest,
   ASSERT_FALSE(invalidMark.ok());
   EXPECT_EQ(invalidMark.error().code,
             bte::core::ErrorCode::strategyContractViolation);
+
+  auto nonFiniteBar = context(1'700'000'000'000LL);
+  nonFiniteBar.bar->close = std::numeric_limits<double>::infinity();
+  const auto nonFiniteBarStrategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(nonFiniteBarStrategy.ok())
+      << nonFiniteBarStrategy.error().message;
+  const auto nonFiniteBarResult =
+      nonFiniteBarStrategy.value()->onMarket(nonFiniteBar);
+  ASSERT_FALSE(nonFiniteBarResult.ok());
+  EXPECT_EQ(nonFiniteBarResult.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
 }
 
 TEST(PythonWorkerStrategyTest, rejectsCommandsDuringStrategyStartup) {
@@ -446,6 +461,77 @@ def create_strategy(params):
                 .get<std::string>()
                 .find("File \"strategy.py\", line 9"),
             std::string::npos);
+}
+
+TEST(PythonWorkerStrategyTest, preservesWorkerFailuresForEachLifecycleHook) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_start(self, ctx):
+        raise RuntimeError("intentional on_start failure")
+    def on_market(self, ctx):
+        return None
+    def on_fill(self, fill, ctx):
+        raise RuntimeError("intentional on_fill failure")
+    def on_finish(self, ctx):
+        raise RuntimeError("intentional on_finish failure")
+def create_strategy(params):
+    return Example()
+)python";
+  const bte::strategy::StrategyContext startContext{
+      .symbol = "AAPL",
+      .bar = std::nullopt,
+      .cashMicrodollars = 100'000'000,
+      .equityMicrodollars = 100'000'000,
+      .positionShares = 0,
+      .markPriceNanodollars = std::nullopt};
+  const bte::strategy::StrategyFill fill{
+      .timestamp = context(1'700'000'000'000LL).bar->ts,
+      .side = bte::strategy::StrategyFillSide::buy,
+      .quantityShares = 1,
+      .priceNanodollars = 1'000'000'000,
+      .amountMicrodollars = 1'000'000};
+  using HookInvocation =
+      std::pair<std::string_view, std::function<bte::core::Result<void>(
+                                      bte::strategy::Strategy &)>>;
+  const std::array<HookInvocation, 3> hooks{{
+      {"on_start",
+       [&startContext](bte::strategy::Strategy &strategy) {
+         return strategy.onStart(startContext);
+       }},
+      {"on_fill",
+       [&fill](bte::strategy::Strategy &strategy) {
+         return strategy.onFill(fill, context(1'700'000'000'000LL));
+       }},
+      {"on_finish",
+       [](bte::strategy::Strategy &strategy) {
+         return strategy.onFinish(context(1'700'000'003'600'000LL));
+       }},
+  }};
+
+  for (const auto &[hook, invoke] : hooks) {
+    auto strategyResult = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+        parameters(), true);
+    ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+    auto *pythonStrategy =
+        dynamic_cast<PythonWorkerStrategy *>(strategyResult.value().get());
+    ASSERT_NE(pythonStrategy, nullptr);
+
+    const auto result = invoke(*strategyResult.value());
+
+    ASSERT_FALSE(result.ok()) << hook;
+    EXPECT_EQ(result.error().code, bte::core::ErrorCode::strategyRuntimeError)
+        << hook;
+    const auto diagnostics = pythonStrategy->diagnostics();
+    ASSERT_EQ(diagnostics.structuredErrors.size(), 1U) << hook;
+    EXPECT_EQ(diagnostics.structuredErrors.front().at("hook"), hook);
+    EXPECT_EQ(diagnostics.structuredErrors.front().at("errorCode"),
+              "strategyRuntimeError");
+  }
 }
 
 TEST(PythonWorkerStrategyTest,
@@ -615,6 +701,8 @@ TEST(PythonWorkerStrategyTest,
           {"fast_period", 1}, {"slow_period", 2}, {"quantity", 1'000'000'001}},
       nlohmann::json{{"fast_period", 1}, {"slow_period", 2}, {"quantity", 1.5}},
       nlohmann::json{{"fast_period", 1.5}, {"slow_period", 2}, {"quantity", 1}},
+      nlohmann::json{
+          {"fast_period", true}, {"slow_period", 2}, {"quantity", 1}},
   };
 
   for (const auto &configuration : invalidParameters) {
@@ -1788,6 +1876,35 @@ TEST(PythonWorkerStrategyTest,
   ASSERT_NE(terminal, diagnostics.records.end());
   EXPECT_EQ(terminal->errorCode, "Canceled");
   EXPECT_EQ(terminal->hook, "on_fill");
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsInvalidEngineFillBeforeSendingTheCallback) {
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      validStrategySource, parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  const bte::strategy::StrategyFill invalidFill{
+      .timestamp = context(1'700'000'000'000LL).bar->ts,
+      .side = bte::strategy::StrategyFillSide::buy,
+      .quantityShares = 0,
+      .priceNanodollars = 1'000'000'000,
+      .amountMicrodollars = 1'000'000};
+
+  const auto result =
+      strategyResult.value()->onFill(invalidFill, context(1'700'000'000'000LL));
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code,
+            bte::core::ErrorCode::strategyContractViolation);
+  const auto diagnostics = strategyResult.value()->takeDiagnostics();
+  const auto terminal =
+      std::ranges::find_if(diagnostics.records, [](const auto &record) {
+        return record.kind == bte::strategy::StrategyDiagnosticKind::terminal;
+      });
+  ASSERT_NE(terminal, diagnostics.records.end());
+  EXPECT_EQ(terminal->hook, "on_fill");
+  EXPECT_EQ(terminal->errorCode, "WorkerCallbackFailure");
 }
 
 TEST(PythonWorkerStrategyTest,

@@ -47,15 +47,26 @@ Writable content uses Qt's `QStandardPaths::AppLocalDataLocation`:
 
 ```text
 Strategies/PythonDraft
-Results/Active
+Results/Staging
+Results/Drafts
+Results/Results
 Results/Trash
+Results/Quarantine
+Results/Leases
 Results/Verifications
-DataSegments
+Data/Snapshots
+Data/Segments
+Data/Trash/Segments
 ```
 
 The installation directory is read-only at runtime. Upgrade and uninstall must
-not silently remove user strategies, results, referenced Data Segments, or
-referenced Runtime Profiles.
+preserve user strategies, results, and referenced Data Segments. The bundled
+runtime profile follows the application bundle lifecycle and may be replaced on
+upgrade or removed on uninstall. Results retain the profile ID and hash, not
+the profile files. `Results/Results` contains published immutable backtest
+artifacts; `Results/Drafts` contains recoverable unpromoted artifacts.
+`Data/Snapshots` contains release manifests and `Data/Segments` contains the
+immutable segment objects they reference.
 
 The first milestone stores only one recoverable Python editor draft; a saved
 Strategy library and its `Strategies/Active` / `Strategies/Trash` directories

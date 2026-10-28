@@ -428,9 +428,18 @@ does not expose Engine objects or process handles.
   filesystem, native-extension, introspection, and network modules are
   rejected by validation. Direct or reflective access to `__builtins__` or
   `__import__` and dynamic code operations such as `eval`, `exec`, and
-  `compile` are rejected before module evaluation. Dependencies imported
-  internally by the immutable runtime are not user-import permissions. This
-  allowlist is a reproducibility boundary, not a security sandbox.
+  `compile` are rejected before module evaluation. Namespace and attribute
+  reflection builtins (`globals`, `locals`, `vars`, `getattr`, `hasattr`,
+  `setattr`, `delattr`, and `dir`) are also rejected before module evaluation.
+  Dunder attribute access and the attribute-reflection helpers
+  `operator.attrgetter` and `operator.methodcaller` are not permitted. Dynamic
+  annotation evaluation through `typing.ForwardRef`,
+  `typing.evaluate_forward_ref`, or `typing.get_type_hints` is also prohibited.
+  Strategy `from` imports cannot use star imports or import reflective names.
+  Imports use a fixed worker allowlist that checks the imported root again at
+  runtime. Dependencies imported internally by the immutable runtime are not
+  user-import permissions. This allowlist is a reproducibility boundary, not a
+  security sandbox.
 - Each immutable runtime manifest records exact package versions, upstream
   URLs, SHA-256 values, license identifiers/notices, platform, architecture,
   Python ABI, stockbt API and source hash, installed-file hashes, and profile

@@ -1,6 +1,8 @@
 #include "ManagedWorkerProcess.h"
 #include "ManagedWorkerProcessTestHooks.h"
 
+#include <Bte/Core/Digest.h>
+
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -230,6 +232,25 @@ TEST(ManagedWorkerProcessTest,
   EXPECT_NE(invalidDataLength.error().message.find("size does not match"),
             std::string::npos);
 
+  const auto writableDataPath = directory.path() / "writable-source.txt";
+  {
+    std::ofstream file{writableDataPath, std::ios::binary};
+    file << "shared-data";
+  }
+  const int writableDataDescriptor =
+      ::open(writableDataPath.c_str(), O_RDWR | O_CLOEXEC);
+  ASSERT_GE(writableDataDescriptor, 0);
+  const auto writableData = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(),
+      .readOnlyDataDescriptor = writableDataDescriptor,
+      .readOnlyDataLength = std::string_view{"shared-data"}.size(),
+      .readOnlyDataSha256 = bte::core::sha256("shared-data"),
+  });
+  static_cast<void>(::close(writableDataDescriptor));
+  ASSERT_FALSE(writableData.ok());
+  EXPECT_NE(writableData.error().message.find("invalid or writable"),
+            std::string::npos);
+
   const auto invalidHistoryDigest =
       ManagedWorkerProcess::start(WorkerProcessLaunch{
           .executable = fixturePath(),
@@ -239,6 +260,21 @@ TEST(ManagedWorkerProcessTest,
       });
   ASSERT_FALSE(invalidHistoryDigest.ok());
   EXPECT_NE(invalidHistoryDigest.error().message.find("invalid or writable"),
+            std::string::npos);
+
+  const int readOnlyHistoryDescriptor =
+      ::open(writableDataPath.c_str(), O_RDONLY | O_CLOEXEC);
+  ASSERT_GE(readOnlyHistoryDescriptor, 0);
+  const auto invalidHistoryLength =
+      ManagedWorkerProcess::start(WorkerProcessLaunch{
+          .executable = fixturePath(),
+          .readOnlyHistoryDescriptor = readOnlyHistoryDescriptor,
+          .readOnlyHistoryLength = std::string_view{"shared-data"}.size() + 1,
+          .readOnlyHistorySha256 = memory.value().sha256Digest(),
+      });
+  static_cast<void>(::close(readOnlyHistoryDescriptor));
+  ASSERT_FALSE(invalidHistoryLength.ok());
+  EXPECT_NE(invalidHistoryLength.error().message.find("size does not match"),
             std::string::npos);
 #else
   GTEST_SKIP()

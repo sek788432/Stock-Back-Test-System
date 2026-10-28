@@ -66,6 +66,7 @@ class StrategyTabTest final : public QObject {
 private slots:
   void initTestCase();
   void exposesSampleAndPersistsRecoverableDrafts();
+  void invalidDraftsRemainUntouchedAndFallBackToEmptyEditor();
   void importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles();
   void acceptsSourceAtTheOneMiBLimit();
   void autosavesAfterFiveHundredMillisecondsOfIdle();
@@ -79,9 +80,12 @@ private slots:
   void explainsWhenManagedValidationIsUnavailable();
   void cancellationReachesTheValidationWorker();
   void cannotSaveDraftWhenItsDestinationIsUnavailable();
+  void autosaveReportsWhenItsDraftDirectoryIsUnavailable();
+  void preservesCurrentDraftWhenItsRecoveryCopyCannotBeWritten();
   void ignoresValidationForAnEditedDraft();
   void useInBacktestEmitsTheCurrentSourceAndParameters();
   void exportsNormalizedUtf8SourceAtomically();
+  void reportsWhenThePythonExportDestinationCannotBeWritten();
   void builtInSampleHandlesIncompleteHistoryAndEmitsValidOrder();
   void preservesUnrecoverableDraftsWhenTheTabCloses();
 };
@@ -134,6 +138,45 @@ void StrategyTabTest::exposesSampleAndPersistsRecoverableDrafts() {
            std::string{"first generation = True\n"});
 }
 
+void StrategyTabTest::invalidDraftsRemainUntouchedAndFallBackToEmptyEditor() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto validSourcePrefix =
+      R"({"fastPeriod":5,"quantity":1,"schemaVersion":1,"slowPeriod":20,"source":")";
+  const auto validSourceSuffix = R"("})";
+  const auto oversizedSource =
+      validSourcePrefix + std::string(1024 * 1024 + 1, 'x') + validSourceSuffix;
+  const std::array invalidDrafts{
+      QByteArray{
+          R"({"fastPeriod":5,"quantity":1,"schemaVersion":1,"slowPeriod":20,"source":""})"},
+      QByteArray{
+          R"({"fastPeriod":5,"quantity":1,"schemaVersion":1,"slowPeriod":20,"source":"\u0000"})"},
+      QByteArray::fromStdString(oversizedSource),
+      QByteArray{
+          R"({"fastPeriod":5,"quantity":0,"schemaVersion":1,"slowPeriod":20,"source":"valid"})"},
+      QByteArray{
+          R"({"fastPeriod":20,"quantity":1,"schemaVersion":1,"slowPeriod":20,"source":"valid"})"},
+  };
+
+  for (std::size_t index = 0; index < invalidDrafts.size(); ++index) {
+    const auto caseDirectory = root / std::to_string(index);
+    QVERIFY(std::filesystem::create_directories(caseDirectory));
+    const auto currentPath = caseDirectory / "python-draft.json";
+    QVERIFY(writeSourceFile(currentPath, invalidDrafts[index]));
+
+    bte::frontend::StrategyTab recovered{caseDirectory, {}};
+
+    QCOMPARE(recovered.sourceUtf8(), std::string{});
+    QVERIFY(recovered.findChild<QLabel *>("pythonStrategyStatusLabel")
+                ->text()
+                .contains("preserved for diagnosis"));
+    QFile preserved{QString::fromStdString(currentPath.string())};
+    QVERIFY(preserved.open(QIODevice::ReadOnly));
+    QCOMPARE(preserved.readAll(), invalidDrafts[index]);
+  }
+}
+
 void StrategyTabTest::importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles() {
   QTemporaryDir directory;
   QVERIFY(directory.isValid());
@@ -167,6 +210,21 @@ void StrategyTabTest::importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles() {
   oversized.close();
   QVERIFY(!tab.loadSourceFile(oversizedPath));
   QCOMPARE(QString::fromStdString(tab.sourceUtf8()), QString{"x=1\n"});
+
+  const auto nulPath = path / "nul.py";
+  QVERIFY(writeSourceFile(nulPath, QByteArray{"x\0y", 3}));
+  QVERIFY(!tab.loadSourceFile(nulPath));
+  QVERIFY(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
+              ->text()
+              .contains("StrategySourceContainsNul"));
+  QCOMPARE(QString::fromStdString(tab.sourceUtf8()), QString{"x=1\n"});
+
+  const auto unsupportedPath = path / "strategy.txt";
+  QVERIFY(writeSourceFile(unsupportedPath, QByteArray{"ignored\n"}));
+  QVERIFY(!tab.loadSourceFile(unsupportedPath));
+  QVERIFY(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
+              ->text()
+              .contains("Only .py files can be loaded"));
 }
 
 void StrategyTabTest::acceptsSourceAtTheOneMiBLimit() {
@@ -587,6 +645,55 @@ void StrategyTabTest::cannotSaveDraftWhenItsDestinationIsUnavailable() {
               .contains("Cannot atomically write the Strategy draft"));
 }
 
+void StrategyTabTest::autosaveReportsWhenItsDraftDirectoryIsUnavailable() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto blockedDirectory = root / "drafts";
+  QVERIFY(writeSourceFile(blockedDirectory, QByteArray{"not a directory"}));
+  bte::frontend::StrategyTab tab{blockedDirectory, {}};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  QVERIFY(editor != nullptr);
+  QVERIFY(status != nullptr);
+
+  editor->setPlainText("def create_strategy(params):\n    return None\n");
+
+  QTRY_VERIFY_WITH_TIMEOUT(
+      status->text().contains("Cannot save draft to the local data folder"),
+      2000);
+  QVERIFY(std::filesystem::is_regular_file(blockedDirectory));
+}
+
+void StrategyTabTest::
+    preservesCurrentDraftWhenItsRecoveryCopyCannotBeWritten() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto draftDirectory = root / "drafts";
+  bte::frontend::StrategyTab tab{draftDirectory, {}};
+  auto *editor = tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *status = tab.findChild<QLabel *>("pythonStrategyStatusLabel");
+  QVERIFY(editor != nullptr);
+  QVERIFY(status != nullptr);
+  editor->setPlainText("first valid generation\n");
+  QVERIFY(tab.saveDraft());
+  const auto currentPath = draftDirectory / "python-draft.json";
+  QFile currentBefore{QString::fromStdString(currentPath.string())};
+  QVERIFY(currentBefore.open(QIODevice::ReadOnly));
+  const auto currentBytes = currentBefore.readAll();
+  QVERIFY(std::filesystem::create_directory(draftDirectory /
+                                            "python-draft.previous.json"));
+
+  editor->setPlainText("second generation\n");
+
+  QVERIFY(!tab.saveDraft());
+  QVERIFY(status->text().contains("Cannot preserve the previous valid draft"));
+  QFile currentAfter{QString::fromStdString(currentPath.string())};
+  QVERIFY(currentAfter.open(QIODevice::ReadOnly));
+  QCOMPARE(currentAfter.readAll(), currentBytes);
+}
+
 void StrategyTabTest::ignoresValidationForAnEditedDraft() {
   QTemporaryDir directory;
   QVERIFY(directory.isValid());
@@ -651,6 +758,23 @@ void StrategyTabTest::exportsNormalizedUtf8SourceAtomically() {
   QVERIFY(!tab.exportSourceFile(destination.parent_path() / "strategy.txt"));
   QCOMPARE(tab.sourceUtf8(),
            std::string{"def create_strategy(params):\n    return None\n"});
+}
+
+void StrategyTabTest::reportsWhenThePythonExportDestinationCannotBeWritten() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const auto blockedParent = root / "file-parent";
+  QVERIFY(writeSourceFile(blockedParent, QByteArray{"not a directory"}));
+  bte::frontend::StrategyTab tab{root / "drafts", {}};
+  tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor")
+      ->setPlainText("def create_strategy(params):\n    return None\n");
+
+  QVERIFY(!tab.exportSourceFile(blockedParent / "strategy.py"));
+
+  QVERIFY(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
+              ->text()
+              .contains("Cannot write Python source file"));
 }
 
 void StrategyTabTest::

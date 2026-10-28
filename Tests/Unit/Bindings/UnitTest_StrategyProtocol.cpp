@@ -63,6 +63,21 @@ TEST(StrategyProtocolTest, rejectsDuplicatePropertiesAndOutOfModelNumbers) {
   EXPECT_FALSE(serializeCanonicalJson(nonFinite).ok());
 }
 
+TEST(StrategyProtocolTest, rejectsNonFinitePayloadWhenEncodingAnEnvelope) {
+  const auto encoded = encodeMessage(ProtocolMessage{
+      .protocolVersion = 1,
+      .runId = "run-123",
+      .sequence = 0,
+      .messageType = "callback-result",
+      .payload =
+          nlohmann::json{{"value", std::numeric_limits<double>::infinity()}},
+  });
+
+  ASSERT_FALSE(encoded.ok());
+  EXPECT_EQ(encoded.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+}
+
 TEST(StrategyProtocolTest, framesAtTheExactPayloadBoundary) {
   const auto makePayload = [](const std::size_t byteCount) {
     constexpr std::string_view prefix = R"json({"data":")json";

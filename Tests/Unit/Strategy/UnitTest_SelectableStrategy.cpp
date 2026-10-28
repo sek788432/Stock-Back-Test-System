@@ -1487,6 +1487,61 @@ TEST(SelectableStrategyTest,
   EXPECT_EQ(result.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
+TEST(SelectableStrategyTest,
+     commandAdapterRejectsCancellationMissingBarsAndNegativePositions) {
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {priceChangeCondition(
+                  bte::strategy::Comparison::greaterThan, 1.0)}},
+      .sell = {},
+  };
+  auto created = bte::strategy::createSelectableStrategyAdapter(plan, 1);
+  ASSERT_TRUE(created.ok()) << created.error().message;
+  auto adapter = std::move(created).value();
+  const auto bar = makeBar(2, 10.0);
+  const bte::strategy::StrategyContext context{
+      .symbol = "SYN",
+      .bar = bar,
+  };
+
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+  const auto cancelled = adapter->onMarket(context, cancellation.token());
+  EXPECT_FALSE(cancelled.ok());
+  EXPECT_EQ(cancelled.error().code, bte::core::ErrorCode::cancelled);
+
+  const auto missingBar = adapter->onMarket({.symbol = "SYN"});
+  EXPECT_FALSE(missingBar.ok());
+  EXPECT_EQ(missingBar.error().code,
+            bte::core::ErrorCode::strategyRuntimeError);
+
+  auto negativePositionContext = context;
+  negativePositionContext.positionShares = -1;
+  const auto negativePosition = adapter->onMarket(negativePositionContext);
+  EXPECT_FALSE(negativePosition.ok());
+  EXPECT_EQ(negativePosition.error().code,
+            bte::core::ErrorCode::strategyRuntimeError);
+}
+
+TEST(SelectableStrategyTest,
+     commandAdapterRejectsQuantitiesOutsideTheWholeShareRange) {
+  const auto plan = bte::strategy::SelectableStrategyPlan{
+      .buy = {.conditions = {priceChangeCondition(
+                  bte::strategy::Comparison::greaterThan, 1.0)}},
+      .sell = {},
+  };
+
+  const auto zeroQuantity =
+      bte::strategy::createSelectableStrategyAdapter(plan, 0);
+  const auto excessiveQuantity = bte::strategy::createSelectableStrategyAdapter(
+      plan, bte::strategy::maximumStrategyQuantityShares + 1);
+
+  EXPECT_FALSE(zeroQuantity.ok());
+  EXPECT_FALSE(excessiveQuantity.ok());
+  EXPECT_EQ(zeroQuantity.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(excessiveQuantity.error().code,
+            bte::core::ErrorCode::invalidArgument);
+}
+
 TEST(SelectableStrategyTest, nonFiniteBuyAndSellIndicatorOutputsArePropagated) {
   const auto overflowCondition = bte::strategy::Condition{
       .source = bte::strategy::ConditionSource::indicator,
