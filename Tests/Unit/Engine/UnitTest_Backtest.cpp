@@ -119,7 +119,7 @@ public:
   onMarket(const bte::strategy::StrategyContext &context,
            const bte::core::CancellationToken &) override {
     observedHistorySizes.push_back(context.warmupHistory.size());
-    observedBars.push_back(context.bar.has_value());
+    observedBars.push_back(static_cast<std::size_t>(context.bar.has_value()));
     if (context.indicatorValues.empty() ||
         !context.indicatorValues.front().value.has_value()) {
       observedIndicatorValues.push_back(std::nullopt);
@@ -131,7 +131,7 @@ public:
   }
 
   std::vector<std::size_t> observedHistorySizes;
-  std::vector<bool> observedBars;
+  std::vector<std::size_t> observedBars;
   std::vector<std::optional<double>> observedIndicatorValues;
 
 private:
@@ -251,7 +251,7 @@ TEST(BacktestTest, boundedHistorySeedsDeclaredStreamingIndicators) {
   ASSERT_TRUE(execution.value()->runToCompletion().ok());
   ASSERT_EQ(observer->observedIndicatorValues.size(), 2U);
   EXPECT_EQ(observer->observedHistorySizes, (std::vector<std::size_t>{2, 2}));
-  EXPECT_EQ(observer->observedBars, (std::vector<bool>{true, true}));
+  EXPECT_EQ(observer->observedBars, (std::vector<std::size_t>{1, 1}));
   EXPECT_DOUBLE_EQ(observer->observedIndicatorValues[0].value(), 25.0);
   EXPECT_DOUBLE_EQ(observer->observedIndicatorValues[1].value(), 35.0);
   EXPECT_EQ(execution.value()->result().barsProcessed, request.bars.size());
