@@ -160,6 +160,26 @@ private:
   bte::strategy::StrategyDiagnosticBatch batch_;
 };
 
+class CommandBatchProbeStrategy final : public bte::strategy::Strategy {
+public:
+  explicit CommandBatchProbeStrategy(
+      std::vector<bte::strategy::StrategyCommandBatch> batches)
+      : batches_(std::move(batches)) {}
+
+  [[nodiscard]] bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &,
+           const bte::core::CancellationToken &) override {
+    if (nextBatch_ >= batches_.size()) {
+      return bte::strategy::StrategyCommandBatch{};
+    }
+    return batches_[nextBatch_++];
+  }
+
+private:
+  std::vector<bte::strategy::StrategyCommandBatch> batches_;
+  std::size_t nextBatch_ = 0;
+};
+
 enum class CancellationPoint { none, onStart, onMarket, onFill, onFinish };
 
 class LifecycleProbeStrategy final : public bte::strategy::Strategy {
@@ -548,6 +568,120 @@ TEST(BacktestTest, malformedStructuredStrategyDiagnosticFailsTheRun) {
   EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::failed);
   EXPECT_EQ(execution.value()->result().barsProcessed, 0U);
   EXPECT_FALSE(execution.value()->result().diagnosticsComplete);
+}
+
+TEST(BacktestTest, invalidUtf8TerminalDiagnosticFailsWithoutRecordingIt) {
+  auto invalidUtf8 = std::string{"\xff", 1};
+  auto execution = bte::engine::BacktestExecution::start(
+      {.bars = {makeFlatBar(2, 10.0)},
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1,
+       .previousDataDays = {}},
+      std::make_unique<DiagnosticProbeStrategy>(
+          bte::strategy::StrategyDiagnosticBatch{
+              .records = {
+                  {.kind = bte::strategy::StrategyDiagnosticKind::terminal,
+                   .hook = "on_finish",
+                   .level = "error",
+                   .message = std::move(invalidUtf8),
+                   .errorCode = "strategyRuntimeError"}}}));
+
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+  const auto advanced = execution.value()->advance();
+
+  ASSERT_FALSE(advanced.ok());
+  EXPECT_EQ(advanced.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::failed);
+  ASSERT_TRUE(execution.value()->terminalError().has_value());
+  EXPECT_EQ(execution.value()->terminalError()->code,
+            bte::core::ErrorCode::invalidArgument);
+  EXPECT_FALSE(execution.value()->result().diagnosticsComplete);
+  EXPECT_EQ(std::ranges::count_if(
+                execution.value()->result().canonicalRecords,
+                [](const auto &record) {
+                  return record.family ==
+                         bte::results::RecordFamily::terminalDiagnostic;
+                }),
+            0);
+}
+
+TEST(BacktestTest, rejectsInvalidStrategyCommandBatchesWithoutQueueingOrders) {
+  using Command = bte::strategy::StrategyCommand;
+  using CommandKind = bte::strategy::StrategyCommandKind;
+  const auto validBuy = Command{
+      .kind = CommandKind::buyMarket, .symbol = "SYN", .quantityShares = 1};
+  const std::vector<bte::strategy::StrategyCommandBatch> invalidBatches{
+      {Command{.kind = CommandKind::buyMarket,
+               .symbol = "OTHER",
+               .quantityShares = 1}},
+      {Command{.kind = CommandKind::buyMarket,
+               .symbol = "SYN",
+               .quantityShares = 0}},
+      {Command{.kind = CommandKind::buyMarket,
+               .symbol = "SYN",
+               .quantityShares =
+                   bte::engine::maximumStarterQuantityShares + 1}},
+      {Command{.kind = CommandKind::closePosition,
+               .symbol = "SYN",
+               .quantityShares = 1}},
+      {Command{.kind = CommandKind::closePosition,
+               .symbol = "SYN",
+               .quantityShares = 0}},
+      {Command{.kind = static_cast<CommandKind>(255),
+               .symbol = "SYN",
+               .quantityShares = 0}},
+      {validBuy, validBuy},
+  };
+  for (const auto &batch : invalidBatches) {
+    auto execution = bte::engine::BacktestExecution::start(
+        {.bars = {makeFlatBar(2, 10.0)},
+         .symbol = "SYN",
+         .initialCapitalMicrodollars = 1'000'000'000,
+         .quantityShares = 1,
+         .previousDataDays = {}},
+        std::make_unique<CommandBatchProbeStrategy>(
+            std::vector<bte::strategy::StrategyCommandBatch>{batch}));
+    ASSERT_TRUE(execution.ok()) << execution.error().message;
+
+    const auto advanced = execution.value()->advance();
+
+    ASSERT_FALSE(advanced.ok());
+    EXPECT_EQ(advanced.error().code,
+              bte::core::ErrorCode::strategyCommandRejected);
+    EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::failed);
+    EXPECT_EQ(std::ranges::count_if(
+                  execution.value()->result().canonicalRecords,
+                  [](const auto &record) {
+                    return record.family == bte::results::RecordFamily::order;
+                  }),
+              0);
+  }
+
+  auto buyWhileLong = bte::engine::BacktestExecution::start(
+      {.bars = {makeFlatBar(2, 10.0), makeFlatBar(3, 11.0)},
+       .symbol = "SYN",
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1,
+       .previousDataDays = {}},
+      std::make_unique<CommandBatchProbeStrategy>(
+          std::vector<bte::strategy::StrategyCommandBatch>{{validBuy},
+                                                           {validBuy}}));
+  ASSERT_TRUE(buyWhileLong.ok()) << buyWhileLong.error().message;
+  ASSERT_TRUE(buyWhileLong.value()->advance().ok());
+
+  const auto secondBar = buyWhileLong.value()->advance();
+
+  ASSERT_FALSE(secondBar.ok());
+  EXPECT_EQ(secondBar.error().code,
+            bte::core::ErrorCode::strategyCommandRejected);
+  EXPECT_EQ(buyWhileLong.value()->result().positionShares, 0);
+  EXPECT_TRUE(buyWhileLong.value()->result().fills.empty());
+  EXPECT_EQ(std::ranges::count_if(
+                buyWhileLong.value()->result().canonicalRecords,
+                [](const auto &record) {
+                  return record.family == bte::results::RecordFamily::order;
+                }),
+            1);
 }
 
 TEST(BacktestTest, starterMarketBuyFillsAtNextBarOpenAndMarksFinalEquity) {

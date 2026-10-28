@@ -322,6 +322,9 @@ validateParameters(const nlohmann::json &parameters) {
   if (code == "RuntimeUnavailable") {
     return core::ErrorCode::runtimeUnavailable;
   }
+  if (code == "RuntimeIntegrityFailure") {
+    return core::ErrorCode::runtimeIntegrityFailure;
+  }
   if (code == "strategyRuntimeError") {
     return core::ErrorCode::strategyRuntimeError;
   }
@@ -349,14 +352,23 @@ validateParameters(const nlohmann::json &parameters) {
 
 [[nodiscard]] bool isKnownWorkerErrorCode(const std::string_view code) {
   static const std::set<std::string> knownErrorCodes{
-      "RuntimeUnavailable",        "StrategyCommandRejected",
-      "StrategyContractViolation", "StrategyFactoryFailed",
-      "StrategyLoadFailed",        "StrategyProtocolViolation",
-      "StrategySyntaxError",       "StrategyImportNotAllowed",
-      "StrategySourceContainsNul", "UnsupportedStrategyApiVersion",
-      "WorkerHandshakeFailed",     "InvalidHistoryRequest",
-      "HistoryUnavailable",        "HistoryBudgetExceeded",
-      "FutureDataRequest",         "strategyRuntimeError"};
+      "RuntimeUnavailable",
+      "RuntimeIntegrityFailure",
+      "StrategyCommandRejected",
+      "StrategyContractViolation",
+      "StrategyFactoryFailed",
+      "StrategyLoadFailed",
+      "StrategyProtocolViolation",
+      "StrategySyntaxError",
+      "StrategyImportNotAllowed",
+      "StrategySourceContainsNul",
+      "UnsupportedStrategyApiVersion",
+      "WorkerHandshakeFailed",
+      "InvalidHistoryRequest",
+      "HistoryUnavailable",
+      "HistoryBudgetExceeded",
+      "FutureDataRequest",
+      "strategyRuntimeError"};
   return knownErrorCodes.contains(std::string{code});
 }
 

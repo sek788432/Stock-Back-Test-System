@@ -1262,7 +1262,8 @@ core::Result<void> ManagedWorkerProcess::terminateProcessTree(
 
 bool ManagedWorkerProcess::isRunning() const noexcept {
 #if defined(__unix__) || defined(__APPLE__)
-  return impl_ && impl_->processGroup > 0 && !impl_->reaped;
+  return impl_ && impl_->processGroup > 0 &&
+         (!impl_->reaped || processGroupExists(impl_->processGroup));
 #else
   return false;
 #endif

@@ -86,6 +86,18 @@ void writeAll(const int descriptor, const std::string_view bytes) {
       ::pause();
     }
   }
+  if (mode == "leader-exits-with-descendant") {
+    const auto child = ::fork();
+    if (child < 0) {
+      return 17;
+    }
+    if (child == 0) {
+      while (true) {
+        ::pause();
+      }
+    }
+    return 0;
+  }
   if (mode == "invalid-frame") {
     writeAll(3, "bad!");
     return 0;

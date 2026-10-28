@@ -451,8 +451,13 @@ TEST(PythonWorkerStrategyTest,
 
 TEST(PythonWorkerStrategyTest,
      rejectsDuplicateInvalidOrNonFiniteEngineIndicators) {
-  const std::array invalidNames{bte::strategy::StrategyIndicatorValue{
-      .name = "fast-name", .value = std::nullopt}};
+  const std::array invalidNames{
+      bte::strategy::StrategyIndicatorValue{.name = "fast-name",
+                                            .value = std::nullopt},
+      bte::strategy::StrategyIndicatorValue{.name = "", .value = std::nullopt},
+      bte::strategy::StrategyIndicatorValue{.name = std::string(65, 'a'),
+                                            .value = std::nullopt},
+  };
   const std::array duplicateNames{bte::strategy::StrategyIndicatorValue{
                                       .name = "fast", .value = std::nullopt},
                                   bte::strategy::StrategyIndicatorValue{
@@ -670,6 +675,7 @@ class Example:
     indicators = {}
     def on_market(self, ctx):
         print("python-output")
+        print("zz", end="")
 def create_strategy(params):
     return Example()
 )python";
@@ -700,11 +706,307 @@ def create_strategy(params):
   const auto &records = execution.value()->result().canonicalRecords;
   const auto output = std::ranges::find_if(records, [](const auto &record) {
     return record.family == bte::results::RecordFamily::log &&
-           record.text.find("cHl0aG9uLW91dHB1dAo=") != std::string::npos;
+           record.text.find("cHl0aG9uLW91dHB1dAp6eg==") != std::string::npos;
   });
   ASSERT_NE(output, records.end());
   EXPECT_NE(output->text.find(R"("hook":"worker")"), std::string::npos);
-  EXPECT_NE(output->text.find("cHl0aG9uLW91dHB1dAo="), std::string::npos);
+  EXPECT_NE(output->text.find("cHl0aG9uLW91dHB1dAp6eg=="), std::string::npos);
+}
+
+TEST(PythonWorkerStrategyTest,
+     marksWorkerStreamIncompleteWhenStdoutExceedsRetentionLimit) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        print("x" * 300000)
+def create_strategy(params):
+    return Example()
+)python";
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategyResult.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
+  auto execution = bte::engine::BacktestExecution::start(
+      bte::engine::BacktestRequest{
+          .bars = {context(1'700'000'000'000LL).bar.value()},
+          .symbol = "AAPL",
+          .initialCapitalMicrodollars = 100'000'000,
+          .quantityShares = 1},
+      std::move(strategyResult).value());
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+
+  const auto completed = execution.value()->runToCompletion();
+
+  ASSERT_TRUE(completed.ok()) << completed.error().message;
+  const auto diagnostics = pythonStrategy->diagnostics();
+  EXPECT_EQ(diagnostics.streams.standardOutput.bytesSeen, 300'001U);
+  EXPECT_GT(diagnostics.streams.standardOutput.omittedBytes, 0U);
+  EXPECT_FALSE(execution.value()->result().diagnosticsComplete);
+  EXPECT_TRUE(std::ranges::any_of(
+      execution.value()->result().canonicalRecords, [](const auto &record) {
+        return record.family == bte::results::RecordFamily::log &&
+               record.text.find(R"("hook":"worker")") != std::string::npos &&
+               record.text.find("stdout") != std::string::npos &&
+               record.text.find(R"("omittedBytes":")") != std::string::npos;
+      }));
+}
+
+TEST(PythonWorkerStrategyTest,
+     boundsRetainedStructuredLogBytesAcrossCallbacks) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        message = "x" * 1024
+        for _ in range(100):
+            ctx.log.info(message)
+def create_strategy(params):
+    return Example()
+)python";
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategyResult.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
+
+  std::vector<bte::core::Bar> bars;
+  bars.reserve(11);
+  for (std::int64_t index = 0; index < 11; ++index) {
+    bars.push_back(context(1'700'000'000'000LL + index * 60'000).bar.value());
+  }
+  auto execution = bte::engine::BacktestExecution::start(
+      bte::engine::BacktestRequest{.bars = std::move(bars),
+                                   .symbol = "AAPL",
+                                   .initialCapitalMicrodollars = 100'000'000,
+                                   .quantityShares = 1},
+      std::move(strategyResult).value());
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+
+  const auto completed = execution.value()->runToCompletion();
+
+  ASSERT_TRUE(completed.ok()) << completed.error().message;
+  const auto diagnostics = pythonStrategy->diagnostics();
+  EXPECT_FALSE(diagnostics.complete);
+  EXPECT_FALSE(execution.value()->result().diagnosticsComplete);
+  EXPECT_GT(diagnostics.omittedLogEntries, 0U);
+  EXPECT_GT(diagnostics.omittedLogBytes, 0U);
+  EXPECT_LT(diagnostics.structuredLogs.size(), 10'000U);
+  EXPECT_EQ(std::ranges::count_if(diagnostics.structuredLogs,
+                                  [](const auto &entry) {
+                                    return entry.at("message") ==
+                                           "DiagnosticsTruncated";
+                                  }),
+            1);
+}
+
+TEST(PythonWorkerStrategyTest,
+     snapshotsStructuredLogFieldsBeforeTheStrategyCanMutateThem) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        fields = {"value": "small"}
+        ctx.log.info("snapshot", payload=fields)
+        fields["value"] = "x" * (1024 * 1024 + 1)
+def create_strategy(params):
+    return Example()
+)python";
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  auto strategy = std::move(strategyResult).value();
+
+  const auto result = strategy->onMarket(context(1'700'000'000'000LL));
+
+  ASSERT_TRUE(result.ok()) << result.error().message;
+  const auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategy.get());
+  ASSERT_NE(pythonStrategy, nullptr);
+  const auto diagnostics = pythonStrategy->diagnostics();
+  ASSERT_EQ(diagnostics.structuredLogs.size(), 1U);
+  EXPECT_EQ(
+      diagnostics.structuredLogs.front().at("fields").at("payload").at("value"),
+      "small");
+}
+
+TEST(PythonWorkerStrategyTest,
+     doesNotAppendTruncationNoticeWhenStructuredLogEntryBudgetIsFull) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        for _ in range(100):
+            ctx.log.info("x")
+def create_strategy(params):
+    return Example()
+)python";
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategyResult.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
+
+  std::vector<bte::core::Bar> bars;
+  bars.reserve(101);
+  for (std::int64_t index = 0; index < 101; ++index) {
+    bars.push_back(context(1'700'000'000'000LL + index * 60'000).bar.value());
+  }
+  auto execution = bte::engine::BacktestExecution::start(
+      bte::engine::BacktestRequest{.bars = std::move(bars),
+                                   .symbol = "AAPL",
+                                   .initialCapitalMicrodollars = 100'000'000,
+                                   .quantityShares = 1},
+      std::move(strategyResult).value());
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+
+  const auto completed = execution.value()->runToCompletion();
+
+  ASSERT_TRUE(completed.ok()) << completed.error().message;
+  const auto diagnostics = pythonStrategy->diagnostics();
+  EXPECT_EQ(diagnostics.structuredLogs.size(), 10'000U);
+  EXPECT_FALSE(diagnostics.complete);
+  EXPECT_GT(diagnostics.omittedLogEntries, 0U);
+  EXPECT_EQ(std::ranges::count_if(diagnostics.structuredLogs,
+                                  [](const auto &entry) {
+                                    return entry.at("message") ==
+                                           "DiagnosticsTruncated";
+                                  }),
+            0);
+}
+
+TEST(PythonWorkerStrategyTest,
+     reportsOmittedBytesForOversizedStartupSyntaxTraceback) {
+  const std::string source = "STOCKBT_API_VERSION = \"1\"\n"
+                             "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
+                             "def broken(" +
+                             std::string(60'000, ' ') + "x = )\n";
+  const auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+
+  ASSERT_FALSE(strategyResult.ok());
+  EXPECT_EQ(strategyResult.error().code,
+            bte::core::ErrorCode::strategyLoadFailed);
+  EXPECT_NE(strategyResult.error().message.find("traceback bytes omitted"),
+            std::string::npos)
+      << strategyResult.error().message;
+  EXPECT_LE(strategyResult.error().message.size(), 64U * 1024U);
+}
+
+TEST(PythonWorkerStrategyTest,
+     preservesRuntimeIntegrityFailureFromWorkerStartup) {
+#if defined(__unix__) || defined(__APPLE__)
+  const auto temporaryDirectory =
+      std::filesystem::temp_directory_path() /
+      ("bte-worker-error-mapping-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(temporaryDirectory);
+  struct DirectoryCleanup final {
+    std::filesystem::path path;
+    ~DirectoryCleanup() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path, ignored);
+    }
+  } cleanup{temporaryDirectory};
+  const auto bootstrapPath = temporaryDirectory / "worker.py";
+  const std::string bootstrap = R"python(
+import hashlib
+import json
+import os
+import struct
+import sys
+
+run_id = next(argument.split("=", 1)[1] for argument in sys.argv
+              if argument.startswith("--run-id="))
+sequence = 0
+
+def read_exact(descriptor, size):
+    result = bytearray()
+    while len(result) < size:
+        chunk = os.read(descriptor, size - len(result))
+        if not chunk:
+            raise EOFError("protocol input closed")
+        result.extend(chunk)
+    return bytes(result)
+
+def receive():
+    size = struct.unpack(">I", read_exact(0, 4))[0]
+    read_exact(0, 32)
+    return json.loads(read_exact(0, size))
+
+def send(message_type, payload):
+    global sequence
+    envelope = {
+        "messageType": message_type,
+        "payload": payload,
+        "protocolVersion": 1,
+        "runId": run_id,
+        "sequence": sequence,
+    }
+    content = json.dumps(envelope, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")).encode("utf-8")
+    frame = struct.pack(">I", len(content)) + hashlib.sha256(content).digest() + content
+    offset = 0
+    while offset < len(frame):
+        offset += os.write(3, frame[offset:])
+    sequence += 1
+
+python_version = ".".join(str(part) for part in sys.version_info[:3])
+send("bootstrap-ready", {"protocolVersion": 1, "pythonVersion": python_version})
+receive()
+send("handshake-complete", {
+    "pythonVersion": python_version,
+    "stockbtApiVersion": "1",
+})
+receive()
+send("module-loaded", {"stockbtApiVersion": "1"})
+receive()
+send("worker-error", {
+    "errorCode": "RuntimeIntegrityFailure",
+    "message": "managed runtime integrity check failed",
+})
+)python";
+  {
+    std::ofstream file{bootstrapPath};
+    ASSERT_TRUE(file.good());
+    file << bootstrap;
+    ASSERT_TRUE(file.good());
+  }
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath, validStrategySource,
+      parameters(), true);
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+  EXPECT_EQ(strategy.error().message, "managed runtime integrity check failed");
+#else
+  GTEST_SKIP()
+      << "POSIX worker process support is unavailable on this platform.";
+#endif
 }
 
 TEST(PythonWorkerStrategyTest, marksResultIncompleteAfterBoundedLogTruncation) {
@@ -725,6 +1027,9 @@ def create_strategy(params):
       BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
       parameters(), true);
   ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategyResult.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
   auto execution = bte::engine::BacktestExecution::start(
       bte::engine::BacktestRequest{
           .bars = {context(1'700'000'000'000LL).bar.value()},
@@ -752,6 +1057,68 @@ def create_strategy(params):
         return record.family == bte::results::RecordFamily::log &&
                record.text.find(R"("hook":"on_market")") != std::string::npos;
       }));
+
+  const auto diagnostics = pythonStrategy->diagnostics();
+  EXPECT_GT(diagnostics.omittedLogEntries, 0U);
+  EXPECT_GT(diagnostics.omittedLogBytes, 0U);
+  EXPECT_EQ(std::ranges::count_if(diagnostics.structuredLogs,
+                                  [](const auto &entry) {
+                                    return entry.at("message") ==
+                                           "DiagnosticsTruncated";
+                                  }),
+            1);
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsDeepAndOversizedStructuredLogFieldsAtomically) {
+  const std::array invalidLogFields{
+      std::string_view{R"python(detail={"a":{"b":{"c":{"d":{"e":1}}}}})python"},
+      std::string_view{R"python(**{"x" * 257: 1})python"},
+  };
+
+  for (const auto logFields : invalidLogFields) {
+    const std::string source = std::string{R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        ctx.orders.buy_market(ctx.symbol, quantity=1)
+        ctx.log.info("invalid fields", )python"} +
+                               std::string{logFields} + ")" + R"python(
+def create_strategy(params):
+    return Example()
+)python";
+    auto strategyResult = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+        parameters(), true);
+    ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+
+    auto execution = bte::engine::BacktestExecution::start(
+        bte::engine::BacktestRequest{
+            .bars = {context(1'700'000'000'000LL).bar.value()},
+            .symbol = "AAPL",
+            .initialCapitalMicrodollars = 100'000'000,
+            .quantityShares = 1,
+        },
+        std::move(strategyResult).value());
+    ASSERT_TRUE(execution.ok()) << execution.error().message;
+
+    const auto advanced = execution.value()->advance();
+
+    ASSERT_FALSE(advanced.ok());
+    EXPECT_EQ(advanced.error().code,
+              bte::core::ErrorCode::strategyContractViolation);
+    EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::failed);
+    EXPECT_EQ(execution.value()->result().barsProcessed, 0U);
+    EXPECT_TRUE(std::ranges::none_of(
+        execution.value()->result().canonicalRecords, [](const auto &record) {
+          return record.family == bte::results::RecordFamily::order ||
+                 record.family == bte::results::RecordFamily::fill ||
+                 record.family == bte::results::RecordFamily::portfolio;
+        }));
+  }
 }
 
 TEST(PythonWorkerStrategyTest, validatesFrozenParametersBeforeLaunchingWorker) {
@@ -786,6 +1153,11 @@ TEST(PythonWorkerStrategyTest, acceptsRunParameterLimitBoundaries) {
 TEST(PythonWorkerStrategyTest,
      rejectsOutOfRangeRunParametersBeforeLaunchingWorker) {
   const auto invalidParameters = std::array{
+      nlohmann::json{{"fast_period", 1}, {"slow_period", 2}},
+      nlohmann::json{{"fast_period", 1},
+                     {"slow_period", 2},
+                     {"quantity", 1},
+                     {"unexpected", 0}},
       nlohmann::json{{"fast_period", 0}, {"slow_period", 2}, {"quantity", 1}},
       nlohmann::json{
           {"fast_period", 10001}, {"slow_period", 10000}, {"quantity", 1}},
@@ -827,7 +1199,7 @@ STOCKBT_TEMPLATE_VERSION = "1.0.0"
 class Example:
     max_history_bars = 3
     indicators = {
-        "fast": stockbt.SMA("fast", period=2),
+        "F1_1": stockbt.SMA("F1_1", period=2),
         "slow": stockbt.SMA("slow", period=3),
     }
     def on_market(self, ctx):
@@ -843,7 +1215,7 @@ def create_strategy(params):
   const auto &requirements = strategyResult.value()->requirements();
   EXPECT_EQ(requirements.maxHistoryBars, 3U);
   ASSERT_EQ(requirements.indicators.size(), 2U);
-  EXPECT_EQ(requirements.indicators[0].name, "fast");
+  EXPECT_EQ(requirements.indicators[0].name, "F1_1");
   EXPECT_EQ(requirements.indicators[0].definition.kind,
             bte::indicators::IndicatorKind::sma);
   EXPECT_EQ(requirements.indicators[0].definition.period, 2);

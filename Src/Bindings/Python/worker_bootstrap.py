@@ -415,13 +415,17 @@ class _Log:
         if len(encoded) > 8192:
             raise WorkerFailure("StrategyContractViolation", "log message exceeds 8 KiB")
         entry = {"fields": fields, "level": level, "message": message}
-        size = len(_canonical_bytes(entry))
+        serialized_entry = _canonical_bytes(entry)
+        size = len(serialized_entry)
         if (len(self._entries) >= 10_000
                 or self._byte_count + size > MAXIMUM_CALLBACK_LOG_BYTES):
             self.omitted_entries += 1
             self.omitted_bytes += size
             return
-        self._entries.append(entry)
+        snapshot = _decode_json(serialized_entry)
+        if not isinstance(snapshot, dict):
+            raise ProtocolViolation("structured log entry is not a JSON object")
+        self._entries.append(snapshot)
         self._byte_count += size
 
     def info(self, message: str, **fields: object) -> None:

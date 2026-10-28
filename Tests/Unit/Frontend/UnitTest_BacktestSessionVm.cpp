@@ -779,6 +779,7 @@ def create_strategy(params):
         def on_market(self, ctx):
             fast = ctx.indicators["fast"]
             slow = ctx.indicators["slow"]
+            ctx.log.info("market", fast=fast, slow=slow)
             if fast is None or slow is None:
                 return
             previous = self.previous
@@ -832,6 +833,30 @@ def create_strategy(params):
   QCOMPARE(run.value().fills[1].side, bte::bindings::BacktestFillSide::sell);
   QVERIFY(!run.value().resultId.empty());
   QVERIFY(!run.value().canonicalResultHash.empty());
+  QVERIFY(!run.value().strategyDiagnostics.empty());
+
+  auto failingConfiguration = configuration;
+  failingConfiguration.pythonStrategy->sourceUtf8 = R"python(import stockbt
+
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+
+class FailingStrategy:
+    max_history_bars = 1
+    indicators = {}
+
+    def on_market(self, ctx):
+        raise RuntimeError("expected integration failure")
+
+def create_strategy(params):
+    return FailingStrategy()
+)python";
+  const auto failedRun = bte::bindings::runPersistedBacktestConfiguration(
+      failingConfiguration, storage);
+  QVERIFY2(failedRun.ok(),
+           failedRun.ok() ? "" : failedRun.error().message.c_str());
+  QCOMPARE(failedRun.value().status, bte::results::RunStatus::failed);
+  QVERIFY(!failedRun.value().terminalReason.empty());
 
   QVERIFY(std::filesystem::remove(storage.resultStore / "Verifications"));
   std::vector<std::size_t> verificationProgress;
@@ -851,6 +876,8 @@ def create_strategy(params):
   QVERIFY(!verificationProgress.empty());
   QCOMPARE(verificationProgress.back(), 3U);
 
+  QVERIFY(qputenv("BTE_PYTHON_WORKER_BOOTSTRAP",
+                  QByteArray::fromStdString(packagedBootstrap.string())));
   const auto verifiedRun =
       bte::bindings::runPersistedBacktestConfiguration(configuration, storage);
   QVERIFY2(verifiedRun.ok(),
@@ -974,6 +1001,11 @@ void BacktestSessionVmTest::pythonWarmupRejectsInvalidHistoryLimitsAndDates() {
   QVERIFY2(noHistory.ok(),
            noHistory.ok() ? "" : noHistory.error().message.c_str());
   QVERIFY(noHistory.value().empty());
+
+  const auto invalidRange = bte::bindings::testing::selectPythonWarmupBars(
+      root / "Data", built.value().snapshotId, "SYN", QDate{1, 1, 1}, 1);
+  QVERIFY(!invalidRange.ok());
+  QCOMPARE(invalidRange.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
 void BacktestSessionVmTest::draftLifecycleBoundariesReturnStructuredResults() {

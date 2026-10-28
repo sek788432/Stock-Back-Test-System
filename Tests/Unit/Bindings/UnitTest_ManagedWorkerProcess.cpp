@@ -210,6 +210,24 @@ TEST(ManagedWorkerProcessTest,
   EXPECT_NE(nonExecutable.error().message.find("not executable"),
             std::string::npos);
 
+  const auto invalidFormatPath = directory.path() / "invalid-worker";
+  {
+    std::ofstream file{invalidFormatPath};
+    file << "not a valid executable";
+  }
+  std::filesystem::permissions(invalidFormatPath,
+                               std::filesystem::perms::owner_read |
+                                   std::filesystem::perms::owner_write |
+                                   std::filesystem::perms::owner_exec,
+                               std::filesystem::perm_options::replace);
+  const auto invalidFormat = ManagedWorkerProcess::start(
+      WorkerProcessLaunch{.executable = invalidFormatPath});
+  ASSERT_FALSE(invalidFormat.ok());
+  EXPECT_EQ(invalidFormat.error().code,
+            bte::core::ErrorCode::workerStartFailed);
+  EXPECT_EQ(invalidFormat.error().message,
+            "Could not launch the managed worker executable.");
+
   const auto embeddedNull = ManagedWorkerProcess::start(WorkerProcessLaunch{
       .executable = fixturePath(),
       .arguments = {std::string{"bad\0argument", 12}},
@@ -308,6 +326,97 @@ TEST(ManagedWorkerProcessTest,
 #endif
 }
 
+TEST(ManagedWorkerProcessTest,
+     rejectsInvalidSharedMemoryMetadataBeforeSpawning) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto memoryResult = ReadOnlySharedMemory::create("shared-data");
+  ASSERT_TRUE(memoryResult.ok()) << memoryResult.error().message;
+  const auto &memory = memoryResult.value();
+
+  struct InvalidLaunch final {
+    WorkerProcessLaunch launch;
+    std::string_view expectedError;
+  };
+  const auto invalidLaunches = std::vector<InvalidLaunch>{
+      InvalidLaunch{
+          .launch =
+              WorkerProcessLaunch{
+                  .executable = fixturePath(),
+                  .readOnlyDataDescriptor = memory.descriptor(),
+                  .readOnlyDataLength = 0,
+                  .readOnlyDataSha256 = memory.sha256Digest(),
+              },
+          .expectedError =
+              "Worker shared-data descriptor is invalid or writable."},
+      InvalidLaunch{
+          .launch =
+              WorkerProcessLaunch{
+                  .executable = fixturePath(),
+                  .readOnlyDataDescriptor = memory.descriptor(),
+                  .readOnlyDataLength =
+                      bte::bindings::python::maximumWorkerSourceBytes + 1,
+                  .readOnlyDataSha256 = memory.sha256Digest(),
+              },
+          .expectedError =
+              "Worker shared-data descriptor is invalid or writable."},
+      InvalidLaunch{
+          .launch =
+              WorkerProcessLaunch{
+                  .executable = fixturePath(),
+                  .readOnlyDataDescriptor = memory.descriptor(),
+                  .readOnlyDataLength = memory.size(),
+                  .readOnlyDataSha256 = "short",
+              },
+          .expectedError =
+              "Worker shared-data descriptor is invalid or writable."},
+      InvalidLaunch{
+          .launch =
+              WorkerProcessLaunch{
+                  .executable = fixturePath(),
+                  .readOnlyHistoryDescriptor = memory.descriptor(),
+                  .readOnlyHistoryLength = 0,
+                  .readOnlyHistorySha256 = memory.sha256Digest(),
+              },
+          .expectedError =
+              "Worker shared-history descriptor is invalid or writable."},
+      InvalidLaunch{
+          .launch =
+              WorkerProcessLaunch{
+                  .executable = fixturePath(),
+                  .readOnlyHistoryDescriptor = memory.descriptor(),
+                  .readOnlyHistoryLength =
+                      bte::bindings::python::maximumWorkerSourceBytes + 1,
+                  .readOnlyHistorySha256 = memory.sha256Digest(),
+              },
+          .expectedError =
+              "Worker shared-history descriptor is invalid or writable."},
+      InvalidLaunch{
+          .launch =
+              WorkerProcessLaunch{
+                  .executable = fixturePath(),
+                  .readOnlyHistoryDescriptor = memory.descriptor(),
+                  .readOnlyHistoryLength = memory.size(),
+                  .readOnlyHistorySha256 = "short",
+              },
+          .expectedError =
+              "Worker shared-history descriptor is invalid or writable."},
+  };
+
+  const auto startCountBefore =
+      bte::bindings::python::testing::managedWorkerProcessStartCount();
+  for (const auto &invalid : invalidLaunches) {
+    const auto started = ManagedWorkerProcess::start(invalid.launch);
+    ASSERT_FALSE(started.ok());
+    EXPECT_EQ(started.error().message, invalid.expectedError);
+  }
+  EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+            startCountBefore);
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
 TEST(ManagedWorkerProcessTest, rejectsInvalidSharedMemorySizeBoundaries) {
   EXPECT_FALSE(ReadOnlySharedMemory::create("").ok());
   const auto oversized =
@@ -315,6 +424,74 @@ TEST(ManagedWorkerProcessTest, rejectsInvalidSharedMemorySizeBoundaries) {
   const auto rejected = ReadOnlySharedMemory::create(oversized);
   ASSERT_FALSE(rejected.ok());
   EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(ManagedWorkerProcessTest, acceptsSharedMemoryAtTheMaximumSourceSize) {
+#if defined(__unix__) || defined(__APPLE__)
+  const auto source =
+      std::string(bte::bindings::python::maximumWorkerSourceBytes, 'x');
+  auto memory = ReadOnlySharedMemory::create(source);
+
+  ASSERT_TRUE(memory.ok()) << memory.error().message;
+  EXPECT_EQ(memory.value().size(), source.size());
+  EXPECT_EQ(memory.value().sha256Digest(), bte::core::sha256(source));
+#else
+  GTEST_SKIP() << "POSIX shared memory is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest, rejectsMalformedTimezonePathBeforeSpawning) {
+#if defined(__unix__) || defined(__APPLE__)
+  const auto startCountBefore =
+      bte::bindings::python::testing::managedWorkerProcessStartCount();
+  const std::string malformedPath{"zone\0info", 9};
+  const auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(),
+      .timezoneDatabasePath = std::filesystem::path{malformedPath},
+  });
+
+  ASSERT_FALSE(started.ok());
+  EXPECT_EQ(started.error().message,
+            "Worker timezone database path is malformed.");
+  EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+            startCountBefore);
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     passesTimezoneDatabasePathAsOneArgumentToTheWorker) {
+#if defined(__unix__) || defined(__APPLE__)
+  TemporaryDirectory directory;
+  const auto timezonePath = directory.path() / "zone database";
+  {
+    std::ofstream timezoneFile{timezonePath};
+    ASSERT_TRUE(timezoneFile.good());
+    timezoneFile << "timezone data";
+  }
+
+  const auto expectedArgument = "--timezone-data-path=" + timezonePath.string();
+  const auto script =
+      "import sys; expected = " + nlohmann::json(expectedArgument).dump() +
+      "; assert sys.argv[1:] == [expected], repr(sys.argv); "
+      "print('timezone-argument-ok', file=sys.stderr)";
+  auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = std::filesystem::path{BTE_TEST_PYTHON_EXECUTABLE},
+      .arguments = {"-c", script},
+      .timezoneDatabasePath = timezonePath,
+  });
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+
+  ASSERT_TRUE(worker.waitForExit(2s).ok());
+  const auto diagnostics = worker.diagnostics();
+  EXPECT_EQ(diagnostics.standardError.retainedBytes, "timezone-argument-ok\n");
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
 }
 
 TEST(ManagedWorkerProcessTest, emptyProcessReportsClosedStateAndNoDiagnostics) {
@@ -378,6 +555,45 @@ TEST(ManagedWorkerProcessTest,
       request(), 2s, bte::core::ErrorCode::workerHandshakeTimeout);
   ASSERT_FALSE(followup.ok());
   EXPECT_EQ(followup.error().message, "Managed worker process already exited.");
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     rejectsWorkerResponsesWithUnexpectedIdentityOrSequence) {
+#if defined(__unix__) || defined(__APPLE__)
+  struct ExpectedResponse final {
+    std::string_view runId;
+    std::uint64_t sequence;
+  };
+  const auto invalidExpectations = std::vector<ExpectedResponse>{
+      ExpectedResponse{.runId = "different-run", .sequence = 0},
+      ExpectedResponse{.runId = "fixture-run", .sequence = 1},
+  };
+
+  for (const auto &expected : invalidExpectations) {
+    auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+        .executable = fixturePath(), .arguments = {"exit-ready"}});
+    ASSERT_TRUE(started.ok()) << started.error().message;
+    auto worker = std::move(started).value();
+    ASSERT_TRUE(worker
+                    .sendMessage(request(), 2s,
+                                 bte::core::ErrorCode::workerHandshakeTimeout)
+                    .ok());
+
+    const auto response =
+        worker.receiveMessage(expected.runId, expected.sequence, 2s,
+                              bte::core::ErrorCode::workerHandshakeTimeout);
+
+    ASSERT_FALSE(response.ok());
+    EXPECT_EQ(response.error().code,
+              bte::core::ErrorCode::strategyProtocolViolation);
+    EXPECT_EQ(response.error().message,
+              "Protocol message version, identity, sequence, or type is "
+              "invalid.");
+  }
 #else
   GTEST_SKIP()
       << "POSIX worker process fixture is unavailable on this platform.";
@@ -482,6 +698,49 @@ TEST(ManagedWorkerProcessTest,
 }
 
 TEST(ManagedWorkerProcessTest,
+     passesOnlyTheSourceSharedMemoryDescriptorWhenHistoryIsAbsent) {
+#if defined(__unix__) || defined(__APPLE__)
+  constexpr std::string_view source =
+      "def create_strategy(params): return None\n";
+  auto sharedMemoryResult = ReadOnlySharedMemory::create(source);
+  ASSERT_TRUE(sharedMemoryResult.ok()) << sharedMemoryResult.error().message;
+  auto sharedMemory = std::move(sharedMemoryResult).value();
+
+  auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(),
+      .arguments = {"read-source"},
+      .readOnlyDataDescriptor = sharedMemory.descriptor(),
+      .readOnlyDataLength = sharedMemory.size(),
+      .readOnlyDataSha256 = sharedMemory.sha256Digest(),
+  });
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+  sharedMemory = ReadOnlySharedMemory{};
+
+  ASSERT_TRUE(worker
+                  .sendMessage(request(), 2s,
+                               bte::core::ErrorCode::workerHandshakeTimeout)
+                  .ok());
+  const auto response = worker.receiveMessage(
+      "fixture-run", 0, 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+  ASSERT_TRUE(response.ok())
+      << response.error().message << "\n"
+      << worker.diagnostics().standardError.retainedBytes;
+  EXPECT_EQ(response.value().payload.at("source").get<std::string>(), source);
+  EXPECT_TRUE(response.value().payload.at("sourceSha256Matches").get<bool>());
+  EXPECT_TRUE(
+      response.value().payload.at("sharedSourceIsReadOnly").get<bool>());
+  EXPECT_TRUE(
+      response.value().payload.at("history").get<std::string>().empty());
+  EXPECT_FALSE(response.value().payload.at("historySha256Matches").get<bool>());
+  EXPECT_FALSE(
+      response.value().payload.at("sharedHistoryIsReadOnly").get<bool>());
+#else
+  GTEST_SKIP() << "POSIX shared memory is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
      enforcesParentDeadlinesAndRejectsInvalidWorkerFrames) {
 #if defined(__unix__) || defined(__APPLE__)
   auto hangingStart = ManagedWorkerProcess::start(
@@ -508,6 +767,42 @@ TEST(ManagedWorkerProcessTest,
   ASSERT_FALSE(invalid.ok());
   EXPECT_EQ(invalid.error().code,
             bte::core::ErrorCode::strategyProtocolViolation);
+#else
+  GTEST_SKIP()
+      << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     handlesWorkerClosingProtocolPipesWithoutRaisingSigpipe) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = std::filesystem::path{BTE_TEST_PYTHON_EXECUTABLE},
+      .arguments = {"-c", "import os, time; os.close(0); os.close(3); "
+                          "os.write(2, b'pipes-closed\\n'); time.sleep(10)"},
+  });
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+
+  const auto received = worker.receiveMessage(
+      "fixture-run", 0, 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+  ASSERT_FALSE(received.ok());
+  EXPECT_EQ(received.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+  EXPECT_EQ(received.error().message,
+            "Protocol stream ended before the frame was complete.");
+  EXPECT_NE(
+      worker.diagnostics().standardError.retainedBytes.find("pipes-closed\n"),
+      std::string::npos);
+  ASSERT_TRUE(worker.isRunning());
+
+  const auto sent = worker.sendMessage(
+      request(), 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+  ASSERT_FALSE(sent.ok());
+  EXPECT_EQ(sent.error().code, bte::core::ErrorCode::workerHandshakeFailed);
+  EXPECT_EQ(sent.error().message,
+            "Could not write a managed worker protocol frame.");
+  ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
 #else
   GTEST_SKIP()
       << "POSIX worker process fixture is unavailable on this platform.";
@@ -571,6 +866,31 @@ TEST(ManagedWorkerProcessTest, terminatesTheOwnedProcessGroupAndDescendants) {
          std::chrono::steady_clock::now() < groupGoneDeadline) {
     std::this_thread::sleep_for(5ms);
   }
+  EXPECT_EQ(::kill(-group, 0), -1);
+  EXPECT_EQ(errno, ESRCH);
+#else
+  GTEST_SKIP()
+      << "POSIX process-group support is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     tracksSurvivingDescendantsAfterTheWorkerLeaderExits) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto started = ManagedWorkerProcess::start(
+      WorkerProcessLaunch{.executable = fixturePath(),
+                          .arguments = {"leader-exits-with-descendant"}});
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+  const auto group = worker.processId();
+  ASSERT_GT(group, 0);
+  ASSERT_TRUE(worker.waitForExit(2s).ok());
+
+  const auto runningAfterLeaderExit = worker.isRunning();
+  ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
+
+  EXPECT_TRUE(runningAfterLeaderExit);
+  EXPECT_FALSE(worker.isRunning());
   EXPECT_EQ(::kill(-group, 0), -1);
   EXPECT_EQ(errno, ESRCH);
 #else

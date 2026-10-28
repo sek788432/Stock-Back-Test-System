@@ -101,6 +101,8 @@ public:
   [[nodiscard]] core::Result<void> terminateProcessTree(
       std::chrono::milliseconds gracePeriod = std::chrono::seconds{2});
 
+  /// Returns true while the worker leader or a member of its process group
+  /// runs.
   [[nodiscard]] bool isRunning() const noexcept;
   [[nodiscard]] int processId() const noexcept;
   [[nodiscard]] WorkerDiagnostics diagnostics() const;
