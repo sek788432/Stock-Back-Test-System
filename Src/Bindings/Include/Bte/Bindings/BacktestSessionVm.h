@@ -53,10 +53,8 @@ struct BacktestSnapshot {
   std::size_t barsProcessed = 0;
   std::string resultId;
   std::string canonicalResultHash;
-  std::string
-      reproducibilityDiagnostic{}; // NOLINT(readability-redundant-member-init):
-                                   // avoids -Wmissing-field-initializers at
-                                   // partial aggregate call sites.
+  // NOLINTNEXTLINE(readability-redundant-member-init): aggregate defaults.
+  std::string reproducibilityDiagnostic{};
   results::RunStatus status = results::RunStatus::completed;
   std::string terminalReason;
   std::vector<std::string> strategyDiagnostics;

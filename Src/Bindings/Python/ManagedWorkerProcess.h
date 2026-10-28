@@ -60,26 +60,18 @@ private:
 
 struct WorkerProcessLaunch {
   std::filesystem::path executable;
-  std::vector<std::string>
-      arguments{}; // NOLINT(readability-redundant-member-init):
-                   // avoids -Wmissing-field-initializers
-                   // at partial aggregate call sites.
-  std::filesystem::path
-      timezoneDatabasePath{}; // NOLINT(readability-redundant-member-init):
-                              // avoids -Wmissing-field-initializers at partial
-                              // aggregate call sites.
+  // NOLINTNEXTLINE(readability-redundant-member-init): aggregate defaults.
+  std::vector<std::string> arguments{};
+  // NOLINTNEXTLINE(readability-redundant-member-init): aggregate defaults.
+  std::filesystem::path timezoneDatabasePath{};
   int readOnlyDataDescriptor = -1;
   std::uint64_t readOnlyDataLength = 0;
-  std::string
-      readOnlyDataSha256{}; // NOLINT(readability-redundant-member-init):
-                            // avoids -Wmissing-field-initializers at
-                            // partial aggregate call sites.
+  // NOLINTNEXTLINE(readability-redundant-member-init): aggregate defaults.
+  std::string readOnlyDataSha256{};
   int readOnlyHistoryDescriptor = -1;
   std::uint64_t readOnlyHistoryLength = 0;
-  std::string
-      readOnlyHistorySha256{}; // NOLINT(readability-redundant-member-init):
-                               // avoids -Wmissing-field-initializers at
-                               // partial aggregate call sites.
+  // NOLINTNEXTLINE(readability-redundant-member-init): aggregate defaults.
+  std::string readOnlyHistorySha256{};
 };
 
 class ManagedWorkerProcess final {
