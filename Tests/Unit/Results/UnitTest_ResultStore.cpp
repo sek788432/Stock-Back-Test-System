@@ -211,6 +211,7 @@ protected:
         .strategyId = "starter",
         .strategyHash = std::string(64, 'c'),
         .dataSelection = selection_,
+        .provenance = {},
     };
   }
 
@@ -1965,7 +1966,8 @@ TEST_F(ResultStoreFixture,
 
   const auto finalized = writer.value()->finalizeAndPromote(
       bte::results::RunStatus::failed,
-      bte::results::FinalSummary{.diagnosticsComplete = false},
+      bte::results::FinalSummary{.finalEquityMicrodollars = std::nullopt,
+                                 .diagnosticsComplete = false},
       "deliberate failure");
 
   ASSERT_TRUE(finalized.ok()) << finalized.error().message;
@@ -2310,6 +2312,7 @@ TEST_F(ResultStoreFixture,
   ASSERT_TRUE(writer.ok()) << writer.error().message;
   ASSERT_TRUE(writer.value()->append(records()).ok());
   const auto summary = bte::results::FinalSummary{
+      .finalEquityMicrodollars = std::nullopt,
       .diagnosticsComplete = false,
   };
   const auto finalized = writer.value()->finalizeAndPromote(

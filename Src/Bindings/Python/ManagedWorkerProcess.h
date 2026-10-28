@@ -60,14 +60,14 @@ private:
 
 struct WorkerProcessLaunch {
   std::filesystem::path executable;
-  std::vector<std::string> arguments;
-  std::filesystem::path timezoneDatabasePath;
+  std::vector<std::string> arguments{};
+  std::filesystem::path timezoneDatabasePath{};
   int readOnlyDataDescriptor = -1;
   std::uint64_t readOnlyDataLength = 0;
-  std::string readOnlyDataSha256;
+  std::string readOnlyDataSha256{};
   int readOnlyHistoryDescriptor = -1;
   std::uint64_t readOnlyHistoryLength = 0;
-  std::string readOnlyHistorySha256;
+  std::string readOnlyHistorySha256{};
 };
 
 class ManagedWorkerProcess final {

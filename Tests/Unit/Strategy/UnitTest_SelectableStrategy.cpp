@@ -1501,6 +1501,9 @@ TEST(SelectableStrategyTest,
   const bte::strategy::StrategyContext context{
       .symbol = "SYN",
       .bar = bar,
+      .markPriceNanodollars = std::nullopt,
+      .warmupHistory = {},
+      .indicatorValues = {},
   };
 
   bte::core::CancellationSource cancellation;
@@ -1509,7 +1512,12 @@ TEST(SelectableStrategyTest,
   EXPECT_FALSE(cancelled.ok());
   EXPECT_EQ(cancelled.error().code, bte::core::ErrorCode::cancelled);
 
-  const auto missingBar = adapter->onMarket({.symbol = "SYN"});
+  const auto missingBar =
+      adapter->onMarket({.symbol = "SYN",
+                         .bar = std::nullopt,
+                         .markPriceNanodollars = std::nullopt,
+                         .warmupHistory = {},
+                         .indicatorValues = {}});
   EXPECT_FALSE(missingBar.ok());
   EXPECT_EQ(missingBar.error().code,
             bte::core::ErrorCode::strategyRuntimeError);

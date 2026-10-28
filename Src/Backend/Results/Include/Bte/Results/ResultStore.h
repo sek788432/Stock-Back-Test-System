@@ -118,7 +118,7 @@ struct RunDescriptor {
   std::string strategyId;
   std::string strategyHash;
   data::DataSelectionIdentity dataSelection;
-  ResultProvenance provenance;
+  ResultProvenance provenance{};
 
   bool operator==(const RunDescriptor &) const = default;
 };
@@ -147,8 +147,8 @@ struct CanonicalRecord {
 // GCOVR_EXCL_STOP
 
 struct FinalSummary {
-  std::optional<std::int64_t> finalEquityMicrodollars;
-  std::optional<std::int64_t> pnlMicrodollars;
+  std::optional<std::int64_t> finalEquityMicrodollars = std::nullopt;
+  std::optional<std::int64_t> pnlMicrodollars = std::nullopt;
   bool diagnosticsComplete = true;
 
   bool operator==(const FinalSummary &) const = default;

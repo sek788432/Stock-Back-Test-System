@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -38,6 +39,31 @@ using bte::bindings::python::WorkerProcessLaunch;
 #if defined(__unix__) || defined(__APPLE__)
 [[nodiscard]] std::filesystem::path fixturePath() {
   return std::filesystem::path{BTE_WORKER_FIXTURE_PATH};
+}
+
+[[nodiscard]] bool
+waitForProcessExitWithoutReaping(const ManagedWorkerProcess &worker,
+                                 const std::chrono::milliseconds timeout) {
+  const auto process = worker.processId();
+  if (process <= 0) {
+    return false;
+  }
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    siginfo_t status{};
+    if (::waitid(P_PID, static_cast<id_t>(process), &status,
+                 WEXITED | WNOHANG | WNOWAIT) != 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return false;
+    }
+    if (status.si_pid == process) {
+      return true;
+    }
+    std::this_thread::sleep_for(1ms);
+  }
+  return false;
 }
 
 [[nodiscard]] ProtocolMessage request() {
@@ -341,7 +367,7 @@ TEST(ManagedWorkerProcessTest,
                                bte::core::ErrorCode::workerHandshakeTimeout)
                   .ok());
 
-  std::this_thread::sleep_for(100ms);
+  ASSERT_TRUE(waitForProcessExitWithoutReaping(worker, 2s));
 
   const auto response = worker.receiveMessage(
       "fixture-run", 0, 2s, bte::core::ErrorCode::workerHandshakeTimeout);

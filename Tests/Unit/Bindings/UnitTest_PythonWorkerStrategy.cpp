@@ -372,14 +372,15 @@ TEST(PythonWorkerStrategyTest,
 
   auto emptySymbol = context(1'700'000'000'000LL);
   emptySymbol.symbol = {};
-  auto invalidUtf8Symbol = context(1'700'000'000'000LL);
-  invalidUtf8Symbol.symbol = std::string{"\xff", 1};
+  const std::string invalidUtf8SymbolBytes{"\xff", 1};
+  auto invalidUtf8Context = context(1'700'000'000'000LL);
+  invalidUtf8Context.symbol = invalidUtf8SymbolBytes;
   const auto invalidContexts = std::array{
       context(1'700'000'000'000LL, -1),
       context(1'700'000'000'000LL,
               bte::strategy::maximumStrategyQuantityShares + 1),
       emptySymbol,
-      invalidUtf8Symbol,
+      invalidUtf8Context,
   };
   auto invalidMarkPrice = context(1'700'000'000'000LL);
   invalidMarkPrice.markPriceNanodollars = 0;
@@ -418,8 +419,9 @@ TEST(PythonWorkerStrategyTest,
 
 TEST(PythonWorkerStrategyTest,
      rejectsInvalidContextBeforeOnFillAndOnFinishCallbacks) {
+  const std::string invalidUtf8Symbol{"\xff", 1};
   auto invalidContext = context(1'700'000'000'000LL);
-  invalidContext.symbol = std::string{"\xff", 1};
+  invalidContext.symbol = invalidUtf8Symbol;
   const auto validFill = bte::strategy::StrategyFill{
       .timestamp = context(1'700'000'000'000LL).bar->ts,
       .side = bte::strategy::StrategyFillSide::buy,
