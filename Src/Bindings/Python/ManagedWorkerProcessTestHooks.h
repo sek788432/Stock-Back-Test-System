@@ -13,10 +13,23 @@ enum class ManagedWorkerSystemCall : std::uint8_t {
   pipeCreate,
   closeOnExec,
   duplicateDescriptor,
+  spawnActionsInitialize,
+  spawnAttributesInitialize,
+  spawnActionsAddDup2,
+  spawnActionsAddClose,
+  spawnAttributesSetProcessGroup,
+  spawnAttributesSetFlags,
+  processSpawn,
+  nonBlocking,
   poll,
+  diagnosticRead,
+  unexpectedProtocolRead,
   protocolRead,
   protocolWrite,
   terminateSignal,
+  processGroupProbe,
+  terminateChildSignal,
+  waitForChild,
 };
 
 [[nodiscard]] std::uint64_t managedWorkerProcessStartCount() noexcept;

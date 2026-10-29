@@ -69,7 +69,7 @@ The C++ engine is canonical. A Strategy observes a `MarketSlice` and returns com
 - Application-owned read-only shared memory carries bulk slices and history.
 - No TCP, HTTP, localhost port, or Unix-domain socket is used.
 - Commands are buffered and committed only after a callback returns successfully.
-- A Python exception fails the run transactionally. Cancellation is cooperative for two seconds, then terminates the worker process tree.
+- A Python hook failure discards that callback's commands, stops the run, and retains earlier committed Engine slices and terminal diagnostics under the Result's explicit Save/Discard lifecycle. Startup and factory failures occur before writer creation and leave no Result. Cancellation is cooperative for two seconds, then terminates the worker process tree.
 - Isolation protects application stability; it is not a security sandbox. Worker inheritance excludes credentials and physical snapshot paths.
 - The first Python milestone uses one selected symbol and the same Engine path
   as Selectable Conditions. It registers C++ SMA indicators before warm-up,

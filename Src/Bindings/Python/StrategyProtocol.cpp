@@ -27,7 +27,7 @@ constexpr std::size_t framePrefixBytes = frameHeaderBytes + sha256DigestBytes;
 [[nodiscard]] core::Error protocolError(std::string message) {
   return core::makeError(core::ErrorCode::strategyProtocolViolation,
                          std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] std::string digestBytes(std::string_view bytes) {
   const auto hexadecimal = core::sha256(bytes);

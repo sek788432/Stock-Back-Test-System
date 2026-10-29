@@ -1,16 +1,22 @@
 #include "RuntimeProfile.h"
+#include "RuntimeProfileTestHooks.h"
 #include "StrategyProtocol.h"
 
 #include <Bte/Core/Digest.h>
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <atomic>
+#if defined(__unix__) || defined(__APPLE__)
+#include <cerrno>
+#endif
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,6 +29,27 @@ namespace {
 using bte::bindings::python::discoverManagedRuntime;
 using bte::bindings::python::serializeCanonicalJson;
 using bte::bindings::python::verifyRuntimeProfile;
+
+#if defined(__unix__) || defined(__APPLE__)
+class RuntimeProfileSystemCallFailure final {
+public:
+  RuntimeProfileSystemCallFailure(
+      const bte::bindings::python::testing::RuntimeProfileSystemCall systemCall,
+      const int errorNumber) {
+    bte::bindings::python::testing::failNextRuntimeProfileSystemCall(
+        systemCall, errorNumber);
+  }
+
+  ~RuntimeProfileSystemCallFailure() {
+    bte::bindings::python::testing::clearRuntimeProfileSystemCallFailure();
+  }
+
+  RuntimeProfileSystemCallFailure(const RuntimeProfileSystemCallFailure &) =
+      delete;
+  RuntimeProfileSystemCallFailure &
+  operator=(const RuntimeProfileSystemCallFailure &) = delete;
+};
+#endif
 
 class TemporaryDirectory {
 public:
@@ -160,6 +187,39 @@ TEST(RuntimeProfileTest, verifiesCanonicalManifestAndInstalledFileHashes) {
   EXPECT_EQ(verified.value().manifestHash.size(), 64U);
   EXPECT_EQ(verified.value().pythonExecutablePath.filename(), "python3");
   EXPECT_EQ(verified.value().timezoneDatabasePath.filename(), "zoneinfo");
+}
+
+TEST(RuntimeProfileTest,
+     reportsRuntimeFileOpenStatAndMappingFailuresWithoutLeakingDescriptors) {
+#if defined(__unix__) || defined(__APPLE__)
+  using bte::bindings::python::testing::RuntimeProfileSystemCall;
+  struct ExpectedFailure final {
+    RuntimeProfileSystemCall systemCall;
+    std::string_view message;
+  };
+  const auto failures = std::array{
+      ExpectedFailure{RuntimeProfileSystemCall::open,
+                      "Could not open a managed runtime file."},
+      ExpectedFailure{RuntimeProfileSystemCall::stat,
+                      "A managed runtime entry is not a regular file."},
+      ExpectedFailure{RuntimeProfileSystemCall::memoryMap,
+                      "Could not map a managed runtime file for verification."},
+  };
+  TemporaryDirectory directory;
+  writeFixtureProfile(directory.path());
+
+  for (const auto &failure : failures) {
+    RuntimeProfileSystemCallFailure inject{failure.systemCall, EIO};
+    const auto verified = verifyRuntimeProfile(directory.path());
+
+    ASSERT_FALSE(verified.ok());
+    EXPECT_EQ(verified.error().code,
+              bte::core::ErrorCode::runtimeIntegrityFailure);
+    EXPECT_EQ(verified.error().message, failure.message);
+  }
+#else
+  GTEST_SKIP() << "Runtime file system calls are unavailable on this platform.";
+#endif
 }
 
 TEST(RuntimeProfileTest, verifiesHashesForEmptyInstalledFiles) {
@@ -455,6 +515,10 @@ TEST(RuntimeProfileTest,
        [](nlohmann::json &manifest) {
          manifest["installedFiles"][0]["path"] = "python/bin/missing";
        }},
+      {"directory declared as an installed file",
+       [](nlohmann::json &manifest) {
+         manifest["installedFiles"][0]["path"] = "python";
+       }},
       {"file digest mismatch",
        [](nlohmann::json &manifest) {
          manifest["installedFiles"][0]["sha256"] = bte::core::sha256("other");
@@ -595,6 +659,29 @@ TEST(RuntimeProfileTest, rejectsInstalledFileSymlinksEscapingTheProfile) {
   ASSERT_FALSE(rejected.ok());
   EXPECT_EQ(rejected.error().code,
             bte::core::ErrorCode::runtimeIntegrityFailure);
+}
+
+TEST(RuntimeProfileTest, acceptsInstalledFileSymlinksWithinTheProfile) {
+  TemporaryDirectory directory;
+  writeFixtureProfile(directory.path());
+
+  const auto executable = directory.path() / "python/bin/python3";
+  const auto executableTarget = directory.path() / "python/bin/python3-real";
+  std::filesystem::rename(executable, executableTarget);
+  std::filesystem::create_symlink(executableTarget.filename(), executable);
+
+  auto manifest =
+      createFixtureManifest(bte::core::sha256("managed-python-fixture"));
+  manifest["installedFiles"].push_back(
+      {{"path", "python/bin/python3-real"},
+       {"sha256", bte::core::sha256("managed-python-fixture")}});
+  writeCanonicalManifest(directory.path(), manifest);
+
+  const auto verified = verifyRuntimeProfile(directory.path());
+
+  ASSERT_TRUE(verified.ok()) << verified.error().message;
+  EXPECT_EQ(verified.value().pythonExecutablePath,
+            std::filesystem::canonical(executableTarget));
 }
 
 } // namespace

@@ -319,14 +319,16 @@ coverage dependency closure—including gcovr `8.5`, diff-cover `10.0.0`, Jinja2
 `Tools/CoverageRequirements.txt`; direct requirements remain in
 `Tools/CoverageRequirements.in`.
 
-The merge-blocking coverage commands are:
+The following commands describe the CI merge-blocking coverage job. The
+local `RunQuality.sh` workflow supplies platform-specific gcov options; run it
+for the complete local gate.
 
 ```bash
 cmake -E remove_directory Output/coverage
 cmake --preset coverage -DBTE_BUILD_QT_APP=ON
 cmake --build --preset coverage --parallel
 ctest --preset coverage --no-tests=error
-python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --decisions --cobertura coverage.xml --json coverage.json --html-details coverage.html
+python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --decisions --gcov-suspicious-hits-threshold 0 --cobertura coverage.xml --json coverage.json --html-details coverage.html
 diff-cover coverage.xml --compare-branch=<base> --fail-under=98
 python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 90
 ```

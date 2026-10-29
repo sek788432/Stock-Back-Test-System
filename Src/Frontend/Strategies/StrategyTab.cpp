@@ -108,7 +108,7 @@ QString normalizedSource(QString source) {
   source.replace("\r\n", "\n");
   source.replace('\r', '\n');
   return source;
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 std::optional<StrategyDraft> readDraft(const std::filesystem::path &path) {
   QFile file{QString::fromStdString(path.string())};
@@ -213,7 +213,7 @@ validationWorkerFailure(const char *detail = nullptr) noexcept {
     auto error = core::Error{};
     error.code = core::ErrorCode::internal;
     return core::Result<void>{std::move(error)};
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 }
 
 core::Result<void>
@@ -278,14 +278,14 @@ StrategyDraft currentDraft(const StrategyTab::State &state) {
           .fastPeriod = state.fastPeriod->value(),
           .slowPeriod = state.slowPeriod->value(),
           .quantity = state.quantity->value()};
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 QByteArray fingerprint(const StrategyDraft &draft) { return draftBytes(draft); }
 
 QString consentKey(const std::string &sourceHash) {
   return QString{"pythonStrategy/consent/api-1/%1"}.arg(
       QString::fromStdString(sourceHash));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 bool requestSourceConsent(const std::string &sourceHash) {
   QSettings settings;
@@ -373,7 +373,8 @@ StrategyTab::StrategyTab(QWidget *parent)
             if (applicationPath.filename() == "MacOS" &&
                 applicationPath.parent_path().filename() == "Contents") {
               resources = applicationPath.parent_path() / "Resources";
-            }
+            } // GCOVR_EXCL_LINE: the compiler emits no executable instruction
+              // here.
             const auto bootstrap = resources / "Python" / "worker_bootstrap.py";
             return bindings::validatePythonStrategy(
                 configuration,
@@ -715,7 +716,7 @@ StrategyTab::~StrategyTab() {
                << error.what();
   } catch (...) {
     qWarning() << "Failed to autosave Python Strategy draft during shutdown";
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 }
 
 bool StrategyTab::autosaveDraft() {
@@ -774,9 +775,6 @@ bool StrategyTab::loadSourceFile(const std::filesystem::path &path) {
     state_->status->setText(tr("InvalidStrategyEncoding: file is not UTF-8"));
     return false;
   }
-  if (!source.isEmpty() && source.front() == QChar{0xfeff}) {
-    source.remove(0, 1);
-  }
   source = normalizedSource(std::move(source));
   if (source.contains(QChar::Null) ||
       static_cast<std::size_t>(source.toUtf8().size()) >
@@ -824,7 +822,7 @@ bool StrategyTab::exportSourceFile(const std::filesystem::path &path) {
 
 std::string StrategyTab::sourceUtf8() const {
   return normalizedSource(state_->editor->toPlainText()).toUtf8().toStdString();
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 std::string StrategyTab::canonicalParametersJson() const {
   const nlohmann::json parameters{

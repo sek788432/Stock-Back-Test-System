@@ -740,7 +740,7 @@ core::Result<T> workerFailure(const WorkerFailureMessage message) noexcept {
     auto error = core::Error{};
     error.code = core::ErrorCode::internal;
     return core::Result<T>{std::move(error)};
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 }
 
 template <typename T>
@@ -835,7 +835,7 @@ QString runStatusText(const results::RunStatus status) {
 QString sourceConsentKey(const std::string &sourceHash) {
   return QString{"pythonStrategy/consent/api-1/%1"}.arg(
       QString::fromStdString(sourceHash));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 bool requestPythonSourceConsent(const std::string &sourceHash) {
   QSettings settings;
@@ -1837,7 +1837,7 @@ BacktestTab::backtestConfigurationFromWidgets() const {
       .quantityShares = quantity->value(),
       .selectableStrategy = {},
   };
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 void BacktestTab::addSelectableConditions(
     bindings::BacktestConfiguration &configuration) {

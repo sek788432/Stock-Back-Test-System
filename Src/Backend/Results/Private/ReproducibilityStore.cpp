@@ -5,6 +5,11 @@
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 
+#if defined(BTE_ENABLE_TEST_HOOKS)
+#include "ReproducibilityStoreTestHooks.h"
+#include <atomic>
+#endif
+
 // IWYU pragma: no_include <_stdio.h>
 
 #include <algorithm>
@@ -32,11 +37,44 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 #include <fcntl.h>
+#include <sys/types.h>
 #include <unistd.h>
 #endif
 
 namespace bte::results {
 namespace {
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+std::atomic_uint64_t &reproducibilitySystemCallFailureStorage() {
+  static std::atomic_uint64_t value{0};
+  return value;
+}
+
+[[nodiscard]] int injectedReproducibilitySystemCallError(
+    const testing::ReproducibilitySystemCall systemCall) noexcept {
+  auto &failure = reproducibilitySystemCallFailureStorage();
+  auto state = failure.load(std::memory_order_relaxed);
+  while (state != 0) {
+    const auto configuredCall = static_cast<std::uint8_t>(state >> 56U);
+    if (configuredCall != static_cast<std::uint8_t>(systemCall)) {
+      return 0;
+    }
+    const auto skippedCalls = (state >> 32U) & 0x00ff'ffffU;
+    if (skippedCalls > 0) {
+      const auto next = state - (std::uint64_t{1} << 32U);
+      if (failure.compare_exchange_weak(state, next,
+                                        std::memory_order_relaxed)) {
+        return 0;
+      }
+      continue;
+    }
+    if (failure.compare_exchange_weak(state, 0, std::memory_order_relaxed)) {
+      return static_cast<int>(state & 0xffff'ffffU);
+    }
+  }
+  return 0;
+}
+#endif
 
 constexpr std::size_t maximumEvidenceBytes = std::size_t{64} * 1024U;
 constexpr std::size_t maximumStrategySourceBytes = std::size_t{1024} * 1024U;
@@ -84,15 +122,37 @@ public:
     VerificationFileLock lock;
 #if defined(__APPLE__) || defined(__linux__)
     const auto path = (directory / ".verification-store.lock").string();
-    lock.descriptor_ =
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): lock O_CREAT mode
-        ::open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
+    int openResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedReproducibilitySystemCallError(
+            testing::ReproducibilitySystemCall::openLock);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      openResult = ::open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
+                           // open requires a mode argument when O_CREAT is set.
+          path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
+    }
+    lock.descriptor_ = openResult;
     if (lock.descriptor_ < 0) {
       return fileError(
           "Unable to open verification store lock",
           std::error_code{errno, std::generic_category()}.message());
     }
-    if (::flock(lock.descriptor_, LOCK_EX) != 0) {
+    int lockResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedReproducibilitySystemCallError(
+            testing::ReproducibilitySystemCall::lockExclusive);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      lockResult = ::flock(lock.descriptor_, LOCK_EX);
+    }
+    if (lockResult != 0) {
       const auto savedError = errno;
       return fileError(
           "Unable to lock verification store",
@@ -122,18 +182,18 @@ private:
 
 core::Error invalidArgument(std::string message) {
   return core::makeError(core::ErrorCode::invalidArgument, std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 core::Error schemaError(std::string message) {
   return core::makeError(core::ErrorCode::schemaMismatch, std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 core::Error fileError(std::string operation, const std::string_view detail) {
   operation.append(": ");
   operation.append(detail);
   return core::makeError(core::ErrorCode::permissionDenied,
                          std::move(operation));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 bool validHex(const std::string_view value, const std::size_t length) {
   return value.size() == length &&
@@ -610,17 +670,37 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
 #if defined(__APPLE__) || defined(__linux__)
   const auto temporaryName = temporary.string();
   const auto destinationName = path.string();
-  const auto descriptor =
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): stage O_CREAT mode
-      ::open(temporaryName.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+  int descriptor = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedReproducibilitySystemCallError(
+          testing::ReproducibilitySystemCall::openStagingFile);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    descriptor =
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): stage O_CREAT mode
+        ::open(temporaryName.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+  }
   if (descriptor < 0) {
     return fileError("Unable to create verification staging file",
                      std::error_code{errno, std::generic_category()}.message());
   }
   std::size_t writtenBytes = 0;
   while (writtenBytes < bytes.size()) {
-    const auto written = ::write(descriptor, bytes.data() + writtenBytes,
-                                 bytes.size() - writtenBytes);
+    ssize_t written = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedReproducibilitySystemCallError(
+            testing::ReproducibilitySystemCall::writeStagingFile);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      written = ::write(descriptor, bytes.data() + writtenBytes,
+                        bytes.size() - writtenBytes);
+    }
     if (written <= 0) {
       const auto savedError = written < 0 ? errno : EIO;
       static_cast<void>(::close(descriptor));
@@ -631,7 +711,18 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
     }
     writtenBytes += static_cast<std::size_t>(written);
   }
-  if (::fsync(descriptor) != 0) {
+  int flushResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedReproducibilitySystemCallError(
+          testing::ReproducibilitySystemCall::flushStagingFile);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    flushResult = ::fsync(descriptor);
+  }
+  if (flushResult != 0) {
     const auto savedError = errno;
     static_cast<void>(::close(descriptor));
     static_cast<void>(::unlink(temporaryName.c_str()));
@@ -639,7 +730,19 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
         "Unable to flush verification staging file",
         std::error_code{savedError, std::generic_category()}.message());
   }
-  if (::close(descriptor) != 0) {
+  int closeResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedReproducibilitySystemCallError(
+          testing::ReproducibilitySystemCall::closeStagingFile);
+      injectedError != 0) {
+    static_cast<void>(::close(descriptor));
+    errno = injectedError;
+  } else
+#endif
+  {
+    closeResult = ::close(descriptor);
+  }
+  if (closeResult != 0) {
     const auto savedError = errno;
     static_cast<void>(::unlink(temporaryName.c_str()));
     return fileError(
@@ -647,7 +750,18 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
         std::error_code{savedError, std::generic_category()}.message());
   }
   if (createOnly) {
-    if (::link(temporaryName.c_str(), destinationName.c_str()) != 0) {
+    int linkResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedReproducibilitySystemCallError(
+            testing::ReproducibilitySystemCall::installEvidence);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      linkResult = ::link(temporaryName.c_str(), destinationName.c_str());
+    }
+    if (linkResult != 0) {
       const auto savedError = errno;
       static_cast<void>(::unlink(temporaryName.c_str()));
       return core::makeError(
@@ -658,12 +772,26 @@ core::Result<void> writeAtomic(const std::filesystem::path &path,
                               .message()});
     }
     static_cast<void>(::unlink(temporaryName.c_str()));
-  } else if (std::rename(temporaryName.c_str(), destinationName.c_str()) != 0) {
-    const auto savedError = errno;
-    static_cast<void>(::unlink(temporaryName.c_str()));
-    return fileError(
-        "Unable to replace verification evidence",
-        std::error_code{savedError, std::generic_category()}.message());
+  } else {
+    int renameResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedReproducibilitySystemCallError(
+            testing::ReproducibilitySystemCall::replaceEvidence);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      renameResult =
+          std::rename(temporaryName.c_str(), destinationName.c_str());
+    }
+    if (renameResult != 0) {
+      const auto savedError = errno;
+      static_cast<void>(::unlink(temporaryName.c_str()));
+      return fileError(
+          "Unable to replace verification evidence",
+          std::error_code{savedError, std::generic_category()}.message());
+    }
   }
   const auto directoryDescriptor =
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): Directory fsync fd.
@@ -1048,6 +1176,28 @@ verificationPaths(const std::filesystem::path &directory) {
 }
 
 } // namespace
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+void testing::failNextReproducibilitySystemCall(
+    const testing::ReproducibilitySystemCall systemCall,
+    const std::uint32_t successfulCallsBeforeFailure,
+    const int errorNumber) noexcept {
+  constexpr auto maximumSkippedCalls = std::uint32_t{0x00ff'ffffU};
+  const auto skippedCalls =
+      std::min(successfulCallsBeforeFailure, maximumSkippedCalls);
+  const auto errorCode =
+      static_cast<std::uint32_t>(errorNumber > 0 ? errorNumber : EIO);
+  const auto state = (static_cast<std::uint64_t>(systemCall) << 56U) |
+                     (static_cast<std::uint64_t>(skippedCalls) << 32U) |
+                     errorCode;
+  reproducibilitySystemCallFailureStorage().store(state,
+                                                  std::memory_order_relaxed);
+}
+
+void testing::clearReproducibilitySystemCallFailure() noexcept {
+  reproducibilitySystemCallFailureStorage().store(0, std::memory_order_relaxed);
+}
+#endif
 
 struct VerificationStore::Impl final {
   std::filesystem::path directory;

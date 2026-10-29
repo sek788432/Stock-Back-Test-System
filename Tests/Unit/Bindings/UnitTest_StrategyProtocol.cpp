@@ -143,6 +143,14 @@ TEST(StrategyProtocolTest, rejectsUnknownEnvelopeKeysAndNonCanonicalFrames) {
       R"json({ "messageType":"ready","payload":{},"protocolVersion":1,"runId":"run-123","sequence":0})json");
   ASSERT_TRUE(nonCanonical.ok());
   EXPECT_FALSE(decodeMessage(nonCanonical.value(), "run-123", 0).ok());
+
+  const auto negativeZeroSequence = frameCanonicalPayload(
+      R"json({"messageType":"ready","payload":{},"protocolVersion":1,"runId":"run-123","sequence":-0})json");
+  ASSERT_TRUE(negativeZeroSequence.ok())
+      << negativeZeroSequence.error().message;
+  const auto decodedNegativeZero =
+      decodeMessage(negativeZeroSequence.value(), "run-123", 0);
+  EXPECT_FALSE(decodedNegativeZero.ok());
 }
 
 TEST(StrategyProtocolTest, rejectsFrameDigestLengthAndTrailingByteViolations) {
@@ -242,6 +250,23 @@ TEST(StrategyProtocolTest,
                      .messageType = "ready",
                      .payload = nlohmann::json::object()})
           .ok());
+
+  constexpr std::uint64_t maximumSafeSequence = 9'007'199'254'740'991ULL;
+  const ProtocolMessage boundaryMessage{.protocolVersion = 1,
+                                        .runId = "run-123",
+                                        .sequence = maximumSafeSequence,
+                                        .messageType = "ready",
+                                        .payload = nlohmann::json::object()};
+  const auto boundaryFrame = encodeMessage(boundaryMessage);
+  ASSERT_TRUE(boundaryFrame.ok()) << boundaryFrame.error().message;
+  const auto boundaryDecoded =
+      decodeMessage(boundaryFrame.value(), "run-123", maximumSafeSequence);
+  ASSERT_TRUE(boundaryDecoded.ok()) << boundaryDecoded.error().message;
+  EXPECT_EQ(boundaryDecoded.value().sequence, maximumSafeSequence);
+
+  auto firstUnsafeMessage = boundaryMessage;
+  ++firstUnsafeMessage.sequence;
+  EXPECT_FALSE(encodeMessage(firstUnsafeMessage).ok());
 }
 
 TEST(StrategyProtocolTest, rejectsMalformedFramesAndUnconfiguredStreams) {
@@ -379,6 +404,56 @@ TEST(StrategyProtocolTest, readsAndWritesFragmentedStreamsAndRejectsEarlyEof) {
   EXPECT_FALSE(truncated.ok());
   EXPECT_EQ(truncated.error().code,
             bte::core::ErrorCode::strategyProtocolViolation);
+}
+
+TEST(StrategyProtocolTest, propagatesIoErrorsAfterPartialFrameProgress) {
+  const ProtocolMessage message{.protocolVersion = 1,
+                                .runId = "run-123",
+                                .sequence = 5,
+                                .messageType = "callback-result",
+                                .payload = nlohmann::json{{"success", true}}};
+  const auto frame = encodeMessage(message);
+  ASSERT_TRUE(frame.ok()) << frame.error().message;
+
+  std::size_t readCalls = 0;
+  const auto partialReader =
+      [&frame, &readCalls](const std::span<std::byte> destination)
+      -> bte::core::Result<std::size_t> {
+    if (readCalls++ > 0) {
+      return bte::core::makeError(bte::core::ErrorCode::internal,
+                                  "read failed after partial progress");
+    }
+    constexpr std::size_t partialHeaderBytes = 2;
+    std::memcpy(destination.data(), frame.value().data(), partialHeaderBytes);
+    return partialHeaderBytes;
+  };
+  const auto readFailure = readMessage(partialReader, "run-123", 5);
+  ASSERT_FALSE(readFailure.ok());
+  EXPECT_EQ(readFailure.error().code, bte::core::ErrorCode::internal);
+  EXPECT_EQ(readFailure.error().message, "read failed after partial progress");
+  EXPECT_EQ(readCalls, 2U);
+
+  std::string writtenPrefix;
+  std::size_t writeCalls = 0;
+  const auto partialWriter =
+      [&writtenPrefix, &writeCalls](const std::span<const std::byte> bytes)
+      -> bte::core::Result<std::size_t> {
+    if (writeCalls++ > 0) {
+      return bte::core::makeError(bte::core::ErrorCode::internal,
+                                  "write failed after partial progress");
+    }
+    constexpr std::size_t partialFrameBytes = 3;
+    writtenPrefix.append(reinterpret_cast<const char *>(bytes.data()),
+                         partialFrameBytes);
+    return partialFrameBytes;
+  };
+  const auto writeFailure = writeMessage(partialWriter, message);
+  ASSERT_FALSE(writeFailure.ok());
+  EXPECT_EQ(writeFailure.error().code, bte::core::ErrorCode::internal);
+  EXPECT_EQ(writeFailure.error().message,
+            "write failed after partial progress");
+  EXPECT_EQ(writtenPrefix, frame.value().substr(0, 3));
+  EXPECT_EQ(writeCalls, 2U);
 }
 
 TEST(StrategyProtocolTest, rejectsExcessiveNestingBeforeBuildingTheJsonTree) {

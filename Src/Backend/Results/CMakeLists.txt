@@ -7,7 +7,8 @@ add_library(
     Private/ResultStore.cpp
     Private/ReproducibilityCoordinator.cpp
     Private/ReproducibilityStore.cpp
-    Private/ResultStoreTestHooks.h)
+    Private/ResultStoreTestHooks.h
+    Private/ReproducibilityStoreTestHooks.h)
 
 add_library(bte::results ALIAS bte_results)
 

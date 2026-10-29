@@ -103,7 +103,8 @@ target_link_libraries(
 target_include_directories(
   bte_engine_tests
   PRIVATE
-    "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private")
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private"
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Engine/Private")
 
 gtest_discover_tests(bte_engine_tests DISCOVERY_TIMEOUT 30)
 
@@ -540,6 +541,8 @@ if(BTE_BUILD_QT_APP)
     bte_backtest_vm_tests
     PRIVATE
       bte::bindings
+      bte::engine
+      bte::python_strategy
       Qt6::Test)
 
   target_include_directories(

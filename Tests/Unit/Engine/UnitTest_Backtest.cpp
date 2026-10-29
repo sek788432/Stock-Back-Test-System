@@ -1,3 +1,4 @@
+#include "BacktestTestHooks.h"
 #include "Bte/Engine/Backtest.h"
 
 #include "Bte/Core/Bar.h"
@@ -163,6 +164,44 @@ private:
   bte::strategy::StrategyRequirements requirements_;
 };
 
+class InvalidBarsCallbackProbe final : public bte::strategy::Strategy {
+public:
+  explicit InvalidBarsCallbackProbe(std::shared_ptr<std::array<int, 4>> calls)
+      : calls_(std::move(calls)) {}
+
+  [[nodiscard]] bte::core::Result<void>
+  onStart(const bte::strategy::StrategyContext &,
+          const bte::core::CancellationToken &) override {
+    ++(*calls_)[0];
+    return {};
+  }
+
+  [[nodiscard]] bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &,
+           const bte::core::CancellationToken &) override {
+    ++(*calls_)[1];
+    return bte::strategy::StrategyCommandBatch{};
+  }
+
+  [[nodiscard]] bte::core::Result<void>
+  onFill(const bte::strategy::StrategyFill &,
+         const bte::strategy::StrategyContext &,
+         const bte::core::CancellationToken &) override {
+    ++(*calls_)[2];
+    return {};
+  }
+
+  [[nodiscard]] bte::core::Result<void>
+  onFinish(const bte::strategy::StrategyContext &,
+           const bte::core::CancellationToken &) override {
+    ++(*calls_)[3];
+    return {};
+  }
+
+private:
+  std::shared_ptr<std::array<int, 4>> calls_;
+};
+
 class DiagnosticProbeStrategy final : public bte::strategy::Strategy {
 public:
   explicit DiagnosticProbeStrategy(bte::strategy::StrategyDiagnosticBatch batch)
@@ -296,6 +335,32 @@ private:
   bool submitted_ = false;
 };
 
+class CancellationAtFinalDiagnosticsStrategy final
+    : public bte::strategy::Strategy {
+public:
+  explicit CancellationAtFinalDiagnosticsStrategy(
+      bte::core::CancellationSource &cancellation)
+      : cancellation_(cancellation) {}
+
+  [[nodiscard]] bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &,
+           const bte::core::CancellationToken &) override {
+    return bte::strategy::StrategyCommandBatch{};
+  }
+
+  [[nodiscard]] bte::strategy::StrategyDiagnosticBatch
+  takeDiagnostics() override {
+    if (diagnosticCalls_++ == 1) {
+      cancellation_.requestCancellation();
+    }
+    return {};
+  }
+
+private:
+  bte::core::CancellationSource &cancellation_;
+  std::size_t diagnosticCalls_ = 0;
+};
+
 } // namespace
 
 TEST(BacktestTest, validatesStrategyHistoryBudgetsAndIndicatorRegistrations) {
@@ -358,6 +423,35 @@ TEST(BacktestTest, validatesStrategyHistoryBudgetsAndIndicatorRegistrations) {
   ASSERT_FALSE(insufficientHistory.ok());
   EXPECT_EQ(insufficientHistory.error().code,
             bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(BacktestTest, startRejectsInvalidActualBarsBeforeStrategyCallbacks) {
+  const auto makeRequest = [](std::vector<bte::core::Bar> bars) {
+    return bte::engine::BacktestRequest{
+        .bars = std::move(bars),
+        .initialCapitalMicrodollars = 1'000'000'000,
+        .quantityShares = 1,
+        .previousDataDays = {},
+    };
+  };
+  const auto expectRejectedBeforeCallbacks =
+      [&](std::vector<bte::core::Bar> bars) {
+        auto calls = std::make_shared<std::array<int, 4>>();
+        const auto execution = bte::engine::BacktestExecution::start(
+            makeRequest(std::move(bars)),
+            std::make_unique<InvalidBarsCallbackProbe>(calls));
+        ASSERT_FALSE(execution.ok());
+        EXPECT_EQ(execution.error().code,
+                  bte::core::ErrorCode::invalidArgument);
+        EXPECT_EQ(*calls, (std::array{0, 0, 0, 0}));
+      };
+  auto invalidVolume = makeFlatBar(2, 10.0);
+  invalidVolume.volume = std::numeric_limits<double>::quiet_NaN();
+  expectRejectedBeforeCallbacks({invalidVolume});
+
+  expectRejectedBeforeCallbacks({makeFlatBar(2, 10'000'000'000.0)});
+
+  expectRejectedBeforeCallbacks({makeFlatBar(2, 10.0), makeFlatBar(2, 11.0)});
 }
 
 TEST(BacktestTest, rejectsInvalidWarmupHistoryBeforeStartingStrategy) {
@@ -473,6 +567,28 @@ TEST(BacktestTest, cancellationDuringStrategyCallbacksRollsBackCurrentSlice) {
   EXPECT_FALSE(canceledAtFinish.ok());
   EXPECT_EQ(onFinish.value()->status(), bte::results::RunStatus::canceled);
   EXPECT_EQ(onFinish.value()->result().barsProcessed, 1U);
+}
+
+TEST(BacktestTest, cancellationDuringFinalDiagnosticsFailsTheCompletedRun) {
+  bte::core::CancellationSource cancellation;
+  auto execution = bte::engine::BacktestExecution::start(
+      {.bars = {makeFlatBar(2, 10.0)},
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1,
+       .previousDataDays = {}},
+      std::make_unique<CancellationAtFinalDiagnosticsStrategy>(cancellation));
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+
+  const auto completed =
+      execution.value()->runToCompletion(cancellation.token());
+
+  ASSERT_FALSE(completed.ok());
+  EXPECT_EQ(completed.error().code, bte::core::ErrorCode::cancelled);
+  EXPECT_EQ(execution.value()->status(), bte::results::RunStatus::canceled);
+  EXPECT_EQ(execution.value()->result().barsProcessed, 1U);
+  ASSERT_TRUE(execution.value()->terminalError().has_value());
+  EXPECT_EQ(execution.value()->terminalError()->code,
+            bte::core::ErrorCode::cancelled);
 }
 
 TEST(BacktestTest, finishFailureProducesFailedTerminalResult) {
@@ -608,6 +724,23 @@ TEST(BacktestTest, resultCreationObserverFailureStopsTheTypedRun) {
   };
   auto store = bte::results::ResultStore::open(root / "Results", root / "Data");
   ASSERT_TRUE(store.ok()) << store.error().message;
+
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+  const auto canceledStart = bte::engine::BacktestExecution::startRecorded(
+      request, *store.value(), descriptor, cancellation.token());
+  ASSERT_FALSE(canceledStart.ok());
+  EXPECT_EQ(canceledStart.error().code, bte::core::ErrorCode::cancelled);
+
+  auto recordedStrategy = bte::engine::BacktestExecution::startRecorded(
+      request,
+      std::make_unique<RequirementsProbeStrategy>(
+          bte::strategy::StrategyRequirements{}),
+      *store.value(), descriptor);
+  ASSERT_TRUE(recordedStrategy.ok()) << recordedStrategy.error().message;
+  ASSERT_TRUE(recordedStrategy.value()->runToCompletion().ok());
+  EXPECT_EQ(recordedStrategy.value()->status(),
+            bte::results::RunStatus::completed);
 
   bool observerCalled = false;
   const auto recorded = bte::engine::runBacktestAndRecord(
@@ -765,8 +898,8 @@ TEST(BacktestTest, invalidUtf8TerminalDiagnosticFailsWithoutRecordingIt) {
                   {.kind = bte::strategy::StrategyDiagnosticKind::terminal,
                    .hook = "on_finish",
                    .level = "error",
-                   .message = std::move(invalidUtf8),
-                   .errorCode = "strategyRuntimeError"}}}));
+                   .errorCode = "strategyRuntimeError",
+                   .message = std::move(invalidUtf8)}}}));
 
   ASSERT_TRUE(execution.ok()) << execution.error().message;
   const auto advanced = execution.value()->advance();
@@ -1861,6 +1994,19 @@ TEST(BacktestTest, monetaryConversionChecksTheFullSumAtTheInt64Boundary) {
   EXPECT_EQ(outside.error().code, bte::core::ErrorCode::invalidArgument);
   EXPECT_EQ(outside.error().message,
             "accounting value exceeds the supported range");
+}
+
+TEST(BacktestTest, testHookCountsPublicExecutionStarts) {
+  const auto startsBefore = bte::engine::testing::backtestStartCount();
+  const auto result = bte::engine::runBacktest({
+      .bars = {makeFlatBar(2, 100.0)},
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+      .previousDataDays = {},
+  });
+
+  ASSERT_TRUE(result.ok()) << result.error().message;
+  EXPECT_EQ(bte::engine::testing::backtestStartCount(), startsBefore + 1);
 }
 
 TEST(BacktestTest, requestedStopCancelsBeforeExecution) {

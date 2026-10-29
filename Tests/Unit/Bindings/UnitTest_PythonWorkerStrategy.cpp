@@ -155,6 +155,7 @@ import json
 import os
 import struct
 import sys
+import time
 
 run_id = next(argument.split("=", 1)[1] for argument in sys.argv
               if argument.startswith("--run-id="))
@@ -196,7 +197,13 @@ def send(message_type, payload):
 
 def send_test_response(stage):
     if configuration["responseStage"] == stage:
-        send(configuration["responseType"], configuration["responsePayload"])
+        if configuration["responseType"] == "exit":
+            sys.exit(0)
+        if configuration["responseType"] == "stall":
+            send("shutdown-complete", configuration["responsePayload"])
+            time.sleep(5)
+        else:
+            send(configuration["responseType"], configuration["responsePayload"])
         sys.exit(0)
 
 python_version = ".".join(str(part) for part in sys.version_info[:3])
@@ -218,9 +225,11 @@ send("strategy-loaded", {"indicators": [], "maxHistoryBars": 1})
 while True:
     request = receive()
     if request["messageType"] == "history-seed":
+        send_test_response("history-seed")
         send("history-seeded", {})
     elif request["messageType"] == "callback":
         send_test_response("callback")
+        send_test_response("callback-" + request["payload"].get("hook", ""))
         send("callback-result", {
             "commands": [],
             "logs": [],
@@ -228,6 +237,7 @@ while True:
             "omittedLogEntries": 0,
         })
     elif request["messageType"] == "shutdown":
+        send_test_response("shutdown")
         send("shutdown-complete", {})
         break
 )python";
@@ -254,12 +264,47 @@ def create_strategy(params):
     return Example()
 )python";
 
+  bte::core::CancellationSource preRequestedCancellation;
+  preRequestedCancellation.requestCancellation();
+  const auto canceledBeforeRuntimeVerification = PythonWorkerStrategy::create(
+      runtime.value(), BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source, parameters(),
+      true, preRequestedCancellation.token());
+  ASSERT_FALSE(canceledBeforeRuntimeVerification.ok());
+  EXPECT_EQ(canceledBeforeRuntimeVerification.error().code,
+            bte::core::ErrorCode::cancelled);
+
   const auto strategy = PythonWorkerStrategy::create(
       runtime.value(), BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source, parameters(),
       true);
 
   ASSERT_TRUE(strategy.ok()) << strategy.error().message;
   EXPECT_NE(strategy.value(), nullptr);
+
+  TemporaryWorkerDirectory temporaryDirectory{"runtime-version-mismatch"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "bootstrap", "bootstrap-ready",
+      nlohmann::json{{"protocolVersion", 1}, {"pythonVersion", "3.14.8"}});
+  const auto mismatchedRuntime = PythonWorkerStrategy::create(
+      runtime.value(), bootstrapPath, source, parameters(), true);
+  ASSERT_FALSE(mismatchedRuntime.ok());
+  EXPECT_EQ(mismatchedRuntime.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+
+  auto alteredRuntimeIdentity = runtime.value();
+  alteredRuntimeIdentity.stockbtApiVersion = "2";
+  const auto changedIdentity = PythonWorkerStrategy::create(
+      alteredRuntimeIdentity, bootstrapPath, source, parameters(), true);
+  ASSERT_FALSE(changedIdentity.ok());
+  EXPECT_EQ(changedIdentity.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
+
+  auto missingRuntime = runtime.value();
+  missingRuntime.root = temporaryDirectory.path / "missing-profile";
+  const auto missingProfile = PythonWorkerStrategy::create(
+      missingRuntime, bootstrapPath, source, parameters(), true);
+  ASSERT_FALSE(missingProfile.ok());
+  EXPECT_EQ(missingProfile.error().code,
+            bte::core::ErrorCode::runtimeIntegrityFailure);
 }
 #endif
 
@@ -580,6 +625,29 @@ TEST(PythonWorkerStrategyTest,
 }
 
 TEST(PythonWorkerStrategyTest,
+     rejectsInvalidStartContextBeforeCallingTheWorker) {
+  const std::string invalidUtf8Symbol{"\xff", 1};
+  auto invalidContext = context(1'700'000'000'000LL);
+  invalidContext.symbol = invalidUtf8Symbol;
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+  const auto started = strategy.value()->onStart(invalidContext);
+
+  ASSERT_FALSE(started.ok());
+  EXPECT_EQ(started.error().code,
+            bte::core::ErrorCode::strategyContractViolation);
+  const auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategy.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
+  const auto diagnostics = pythonStrategy->diagnostics();
+  ASSERT_EQ(diagnostics.structuredErrors.size(), 1U);
+  EXPECT_EQ(diagnostics.structuredErrors.front().at("hook"), "on_start");
+}
+
+TEST(PythonWorkerStrategyTest,
      rejectsDuplicateInvalidOrNonFiniteEngineIndicators) {
   const std::array invalidNames{
       bte::strategy::StrategyIndicatorValue{.name = "fast-name",
@@ -650,6 +718,99 @@ def create_strategy(params):
             bte::core::ErrorCode::strategyCommandRejected);
 }
 
+TEST(PythonWorkerStrategyTest,
+     rejectsMarketCommandForgedInWorkerStartupResponse) {
+  TemporaryWorkerDirectory temporaryDirectory{"startup-command-response"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "callback", "callback-result",
+      nlohmann::json{
+          {"commands", nlohmann::json::array({nlohmann::json{
+                           {"kind", "buy_market"},
+                           {"quantity_shares", 1},
+                           {"symbol", "AAPL"},
+                       }})},
+          {"logs", nlohmann::json::array()},
+          {"omittedLogBytes", 0},
+          {"omittedLogEntries", 0},
+      });
+  auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+  const auto started = strategy.value()->onStart(
+      bte::strategy::StrategyContext{.symbol = "AAPL",
+                                     .bar = std::nullopt,
+                                     .cashMicrodollars = 100'000'000,
+                                     .equityMicrodollars = 100'000'000,
+                                     .positionShares = 0,
+                                     .markPriceNanodollars = std::nullopt});
+
+  ASSERT_FALSE(started.ok());
+  EXPECT_EQ(started.error().code,
+            bte::core::ErrorCode::strategyCommandRejected);
+  EXPECT_NE(started.error().message.find("unsupported command batch"),
+            std::string::npos);
+  const auto diagnostics = strategy.value()->takeDiagnostics();
+  ASSERT_EQ(diagnostics.records.size(), 1U);
+  EXPECT_EQ(diagnostics.records.front().errorCode, "StrategyCommandRejected");
+  EXPECT_EQ(diagnostics.records.front().hook, "on_start");
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsCommandsReturnedByWorkerFillAndFinishHooks) {
+  const auto payload = nlohmann::json{
+      {"commands", nlohmann::json::array({nlohmann::json{
+                       {"kind", "buy_market"},
+                       {"quantity_shares", 1},
+                       {"symbol", "AAPL"},
+                   }})},
+      {"logs", nlohmann::json::array()},
+      {"omittedLogBytes", 0},
+      {"omittedLogEntries", 0},
+  };
+  const bte::strategy::StrategyContext startContext{
+      .symbol = "AAPL",
+      .bar = std::nullopt,
+      .cashMicrodollars = 100'000'000,
+      .equityMicrodollars = 100'000'000,
+      .positionShares = 0,
+      .markPriceNanodollars = std::nullopt};
+  const auto fill = bte::strategy::StrategyFill{
+      .timestamp = context(1'700'000'000'000LL).bar->ts,
+      .side = bte::strategy::StrategyFillSide::buy,
+      .quantityShares = 1,
+      .priceNanodollars = 1'000'000'000,
+      .amountMicrodollars = 1'000'000};
+
+  for (const auto hook :
+       {std::string_view{"on_fill"}, std::string_view{"on_finish"}}) {
+    TemporaryWorkerDirectory temporaryDirectory{
+        std::string{"invalid-command-"} + std::string{hook}};
+    const auto bootstrapPath = writeScriptedWorkerBootstrap(
+        temporaryDirectory.path, std::string{"callback-"} + std::string{hook},
+        "callback-result", payload);
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+    ASSERT_TRUE(strategy.value()->onStart(startContext).ok());
+
+    const auto called =
+        hook == "on_fill"
+            ? strategy.value()->onFill(fill, context(1'700'000'000'000LL))
+            : strategy.value()->onFinish(context(1'700'000'003'600'000LL));
+
+    ASSERT_FALSE(called.ok()) << hook;
+    EXPECT_EQ(called.error().code,
+              bte::core::ErrorCode::strategyCommandRejected);
+    const auto diagnostics = strategy.value()->takeDiagnostics();
+    ASSERT_EQ(diagnostics.records.size(), 1U) << hook;
+    EXPECT_EQ(diagnostics.records.front().hook, hook);
+    EXPECT_EQ(diagnostics.records.front().errorCode, "StrategyCommandRejected");
+  }
+}
+
 TEST(PythonWorkerStrategyTest, rejectsWarmupHistoryAboveTheDeclaredBudget) {
   const auto firstContext = context(1'700'000'000'000LL);
   const auto secondContext = context(1'700'000'003'600'000LL);
@@ -689,6 +850,100 @@ TEST(PythonWorkerStrategyTest, rejectsWarmupHistoryAboveTheDeclaredBudget) {
   EXPECT_EQ(diagnostics.structuredErrors.front().at("hook"), "warmup");
   EXPECT_EQ(diagnostics.structuredErrors.front().at("errorCode"),
             "InvalidHistoryRequest");
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsWarmupHistoryAboveTheGlobalLimitBeforeLaunchingAWorker) {
+  std::vector<bte::core::Bar> warmupHistory;
+  warmupHistory.reserve(10'001);
+  for (std::int64_t index = 0; index < 10'001; ++index) {
+    warmupHistory.push_back(context(1'700'000'000'000LL + index).bar.value());
+  }
+  const auto startCountBefore =
+      bte::bindings::python::testing::managedWorkerProcessStartCount();
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      parameterBoundaryStrategySource, parameters(), true, true, {},
+      warmupHistory);
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(strategy.error().message,
+            "Python Strategy warm-up history exceeds 10000 bars.");
+  EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+            startCountBefore);
+}
+
+TEST(PythonWorkerStrategyTest,
+     reportsHistorySeedRejectionAndWorkerErrorsThroughOnStart) {
+  struct HistorySeedCase final {
+    std::string_view name;
+    std::string_view responseType;
+    nlohmann::json payload;
+    bte::core::ErrorCode expectedError;
+    std::string_view expectedMessage;
+  };
+  const std::array cases{
+      HistorySeedCase{"worker error", "worker-error",
+                      nlohmann::json{{"errorCode", "HistoryUnavailable"},
+                                     {"message", "fixture history rejection"}},
+                      bte::core::ErrorCode::historyUnavailable,
+                      "fixture history rejection"},
+      HistorySeedCase{"runtime error", "worker-error",
+                      nlohmann::json{{"errorCode", "strategyRuntimeError"},
+                                     {"message", "fixture runtime rejection"}},
+                      bte::core::ErrorCode::strategyRuntimeError,
+                      "fixture runtime rejection"},
+      HistorySeedCase{
+          "history budget", "worker-error",
+          nlohmann::json{{"errorCode", "HistoryBudgetExceeded"},
+                         {"message", "fixture history budget rejection"}},
+          bte::core::ErrorCode::historyBudgetExceeded,
+          "fixture history budget rejection"},
+      HistorySeedCase{
+          "future data", "worker-error",
+          nlohmann::json{{"errorCode", "FutureDataRequest"},
+                         {"message", "fixture future data rejection"}},
+          bte::core::ErrorCode::futureDataRequest,
+          "fixture future data rejection"},
+      HistorySeedCase{"unexpected response", "unexpected",
+                      nlohmann::json::object(),
+                      bte::core::ErrorCode::strategyProtocolViolation,
+                      "Python worker rejected its history seed."},
+  };
+  const auto historyContext = context(1'700'000'000'000LL);
+  const std::array warmupHistory{historyContext.bar.value()};
+  auto startContext = historyContext;
+  startContext.bar.reset();
+  startContext.warmupHistory = warmupHistory;
+
+  for (const auto &testCase : cases) {
+    TemporaryWorkerDirectory temporaryDirectory{"history-seed-" +
+                                                std::string{testCase.name}};
+    const auto bootstrapPath =
+        writeScriptedWorkerBootstrap(temporaryDirectory.path, "history-seed",
+                                     testCase.responseType, testCase.payload);
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true, true, {},
+        warmupHistory);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+    const auto started = strategy.value()->onStart(startContext);
+
+    ASSERT_FALSE(started.ok()) << testCase.name;
+    EXPECT_EQ(started.error().code, testCase.expectedError) << testCase.name;
+    EXPECT_EQ(started.error().message, testCase.expectedMessage)
+        << testCase.name;
+    const auto *pythonStrategy =
+        dynamic_cast<PythonWorkerStrategy *>(strategy.value().get());
+    ASSERT_NE(pythonStrategy, nullptr);
+    const auto diagnostics = pythonStrategy->diagnostics();
+    ASSERT_EQ(diagnostics.structuredErrors.size(), 1U) << testCase.name;
+    EXPECT_EQ(diagnostics.structuredErrors.front().at("hook"), "warmup")
+        << testCase.name;
+  }
 }
 
 TEST(PythonWorkerStrategyTest, preservesHookLogsWhenPythonHookRaises) {
@@ -807,6 +1062,73 @@ def create_strategy(params):
 }
 
 TEST(PythonWorkerStrategyTest,
+     rejectsEngineCommandsFromStartFillAndFinishHooks) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_start(self, ctx):
+        ctx.orders.buy_market(ctx.symbol, quantity=1)
+    def on_market(self, ctx):
+        return None
+    def on_fill(self, fill, ctx):
+        ctx.orders.buy_market(ctx.symbol, quantity=1)
+    def on_finish(self, ctx):
+        ctx.orders.buy_market(ctx.symbol, quantity=1)
+def create_strategy(params):
+    return Example()
+)python";
+  const bte::strategy::StrategyContext startContext{
+      .symbol = "AAPL",
+      .bar = std::nullopt,
+      .cashMicrodollars = 100'000'000,
+      .equityMicrodollars = 100'000'000,
+      .positionShares = 0,
+      .markPriceNanodollars = std::nullopt};
+  const bte::strategy::StrategyFill fill{
+      .timestamp = context(1'700'000'000'000LL).bar->ts,
+      .side = bte::strategy::StrategyFillSide::buy,
+      .quantityShares = 1,
+      .priceNanodollars = 1'000'000'000,
+      .amountMicrodollars = 1'000'000};
+  using HookInvocation =
+      std::pair<std::string_view, std::function<bte::core::Result<void>(
+                                      bte::strategy::Strategy &)>>;
+  const std::array<HookInvocation, 3> hooks{{
+      {"on_start",
+       [&startContext](bte::strategy::Strategy &strategy) {
+         return strategy.onStart(startContext);
+       }},
+      {"on_fill",
+       [&fill](bte::strategy::Strategy &strategy) {
+         return strategy.onFill(fill, context(1'700'000'000'000LL));
+       }},
+      {"on_finish",
+       [](bte::strategy::Strategy &strategy) {
+         return strategy.onFinish(context(1'700'000'003'600'000LL));
+       }},
+  }};
+
+  for (const auto &[hook, invoke] : hooks) {
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+        parameters(), true);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+    const auto result = invoke(*strategy.value());
+
+    ASSERT_FALSE(result.ok()) << hook;
+    EXPECT_EQ(result.error().code,
+              bte::core::ErrorCode::strategyCommandRejected)
+        << hook;
+    EXPECT_EQ(result.error().message, "orders are unavailable in this hook")
+        << hook;
+  }
+}
+
+TEST(PythonWorkerStrategyTest,
      marksCallbackDiagnosticsIncompleteWhenTheParentCancels) {
   const std::string source = R"python(
 STOCKBT_API_VERSION = "1"
@@ -882,6 +1204,46 @@ def create_strategy(params):
   ASSERT_NE(output, records.end());
   EXPECT_NE(output->text.find(R"("hook":"worker")"), std::string::npos);
   EXPECT_NE(output->text.find("cHl0aG9uLW91dHB1dAp6eg=="), std::string::npos);
+}
+
+TEST(PythonWorkerStrategyTest, collectsWorkerStdoutOnceAfterGracefulShutdown) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        print("worker-stdout")
+def create_strategy(params):
+    return Example()
+)python";
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  auto *pythonStrategy =
+      dynamic_cast<PythonWorkerStrategy *>(strategyResult.value().get());
+  ASSERT_NE(pythonStrategy, nullptr);
+
+  const auto market =
+      strategyResult.value()->onMarket(context(1'700'000'000'000LL));
+  ASSERT_TRUE(market.ok()) << market.error().message;
+  const auto finished =
+      strategyResult.value()->onFinish(context(1'700'000'003'600'000LL));
+  ASSERT_TRUE(finished.ok()) << finished.error().message;
+
+  const auto diagnostics = strategyResult.value()->takeDiagnostics();
+  ASSERT_EQ(diagnostics.records.size(), 1U);
+  EXPECT_TRUE(diagnostics.complete);
+  EXPECT_EQ(diagnostics.records.front().message, "stdout");
+  EXPECT_NE(diagnostics.records.front().canonicalFieldsJson.find(
+                "d29ya2VyLXN0ZG91dAo="),
+            std::string::npos);
+  EXPECT_NE(diagnostics.records.front().canonicalFieldsJson.find(
+                R"("bytesSeen":"14")"),
+            std::string::npos);
+  EXPECT_TRUE(strategyResult.value()->takeDiagnostics().records.empty());
 }
 
 TEST(PythonWorkerStrategyTest,
@@ -1196,6 +1558,219 @@ TEST(PythonWorkerStrategyTest, mapsWorkerErrorDuringProtocolHandshake) {
   EXPECT_EQ(strategy.error().message, "fixture handshake rejection");
 }
 
+TEST(PythonWorkerStrategyTest, rejectsMalformedProtocolHandshakeResponse) {
+  TemporaryWorkerDirectory temporaryDirectory{"malformed-handshake"};
+  const auto bootstrapPath =
+      writeScriptedWorkerBootstrap(temporaryDirectory.path, "handshake",
+                                   "unexpected", nlohmann::json::object());
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::workerHandshakeFailed);
+  EXPECT_EQ(strategy.error().message,
+            "Python worker handshake response is invalid.");
+}
+
+TEST(PythonWorkerStrategyTest,
+     workerExitDuringBootstrapAndHandshakeReturnsStartupErrors) {
+  for (const auto stage :
+       {std::string_view{"bootstrap"}, std::string_view{"handshake"}}) {
+    TemporaryWorkerDirectory temporaryDirectory{"worker-exit-" +
+                                                std::string{stage}};
+    const auto bootstrapPath = writeScriptedWorkerBootstrap(
+        temporaryDirectory.path, stage, "exit", nlohmann::json::object());
+
+    const auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+
+    ASSERT_FALSE(strategy.ok()) << stage;
+    EXPECT_FALSE(strategy.error().message.empty()) << stage;
+    EXPECT_NE(strategy.error().code, bte::core::ErrorCode::cancelled) << stage;
+  }
+}
+
+TEST(PythonWorkerStrategyTest,
+     workerExitDuringStartCallbackPreservesTransportFailure) {
+  TemporaryWorkerDirectory temporaryDirectory{"worker-exit-on-start"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "callback", "exit", nlohmann::json::object());
+  auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+  const auto started = strategy.value()->onStart(
+      bte::strategy::StrategyContext{.symbol = "AAPL",
+                                     .bar = std::nullopt,
+                                     .cashMicrodollars = 100'000'000,
+                                     .equityMicrodollars = 100'000'000,
+                                     .positionShares = 0,
+                                     .markPriceNanodollars = std::nullopt});
+
+  ASSERT_FALSE(started.ok());
+  EXPECT_FALSE(started.error().message.empty());
+  const auto diagnostics = strategy.value()->takeDiagnostics();
+  EXPECT_FALSE(diagnostics.complete);
+  ASSERT_EQ(diagnostics.records.size(), 1U);
+  EXPECT_EQ(diagnostics.records.front().hook, "on_start");
+}
+
+TEST(PythonWorkerStrategyTest, rejectsMalformedStrategyContractFromWorker) {
+  struct ContractCase final {
+    std::string_view name;
+    nlohmann::json payload;
+    std::string_view expectedMessage;
+  };
+  const std::array cases{
+      ContractCase{"invalid history budget",
+                   nlohmann::json{{"indicators", nlohmann::json::array()},
+                                  {"maxHistoryBars", 0}},
+                   "Python worker returned an invalid strategy contract."},
+      ContractCase{
+          "unsupported indicator",
+          nlohmann::json{
+              {"indicators",
+               nlohmann::json::array({nlohmann::json{
+                   {"kind", "EMA"}, {"name", "fast"}, {"period", 1}}})},
+              {"maxHistoryBars", 1}},
+          "Python Strategy supports only valid SMA registrations."},
+      ContractCase{
+          "empty indicator name",
+          nlohmann::json{{"indicators",
+                          nlohmann::json::array({nlohmann::json{
+                              {"kind", "SMA"}, {"name", ""}, {"period", 1}}})},
+                         {"maxHistoryBars", 1}},
+          "Python Strategy SMA names must be unique ASCII identifiers."},
+      ContractCase{
+          "overlong indicator name",
+          nlohmann::json{{"indicators", nlohmann::json::array({nlohmann::json{
+                                            {"kind", "SMA"},
+                                            {"name", std::string(65, 'a')},
+                                            {"period", 1}}})},
+                         {"maxHistoryBars", 1}},
+          "Python Strategy SMA names must be unique ASCII identifiers."},
+      ContractCase{
+          "duplicate indicator name",
+          nlohmann::json{
+              {"indicators",
+               nlohmann::json::array(
+                   {nlohmann::json{
+                        {"kind", "SMA"}, {"name", "fast"}, {"period", 1}},
+                    nlohmann::json{
+                        {"kind", "SMA"}, {"name", "fast"}, {"period", 1}}})},
+              {"maxHistoryBars", 1}},
+          "Python Strategy SMA names must be unique ASCII identifiers."},
+      ContractCase{
+          "indicator period exceeds history budget",
+          nlohmann::json{
+              {"indicators",
+               nlohmann::json::array({nlohmann::json{
+                   {"kind", "SMA"}, {"name", "fast"}, {"period", 2}}})},
+              {"maxHistoryBars", 1}},
+          "Python Strategy history budget is smaller than an SMA period."},
+  };
+
+  for (const auto &testCase : cases) {
+    TemporaryWorkerDirectory temporaryDirectory{"strategy-contract-" +
+                                                std::string{testCase.name}};
+    const auto bootstrapPath =
+        writeScriptedWorkerBootstrap(temporaryDirectory.path, "factory",
+                                     "strategy-loaded", testCase.payload);
+
+    const auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+
+    ASSERT_FALSE(strategy.ok()) << testCase.name;
+    EXPECT_EQ(strategy.error().code,
+              bte::core::ErrorCode::strategyContractViolation)
+        << testCase.name;
+    EXPECT_EQ(strategy.error().message, testCase.expectedMessage)
+        << testCase.name;
+  }
+}
+
+TEST(PythonWorkerStrategyTest, rejectsUnexpectedWorkerModuleResponse) {
+  TemporaryWorkerDirectory temporaryDirectory{"unexpected-module-response"};
+  const auto bootstrapPath =
+      writeScriptedWorkerBootstrap(temporaryDirectory.path, "module",
+                                   "unexpected", nlohmann::json::object());
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::strategyLoadFailed);
+  EXPECT_EQ(strategy.error().message,
+            "Python worker did not confirm module loading.");
+}
+
+TEST(PythonWorkerStrategyTest,
+     reportsWorkerShutdownProtocolAndWorkerErrorsThroughOnFinish) {
+  struct ShutdownCase final {
+    std::string_view name;
+    std::string_view responseType;
+    nlohmann::json payload;
+    bte::core::ErrorCode expectedError;
+    std::string_view expectedMessage;
+  };
+  const std::array cases{
+      ShutdownCase{"unexpected response", "unexpected",
+                   nlohmann::json::object(),
+                   bte::core::ErrorCode::strategyProtocolViolation,
+                   "Python worker returned an invalid shutdown response."},
+      ShutdownCase{"worker error", "worker-error",
+                   nlohmann::json{{"errorCode", "WorkerHandshakeFailed"},
+                                  {"message", "fixture shutdown rejection"}},
+                   bte::core::ErrorCode::workerHandshakeFailed,
+                   "fixture shutdown rejection"},
+      ShutdownCase{"worker does not exit", "stall", nlohmann::json::object(),
+                   bte::core::ErrorCode::workerHandshakeTimeout,
+                   "Python worker did not complete its bounded shutdown."},
+  };
+  const bte::strategy::StrategyContext startContext{
+      .symbol = "AAPL",
+      .bar = std::nullopt,
+      .cashMicrodollars = 100'000'000,
+      .equityMicrodollars = 100'000'000,
+      .positionShares = 0,
+      .markPriceNanodollars = std::nullopt};
+
+  for (const auto &testCase : cases) {
+    TemporaryWorkerDirectory temporaryDirectory{"shutdown-" +
+                                                std::string{testCase.name}};
+    const auto bootstrapPath =
+        writeScriptedWorkerBootstrap(temporaryDirectory.path, "shutdown",
+                                     testCase.responseType, testCase.payload);
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+    auto *pythonStrategy =
+        dynamic_cast<PythonWorkerStrategy *>(strategy.value().get());
+    ASSERT_NE(pythonStrategy, nullptr);
+    ASSERT_TRUE(strategy.value()->onStart(startContext).ok());
+
+    const auto finished =
+        strategy.value()->onFinish(context(1'700'000'003'600'000LL));
+
+    ASSERT_FALSE(finished.ok()) << testCase.name;
+    EXPECT_EQ(finished.error().code, testCase.expectedError) << testCase.name;
+    EXPECT_EQ(finished.error().message, testCase.expectedMessage)
+        << testCase.name;
+    const auto diagnostics = pythonStrategy->diagnostics();
+    EXPECT_FALSE(diagnostics.complete) << testCase.name;
+    ASSERT_EQ(diagnostics.structuredErrors.size(), 1U) << testCase.name;
+    EXPECT_EQ(diagnostics.structuredErrors.front().at("hook"), "on_finish")
+        << testCase.name;
+  }
+}
+
 TEST(PythonWorkerStrategyTest, rejectsInvalidBootstrapIdentityFromWorker) {
   TemporaryWorkerDirectory temporaryDirectory{"bootstrap-identity"};
   const auto bootstrapPath = writeScriptedWorkerBootstrap(
@@ -1270,6 +1845,8 @@ TEST(PythonWorkerStrategyTest,
                        bte::core::ErrorCode::historyBudgetExceeded},
       ErrorMappingCase{"FutureDataRequest",
                        bte::core::ErrorCode::futureDataRequest},
+      ErrorMappingCase{"UnknownWorkerErrorCode",
+                       bte::core::ErrorCode::strategyProtocolViolation},
   };
 
   for (const auto &testCase : cases) {
@@ -1351,6 +1928,12 @@ TEST(PythonWorkerStrategyTest, rejectsInvalidFactoryErrorDiagnosticValues) {
                              nlohmann::json{{"omittedTracebackBytes", 0},
                                             {"sourceColumn", 1},
                                             {"sourceLine", 0},
+                                            {"traceback", "Traceback"}},
+                             "invalid startup source location"},
+      InvalidDiagnosticsCase{"boolean-source-column",
+                             nlohmann::json{{"omittedTracebackBytes", 0},
+                                            {"sourceColumn", true},
+                                            {"sourceLine", 1},
                                             {"traceback", "Traceback"}},
                              "invalid startup source location"},
   };
@@ -1596,10 +2179,16 @@ TEST(PythonWorkerStrategyTest,
   using HookInvocation =
       std::pair<std::string_view, std::function<bte::core::Result<void>(
                                       bte::strategy::Strategy &)>>;
-  const std::array<HookInvocation, 3> hooks{{
+  const std::array<HookInvocation, 4> hooks{{
       {"on_start",
        [&startContext](bte::strategy::Strategy &strategy) {
          return strategy.onStart(startContext);
+       }},
+      {"on_market",
+       [](bte::strategy::Strategy &strategy) {
+         const auto result = strategy.onMarket(context(1'700'000'000'000LL));
+         return result.ok() ? bte::core::Result<void>{}
+                            : bte::core::Result<void>{result.error()};
        }},
       {"on_fill",
        [&fill](bte::strategy::Strategy &strategy) {
@@ -1669,6 +2258,225 @@ TEST(PythonWorkerStrategyTest, rejectsMalformedWorkerCallbackErrorDiagnostics) {
   ASSERT_EQ(diagnostics.structuredErrors.size(), 1U);
   EXPECT_EQ(diagnostics.structuredErrors.front().at("errorCode"),
             "StrategyProtocolViolation");
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsMalformedWorkerErrorDiagnosticsFromFillAndFinishHooks) {
+  const auto marketContext = context(1'700'000'000'000LL);
+  auto finishContext = marketContext;
+  finishContext.bar.reset();
+  finishContext.markPriceNanodollars.reset();
+  const bte::strategy::StrategyFill fill{
+      .timestamp = marketContext.bar->ts,
+      .side = bte::strategy::StrategyFillSide::buy,
+      .quantityShares = 1,
+      .priceNanodollars = 1'000'000'000,
+      .amountMicrodollars = 1'000'000};
+  using HookInvocation =
+      std::pair<std::string_view, std::function<bte::core::Result<void>(
+                                      bte::strategy::Strategy &)>>;
+  const std::array<HookInvocation, 3> hooks{{
+      {"on_start",
+       [](bte::strategy::Strategy &strategy) {
+         return strategy.onStart(bte::strategy::StrategyContext{
+             .symbol = "AAPL",
+             .bar = std::nullopt,
+             .cashMicrodollars = 100'000'000,
+             .equityMicrodollars = 100'000'000,
+             .positionShares = 0,
+             .markPriceNanodollars = std::nullopt});
+       }},
+      {"on_fill",
+       [&fill, &marketContext](bte::strategy::Strategy &strategy) {
+         return strategy.onFill(fill, marketContext);
+       }},
+      {"on_finish",
+       [&finishContext](bte::strategy::Strategy &strategy) {
+         return strategy.onFinish(finishContext);
+       }},
+  }};
+
+  for (const auto &[hook, invoke] : hooks) {
+    TemporaryWorkerDirectory temporaryDirectory{"callback-error-" +
+                                                std::string{hook}};
+    const auto bootstrapPath = writeScriptedWorkerBootstrap(
+        temporaryDirectory.path, "callback", "worker-error",
+        nlohmann::json{
+            {"diagnostics", nlohmann::json{{"hook", std::string{hook}}}},
+            {"errorCode", "strategyRuntimeError"},
+            {"message", "fixture callback failure"}});
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+    const auto result = invoke(*strategy.value());
+
+    ASSERT_FALSE(result.ok()) << hook;
+    EXPECT_EQ(result.error().code,
+              bte::core::ErrorCode::strategyProtocolViolation)
+        << hook;
+    EXPECT_NE(result.error().message.find("malformed hook diagnostics"),
+              std::string::npos)
+        << hook;
+    const auto diagnostics = strategy.value()->takeDiagnostics();
+    EXPECT_FALSE(diagnostics.complete) << hook;
+    ASSERT_EQ(diagnostics.records.size(), 1U) << hook;
+    EXPECT_EQ(diagnostics.records.front().kind,
+              bte::strategy::StrategyDiagnosticKind::terminal)
+        << hook;
+    EXPECT_EQ(diagnostics.records.front().hook, hook);
+    EXPECT_EQ(diagnostics.records.front().errorCode,
+              "StrategyProtocolViolation");
+  }
+}
+
+TEST(PythonWorkerStrategyTest, rejectsInvalidWorkerHookCountsLocationsAndLogs) {
+  const nlohmann::json validDiagnostics{
+      {"hook", "on_market"},        {"logs", nlohmann::json::array()},
+      {"omittedLogBytes", 0},       {"omittedLogEntries", 0},
+      {"omittedTracebackBytes", 0}, {"sourceColumn", nullptr},
+      {"sourceLine", nullptr},      {"traceback", ""},
+  };
+  auto booleanCount = validDiagnostics;
+  booleanCount["omittedLogBytes"] = true;
+  auto negativeCount = validDiagnostics;
+  negativeCount["omittedTracebackBytes"] = -1;
+  auto invalidLocation = validDiagnostics;
+  invalidLocation["sourceLine"] = true;
+  auto overflowingLocation = validDiagnostics;
+  overflowingLocation["sourceColumn"] =
+      static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max()) + 1;
+  auto malformedLogs = validDiagnostics;
+  malformedLogs["logs"] =
+      nlohmann::json::array({nlohmann::json{{"fields", "not an object"},
+                                            {"level", "info"},
+                                            {"message", "fixture log"}}});
+  const std::array cases{
+      std::pair{"boolean omission count", booleanCount},
+      std::pair{"negative traceback omission", negativeCount},
+      std::pair{"boolean source location", invalidLocation},
+      std::pair{"overflowing source column", overflowingLocation},
+      std::pair{"malformed log entry", malformedLogs},
+  };
+
+  for (const auto &[name, diagnostics] : cases) {
+    TemporaryWorkerDirectory temporaryDirectory{"invalid-hook-diagnostics-" +
+                                                std::string{name}};
+    const auto bootstrapPath = writeScriptedWorkerBootstrap(
+        temporaryDirectory.path, "callback", "worker-error",
+        nlohmann::json{{"diagnostics", diagnostics},
+                       {"errorCode", "strategyRuntimeError"},
+                       {"message", "fixture callback failure"}});
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+    const auto result =
+        strategy.value()->onMarket(context(1'700'000'000'000LL));
+
+    ASSERT_FALSE(result.ok()) << name;
+    EXPECT_EQ(result.error().code,
+              bte::core::ErrorCode::strategyProtocolViolation)
+        << name << ": " << result.error().message;
+  }
+}
+
+TEST(PythonWorkerStrategyTest, rejectsMalformedSuccessfulCallbackDiagnostics) {
+  struct CallbackDiagnosticsCase final {
+    std::string_view name;
+    nlohmann::json payload;
+    std::string_view expectedMessage;
+  };
+  const std::array cases{
+      CallbackDiagnosticsCase{
+          "logs are not an array",
+          nlohmann::json{{"commands", nlohmann::json::array()},
+                         {"logs", "invalid"},
+                         {"omittedLogBytes", 0},
+                         {"omittedLogEntries", 0}},
+          "Python worker returned malformed diagnostics."},
+      CallbackDiagnosticsCase{
+          "negative omission count",
+          nlohmann::json{{"commands", nlohmann::json::array()},
+                         {"logs", nlohmann::json::array()},
+                         {"omittedLogBytes", -1},
+                         {"omittedLogEntries", 0}},
+          "Python worker returned invalid diagnostic counts."},
+      CallbackDiagnosticsCase{
+          "boolean omission count",
+          nlohmann::json{{"commands", nlohmann::json::array()},
+                         {"logs", nlohmann::json::array()},
+                         {"omittedLogBytes", true},
+                         {"omittedLogEntries", 0}},
+          "Python worker returned invalid diagnostic counts."},
+      CallbackDiagnosticsCase{
+          "boolean omission entry count",
+          nlohmann::json{{"commands", nlohmann::json::array()},
+                         {"logs", nlohmann::json::array()},
+                         {"omittedLogBytes", 0},
+                         {"omittedLogEntries", true}},
+          "Python worker returned invalid diagnostic counts."},
+  };
+
+  for (const auto &testCase : cases) {
+    TemporaryWorkerDirectory temporaryDirectory{"callback-diagnostics-" +
+                                                std::string{testCase.name}};
+    const auto bootstrapPath =
+        writeScriptedWorkerBootstrap(temporaryDirectory.path, "callback",
+                                     "callback-result", testCase.payload);
+    auto strategy = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+        parameterBoundaryStrategySource, parameters(), true);
+    ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+    const auto result =
+        strategy.value()->onMarket(context(1'700'000'000'000LL));
+
+    ASSERT_FALSE(result.ok()) << testCase.name;
+    EXPECT_EQ(result.error().code,
+              bte::core::ErrorCode::strategyProtocolViolation)
+        << testCase.name;
+    EXPECT_EQ(result.error().message, testCase.expectedMessage)
+        << testCase.name;
+    const auto *pythonStrategy =
+        dynamic_cast<PythonWorkerStrategy *>(strategy.value().get());
+    ASSERT_NE(pythonStrategy, nullptr);
+    const auto diagnostics = pythonStrategy->diagnostics();
+    EXPECT_FALSE(diagnostics.complete) << testCase.name;
+    ASSERT_EQ(diagnostics.structuredErrors.size(), 1U) << testCase.name;
+    EXPECT_EQ(diagnostics.structuredErrors.front().at("hook"), "on_market")
+        << testCase.name;
+    EXPECT_EQ(diagnostics.structuredErrors.front().at("errorCode"),
+              "StrategyProtocolViolation")
+        << testCase.name;
+  }
+}
+
+TEST(PythonWorkerStrategyTest,
+     rejectsOversizedWorkerErrorEnvelopeBeforeStoringDiagnostics) {
+  TemporaryWorkerDirectory temporaryDirectory{"oversized-error-envelope"};
+  const auto bootstrapPath = writeScriptedWorkerBootstrap(
+      temporaryDirectory.path, "callback", "worker-error",
+      nlohmann::json{{"errorCode", "strategyRuntimeError"},
+                     {"message", std::string(64U * 1024U + 1U, 'x')}});
+  auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, bootstrapPath,
+      parameterBoundaryStrategySource, parameters(), true);
+  ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+
+  const auto result = strategy.value()->onMarket(context(1'700'000'000'000LL));
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code,
+            bte::core::ErrorCode::strategyProtocolViolation);
+  EXPECT_EQ(result.error().message,
+            "Python worker returned a malformed error envelope.");
+  const auto diagnostics = strategy.value()->takeDiagnostics();
+  EXPECT_FALSE(diagnostics.complete);
+  ASSERT_EQ(diagnostics.records.size(), 1U);
+  EXPECT_EQ(diagnostics.records.front().errorCode, "StrategyProtocolViolation");
 }
 
 TEST(PythonWorkerStrategyTest, marksResultIncompleteAfterBoundedLogTruncation) {
@@ -1930,6 +2738,56 @@ def create_strategy(params):
   EXPECT_EQ(strategyResult.error().code,
             bte::core::ErrorCode::strategyContractViolation);
   EXPECT_NE(strategyResult.error().message.find("SMA"), std::string::npos);
+}
+
+TEST(PythonWorkerStrategyTest, hashRandomizationIsStableAcrossFreshWorkers) {
+  const std::string source = R"python(
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class HashProbe:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        ctx.log.info("hash", value=str(hash("same-functional-input")))
+def create_strategy(params):
+    return HashProbe()
+)python";
+
+  const auto run =
+      [&]() -> bte::core::Result<std::vector<bte::results::CanonicalRecord>> {
+    auto strategyResult = PythonWorkerStrategy::createForTesting(
+        BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+        parameters(), true);
+    if (!strategyResult.ok()) {
+      return strategyResult.error();
+    }
+    auto execution = bte::engine::BacktestExecution::start(
+        {.bars = {{.ts = bte::core::Timestamp{std::chrono::milliseconds{
+                       1'700'000'000'000}},
+                   .open = 10.0,
+                   .high = 11.0,
+                   .low = 9.0,
+                   .close = 10.0,
+                   .volume = 100.0}},
+         .symbol = "AAPL",
+         .initialCapitalMicrodollars = 1'000'000'000,
+         .quantityShares = 1},
+        std::move(strategyResult).value());
+    if (!execution.ok()) {
+      return execution.error();
+    }
+    auto completed = execution.value()->runToCompletion();
+    if (!completed.ok()) {
+      return completed.error();
+    }
+    return execution.value()->result().canonicalRecords;
+  };
+
+  const auto first = run();
+  ASSERT_TRUE(first.ok()) << first.error().message;
+  const auto second = run();
+  ASSERT_TRUE(second.ok()) << second.error().message;
+  EXPECT_EQ(first.value(), second.value());
 }
 
 TEST(PythonWorkerStrategyTest, sampleSmaCrossMatchesIndependentEngineLedger) {
@@ -2899,8 +3757,53 @@ def create_strategy(params):
   ASSERT_TRUE(recorded.value().backtest.has_value());
   EXPECT_EQ(recorded.value().backtest->fills.size(), 1U);
 
+  auto pacedStrategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(pacedStrategyResult.ok()) << pacedStrategyResult.error().message;
+  std::vector<bte::core::Bar> pacedBars;
+  pacedBars.reserve(selection.value().bars.size());
+  for (const auto &bar : selection.value().bars) {
+    pacedBars.push_back({
+        .ts = bar.timestamp,
+        .open = static_cast<double>(bar.openNanodollars) / 1'000'000'000.0,
+        .high = static_cast<double>(bar.highNanodollars) / 1'000'000'000.0,
+        .low = static_cast<double>(bar.lowNanodollars) / 1'000'000'000.0,
+        .close = static_cast<double>(bar.closeNanodollars) / 1'000'000'000.0,
+        .volume = static_cast<double>(bar.volumeMicroshares) / 1'000'000.0,
+    });
+  }
+  auto pacedStore =
+      bte::results::ResultStore::open(root / "PacedResults", root / "Data");
+  ASSERT_TRUE(pacedStore.ok()) << pacedStore.error().message;
+  auto pacedExecution = bte::engine::BacktestExecution::startRecorded(
+      {.bars = std::move(pacedBars),
+       .symbol = "SYN",
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 2},
+      std::move(pacedStrategyResult).value(), *pacedStore.value(), descriptor);
+  ASSERT_TRUE(pacedExecution.ok()) << pacedExecution.error().message;
+  while (pacedExecution.value()->status() == bte::results::RunStatus::running) {
+    ASSERT_TRUE(pacedExecution.value()->advance().ok());
+  }
+  const auto pacedRecorded = pacedExecution.value()->finalizeRecorded();
+  ASSERT_TRUE(pacedRecorded.ok()) << pacedRecorded.error().message;
+  ASSERT_TRUE(pacedStore.value()
+                  ->publishDraft(pacedRecorded.value().persisted.resultId)
+                  .ok());
   ASSERT_TRUE(
       store.value()->publishDraft(recorded.value().persisted.resultId).ok());
+
+  const auto batchStored =
+      store.value()->openResult(recorded.value().persisted.resultId);
+  const auto pacedStored =
+      pacedStore.value()->openResult(pacedRecorded.value().persisted.resultId);
+  ASSERT_TRUE(batchStored.ok()) << batchStored.error().message;
+  ASSERT_TRUE(pacedStored.ok()) << pacedStored.error().message;
+  EXPECT_EQ(batchStored.value().records, pacedStored.value().records);
+  EXPECT_EQ(batchStored.value().canonicalResultHash,
+            pacedStored.value().canonicalResultHash);
+
   const auto unavailableRuntime =
       bte::bindings::python::discoverManagedRuntime(root / "MissingRuntime");
   ASSERT_FALSE(unavailableRuntime.ok());
@@ -3009,6 +3912,37 @@ TEST(PythonWorkerStrategyTest,
   ASSERT_NE(terminal, diagnostics.records.end());
   EXPECT_EQ(terminal->errorCode, "Canceled");
   EXPECT_EQ(terminal->hook, "on_fill");
+}
+
+TEST(PythonWorkerStrategyTest,
+     cancellationDuringOnStartProducesTypedTerminalDiagnostic) {
+  auto strategyResult = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      validStrategySource, parameters(), true);
+  ASSERT_TRUE(strategyResult.ok()) << strategyResult.error().message;
+  const bte::strategy::StrategyContext startContext{
+      .symbol = "AAPL",
+      .bar = std::nullopt,
+      .cashMicrodollars = 100'000'000,
+      .equityMicrodollars = 100'000'000,
+      .positionShares = 0,
+      .markPriceNanodollars = std::nullopt};
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+
+  const auto result =
+      strategyResult.value()->onStart(startContext, cancellation.token());
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
+  const auto diagnostics = strategyResult.value()->takeDiagnostics();
+  const auto terminal =
+      std::ranges::find_if(diagnostics.records, [](const auto &record) {
+        return record.kind == bte::strategy::StrategyDiagnosticKind::terminal;
+      });
+  ASSERT_NE(terminal, diagnostics.records.end());
+  EXPECT_EQ(terminal->errorCode, "Canceled");
+  EXPECT_EQ(terminal->hook, "warmup");
 }
 
 TEST(PythonWorkerStrategyTest,

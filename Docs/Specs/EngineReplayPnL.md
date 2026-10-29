@@ -457,8 +457,10 @@ or in-place migration. The **Create Schema-3 Copy** UI action remains planned.
 
 **Implementation status:** the durable evidence store and sequential
 three-attempt coordinator are implemented and tested. The Qt Verify workflow
-uses this coordinator. End-to-end acceptance with the pinned production Python
-runtime remains blocked until that runtime is assembled and import-tested.
+uses this coordinator. The optional macOS Apple Silicon app build assembles and
+import-tests the pinned Python runtime, with profile-backed automated tests for
+the managed worker and Python Result workflow. Signed-installer integration and
+manual end-to-end release acceptance remain planned release checks.
 
 The Verify Reproducibility action freezes one functional-input
 identity containing exact

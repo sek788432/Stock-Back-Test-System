@@ -258,6 +258,8 @@ private slots:
   void unknownWorkerExceptionIsPresentedAsAnError();
   void pythonDraftIsFrozenAndPassedToTheRunWorker();
   void pythonActionsExplainWhenNoDraftIsAvailable();
+  void verificationWithoutRunnerShowsUnavailableStateAndIdleCancelIsIgnored();
+  void backtestAndVerificationActionsRejectOverlap();
   void pythonBacktestRequiresConsentBeforeStarting();
   void strategyTabHandoffIsCapturedByTheBacktestRun();
   void reproducibilityVerificationReportsProgressAndCompletion();
@@ -1125,6 +1127,86 @@ void BacktestTabTest::pythonActionsExplainWhenNoDraftIsAvailable() {
   QCOMPARE(verificationCalls.load(), 0);
 }
 
+void BacktestTabTest::
+    verificationWithoutRunnerShowsUnavailableStateAndIdleCancelIsIgnored() {
+  bte::frontend::BacktestTab tab{
+      [](const bte::bindings::BacktestConfiguration &,
+         const bte::core::CancellationToken &) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  tab.setPythonStrategyDraft("source", "{}");
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  auto *verify =
+      tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *cancel = tab.findChild<QPushButton *>("backtestCancelOperationButton");
+  auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(strategy != nullptr);
+  QVERIFY(verify != nullptr);
+  QVERIFY(cancel != nullptr);
+  QVERIFY(status != nullptr);
+
+  strategy->setCurrentIndex(2);
+  verify->setEnabled(true);
+  QTest::mouseClick(verify, Qt::LeftButton);
+  QCOMPARE(status->text(),
+           QString{"Managed reproducibility verification is unavailable"});
+
+  cancel->setEnabled(true);
+  QTest::mouseClick(cancel, Qt::LeftButton);
+  QCOMPARE(status->text(),
+           QString{"Managed reproducibility verification is unavailable"});
+}
+
+void BacktestTabTest::backtestAndVerificationActionsRejectOverlap() {
+  std::atomic_bool allowBacktestToFinish = false;
+  std::atomic_int backtestCalls = 0;
+  std::atomic_int verificationCalls = 0;
+  bte::frontend::BacktestTab tab{
+      [&allowBacktestToFinish,
+       &backtestCalls](const bte::bindings::BacktestConfiguration &,
+                       const bte::core::CancellationToken &) {
+        ++backtestCalls;
+        while (!allowBacktestToFinish.load()) {
+          QThread::msleep(1);
+        }
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      }};
+  tab.setConsentProvider([](const std::string &) { return true; });
+  tab.setPythonStrategyDraft("source", "{}");
+  tab.setVerificationRunner(
+      [&verificationCalls](
+          const bte::bindings::BacktestConfiguration &,
+          const bte::core::CancellationToken &,
+          const bte::bindings::PythonVerificationProgressObserver &) {
+        ++verificationCalls;
+        return bte::core::Result<bte::results::VerificationEvidence>{
+            bte::results::VerificationEvidence{}};
+      });
+  auto *strategy = tab.findChild<QComboBox *>("backtestStrategyCombo");
+  auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+  auto *verify =
+      tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  QVERIFY(strategy != nullptr);
+  QVERIFY(run != nullptr);
+  QVERIFY(verify != nullptr);
+  strategy->setCurrentIndex(2);
+
+  QTest::mouseClick(run, Qt::LeftButton);
+  QVERIFY(bte::test::waitUntil(
+      [&backtestCalls] { return backtestCalls.load() == 1; }));
+  verify->setEnabled(true);
+  QTest::mouseClick(verify, Qt::LeftButton);
+  run->setEnabled(true);
+  QTest::mouseClick(run, Qt::LeftButton);
+  QCOMPARE(verificationCalls.load(), 0);
+  QCOMPARE(backtestCalls.load(), 1);
+
+  allowBacktestToFinish.store(true);
+  QVERIFY(bte::test::waitUntil([run] { return run->isEnabled(); }));
+}
+
 void BacktestTabTest::pythonBacktestRequiresConsentBeforeStarting() {
   QTemporaryDir directory;
   QVERIFY(directory.isValid());
@@ -1184,6 +1266,14 @@ void BacktestTabTest::pythonBacktestRequiresConsentBeforeStarting() {
   QVERIFY(bte::test::waitUntil(
       [&calls, run] { return calls.load() == 2 && run->isEnabled(); }));
   QCOMPARE(*promptCount, 2);
+
+  tab.setPythonStrategyDraft(source + "-changed", "{}");
+  scheduleConsentChoice("Cancel");
+  QTest::mouseClick(run, Qt::LeftButton);
+  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Consent was not granted"),
+                           5000);
+  QCOMPARE(calls.load(), 2);
+  QCOMPARE(*promptCount, 3);
 }
 
 void BacktestTabTest::strategyTabHandoffIsCapturedByTheBacktestRun() {

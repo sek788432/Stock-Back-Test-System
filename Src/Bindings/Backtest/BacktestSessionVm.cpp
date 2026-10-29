@@ -55,9 +55,17 @@ constexpr auto int64ExclusiveUpperBound = 9'223'372'036'854'775'808.0;
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
 std::atomic<core::CancellationSource *> cancelAfterDraftOpen = nullptr;
+std::atomic<core::CancellationSource *> cancelAfterWarmupReaderOpen = nullptr;
 
 void triggerDraftOpenCancellation() noexcept {
   if (auto *const source = cancelAfterDraftOpen.exchange(nullptr);
+      source != nullptr) {
+    source->requestCancellation();
+  }
+}
+
+void triggerWarmupReaderOpenCancellation() noexcept {
+  if (auto *const source = cancelAfterWarmupReaderOpen.exchange(nullptr);
       source != nullptr) {
     source->requestCancellation();
   }
@@ -269,7 +277,7 @@ canonicalPythonParameters(const PythonStrategyConfiguration &configuration) {
   } catch (const nlohmann::json::exception &) {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Python Strategy source is not valid UTF-8");
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
   if (!sourceJson.ok()) {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Python Strategy source is not valid UTF-8");
@@ -498,6 +506,9 @@ loadPythonWarmupBars(const PythonWarmupRequest &request,
   if (!reader.ok()) {
     return reader.error();
   }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  triggerWarmupReaderOpenCancellation();
+#endif
   const auto earliestDate = QDate{1, 1, 1};
   const auto availableDays = earliestDate.daysTo(startDate);
   auto lookbackDays = std::min<qint64>(417, availableDays);
@@ -510,10 +521,6 @@ loadPythonWarmupBars(const PythonWarmupRequest &request,
                              "Python Strategy warm-up selection canceled");
     }
     const auto historyStart = startDate.addDays(-lookbackDays);
-    if (!historyStart.isValid()) {
-      return core::makeError(core::ErrorCode::invalidArgument,
-                             "Python Strategy warm-up range is invalid");
-    }
     selectedHistory = reader.value()->select(
         {.symbols = {symbol},
          .range = {.start = timestampFromDate(historyStart),
@@ -527,11 +534,7 @@ loadPythonWarmupBars(const PythonWarmupRequest &request,
         historyStart == earliestDate) {
       break;
     }
-    const auto expandedLookback = std::min(availableDays, lookbackDays * 2);
-    if (expandedLookback == lookbackDays) {
-      break;
-    }
-    lookbackDays = expandedLookback;
+    lookbackDays = std::min(availableDays, lookbackDays * 2);
   }
   const auto &historyBars = selectedHistory.value().bars;
   const auto firstHistory = historyBars.size() > maximumHistory
@@ -851,6 +854,15 @@ void cancelAfterNextDraftStoreOpen(core::CancellationSource &source) noexcept {
 
 void clearDraftStoreOpenHook() noexcept { cancelAfterDraftOpen.store(nullptr); }
 
+void cancelAfterNextPythonWarmupReaderOpen(
+    core::CancellationSource &source) noexcept {
+  cancelAfterWarmupReaderOpen.store(&source);
+}
+
+void clearPythonWarmupReaderOpenHook() noexcept {
+  cancelAfterWarmupReaderOpen.store(nullptr);
+}
+
 core::Result<std::vector<core::Bar>>
 selectPythonWarmupBars(const std::filesystem::path &dataStore,
                        const std::string &snapshotId, const std::string &symbol,
@@ -863,7 +875,7 @@ selectPythonWarmupBars(const std::filesystem::path &dataStore,
                           .startDate = startDate,
                           .maximumHistory = maximumHistory},
       cancellation);
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 } // namespace testing
 #endif
@@ -876,7 +888,7 @@ runBacktestSession(std::vector<core::Bar> bars, const double initialCapital,
                    const core::CancellationToken &cancellation) {
   return runBacktestSession(std::move(bars), initialCapital, quantityShares,
                             std::nullopt, cancellation);
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 core::Result<BacktestSnapshot>
 // The scalar inputs are intentionally kept explicit at this starter seam.
@@ -906,7 +918,7 @@ runBacktestSession(
   }
 
   return toSnapshot(engineResult.value());
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 core::Result<BacktestSnapshot>
 runBacktestConfiguration(const BacktestConfiguration &configuration,

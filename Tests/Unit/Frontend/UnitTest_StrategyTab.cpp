@@ -905,7 +905,8 @@ void StrategyTabTest::exportsNormalizedUtf8SourceAtomically() {
   QVERIFY(directory.isValid());
   bte::frontend::StrategyTab tab{
       std::filesystem::path{directory.path().toStdString()}, {}};
-  const QString source{"def create_strategy(params):\r\n    return None\r"};
+  const QString source{u"# strategy \U0001F9EA\r\n"
+                       u"def create_strategy(params):\r\n    return None\r"};
   tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor")
       ->setPlainText(source);
   const auto destination =
@@ -913,11 +914,12 @@ void StrategyTabTest::exportsNormalizedUtf8SourceAtomically() {
   QVERIFY(tab.exportSourceFile(destination));
   QFile exported{QString::fromStdString(destination.string())};
   QVERIFY(exported.open(QIODevice::ReadOnly));
-  QCOMPARE(exported.readAll(),
-           QByteArray{"def create_strategy(params):\n    return None\n"});
+  const QByteArray normalizedSource{
+      "# strategy \xf0\x9f\xa7\xaa\n"
+      "def create_strategy(params):\n    return None\n"};
+  QCOMPARE(exported.readAll(), normalizedSource);
   QVERIFY(!tab.exportSourceFile(destination.parent_path() / "strategy.txt"));
-  QCOMPARE(tab.sourceUtf8(),
-           std::string{"def create_strategy(params):\n    return None\n"});
+  QCOMPARE(tab.sourceUtf8(), normalizedSource.toStdString());
 }
 
 void StrategyTabTest::reportsWhenThePythonExportDestinationCannotBeWritten() {
@@ -935,6 +937,19 @@ void StrategyTabTest::reportsWhenThePythonExportDestinationCannotBeWritten() {
   QVERIFY(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
               ->text()
               .contains("Cannot write Python source file"));
+
+  const auto occupiedTarget = root / "occupied.py";
+  QVERIFY(std::filesystem::create_directories(occupiedTarget));
+  const auto preservedFile = occupiedTarget / "existing.txt";
+  QVERIFY(writeSourceFile(preservedFile, QByteArray{"keep existing data"}));
+  QVERIFY(!tab.exportSourceFile(occupiedTarget));
+  const auto status =
+      tab.findChild<QLabel *>("pythonStrategyStatusLabel")->text();
+  QVERIFY(status.contains("Cannot write Python source file") ||
+          status.contains("Cannot atomically export Python source file"));
+  QFile preserved{QString::fromStdString(preservedFile.string())};
+  QVERIFY(preserved.open(QIODevice::ReadOnly));
+  QCOMPARE(preserved.readAll(), QByteArray{"keep existing data"});
 }
 
 void StrategyTabTest::rejectsUnpairedSurrogatesBeforeValidationOrExport() {

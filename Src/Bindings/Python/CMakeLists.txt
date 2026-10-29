@@ -10,6 +10,7 @@ add_library(
     PythonWorkerStrategy.cpp
     RuntimeProfile.h
     RuntimeProfile.cpp
+    RuntimeProfileTestHooks.h
     StrategyProtocol.h
     StrategyProtocol.cpp
     worker_bootstrap.py)

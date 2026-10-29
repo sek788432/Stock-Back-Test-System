@@ -113,8 +113,9 @@ PyPI version pages identify the selected platform wheels and their published
 SHA-256 values. PyPI file hashes are the lock authority. Runtime
 Profile identity is SHA-256 over a canonical manifest containing platform,
 Python ABI, exact package names/versions, artifact and installed-file hashes,
-license identifiers/notices, `stockbt` source digest, seed policy, and profile
-builder version. The profile hash is assigned only after the pinned files are
+license identifiers/notices, `stockbt` source digest, and profile builder
+version. The selected backtest seed is recorded in each run's result
+provenance. The profile hash is assigned only after the pinned files are
 downloaded, verified, installed, import-tested on macOS 14 Apple Silicon, and
 rehashed as an installed tree.
 

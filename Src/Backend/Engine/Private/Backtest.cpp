@@ -165,13 +165,8 @@ sellPriceWithDefaultSlippage(const std::int64_t openNanodollars) {
   return adjusted;
 }
 
-core::Result<void>
-validateActualBars(const std::vector<core::Bar> &bars,
-                   const core::CancellationToken &cancellation) {
+core::Result<void> validateActualBars(const std::vector<core::Bar> &bars) {
   for (std::size_t index = 0; index < bars.size(); ++index) {
-    if (cancellation.isCancellationRequested()) {
-      return cancelled();
-    }
     const auto &bar = bars[index];
     if (!bar.isValid() || !std::isfinite(bar.volume)) {
       return invalidArgument("all bars must satisfy OHLCV invariants");
@@ -190,19 +185,14 @@ validateActualBars(const std::vector<core::Bar> &bars,
   return {};
 }
 
-core::Result<void>
-validateWarmupBars(const std::vector<core::Bar> &bars,
-                   const core::Timestamp firstRunTimestamp,
-                   const core::CancellationToken &cancellation) {
+core::Result<void> validateWarmupBars(const std::vector<core::Bar> &bars,
+                                      const core::Timestamp firstRunTimestamp) {
   if (bars.size() >
       static_cast<std::size_t>(indicators::maximumIndicatorPeriod)) {
     return invalidArgument(
         "strategy warm-up history exceeds 10000 actual bars");
   }
   for (std::size_t index = 0; index < bars.size(); ++index) {
-    if (cancellation.isCancellationRequested()) {
-      return cancelled();
-    }
     const auto &bar = bars[index];
     if (!bar.isValid() || !std::isfinite(bar.volume)) {
       return invalidArgument(
@@ -224,9 +214,7 @@ validateWarmupBars(const std::vector<core::Bar> &bars,
   return {};
 }
 
-core::Result<std::int64_t>
-validateRequest(const BacktestRequest &request,
-                const core::CancellationToken &cancellation) {
+core::Result<std::int64_t> validateRequest(const BacktestRequest &request) {
   if (request.initialCapitalMicrodollars <= 0) {
     return invalidArgument("initial capital must be positive");
   }
@@ -240,12 +228,12 @@ validateRequest(const BacktestRequest &request,
   if (request.symbol.empty()) {
     return invalidArgument("backtest symbol is required");
   }
-  const auto actualBars = validateActualBars(request.bars, cancellation);
+  const auto actualBars = validateActualBars(request.bars);
   if (!actualBars.ok()) {
     return actualBars.error();
   }
-  const auto historyBars = validateWarmupBars(
-      request.historyBars, request.bars.front().ts, cancellation);
+  const auto historyBars =
+      validateWarmupBars(request.historyBars, request.bars.front().ts);
   if (!historyBars.ok()) {
     return historyBars.error();
   }
@@ -740,7 +728,7 @@ struct BacktestExecution::Impl final {
       result.diagnosticsComplete = false;
     }
     return {};
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
   [[nodiscard]] core::Result<void>
   collectStrategyDiagnostics(const core::Timestamp timestamp,
@@ -1112,7 +1100,7 @@ BacktestExecution::startWithStrategy(
 #if defined(BTE_ENABLE_TEST_HOOKS)
   testing::recordBacktestStart();
 #endif
-  const auto validation = validateRequest(request, {});
+  const auto validation = validateRequest(request);
   if (!validation.ok()) {
     return validation.error();
   }
@@ -1181,7 +1169,7 @@ BacktestExecution::startRecorded(
   return startRecordedWithStrategy(std::move(request), std::move(strategy),
                                    store, descriptor, cancellation,
                                    onResultCreated, false);
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 core::Result<std::unique_ptr<BacktestExecution>>
 BacktestExecution::startRecordedWithStrategy(

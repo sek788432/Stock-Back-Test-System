@@ -57,7 +57,7 @@ constexpr std::string_view base64Alphabet =
 [[nodiscard]] core::Error makeStrategyError(const core::ErrorCode code,
                                             std::string message) {
   return core::makeError(code, std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] std::string_view
 strategyDiagnosticCode(const core::ErrorCode code) {
@@ -117,7 +117,7 @@ void storeTerminalDiagnostic(
       {"omittedBytes", omittedBytes},
       {"omittedEntries", omittedEntries},
   });
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] bool hasExactKeys(const nlohmann::json &value,
                                 const std::set<std::string> &keys) {
@@ -370,7 +370,7 @@ validateParameters(const nlohmann::json &parameters) {
       "FutureDataRequest",
       "strategyRuntimeError"};
   return knownErrorCodes.contains(std::string{code});
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] core::Result<void>
 appendStartupDiagnostics(std::string &messageText,
@@ -1252,7 +1252,7 @@ struct PythonWorkerStrategy::Impl final {
       static_cast<void>(shutdown());
     } catch (...) {
       terminate(std::chrono::milliseconds{0});
-    }
+    } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
   }
 
   ~Impl() noexcept { shutdownNoexcept(); }
@@ -1318,7 +1318,7 @@ PythonWorkerStrategy::createForTesting(
       pythonExecutable, workerBootstrapPath, std::move(source),
       std::move(parameters), sourceConsentGranted, false, skipNumpySeedForTest,
       cancellation, warmupHistory, std::move(timezoneDatabasePath));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 #endif
 
 core::Result<std::unique_ptr<strategy::Strategy>>
@@ -1387,8 +1387,8 @@ PythonWorkerStrategy::createInternal(
     return makeStrategyError(
         core::ErrorCode::workerStartFailed,
         "Could not create a unique Python worker run identity.");
-  }
-  std::vector<std::string> arguments{"-I", "-B", bootstrap.string(),
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+  std::vector<std::string> arguments{"-P", "-s", "-B", bootstrap.string(),
                                      "--run-id=" + runId};
   if (skipNumpySeedForTest) {
     arguments.emplace_back("--test-only-skip-numpy-seed");
@@ -1566,7 +1566,7 @@ PythonWorkerStrategy::onMarket(const strategy::StrategyContext &context,
     impl_->captureCallbackFailure(error, "on_market", true);
     impl_->terminate(shutdownDeadline);
     return error;
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
   const auto captured =
       impl_->captureSuccessfulHook(response.value().payload, "on_market");
   auto commands = decodeCommands(response.value().payload.at("commands"),

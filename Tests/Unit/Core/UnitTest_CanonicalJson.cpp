@@ -115,6 +115,21 @@ TEST(CanonicalJsonTest, rejectsInvalidUtf8InObjectKeysAndStringValues) {
   EXPECT_FALSE(bte::core::serializeCanonicalJson(invalidKey).ok());
 }
 
+TEST(CanonicalJsonTest, rejectsInvalidUtf8InParsedKeysAndStringValues) {
+  const std::string invalidUtf8(1, static_cast<char>(0x80));
+  const std::string invalidValue = "\"" + invalidUtf8 + "\"";
+  const std::string invalidKey = "{\"" + invalidUtf8 + "\":1}";
+
+  for (const auto &input : {invalidValue, invalidKey}) {
+    SCOPED_TRACE(input.size());
+    const auto parsed = bte::core::parseCanonicalJson(input);
+
+    ASSERT_FALSE(parsed.ok());
+    EXPECT_EQ(parsed.error().code, bte::core::ErrorCode::invalidArgument);
+    EXPECT_FALSE(parsed.error().message.empty());
+  }
+}
+
 TEST(CanonicalJsonTest, acceptsJsonScalarsAndRejectsMalformedOrUnsafeNumbers) {
   for (const auto input :
        {"null", "true", "false", "0", "-1", "1.25", "\"text\"", "[]", "{}"}) {

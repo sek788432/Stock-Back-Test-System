@@ -2,6 +2,12 @@
 
 #include "StrategyProtocol.h"
 
+#if defined(BTE_ENABLE_TEST_HOOKS)
+#include "RuntimeProfileTestHooks.h"
+#include <atomic>
+#include <cerrno>
+#endif
+
 #include <Bte/Core/Result.h>
 
 #include <Bte/Core/Digest.h>
@@ -33,6 +39,27 @@
 
 namespace bte::bindings::python {
 namespace {
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+std::atomic_uint64_t &runtimeProfileSystemCallFailureStorage() {
+  static std::atomic_uint64_t failure{0};
+  return failure;
+}
+
+[[nodiscard]] int injectedRuntimeProfileSystemCallError(
+    const testing::RuntimeProfileSystemCall systemCall) noexcept {
+  auto &failure = runtimeProfileSystemCallFailureStorage();
+  auto state = failure.load(std::memory_order_relaxed);
+  if (state == 0 || static_cast<std::uint8_t>(state >> 56U) !=
+                        static_cast<std::uint8_t>(systemCall)) {
+    return 0;
+  }
+  if (failure.compare_exchange_strong(state, 0, std::memory_order_relaxed)) {
+    return static_cast<int>(state & 0xffff'ffffU);
+  }
+  return 0;
+}
+#endif
 
 constexpr std::size_t maximumManifestBytes = std::size_t{1024} * 1024;
 
@@ -70,17 +97,17 @@ const std::map<std::string, PinnedComponent> &pinnedComponents() {
         {"Apache-2.0"}}},
   };
   return pins;
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] core::Error unavailableError(std::string message) {
   return core::makeError(core::ErrorCode::runtimeUnavailable,
                          std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] core::Error integrityError(std::string message) {
   return core::makeError(core::ErrorCode::runtimeIntegrityFailure,
                          std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] bool isSha256(const std::string_view value) {
   return value.size() == 64 &&
@@ -169,16 +196,37 @@ private:
 
 [[nodiscard]] core::Result<std::string>
 sha256File(const std::filesystem::path &path) {
-  const FileDescriptor file(
-      ::open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX open omits its
-              // variadic mode because O_CREAT is not set.
-          path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+  int descriptor = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedRuntimeProfileSystemCallError(
+          testing::RuntimeProfileSystemCall::open);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    descriptor =
+        ::open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX open omits
+                // its variadic mode because O_CREAT is not set.
+            path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  }
+  const FileDescriptor file(descriptor);
   if (file.get() < 0) {
     return integrityError("Could not open a managed runtime file.");
   }
   struct stat status {};
-  if (::fstat(file.get(), &status) != 0 || !S_ISREG(status.st_mode) ||
-      status.st_size < 0 ||
+  int statResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedRuntimeProfileSystemCallError(
+          testing::RuntimeProfileSystemCall::stat);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    statResult = ::fstat(file.get(), &status);
+  }
+  if (statResult != 0 || !S_ISREG(status.st_mode) || status.st_size < 0 ||
       static_cast<std::uintmax_t>(status.st_size) >
           static_cast<std::uintmax_t>(
               std::numeric_limits<std::size_t>::max())) {
@@ -188,7 +236,17 @@ sha256File(const std::filesystem::path &path) {
   if (size == 0) {
     return core::sha256(std::string_view{});
   }
-  auto *mapping = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, file.get(), 0);
+  void *mapping = MAP_FAILED;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedRuntimeProfileSystemCallError(
+          testing::RuntimeProfileSystemCall::memoryMap);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    mapping = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, file.get(), 0);
+  }
   if (mapping == MAP_FAILED) {
     return integrityError(
         "Could not map a managed runtime file for verification.");
@@ -560,6 +618,23 @@ runtimePackages(const nlohmann::json &value) {
 }
 
 } // namespace
+
+#if defined(BTE_ENABLE_TEST_HOOKS)
+void testing::failNextRuntimeProfileSystemCall(
+    const testing::RuntimeProfileSystemCall systemCall,
+    const int errorNumber) noexcept {
+  const auto errorCode =
+      static_cast<std::uint32_t>(errorNumber > 0 ? errorNumber : EIO);
+  const auto state =
+      (static_cast<std::uint64_t>(systemCall) << 56U) | errorCode;
+  runtimeProfileSystemCallFailureStorage().store(state,
+                                                 std::memory_order_relaxed);
+}
+
+void testing::clearRuntimeProfileSystemCallFailure() noexcept {
+  runtimeProfileSystemCallFailureStorage().store(0, std::memory_order_relaxed);
+}
+#endif
 
 core::Result<RuntimeProfile>
 verifyRuntimeProfile(const std::filesystem::path &profileRoot) {

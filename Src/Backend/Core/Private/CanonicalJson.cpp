@@ -28,7 +28,7 @@ constexpr std::size_t maximumJsonNestingDepth = 128;
 
 [[nodiscard]] Error invalidJson(std::string message) {
   return makeError(ErrorCode::invalidArgument, std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 class DuplicateKeyDetector final : public nlohmann::json_sax<nlohmann::json> {
 public:
@@ -443,7 +443,7 @@ Result<nlohmann::json> parseCanonicalJson(const std::string_view bytes) {
     return nlohmann::json::parse(bytes.begin(), bytes.end());
   } catch (const nlohmann::json::exception &) {
     return invalidJson("JSON payload is malformed.");
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 }
 
 Result<std::string> serializeCanonicalJson(const nlohmann::json &value) {

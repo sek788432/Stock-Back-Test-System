@@ -88,17 +88,17 @@ std::atomic_uint64_t &workerProcessSystemCallFailureStorage() {
 [[nodiscard]] core::Error workerStartError(std::string message) {
   return core::makeError(core::ErrorCode::workerStartFailed,
                          std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] core::Error workerIoError(std::string message) {
   return core::makeError(core::ErrorCode::workerHandshakeFailed,
                          std::move(message));
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 [[nodiscard]] core::Error timeoutError(const core::ErrorCode code) {
   return core::makeError(code,
                          "Managed strategy worker exceeded its deadline.");
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 #if !defined(__unix__) && !defined(__APPLE__)
 [[nodiscard]] core::Error unsupportedProcessError() {
@@ -186,9 +186,33 @@ private:
   int descriptor_ = -1;
 };
 
+[[nodiscard]] int
+initializeSpawnActions(posix_spawn_file_actions_t *const actions) noexcept {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::spawnActionsInitialize);
+      injectedError != 0) {
+    return injectedError;
+  }
+#endif
+  return ::posix_spawn_file_actions_init(actions);
+}
+
+[[nodiscard]] int
+initializeSpawnAttributes(posix_spawnattr_t *const attributes) noexcept {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::spawnAttributesInitialize);
+      injectedError != 0) {
+    return injectedError;
+  }
+#endif
+  return ::posix_spawnattr_init(attributes);
+}
+
 class SpawnActions final {
 public:
-  SpawnActions() : status_(::posix_spawn_file_actions_init(&actions_)) {}
+  SpawnActions() : status_(initializeSpawnActions(&actions_)) {}
   ~SpawnActions() {
     if (status_ == 0) {
       static_cast<void>(::posix_spawn_file_actions_destroy(&actions_));
@@ -200,14 +224,30 @@ public:
   SpawnActions &operator=(SpawnActions &&) = delete;
   [[nodiscard]] bool valid() const noexcept { return status_ == 0; }
   [[nodiscard]] int addDup2(const int source, const int target) {
-    return status_ == 0
-               ? ::posix_spawn_file_actions_adddup2(&actions_, source, target)
-               : status_;
+    if (status_ != 0) {
+      return status_;
+    }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::spawnActionsAddDup2);
+        injectedError != 0) {
+      return injectedError;
+    }
+#endif
+    return ::posix_spawn_file_actions_adddup2(&actions_, source, target);
   }
   [[nodiscard]] int addClose(const int descriptor) {
-    return status_ == 0
-               ? ::posix_spawn_file_actions_addclose(&actions_, descriptor)
-               : status_;
+    if (status_ != 0) {
+      return status_;
+    }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::spawnActionsAddClose);
+        injectedError != 0) {
+      return injectedError;
+    }
+#endif
+    return ::posix_spawn_file_actions_addclose(&actions_, descriptor);
   }
   [[nodiscard]] const posix_spawn_file_actions_t *get() const noexcept {
     return &actions_;
@@ -220,7 +260,7 @@ private:
 
 class SpawnAttributes final {
 public:
-  SpawnAttributes() : status_(::posix_spawnattr_init(&attributes_)) {}
+  SpawnAttributes() : status_(initializeSpawnAttributes(&attributes_)) {}
   ~SpawnAttributes() {
     if (status_ == 0) {
       static_cast<void>(::posix_spawnattr_destroy(&attributes_));
@@ -235,10 +275,24 @@ public:
     if (status_ != 0) {
       return status_;
     }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::spawnAttributesSetProcessGroup);
+        injectedError != 0) {
+      return injectedError;
+    }
+#endif
     const auto groupStatus = ::posix_spawnattr_setpgroup(&attributes_, 0);
     if (groupStatus != 0) {
       return groupStatus;
     }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::spawnAttributesSetFlags);
+        injectedError != 0) {
+      return injectedError;
+    }
+#endif
     return ::posix_spawnattr_setflags(&attributes_, POSIX_SPAWN_SETPGROUP);
   }
   [[nodiscard]] const posix_spawnattr_t *get() const noexcept {
@@ -286,6 +340,14 @@ private:
 }
 
 [[nodiscard]] int setNonBlocking(const int descriptor) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::nonBlocking);
+      injectedError != 0) {
+    errno = injectedError;
+    return -1;
+  }
+#endif
   const auto flags =
       ::fcntl( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX F_GETFL reads
                // status flags before setting O_NONBLOCK.
@@ -334,7 +396,18 @@ private:
   if (processGroup <= 0) {
     return false;
   }
-  if (::kill(-processGroup, 0) == 0) {
+  int probeResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::processGroupProbe);
+      injectedError != 0) {
+    errno = injectedError;
+  } else
+#endif
+  {
+    probeResult = ::kill(-processGroup, 0);
+  }
+  if (probeResult == 0) {
     return true;
   }
   return errno == EPERM;
@@ -449,7 +522,7 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
   } catch (const std::exception &) {
     return workerStartError(
         "Could not create an unpredictable shared-memory name.");
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
   if (writableDescriptor.get() < 0) {
     return workerStartError(
         "Could not create a shared-memory object for strategy source: " +
@@ -586,8 +659,8 @@ struct ManagedWorkerProcess::Impl final {
     } catch (...) {
       if (processGroup > 0) {
         static_cast<void>(::kill(-processGroup, SIGKILL));
-      }
-    }
+      } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+    } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
   }
 
   Impl() = default;
@@ -600,7 +673,17 @@ struct ManagedWorkerProcess::Impl final {
     if (process <= 0 || reaped) {
       return reaped;
     }
-    const auto result = ::waitpid(process, &exitStatus, WNOHANG);
+    pid_t result = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::waitForChild);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      result = ::waitpid(process, &exitStatus, WNOHANG);
+    }
     if (result == process) {
       reaped = true;
       process = -1;
@@ -625,7 +708,17 @@ struct ManagedWorkerProcess::Impl final {
     }
     std::array<char, 8192> bytes{};
     for (int iteration = 0; iteration < 16; ++iteration) {
-      const auto count = ::read(descriptor.get(), bytes.data(), bytes.size());
+      ssize_t count = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+      if (const auto injectedError = injectedSystemCallError(
+              testing::ManagedWorkerSystemCall::diagnosticRead);
+          injectedError != 0) {
+        errno = injectedError;
+      } else
+#endif
+      {
+        count = ::read(descriptor.get(), bytes.data(), bytes.size());
+      }
       if (count > 0) {
         capture.append(bytes.data(), static_cast<std::size_t>(count));
         continue;
@@ -667,8 +760,18 @@ struct ManagedWorkerProcess::Impl final {
     std::array<std::byte, 8192> discarded{};
     bool unexpectedBytes = false;
     while (true) {
-      const auto count =
-          ::read(protocolOutput.get(), discarded.data(), discarded.size());
+      ssize_t count = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+      if (const auto injectedError = injectedSystemCallError(
+              testing::ManagedWorkerSystemCall::unexpectedProtocolRead);
+          injectedError != 0) {
+        errno = injectedError;
+      } else
+#endif
+      {
+        count =
+            ::read(protocolOutput.get(), discarded.data(), discarded.size());
+      }
       if (count > 0) {
         unexpectedBytes = true;
         continue;
@@ -714,7 +817,7 @@ struct ManagedWorkerProcess::Impl final {
           std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
       if (remaining.count() == 0) {
         remaining = std::chrono::milliseconds{1};
-      }
+      } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
       const auto boundedWait =
           static_cast<int>(std::min<std::int64_t>(remaining.count(), 20));
       std::array<pollfd, 3> descriptors{{
@@ -828,11 +931,7 @@ struct ManagedWorkerProcess::Impl final {
     }
   }
 
-  [[nodiscard]] core::Result<void>
-  terminate(const std::chrono::milliseconds gracePeriod) {
-    if (processGroup <= 0) {
-      return {};
-    }
+  [[nodiscard]] core::Result<void> requestProcessTreeTermination() const {
     int terminateResult = -1;
 #if defined(BTE_ENABLE_TEST_HOOKS)
     if (const auto injectedError = injectedSystemCallError(
@@ -848,8 +947,11 @@ struct ManagedWorkerProcess::Impl final {
       return workerIoError(
           "Could not request managed worker process-tree shutdown.");
     }
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::max(gracePeriod, std::chrono::milliseconds{0});
+    return {};
+  }
+
+  void waitForProcessTreeTermination(
+      const std::chrono::steady_clock::time_point deadline) {
     while (std::chrono::steady_clock::now() < deadline &&
            processGroupExists(processGroup)) {
       static_cast<void>(refreshChildStatus());
@@ -867,19 +969,103 @@ struct ManagedWorkerProcess::Impl final {
           .standardError = diagnostics[1].revents,
       }));
     }
-    if (processGroupExists(processGroup)) {
-      if (::kill(-processGroup, SIGKILL) != 0 && errno != ESRCH) {
-        return workerIoError(
-            "Could not terminate the managed worker process tree.");
+  }
+
+  [[nodiscard]] core::Result<void> terminateOwnedChild() const {
+    if (!processGroupExists(processGroup) || process <= 0 || reaped) {
+      return {};
+    }
+    int killResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::terminateChildSignal);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      killResult = ::kill(process, SIGKILL);
+    }
+    if (killResult != 0 && errno != ESRCH) {
+      const auto savedError = errno;
+      return workerIoError(
+          "Could not terminate the managed worker process: " +
+          std::error_code{savedError, std::generic_category()}.message());
+    }
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void> reapOwnedChild() {
+    if (process <= 0 || reaped) {
+      return {};
+    }
+    int status = 0;
+    pid_t waitResult = -1;
+    while (true) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+      if (const auto injectedError = injectedSystemCallError(
+              testing::ManagedWorkerSystemCall::waitForChild);
+          injectedError != 0) {
+        errno = injectedError;
+      } else
+#endif
+      {
+        waitResult = ::waitpid(process, &status, 0);
+      }
+      if (waitResult >= 0 || errno != EINTR) {
+        break;
       }
     }
-    if (process > 0 && !reaped) {
-      int status = 0;
-      while (::waitpid(process, &status, 0) < 0 && errno == EINTR) {
-      }
-      process = -1;
-      reaped = true;
-      exitStatus = status;
+    if (waitResult != process) {
+      const auto savedError = waitResult < 0 ? errno : ECHILD;
+      return workerIoError(
+          "Could not wait for the managed worker process: " +
+          std::error_code{savedError, std::generic_category()}.message());
+    }
+    process = -1;
+    reaped = true;
+    exitStatus = status;
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void> terminateRemainingProcessTree() const {
+    if (!processGroupExists(processGroup)) {
+      return {};
+    }
+    if (::kill(-processGroup, SIGKILL) != 0 && errno != ESRCH) {
+      const auto savedError = errno;
+      return workerIoError(
+          "Could not terminate the managed worker process tree: " +
+          std::error_code{savedError, std::generic_category()}.message());
+    }
+    return {};
+  }
+
+  [[nodiscard]] core::Result<void>
+  terminate(const std::chrono::milliseconds gracePeriod) {
+    if (processGroup <= 0) {
+      return {};
+    }
+    const auto requested = requestProcessTreeTermination();
+    if (!requested.ok()) {
+      return requested.error();
+    }
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::max(gracePeriod, std::chrono::milliseconds{0});
+    waitForProcessTreeTermination(deadline);
+    // Reap the owned child directly before signaling remaining descendants;
+    // under TSan, group SIGKILL may fail even when the child is killable.
+    const auto childTermination = terminateOwnedChild();
+    if (!childTermination.ok()) {
+      return childTermination.error();
+    }
+    const auto reapedChild = reapOwnedChild();
+    if (!reapedChild.ok()) {
+      return reapedChild.error();
+    }
+    const auto remainingTermination = terminateRemainingProcessTree();
+    if (!remainingTermination.ok()) {
+      return remainingTermination.error();
     }
     processGroup = -1;
     drainPipe(standardOutput, standardOutputOpen, capturedStandardOutput);
@@ -1001,13 +1187,14 @@ validateWorkerHistoryDescriptor(const WorkerProcessLaunch &launch) {
 struct WorkerArguments {
   std::vector<std::string> argumentStorage;
   std::vector<char *> argumentVector;
-  std::array<std::string, 6> environmentStorage{"PATH=/usr/bin:/bin",
+  std::array<std::string, 7> environmentStorage{"PATH=/usr/bin:/bin",
                                                 "LANG=C",
                                                 "TZ=UTC",
                                                 "PYTHONNOUSERSITE=1",
                                                 "PYTHONDONTWRITEBYTECODE=1",
-                                                "PYTHONSAFEPATH=1"};
-  std::array<char *, 7> environmentVector{};
+                                                "PYTHONSAFEPATH=1",
+                                                "PYTHONHASHSEED=0"};
+  std::array<char *, 8> environmentVector{};
 
   void buildVectors() {
     argumentVector.reserve(argumentStorage.size() + 1);
@@ -1286,10 +1473,20 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
   workerArguments.buildVectors();
 
   pid_t process = -1;
-  const auto spawnStatus =
-      ::posix_spawn(&process, executable.c_str(), actions.get(),
-                    attributes.get(), workerArguments.argumentVector.data(),
-                    workerArguments.environmentVector.data());
+  int spawnStatus = 0;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  if (const auto injectedError = injectedSystemCallError(
+          testing::ManagedWorkerSystemCall::processSpawn);
+      injectedError != 0) {
+    spawnStatus = injectedError;
+  } else
+#endif
+  {
+    spawnStatus =
+        ::posix_spawn(&process, executable.c_str(), actions.get(),
+                      attributes.get(), workerArguments.argumentVector.data(),
+                      workerArguments.environmentVector.data());
+  }
   if (spawnStatus != 0) {
     return workerStartError("Could not launch the managed worker executable.");
   }
@@ -1313,6 +1510,10 @@ ManagedWorkerProcess::start(const WorkerProcessLaunch &launch) {
        {impl->protocolInput.get(), impl->standardOutput.get(),
         impl->standardError.get(), impl->protocolOutput.get()}) {
     if (setNonBlocking(descriptor) != 0) {
+      duplicates = WorkerDuplicates{};
+      for (auto &owner : pipeOwners) {
+        owner.reset();
+      }
       static_cast<void>(impl->terminate(std::chrono::milliseconds{0}));
       return workerStartError(
           "Could not configure managed worker pipes as nonblocking.");

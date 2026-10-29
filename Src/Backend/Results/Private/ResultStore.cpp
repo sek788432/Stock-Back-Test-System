@@ -905,6 +905,11 @@ validateSchemaThreeProvenance(const RunDescriptor &descriptor) {
     return core::makeError(core::ErrorCode::invalidArgument,
                            "Schema-3 strategy parameters are not canonical");
   }
+  if (provenance.strategyMode == StrategyMode::python &&
+      descriptor.strategyHash != provenance.sourceHash) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Python strategy hash does not match its source");
+  }
   return validateSchemaThreeStrategyProvenance(provenance);
 }
 
@@ -1148,7 +1153,7 @@ std::string runStatusName(const RunStatus status) {
 nlohmann::json optionalDomainValue(const std::optional<std::int64_t> value) {
   return value.has_value() ? nlohmann::json(std::to_string(*value))
                            : nlohmann::json(nullptr);
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 nlohmann::json provenanceAvailabilityJson(const ResultProvenance &provenance) {
   nlohmann::json result = nlohmann::json::object();
@@ -1541,7 +1546,7 @@ serializeStoredProvenance(const ResultProvenance &provenance) {
 core::Error invalidStoredProvenance() {
   return core::makeError(core::ErrorCode::schemaMismatch,
                          "Schema-3 Result provenance is malformed");
-}
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
 
 std::optional<std::string> storedStringField(const nlohmann::json &value,
                                              const std::string_view key) {
@@ -2552,17 +2557,33 @@ core::Result<OpenedResult> readResultFile(
     prepared = terminalState.prepare(
         *database.value(),
         "SELECT diagnostics_complete FROM schema3_terminal_state");
-    if (!prepared.ok() || terminalState.step() != SQLITE_ROW) {
+    if (!prepared.ok()) {
       return core::makeError(core::ErrorCode::schemaMismatch,
                              "Schema-3 terminal diagnostics state is missing");
     }
-    const auto complete = sqlite3_column_int(terminalState.handle(), 0);
-    if ((complete != 0 && complete != 1) ||
-        terminalState.step() != SQLITE_DONE) {
-      return core::makeError(core::ErrorCode::schemaMismatch,
-                             "Schema-3 terminal diagnostics state is invalid");
+    const auto terminalStateRow = terminalState.step();
+    if (result.status == RunStatus::running) {
+      if (terminalStateRow != SQLITE_DONE) {
+        return core::makeError(
+            core::ErrorCode::schemaMismatch,
+            "Running schema-3 Result has terminal diagnostics state");
+      }
+      result.summary.diagnosticsComplete = false;
+    } else {
+      if (terminalStateRow != SQLITE_ROW) {
+        return core::makeError(
+            core::ErrorCode::schemaMismatch,
+            "Schema-3 terminal diagnostics state is missing");
+      }
+      const auto complete = sqlite3_column_int(terminalState.handle(), 0);
+      if ((complete != 0 && complete != 1) ||
+          terminalState.step() != SQLITE_DONE) {
+        return core::makeError(
+            core::ErrorCode::schemaMismatch,
+            "Schema-3 terminal diagnostics state is invalid");
+      }
+      result.summary.diagnosticsComplete = complete != 0;
     }
-    result.summary.diagnosticsComplete = complete != 0;
   }
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
@@ -2722,7 +2743,8 @@ validateCommittedPrefix(const OpenedResult &staged,
 core::Result<void> interruptArtifact(const std::filesystem::path &path,
                                      const OpenedResult &staged) {
   constexpr auto reason = "Run interrupted before terminal finalization";
-  const FinalSummary summary;
+  FinalSummary summary;
+  summary.diagnosticsComplete = false;
   const auto hash = canonicalHash(staged.descriptor, staged.records,
                                   RunStatus::interrupted, reason, summary);
   if (!hash.ok()) {
@@ -4403,7 +4425,7 @@ promoteMigratedCopy(const MigrationPromotion &promotion) {
     static_cast<void>(ignored);
     return storageError("Unable to promote schema-3 Result copy: " +
                         promotionError.message());
-  }
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
   std::error_code removeError;
   std::filesystem::remove(promotion.stagingPath, removeError);
   if (removeError) {
@@ -4412,7 +4434,7 @@ promoteMigratedCopy(const MigrationPromotion &promotion) {
     if (!rollbackError) {
       const auto ignored = retention.value()->release(promotion.resultId);
       static_cast<void>(ignored);
-    }
+    } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
     return storageError("Unable to remove migrated staging copy: " +
                         removeError.message());
   }

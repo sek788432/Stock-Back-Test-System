@@ -15,6 +15,9 @@ namespace bte::bindings::testing {
 
 void cancelAfterNextDraftStoreOpen(core::CancellationSource &source) noexcept;
 void clearDraftStoreOpenHook() noexcept;
+void cancelAfterNextPythonWarmupReaderOpen(
+    core::CancellationSource &source) noexcept;
+void clearPythonWarmupReaderOpenHook() noexcept;
 
 [[nodiscard]] core::Result<std::vector<core::Bar>>
 selectPythonWarmupBars(const std::filesystem::path &dataStore,
