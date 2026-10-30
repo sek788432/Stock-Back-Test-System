@@ -1470,7 +1470,8 @@ TEST(ManagedWorkerProcessTest,
   ASSERT_TRUE(worker.waitForExit(2s).ok());
 
   const auto runningAfterLeaderExit = worker.isRunning();
-  ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
+  const auto termination = worker.terminateProcessTree(50ms);
+  ASSERT_TRUE(termination.ok()) << termination.error().message;
 
   EXPECT_TRUE(runningAfterLeaderExit);
   EXPECT_FALSE(worker.isRunning());

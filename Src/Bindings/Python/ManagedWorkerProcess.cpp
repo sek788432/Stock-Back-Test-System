@@ -1033,12 +1033,22 @@ struct ManagedWorkerProcess::Impl final {
     return {};
   }
 
-  [[nodiscard]] core::Result<void> terminateRemainingProcessTree() const {
+  [[nodiscard]] core::Result<void> terminateRemainingProcessTree() {
     if (!processGroupExists(processGroup)) {
       return {};
     }
     if (::kill(-processGroup, SIGKILL) != 0 && errno != ESRCH) {
       const auto savedError = errno;
+      if (savedError == EPERM) {
+        // Darwin excludes zombie-only groups from signal delivery and returns
+        // EPERM while the system reaps orphaned descendants. Wait briefly for
+        // the group to disappear; a live, unsignalable member still fails.
+        waitForProcessTreeTermination(std::chrono::steady_clock::now() +
+                                      std::chrono::seconds{2});
+        if (!processGroupExists(processGroup)) {
+          return {};
+        }
+      }
       return workerIoError(
           "Could not terminate the managed worker process tree: " +
           std::error_code{savedError, std::generic_category()}.message());
