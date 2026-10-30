@@ -425,14 +425,40 @@ fi
             "ctest",
             "diff-cover",
             "iwyu_tool.py",
+            "llvm-profdata",
             "python3",
             "scan-build",
             "scan-build-18",
         ):
             version_output = "echo 'clang version 18.1.8'\n" if name in ("clang", "clang-18") else ""
+            command_behavior = ""
+            if name == "cmake":
+                command_behavior = """
+if [[ "$*" == *"-E remove_directory Output/coverage"* ]]; then
+  rm -rf Output/coverage
+fi
+if [[ "$*" == *"--preset coverage"* ]]; then
+  mkdir -p Output/coverage
+  printf 'BTE_COVERAGE_FORMAT:INTERNAL=%s\\n' "${BTE_FAKE_COVERAGE_FORMAT:-gcov}" > Output/coverage/CMakeCache.txt
+fi
+"""
+            elif name == "python3":
+                command_behavior = """
+if [[ "$*" == *"ListCoverageBinaries.py"* ]]; then
+  mkdir -p Output/coverage
+  printf '/tmp/coverage-binary\\n' > Output/coverage/coverage-binaries.txt
+fi
+"""
+            elif name == "ctest":
+                command_behavior = """
+if [[ "$*" == *"--preset coverage"* ]]; then
+  printf 'LLVM_PROFILE_FILE=%s\\n' "${LLVM_PROFILE_FILE:-unset}" >> "$BTE_SCRIPT_TEST_LOG"
+fi
+"""
             self.install_fake_command(
                 name,
                 f"""{version_output}printf "{name} %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"
+{command_behavior}
 if [[ -n "${{BTE_FAIL_MATCH:-}}" && "{name} $*" == *"$BTE_FAIL_MATCH"* ]]; then
   exit 23
 fi
@@ -488,7 +514,10 @@ fi
             commands,
         )
         self.assertIn("cmake -E remove_directory Output/analysis", commands)
-        self.assertIn("ctest --preset coverage --no-tests=error", commands)
+        self.assertIn(
+            "ctest --preset coverage --no-tests=error",
+            commands,
+        )
         self.assertIn(
             "diff-cover Output/CoverageReport/coverage.xml --compare-branch=base-sha --fail-under=98",
             commands,
@@ -498,6 +527,41 @@ fi
             commands,
         )
         self.assertFalse(any(command.startswith("scan-build ") for command in commands))
+
+    def test_run_quality_uses_llvm_source_coverage_for_clang(self) -> None:
+        script = self.copy_script("RunQuality.sh")
+        self.install_quality_commands()
+        environment = self.environment()
+        environment["BTE_FAKE_COVERAGE_FORMAT"] = "llvm-source-based"
+        environment["BTE_QUALITY_PYTHON"] = "python3"
+        environment["BTE_QUALITY_DIFF_COVER"] = "diff-cover"
+
+        result = subprocess.run(
+            ["bash", str(script), "--fast"],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = self.logged_commands()
+        coverage_runner = next(
+            command for command in commands if "ListCoverageBinaries.py" in command
+        )
+        self.assertIn("--output Output/coverage/coverage-binaries.txt", coverage_runner)
+        gcovr = next(command for command in commands if "-m gcovr" in command)
+        self.assertIn("--llvm-profdata-executable", gcovr)
+        self.assertIn("--llvm-cov-binary /tmp/coverage-binary", gcovr)
+        self.assertNotIn("--gcov-executable", gcovr)
+        self.assertTrue(
+            any(
+                command.startswith("LLVM_PROFILE_FILE=")
+                and command.endswith("/Output/coverage/profiles/%p-%m.profraw")
+                for command in commands
+            )
+        )
 
     def test_run_quality_default_includes_whole_tree_scan_build(self) -> None:
         script = self.copy_script("RunQuality.sh")
@@ -624,6 +688,13 @@ fi
                 else
                 f'printf "{name} %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n'
             )
+            if name == "cmake":
+                body += """
+if [[ "$*" == *"--preset coverage"* ]]; then
+  mkdir -p Output/coverage
+  printf 'BTE_COVERAGE_FORMAT:INTERNAL=gcov\\n' > Output/coverage/CMakeCache.txt
+fi
+"""
             self.install_fake_command(name, body)
         self.install_fake_command("xcrun", 'echo "/fake/macOS.sdk"\n')
         self.install_fake_command(

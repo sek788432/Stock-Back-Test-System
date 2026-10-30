@@ -311,23 +311,69 @@ if [[ "$operating_system" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
     echo "Skipping managed Python runtime coverage: locked runtime artifacts are unavailable."
   fi
 fi
-cmake --preset coverage "${coverage_arguments[@]}"
+if [[ "$operating_system" == "Darwin" ]]; then
+  CC="$clang_compiler" CXX="$clangxx_compiler" \
+    cmake --preset coverage "${coverage_arguments[@]}"
+else
+  cmake --preset coverage "${coverage_arguments[@]}"
+fi
 cmake --build --preset coverage --parallel
-ctest --preset coverage --no-tests=error
+
+coverage_format="$(sed -n 's/^BTE_COVERAGE_FORMAT:INTERNAL=//p' Output/coverage/CMakeCache.txt)"
+gcov_arguments=()
+case "$coverage_format" in
+  llvm-source-based)
+    profile_directory="$ROOT/Output/coverage/profiles"
+    coverage_binaries_file="Output/coverage/coverage-binaries.txt"
+    cmake -E make_directory "$profile_directory"
+    LLVM_PROFILE_FILE="$profile_directory/%p-%m.profraw" \
+      ctest --preset coverage --no-tests=error
+    "$quality_python" Tools/ListCoverageBinaries.py \
+      --build-dir Output/coverage \
+      --output "$coverage_binaries_file"
+
+    if has_command llvm-profdata-18 llvm-profdata; then
+      llvm_profdata="$(find_command llvm-profdata-18 llvm-profdata)"
+    elif [[ "$operating_system" == "Darwin" ]]; then
+      llvm_profdata="$(xcrun --find llvm-profdata)"
+    else
+      echo "llvm-profdata is required for Clang source-based coverage." >&2
+      exit 2
+    fi
+
+    llvm_coverage_binaries=()
+    while IFS= read -r coverage_binary; do
+      [[ -n "$coverage_binary" ]] || continue
+      llvm_coverage_binaries+=(--llvm-cov-binary "$coverage_binary")
+    done < "$coverage_binaries_file"
+    if [[ "${#llvm_coverage_binaries[@]}" -eq 0 ]]; then
+      echo "No instrumented test binaries were collected for LLVM coverage." >&2
+      exit 2
+    fi
+    gcov_arguments+=(--llvm-profdata-executable "$llvm_profdata")
+    gcov_arguments+=("${llvm_coverage_binaries[@]}")
+    ;;
+  gcov)
+    ctest --preset coverage --no-tests=error
+    if [[ -n "${BTE_GCOV_EXECUTABLE:-}" ]]; then
+      gcov_arguments+=(--gcov-executable "$BTE_GCOV_EXECUTABLE")
+    elif [[ "$operating_system" == "Darwin" ]]; then
+      gcov_arguments+=(--gcov-executable "xcrun llvm-cov gcov")
+      # llvm-cov gcov can emit overflowed hit counts that gcovr misclassifies.
+      gcov_arguments+=(
+        --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file
+        --gcov-ignore-parse-errors negative_hits.warn_once_per_file
+      )
+    fi
+    ;;
+  *)
+    echo "Coverage configuration did not declare a supported format: ${coverage_format:-unset}" >&2
+    exit 2
+    ;;
+esac
 
 report_directory="Output/CoverageReport"
 cmake -E make_directory "$report_directory"
-gcov_arguments=()
-if [[ -n "${BTE_GCOV_EXECUTABLE:-}" ]]; then
-  gcov_arguments+=(--gcov-executable "$BTE_GCOV_EXECUTABLE")
-elif [[ "$operating_system" == "Darwin" ]]; then
-  gcov_arguments+=(--gcov-executable "xcrun llvm-cov gcov")
-  # llvm-cov gcov can emit overflowed hit counts that gcovr misclassifies.
-  gcov_arguments+=(
-    --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file
-    --gcov-ignore-parse-errors negative_hits.warn_once_per_file
-  )
-fi
 
 "$quality_python" -m gcovr \
   --root . \

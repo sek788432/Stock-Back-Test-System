@@ -333,6 +333,14 @@ diff-cover coverage.xml --compare-branch=<base> --fail-under=98
 python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 90
 ```
 
+The CI coverage job above uses GCC gcov data. Clang coverage builds select
+LLVM source-based instrumentation (`-fprofile-instr-generate` and
+`-fcoverage-mapping`) so gcovr receives source-mapped decision counts. The
+local `RunQuality.sh` workflow gathers one profile per process, lists the
+instrumented test binaries for gcovr, and applies the same changed-line and
+changed-decision thresholds. This avoids interpreting Apple Clang's gcov
+compatibility output with the GCC-oriented decision heuristic.
+
 CI regenerates these reports for the submitted revision and renders the gcovr
 summary plus changed-code gate results on the GitHub Actions workflow summary
 page. XML, JSON, Markdown, and HTML reports are generated evidence, not source

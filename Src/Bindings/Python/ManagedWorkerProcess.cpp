@@ -649,6 +649,7 @@ struct ManagedWorkerProcess::Impl final {
   bool standardOutputOpen = true;
   bool standardErrorOpen = true;
   bool reaped = false;
+  bool childTerminationRequested = false;
   int exitStatus = 0;
   DiagnosticBuffer capturedStandardOutput;
   DiagnosticBuffer capturedStandardError;
@@ -944,8 +945,10 @@ struct ManagedWorkerProcess::Impl final {
       terminateResult = ::kill(-processGroup, SIGTERM);
     }
     if (terminateResult != 0 && errno != ESRCH) {
+      const auto savedError = errno;
       return workerIoError(
-          "Could not request managed worker process-tree shutdown.");
+          "Could not request managed worker process-tree shutdown: " +
+          std::error_code{savedError, std::generic_category()}.message());
     }
     return {};
   }
@@ -971,7 +974,7 @@ struct ManagedWorkerProcess::Impl final {
     }
   }
 
-  [[nodiscard]] core::Result<void> terminateOwnedChild() const {
+  [[nodiscard]] core::Result<void> terminateOwnedChild() {
     if (!processGroupExists(processGroup) || process <= 0 || reaped) {
       return {};
     }
@@ -992,6 +995,7 @@ struct ManagedWorkerProcess::Impl final {
           "Could not terminate the managed worker process: " +
           std::error_code{savedError, std::generic_category()}.message());
     }
+    childTerminationRequested = true;
     return {};
   }
 
@@ -1045,6 +1049,21 @@ struct ManagedWorkerProcess::Impl final {
   terminate(const std::chrono::milliseconds gracePeriod) {
     if (processGroup <= 0) {
       return {};
+    }
+    // A prior cleanup attempt may have killed the group leader but failed to
+    // reap it. On macOS, signaling that process group while the child remains
+    // a zombie can return EPERM, so reap a previously terminated child first.
+    if (childTerminationRequested) {
+      const auto reapedChild = reapOwnedChild();
+      if (!reapedChild.ok()) {
+        return reapedChild.error();
+      }
+      if (!processGroupExists(processGroup)) {
+        processGroup = -1;
+        drainPipe(standardOutput, standardOutputOpen, capturedStandardOutput);
+        drainPipe(standardError, standardErrorOpen, capturedStandardError);
+        return {};
+      }
     }
     const auto requested = requestProcessTreeTermination();
     if (!requested.ok()) {

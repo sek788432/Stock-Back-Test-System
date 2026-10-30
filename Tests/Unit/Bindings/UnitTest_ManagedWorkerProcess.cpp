@@ -1285,8 +1285,9 @@ TEST(ManagedWorkerProcessTest,
     ASSERT_FALSE(terminated.ok());
     EXPECT_EQ(terminated.error().code,
               bte::core::ErrorCode::workerHandshakeFailed);
-    EXPECT_EQ(terminated.error().message,
-              "Could not request managed worker process-tree shutdown.");
+    EXPECT_NE(terminated.error().message.find(
+                  "Could not request managed worker process-tree shutdown:"),
+              std::string::npos);
   }
   EXPECT_TRUE(worker.isRunning());
   ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
