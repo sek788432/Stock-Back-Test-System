@@ -427,6 +427,11 @@ std::uint64_t testing::managedWorkerProcessStartCount() noexcept {
   return workerProcessStartCountStorage().load(std::memory_order_relaxed);
 }
 
+bool testing::managedWorkerSystemCallFailurePending() noexcept {
+  return workerProcessSystemCallFailureStorage().load(
+             std::memory_order_relaxed) != 0;
+}
+
 void testing::failNextManagedWorkerSystemCall(
     const testing::ManagedWorkerSystemCall systemCall,
     const std::uint32_t successfulCallsBeforeFailure,
@@ -1037,7 +1042,18 @@ struct ManagedWorkerProcess::Impl final {
     if (!processGroupExists(processGroup)) {
       return {};
     }
-    if (::kill(-processGroup, SIGKILL) != 0 && errno != ESRCH) {
+    int killResult = -1;
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::terminateProcessGroupSignal);
+        injectedError != 0) {
+      errno = injectedError;
+    } else
+#endif
+    {
+      killResult = ::kill(-processGroup, SIGKILL);
+    }
+    if (killResult != 0 && errno != ESRCH) {
       const auto savedError = errno;
       if (savedError == EPERM) {
         // Darwin excludes zombie-only groups from signal delivery and returns

@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -54,6 +56,48 @@ void writeAll(const int descriptor, const std::string_view bytes) {
   }
 }
 
+[[nodiscard]] int runLeaderExitWithSignalResistantDescendant() {
+  std::array<int, 2> readinessDescriptors{};
+  if (::pipe(readinessDescriptors.data()) != 0) {
+    return 18;
+  }
+
+  const auto child = ::fork();
+  if (child < 0) {
+    static_cast<void>(::close(readinessDescriptors[0]));
+    static_cast<void>(::close(readinessDescriptors[1]));
+    return 19;
+  }
+  if (child == 0) {
+    static_cast<void>(::close(readinessDescriptors[0]));
+    struct sigaction action {};
+    action.sa_handler = SIG_IGN;
+    if (sigemptyset(&action.sa_mask) != 0 ||
+        ::sigaction(SIGTERM, &action, nullptr) != 0) {
+      ::_exit(20);
+    }
+    constexpr char ready = 'r';
+    if (::write(readinessDescriptors[1], &ready, sizeof(ready)) !=
+        static_cast<ssize_t>(sizeof(ready))) {
+      ::_exit(21);
+    }
+    static_cast<void>(::close(readinessDescriptors[1]));
+
+    while (true) {
+      ::pause();
+    }
+  }
+
+  static_cast<void>(::close(readinessDescriptors[1]));
+  char ready = '\0';
+  ssize_t count = -1;
+  do {
+    count = ::read(readinessDescriptors[0], &ready, sizeof(ready));
+  } while (count < 0 && errno == EINTR);
+  static_cast<void>(::close(readinessDescriptors[0]));
+  return count == static_cast<ssize_t>(sizeof(ready)) && ready == 'r' ? 0 : 22;
+}
+
 [[nodiscard]] std::string argumentValue(const int argc, char **argv,
                                         const std::string_view prefix) {
   for (int index = 1; index < argc; ++index) {
@@ -97,6 +141,9 @@ void writeAll(const int descriptor, const std::string_view bytes) {
       }
     }
     return 0;
+  }
+  if (mode == "leader-exits-with-signal-resistant-descendant") {
+    return runLeaderExitWithSignalResistantDescendant();
   }
   if (mode == "invalid-frame") {
     writeAll(3, "bad!");

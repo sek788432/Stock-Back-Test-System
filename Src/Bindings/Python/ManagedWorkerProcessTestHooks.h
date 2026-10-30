@@ -27,12 +27,14 @@ enum class ManagedWorkerSystemCall : std::uint8_t {
   protocolRead,
   protocolWrite,
   terminateSignal,
+  terminateProcessGroupSignal,
   processGroupProbe,
   terminateChildSignal,
   waitForChild,
 };
 
 [[nodiscard]] std::uint64_t managedWorkerProcessStartCount() noexcept;
+[[nodiscard]] bool managedWorkerSystemCallFailurePending() noexcept;
 void failNextManagedWorkerSystemCall(ManagedWorkerSystemCall systemCall,
                                      std::uint32_t successfulCallsBeforeFailure,
                                      int errorNumber) noexcept;

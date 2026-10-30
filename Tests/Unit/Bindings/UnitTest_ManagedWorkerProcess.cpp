@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -120,6 +121,19 @@ waitForProcessExitWithoutReaping(const ManagedWorkerProcess &worker,
     std::this_thread::sleep_for(1ms);
   }
   return false;
+}
+
+[[nodiscard]] bool
+waitForProcessGroupToDisappear(const pid_t processGroup,
+                               const std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  do {
+    if (::kill(-processGroup, 0) != 0 && errno == ESRCH) {
+      return true;
+    }
+    std::this_thread::sleep_for(5ms);
+  } while (std::chrono::steady_clock::now() < deadline);
+  return ::kill(-processGroup, 0) != 0 && errno == ESRCH;
 }
 
 [[nodiscard]] ProtocolMessage request() {
@@ -1475,8 +1489,92 @@ TEST(ManagedWorkerProcessTest,
 
   EXPECT_TRUE(runningAfterLeaderExit);
   EXPECT_FALSE(worker.isRunning());
-  EXPECT_EQ(::kill(-group, 0), -1);
-  EXPECT_EQ(errno, ESRCH);
+  EXPECT_TRUE(waitForProcessGroupToDisappear(group, 2s));
+#else
+  GTEST_SKIP()
+      << "POSIX process-group support is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     waitsForProcessGroupAfterPermissionDeniedUntilItDisappears) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(),
+      .arguments = {"leader-exits-with-signal-resistant-descendant"}});
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+  const auto group = worker.processId();
+  ASSERT_GT(group, 0);
+  ASSERT_TRUE(worker.waitForExit(2s).ok());
+  ASSERT_EQ(::kill(-group, 0), 0);
+
+  {
+    ManagedWorkerSystemCallFailure injectGroupKillFailure{
+        ManagedWorkerSystemCall::terminateProcessGroupSignal, 0, EPERM};
+    auto termination = std::async(std::launch::async, [&worker] {
+      return worker.terminateProcessTree(0ms);
+    });
+    const auto hookDeadline = std::chrono::steady_clock::now() + 1s;
+    while (bte::bindings::python::testing::
+               managedWorkerSystemCallFailurePending() &&
+           std::chrono::steady_clock::now() < hookDeadline) {
+      std::this_thread::sleep_for(1ms);
+    }
+    const auto injectionConsumed = !bte::bindings::python::testing::
+                                       managedWorkerSystemCallFailurePending();
+    const auto terminationIsWaiting =
+        termination.wait_for(100ms) == std::future_status::timeout;
+    const auto releaseResult = ::kill(-group, SIGUSR1);
+    const auto releaseError = errno;
+    const auto terminationResult = termination.get();
+
+    EXPECT_TRUE(injectionConsumed);
+    EXPECT_TRUE(terminationIsWaiting);
+    EXPECT_EQ(releaseResult, 0)
+        << std::error_code{releaseError, std::generic_category()}.message();
+    ASSERT_TRUE(terminationResult.ok()) << terminationResult.error().message;
+  }
+
+  EXPECT_FALSE(worker.isRunning());
+  EXPECT_TRUE(waitForProcessGroupToDisappear(group, 2s));
+#else
+  GTEST_SKIP()
+      << "POSIX process-group support is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     preservesPermissionDeniedWhenProcessGroupRemainsAlive) {
+#if defined(__unix__) || defined(__APPLE__)
+  auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+      .executable = fixturePath(),
+      .arguments = {"leader-exits-with-signal-resistant-descendant"}});
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  auto worker = std::move(started).value();
+  const auto group = worker.processId();
+  ASSERT_GT(group, 0);
+  ASSERT_TRUE(worker.waitForExit(2s).ok());
+
+  {
+    ManagedWorkerSystemCallFailure injectGroupKillFailure{
+        ManagedWorkerSystemCall::terminateProcessGroupSignal, 0, EPERM};
+    const auto termination = worker.terminateProcessTree(0ms);
+    ASSERT_FALSE(termination.ok());
+    EXPECT_EQ(termination.error().code,
+              bte::core::ErrorCode::workerHandshakeFailed);
+    EXPECT_NE(termination.error().message.find(
+                  "Could not terminate the managed worker process tree:"),
+              std::string::npos);
+    EXPECT_NE(termination.error().message.find("Operation not permitted"),
+              std::string::npos);
+  }
+
+  EXPECT_TRUE(worker.isRunning());
+  EXPECT_EQ(::kill(-group, 0), 0);
+  ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
+  EXPECT_FALSE(worker.isRunning());
+  EXPECT_TRUE(waitForProcessGroupToDisappear(group, 2s));
 #else
   GTEST_SKIP()
       << "POSIX process-group support is unavailable on this platform.";
