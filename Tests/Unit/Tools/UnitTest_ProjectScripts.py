@@ -426,6 +426,7 @@ fi
             "diff-cover",
             "iwyu_tool.py",
             "llvm-profdata",
+            "llvm-cov",
             "python3",
             "scan-build",
             "scan-build-18",
@@ -446,13 +447,43 @@ fi
                 command_behavior = """
 if [[ "$*" == *"ListCoverageBinaries.py"* ]]; then
   mkdir -p Output/coverage
-  printf '/tmp/coverage-binary\\n' > Output/coverage/coverage-binaries.txt
+  if [[ "${BTE_FAKE_COVERAGE_BINARY_COUNT:-1}" == "2" ]]; then
+    printf '/tmp/coverage-binary\\n' > Output/coverage/coverage-binaries.txt
+    printf '/tmp/coverage-binary-2\\n' >> Output/coverage/coverage-binaries.txt
+  else
+    printf '/tmp/coverage-binary\\n' > Output/coverage/coverage-binaries.txt
+  fi
 fi
 """
             elif name == "ctest":
                 command_behavior = """
 if [[ "$*" == *"--preset coverage"* ]]; then
   printf 'LLVM_PROFILE_FILE=%s\\n' "${LLVM_PROFILE_FILE:-unset}" >> "$BTE_SCRIPT_TEST_LOG"
+  if [[ -n "${LLVM_PROFILE_FILE:-}" ]]; then
+    profile_path="${LLVM_PROFILE_FILE//%p/123}"
+    profile_path="${profile_path//%m/test}"
+    mkdir -p "$(dirname "$profile_path")"
+    touch "$profile_path"
+  fi
+fi
+"""
+            elif name == "llvm-profdata":
+                command_behavior = """
+if [[ "$1" == "merge" ]]; then
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "-o" ]]; then
+      shift
+      touch "$1"
+      break
+    fi
+    shift
+  done
+fi
+"""
+            elif name == "llvm-cov":
+                command_behavior = """
+if [[ "$1" == "export" ]]; then
+  printf 'SF:%s/Src/Example.cpp\\nDA:1,1\\nend_of_record\\n' "$PWD"
 fi
 """
             self.install_fake_command(
@@ -556,12 +587,85 @@ fi
         self.assertIn("--llvm-cov-binary /tmp/coverage-binary", gcovr)
         self.assertNotIn("--gcov-executable", gcovr)
         self.assertTrue(
+            any(command.startswith("llvm-profdata merge ") for command in commands)
+        )
+        self.assertTrue(
+            any(command.startswith("llvm-cov export ") for command in commands)
+        )
+        self.assertTrue(
+            any("Tools/MergeLlvmLineCoverage.py" in command for command in commands)
+        )
+        self.assertTrue(
+            any(
+                "--json-add-tracefile" in command and "coverage.json" in command
+                for command in commands
+            )
+        )
+        merge_profiles = commands.index(
+            next(
+                command
+                for command in commands
+                if command.startswith("llvm-profdata merge ")
+            )
+        )
+        export_coverage = commands.index(
+            next(
+                command
+                for command in commands
+                if command.startswith("llvm-cov export ")
+            )
+        )
+        initial_report = commands.index(
+            next(command for command in commands if "-m gcovr" in command)
+        )
+        merge_line_report = commands.index(
+            next(
+                command
+                for command in commands
+                if "Tools/MergeLlvmLineCoverage.py" in command
+            )
+        )
+        rendered_report = commands.index(
+            next(command for command in commands if "--json-add-tracefile" in command)
+        )
+        self.assertLess(merge_profiles, export_coverage)
+        self.assertLess(export_coverage, initial_report)
+        self.assertLess(initial_report, merge_line_report)
+        self.assertLess(merge_line_report, rendered_report)
+        self.assertTrue(
             any(
                 command.startswith("LLVM_PROFILE_FILE=")
                 and command.endswith("/Output/coverage/profiles/%p-%m.profraw")
                 for command in commands
             )
         )
+
+    def test_run_quality_exports_every_llvm_coverage_binary(self) -> None:
+        script = self.copy_script("RunQuality.sh")
+        self.install_quality_commands()
+        environment = self.environment()
+        environment["BTE_FAKE_COVERAGE_FORMAT"] = "llvm-source-based"
+        environment["BTE_FAKE_COVERAGE_BINARY_COUNT"] = "2"
+        environment["BTE_QUALITY_PYTHON"] = "python3"
+        environment["BTE_QUALITY_DIFF_COVER"] = "diff-cover"
+
+        result = subprocess.run(
+            ["bash", str(script), "--fast"],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        export = next(
+            command
+            for command in self.logged_commands()
+            if command.startswith("llvm-cov export ")
+        )
+        self.assertIn("/tmp/coverage-binary", export)
+        self.assertIn("--object /tmp/coverage-binary-2", export)
 
     def test_run_quality_default_includes_whole_tree_scan_build(self) -> None:
         script = self.copy_script("RunQuality.sh")

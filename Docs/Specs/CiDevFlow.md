@@ -314,7 +314,7 @@ diff arguments, so every analyzer covers all project translation units.
 CI pins clang/clang-format/clang-tidy/clang-tools and the Clang runtime
 `1:18.1.3-1ubuntu1`, cppcheck
 `2.13.0-2ubuntu3`, and IWYU `8.21-1build2` on Ubuntu 24.04. The complete Python
-coverage dependency closure—including gcovr `8.5`, diff-cover `10.0.0`, Jinja2
+coverage dependency closure—including gcovr `8.7`, diff-cover `10.0.0`, Jinja2
 `3.1.6`, and MarkupSafe `3.0.3`—and artifact hashes are recorded in
 `Tools/CoverageRequirements.txt`; direct requirements remain in
 `Tools/CoverageRequirements.in`.
@@ -338,8 +338,12 @@ LLVM source-based instrumentation (`-fprofile-instr-generate` and
 `-fcoverage-mapping`) so gcovr receives source-mapped decision counts. The
 local `RunQuality.sh` workflow gathers one profile per process, lists the
 instrumented test binaries for gcovr, and applies the same changed-line and
-changed-decision thresholds. This avoids interpreting Apple Clang's gcov
-compatibility output with the GCC-oriented decision heuristic.
+changed-decision thresholds. For line coverage, it also exports LLVM LCOV
+counts and overlays hits only onto existing, non-excluded gcovr source-line
+records, then regenerates every report from those line counts and gcovr's
+original branch and decision data. This avoids interpreting Apple Clang's gcov
+compatibility output with the GCC-oriented decision heuristic while retaining
+the same coverage thresholds.
 
 CI regenerates these reports for the submitted revision and renders the gcovr
 summary plus changed-code gate results on the GitHub Actions workflow summary

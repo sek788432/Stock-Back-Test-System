@@ -350,6 +350,36 @@ case "$coverage_format" in
       echo "No instrumented test binaries were collected for LLVM coverage." >&2
       exit 2
     fi
+
+    llvm_cov="$(dirname "$llvm_profdata")/$(basename "$llvm_profdata" | sed 's/llvm-profdata/llvm-cov/')"
+    if [[ ! -x "$llvm_cov" ]]; then
+      echo "The matching llvm-cov executable is unavailable beside $llvm_profdata." >&2
+      exit 2
+    fi
+
+    llvm_cov_objects=()
+    first_coverage_binary=""
+    while IFS= read -r coverage_binary; do
+      [[ -n "$coverage_binary" ]] || continue
+      if [[ -z "$first_coverage_binary" ]]; then
+        first_coverage_binary="$coverage_binary"
+      else
+        llvm_cov_objects+=(--object "$coverage_binary")
+      fi
+    done < "$coverage_binaries_file"
+    merged_profile="Output/coverage/coverage.profdata"
+    "$llvm_profdata" merge -sparse "$profile_directory"/*.profraw \
+      -o "$merged_profile"
+    llvm_lcov="Output/coverage/coverage.lcov"
+    if [[ "${#llvm_cov_objects[@]}" -gt 0 ]]; then
+      "$llvm_cov" export --format=lcov \
+        --instr-profile="$merged_profile" \
+        "$first_coverage_binary" "${llvm_cov_objects[@]}" > "$llvm_lcov"
+    else
+      "$llvm_cov" export --format=lcov \
+        --instr-profile="$merged_profile" \
+        "$first_coverage_binary" > "$llvm_lcov"
+    fi
     gcov_arguments+=(--llvm-profdata-executable "$llvm_profdata")
     gcov_arguments+=("${llvm_coverage_binaries[@]}")
     ;;
@@ -386,6 +416,30 @@ cmake -E make_directory "$report_directory"
   --markdown-summary "$report_directory/summary.md" \
   --html-details "$report_directory/index.html" \
   "${gcov_arguments[@]}"
+
+if [[ "$coverage_format" == "llvm-source-based" ]]; then
+  merged_line_report="Output/coverage/coverage-llvm-lines.json"
+  "$quality_python" Tools/MergeLlvmLineCoverage.py \
+    --root . \
+    --gcovr-json "$report_directory/coverage.json" \
+    --llvm-lcov "Output/coverage/coverage.lcov" \
+    --output "$merged_line_report"
+
+  # gcovr's LLVM segment merge can leave executed source lines at count zero.
+  # Re-render every report from the merged line counts and gcovr's original
+  # branch/decision records so all report formats describe the same data.
+  "$quality_python" -m gcovr \
+    --root . \
+    --filter 'Src/' \
+    --exclude 'Output/' \
+    --merge-mode-functions merge-use-line-min \
+    --decisions \
+    --json-add-tracefile "$merged_line_report" \
+    --cobertura "$report_directory/coverage.xml" \
+    --json "$report_directory/coverage.json" \
+    --markdown-summary "$report_directory/summary.md" \
+    --html-details "$report_directory/index.html"
+fi
 
 "$diff_cover" "$report_directory/coverage.xml" --compare-branch="$base" --fail-under=98
 "$quality_python" Tools/CheckDiffBranchCoverage.py \
