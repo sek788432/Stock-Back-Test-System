@@ -1339,7 +1339,13 @@ TEST(ManagedWorkerProcessTest,
                   "Could not terminate the managed worker process:"),
               std::string::npos);
   }
-  ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
+  ASSERT_TRUE(waitForProcessExitWithoutReaping(worker, 2s));
+  {
+    ManagedWorkerSystemCallFailure injectRepeatedSignal{
+        ManagedWorkerSystemCall::terminateSignal, 0, EPERM};
+    const auto cleanup = worker.terminateProcessTree(50ms);
+    ASSERT_TRUE(cleanup.ok()) << cleanup.error().message;
+  }
   EXPECT_FALSE(worker.isRunning());
 #else
   GTEST_SKIP() << "POSIX process support is unavailable on this platform.";

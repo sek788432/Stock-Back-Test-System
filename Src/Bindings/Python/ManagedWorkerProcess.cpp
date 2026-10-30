@@ -649,6 +649,7 @@ struct ManagedWorkerProcess::Impl final {
   bool standardOutputOpen = true;
   bool standardErrorOpen = true;
   bool reaped = false;
+  bool processTreeTerminationRequested = false;
   bool childTerminationRequested = false;
   int exitStatus = 0;
   DiagnosticBuffer capturedStandardOutput;
@@ -1065,9 +1066,14 @@ struct ManagedWorkerProcess::Impl final {
         return {};
       }
     }
-    const auto requested = requestProcessTreeTermination();
-    if (!requested.ok()) {
-      return requested.error();
+    if (!processTreeTerminationRequested) {
+      const auto requested = requestProcessTreeTermination();
+      if (!requested.ok()) {
+        return requested.error();
+      }
+      // Repeating SIGTERM can fail with EPERM while a terminated group leader
+      // is still a zombie; retries should continue through the reap path.
+      processTreeTerminationRequested = true;
     }
     const auto deadline = std::chrono::steady_clock::now() +
                           std::max(gracePeriod, std::chrono::milliseconds{0});
