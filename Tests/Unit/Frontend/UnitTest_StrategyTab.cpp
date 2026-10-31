@@ -827,7 +827,11 @@ void StrategyTabTest::
       [status] { return status->text() == "Validation failed"; },
       std::chrono::milliseconds{5000}));
   QVERIFY(*consent);
-  QVERIFY(diagnostics->toPlainText().contains("runtime"));
+  const auto validationDiagnostic = diagnostics->toPlainText();
+  QVERIFY(validationDiagnostic ==
+              "The managed Python runtime profile is not installed." ||
+          validationDiagnostic ==
+              "Python Strategy is unavailable on this platform.");
 }
 
 void StrategyTabTest::cancellationReachesTheValidationWorker() {
