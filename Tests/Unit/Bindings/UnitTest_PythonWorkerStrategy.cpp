@@ -3819,12 +3819,18 @@ def create_strategy(params):
             processStartsBeforeReplay);
   ASSERT_EQ(replay.value()->totalFrames(), 3U);
   EXPECT_TRUE(replay.value()->seek(0));
+  EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+            processStartsBeforeReplay);
   EXPECT_TRUE(replay.value()->current()->fills.empty());
   EXPECT_TRUE(replay.value()->seek(1));
+  EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+            processStartsBeforeReplay);
   ASSERT_EQ(replay.value()->current()->fills.size(), 1U);
   EXPECT_EQ(replay.value()->current()->fills.front().quantityShares, 2);
   EXPECT_DOUBLE_EQ(replay.value()->current()->fills.front().price, 101.0101);
   EXPECT_TRUE(replay.value()->seek(0));
+  EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
+            processStartsBeforeReplay);
   EXPECT_EQ(replay.value()->current()->candle.close, 100.0);
 }
 #endif
