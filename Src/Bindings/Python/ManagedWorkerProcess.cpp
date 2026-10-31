@@ -487,6 +487,12 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
 #if defined(__unix__) || defined(__APPLE__)
   std::string sharedName;
   UniqueDescriptor writableDescriptor;
+  constexpr int closeOnExecFlag =
+#if defined(__linux__)
+      O_CLOEXEC;
+#else
+      0; // Darwin shm_open sets FD_CLOEXEC on the returned descriptor.
+#endif
   try {
     std::random_device entropy;
     for (int attempt = 0; attempt < 8 && writableDescriptor.get() < 0;
@@ -516,7 +522,8 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
         sharedMemoryDescriptor =
             ::shm_open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
                         // shm_open requires this mode because O_CREAT is set.
-                sharedName.c_str(), O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC,
+                sharedName.c_str(),
+                O_CREAT | O_EXCL | O_RDWR | closeOnExecFlag,
                 S_IRUSR | S_IWUSR);
       }
       writableDescriptor.reset(sharedMemoryDescriptor);
@@ -589,7 +596,7 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
 #endif
   {
     readOnlyMemoryDescriptor =
-        ::shm_open(sharedName.c_str(), O_RDONLY | O_CLOEXEC, 0);
+        ::shm_open(sharedName.c_str(), O_RDONLY | closeOnExecFlag, 0);
   }
   UniqueDescriptor readOnlyDescriptor(readOnlyMemoryDescriptor);
   removeName();

@@ -426,7 +426,9 @@ fi
             "diff-cover",
             "iwyu_tool.py",
             "llvm-profdata",
+            "llvm-profdata-18",
             "llvm-cov",
+            "llvm-cov-18",
             "python3",
             "scan-build",
             "scan-build-18",
@@ -587,10 +589,16 @@ fi
         self.assertIn("--llvm-cov-binary /tmp/coverage-binary", gcovr)
         self.assertNotIn("--gcov-executable", gcovr)
         self.assertTrue(
-            any(command.startswith("llvm-profdata merge ") for command in commands)
+            any(
+                command.startswith(("llvm-profdata merge ", "llvm-profdata-18 merge "))
+                for command in commands
+            )
         )
         self.assertTrue(
-            any(command.startswith("llvm-cov export ") for command in commands)
+            any(
+                command.startswith(("llvm-cov export ", "llvm-cov-18 export "))
+                for command in commands
+            )
         )
         self.assertTrue(
             any("Tools/MergeLlvmLineCoverage.py" in command for command in commands)
@@ -605,14 +613,16 @@ fi
             next(
                 command
                 for command in commands
-                if command.startswith("llvm-profdata merge ")
+                if command.startswith(
+                    ("llvm-profdata merge ", "llvm-profdata-18 merge ")
+                )
             )
         )
         export_coverage = commands.index(
             next(
                 command
                 for command in commands
-                if command.startswith("llvm-cov export ")
+                if command.startswith(("llvm-cov export ", "llvm-cov-18 export "))
             )
         )
         initial_report = commands.index(
@@ -662,7 +672,7 @@ fi
         export = next(
             command
             for command in self.logged_commands()
-            if command.startswith("llvm-cov export ")
+            if command.startswith(("llvm-cov export ", "llvm-cov-18 export "))
         )
         self.assertIn("/tmp/coverage-binary", export)
         self.assertIn("--object /tmp/coverage-binary-2", export)

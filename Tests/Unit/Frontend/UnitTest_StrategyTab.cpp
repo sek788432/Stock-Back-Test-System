@@ -1,6 +1,7 @@
 #include "Bte/Frontend/StrategyTab.h"
 
 #include "PythonWorkerStrategy.h"
+#include "WaitUntil.h"
 
 #include <Bte/Core/Bar.h>
 #include <Bte/Strategy/Strategy.h>
@@ -372,7 +373,9 @@ void StrategyTabTest::autosavesAfterFiveHundredMillisecondsOfIdle() {
   editor->setPlainText("second idle generation = True\n");
   QTest::qWait(350);
   QVERIFY(!std::filesystem::exists(draftPath));
-  QTRY_VERIFY_WITH_TIMEOUT(std::filesystem::exists(draftPath), 1500);
+  QVERIFY(bte::test::waitUntil(
+      [&draftPath] { return std::filesystem::exists(draftPath); },
+      std::chrono::milliseconds{1500}));
 
   QFile draft{QString::fromStdString(draftPath.string())};
   QVERIFY(draft.open(QIODevice::ReadOnly));
@@ -488,10 +491,13 @@ void StrategyTabTest::validatesWithFrozenParametersAndConsent() {
   auto *validate = tab.findChild<QPushButton *>("pythonStrategyValidateButton");
   QVERIFY(validate != nullptr);
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
-                               ->text()
-                               .contains("Strategy is valid"),
-                           5000);
+  QVERIFY(bte::test::waitUntil(
+      [&tab] {
+        return tab.findChild<QLabel *>("pythonStrategyStatusLabel")
+            ->text()
+            .contains("Strategy is valid");
+      },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(calls.load(), 1);
 }
 
@@ -632,8 +638,9 @@ void StrategyTabTest::asksForConsentBeforeValidatingTrustedSource() {
 
   scheduleConsentChoice("Cancel");
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Consent was not granted"),
-                           5000);
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text().contains("Consent was not granted"); },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(validationCalls.load(), 0);
   QCOMPARE(*promptCount, 1);
   QVERIFY(informativeText->contains("API version: 1"));
@@ -641,20 +648,26 @@ void StrategyTabTest::asksForConsentBeforeValidatingTrustedSource() {
 
   scheduleConsentChoice("Allow this source");
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Strategy is valid"), 5000);
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text().contains("Strategy is valid"); },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(validationCalls.load(), 1);
   QCOMPARE(*promptCount, 2);
 
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(validationCalls.load() == 2, 5000);
-  QTRY_VERIFY_WITH_TIMEOUT(validate->isEnabled(), 5000);
+  QVERIFY(bte::test::waitUntil(
+      [&validationCalls] { return validationCalls.load() == 2; },
+      std::chrono::milliseconds{5000}));
+  QVERIFY(bte::test::waitUntil([validate] { return validate->isEnabled(); },
+                               std::chrono::milliseconds{5000}));
   QCOMPARE(*promptCount, 2);
 
   editor->setPlainText(source + "# edited source identity\n");
   scheduleConsentChoice("Cancel");
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Consent was not granted"),
-                           5000);
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text().contains("Consent was not granted"); },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(validationCalls.load(), 2);
   QCOMPARE(*promptCount, 3);
 }
@@ -690,16 +703,22 @@ void StrategyTabTest::reportsValidationWorkerFailures() {
   QVERIFY(diagnostics != nullptr);
 
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text() == "Validation failed", 5000);
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text() == "Validation failed";
+  }, std::chrono::milliseconds{5000}));
   QCOMPARE(diagnostics->toPlainText(), QString{"strategy rejected"});
 
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text() == "Validation failed", 5000);
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text() == "Validation failed";
+  }, std::chrono::milliseconds{5000}));
   QCOMPARE(diagnostics->toPlainText(),
            QString{"validation worker failed: worker exception"});
 
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text() == "Validation failed", 5000);
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text() == "Validation failed";
+  }, std::chrono::milliseconds{5000}));
   QCOMPARE(diagnostics->toPlainText(), QString{"validation worker failed"});
   QCOMPARE(invocation.load(), 3);
 }
@@ -742,7 +761,9 @@ void StrategyTabTest::
   const auto consent = chooseReplacementButton("Allow this source");
   QTest::mouseClick(validate, Qt::LeftButton);
 
-  QTRY_VERIFY_WITH_TIMEOUT(status->text() == "Validation failed", 5000);
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text() == "Validation failed";
+  }, std::chrono::milliseconds{5000}));
   QVERIFY(*consent);
   QVERIFY(diagnostics->toPlainText().contains("runtime"));
 }
@@ -778,11 +799,15 @@ void StrategyTabTest::cancellationReachesTheValidationWorker() {
   QVERIFY(diagnostics != nullptr);
 
   QTest::mouseClick(validate, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(started.load(), 5000);
+  QVERIFY(bte::test::waitUntil([&started] { return started.load(); },
+                               std::chrono::milliseconds{5000}));
   QVERIFY(cancel->isEnabled());
   QTest::mouseClick(cancel, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(observedCancellation.load() && validate->isEnabled(),
-                           5000);
+  QVERIFY(bte::test::waitUntil(
+      [&observedCancellation, validate] {
+        return observedCancellation.load() && validate->isEnabled();
+      },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(status->text(), QString{"Validation failed"});
   QCOMPARE(diagnostics->toPlainText(), QString{"validation canceled"});
   QVERIFY(!cancel->isEnabled());
@@ -819,9 +844,12 @@ void StrategyTabTest::autosaveReportsWhenItsDraftDirectoryIsUnavailable() {
 
   editor->setPlainText("def create_strategy(params):\n    return None\n");
 
-  QTRY_VERIFY_WITH_TIMEOUT(
-      status->text().contains("Cannot save draft to the local data folder"),
-      2000);
+  QVERIFY(bte::test::waitUntil(
+      [status] {
+        return status->text().contains(
+            "Cannot save draft to the local data folder");
+      },
+      std::chrono::milliseconds{2000}));
   QVERIFY(std::filesystem::is_regular_file(blockedDirectory));
 }
 
@@ -878,10 +906,13 @@ void StrategyTabTest::ignoresValidationForAnEditedDraft() {
   entered.get_future().wait();
   editor->appendPlainText("# changed while worker was running");
   release.set_value();
-  QTRY_VERIFY_WITH_TIMEOUT(tab.findChild<QLabel *>("pythonStrategyStatusLabel")
-                               ->text()
-                               .contains("earlier result was ignored"),
-                           5000);
+  QVERIFY(bte::test::waitUntil(
+      [&tab] {
+        return tab.findChild<QLabel *>("pythonStrategyStatusLabel")
+            ->text()
+            .contains("earlier result was ignored");
+      },
+      std::chrono::milliseconds{5000}));
 }
 
 void StrategyTabTest::useInBacktestEmitsTheCurrentSourceAndParameters() {

@@ -1993,7 +1993,7 @@ void BacktestTab::handleVerificationRequested() {
   runState_->cancellation = core::CancellationSource{};
   const auto cancellation = runState_->cancellation.token();
   const auto runner = runState_->verificationRunner;
-  const QPointer<BacktestTab> guardedThis{this};
+  const auto guardedThis = std::make_shared<QPointer<BacktestTab>>(this);
   runState_->verificationWatcher.setFuture(
       QtConcurrent::run([runner, configuration = std::move(configuration),
                          cancellation, guardedThis]() noexcept {
@@ -2001,8 +2001,8 @@ void BacktestTab::handleVerificationRequested() {
             [guardedThis](
                 const results::VerificationEvidence &evidence) noexcept {
               try {
-                if (!guardedThis.isNull()) {
-                  emit guardedThis->verificationProgressUpdated(
+                if (!guardedThis->isNull()) {
+                  emit (*guardedThis)->verificationProgressUpdated(
                       verificationStatusText(evidence));
                 }
               } catch (const std::exception &error) {

@@ -113,6 +113,8 @@ bte::bindings::BacktestSnapshot filledSnapshot() {
       .barsProcessed = 2,
       .resultId = {},
       .canonicalResultHash = {},
+      .terminalReason = {},
+      .strategyDiagnostics = {},
   };
 }
 
@@ -132,6 +134,8 @@ noFillSnapshot(const bte::bindings::BacktestOutcome outcome) {
       .barsProcessed = 2,
       .resultId = {},
       .canonicalResultHash = {},
+      .terminalReason = {},
+      .strategyDiagnostics = {},
   };
 }
 
@@ -1248,8 +1252,9 @@ void BacktestTabTest::pythonBacktestRequiresConsentBeforeStarting() {
 
   scheduleConsentChoice("Cancel");
   QTest::mouseClick(run, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Consent was not granted"),
-                           5000);
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text().contains("Consent was not granted"); },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(calls.load(), 0);
   QCOMPARE(*promptCount, 1);
   QVERIFY(informativeText->contains("API version: 1"));
@@ -1270,8 +1275,9 @@ void BacktestTabTest::pythonBacktestRequiresConsentBeforeStarting() {
   tab.setPythonStrategyDraft(source + "-changed", "{}");
   scheduleConsentChoice("Cancel");
   QTest::mouseClick(run, Qt::LeftButton);
-  QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Consent was not granted"),
-                           5000);
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text().contains("Consent was not granted"); },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(calls.load(), 2);
   QCOMPARE(*promptCount, 3);
 }
