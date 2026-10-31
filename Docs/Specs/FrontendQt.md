@@ -433,12 +433,15 @@ their exact paths are not a current contract.
 Current registered frontend tests cover the application shell, current Backtest
 page, bar-only and result-backed Replay states, asynchronous switching and
 destruction, the Qt Charts candle/volume/marker adapter, and Bindings result
-frames. They do not prove saved Strategy/complete Result library pages, the
-five-row editor, Python authoring, or the project-owned release chart.
+frames. The first Python Strategy milestone also covers draft editing,
+import/export, validation and consent flows, plus a managed-runtime GUI
+backtest that saves and opens the ordinary result in Replay when the runtime is
+available. These tests do not prove saved Strategy/complete Result library
+pages, the full five-row editor, or the project-owned release chart.
 
-Those accepted future behaviors require positive, negative, and boundary tests
+The remaining future behaviors require positive, negative, and boundary tests
 for one/five/six condition rows, invalid conditions, responsive layout, inner
-scroll threshold, keyboard reorder, Python validation, Result import,
-hash/schema failures, Trash/Restore, atomic recovery, and **Open Replay**
-eligibility. The release chart also requires deterministic render-geometry,
-interaction, and accessibility tests; visual inspection alone is not evidence.
+scroll threshold, keyboard reorder, complete Result library flows, hash/schema
+failures, Trash/Restore, atomic recovery, and **Open Replay** eligibility. The
+release chart also requires deterministic render-geometry, interaction, and
+accessibility tests; visual inspection alone is not evidence.
