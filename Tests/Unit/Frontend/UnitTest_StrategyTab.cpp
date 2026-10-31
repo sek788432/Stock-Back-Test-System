@@ -9,6 +9,7 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QFile>
 #include <QFileDialog>
 #include <QLabel>
@@ -16,6 +17,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -45,7 +47,9 @@ bool writeSourceFile(const std::filesystem::path &path,
 
 std::shared_ptr<bool> chooseReplacementButton(const QString &buttonText) {
   const auto clicked = std::make_shared<bool>(false);
-  QTimer::singleShot(0, qApp, [buttonText, clicked] {
+  auto *timer = new QTimer{qApp};
+  timer->setInterval(10);
+  QObject::connect(timer, &QTimer::timeout, qApp, [buttonText, clicked, timer] {
     auto *dialog =
         qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
     if (dialog == nullptr) {
@@ -54,11 +58,18 @@ std::shared_ptr<bool> chooseReplacementButton(const QString &buttonText) {
     for (auto *button : dialog->buttons()) {
       if (button->text() == buttonText) {
         *clicked = true;
+        timer->stop();
+        timer->deleteLater();
         button->click();
         return;
       }
     }
   });
+  QTimer::singleShot(5000, timer, [timer] {
+    timer->stop();
+    timer->deleteLater();
+  });
+  timer->start();
   return clicked;
 }
 
@@ -122,6 +133,12 @@ private slots:
 
 void StrategyTabTest::initTestCase() {
   QStandardPaths::setTestModeEnabled(true);
+  QCoreApplication::setOrganizationName("StockBackTestSystemTests");
+  QCoreApplication::setApplicationName("StrategyTabTests");
+  QSettings::setDefaultFormat(QSettings::IniFormat);
+  QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                     QStandardPaths::writableLocation(
+                         QStandardPaths::TempLocation));
 }
 
 void StrategyTabTest::exposesSampleAndPersistsRecoverableDrafts() {
@@ -619,21 +636,31 @@ void StrategyTabTest::asksForConsentBeforeValidatingTrustedSource() {
 
   const auto scheduleConsentChoice =
       [promptCount, informativeText](const QString &buttonText) {
-        QTimer::singleShot(0, qApp, [buttonText, promptCount, informativeText] {
-          auto *dialog =
-              qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-          if (dialog == nullptr) {
-            return;
-          }
-          ++*promptCount;
-          *informativeText = dialog->informativeText();
-          for (auto *button : dialog->buttons()) {
-            if (button->text() == buttonText) {
-              button->click();
-              return;
-            }
-          }
+        auto *timer = new QTimer{qApp};
+        timer->setInterval(10);
+        QObject::connect(timer, &QTimer::timeout, qApp,
+                         [buttonText, promptCount, informativeText, timer] {
+                           auto *dialog = qobject_cast<QMessageBox *>(
+                               QApplication::activeModalWidget());
+                           if (dialog == nullptr) {
+                             return;
+                           }
+                           for (auto *button : dialog->buttons()) {
+                             if (button->text() == buttonText) {
+                               ++*promptCount;
+                               *informativeText = dialog->informativeText();
+                               timer->stop();
+                               timer->deleteLater();
+                               button->click();
+                               return;
+                             }
+                           }
+                         });
+        QTimer::singleShot(5000, timer, [timer] {
+          timer->stop();
+          timer->deleteLater();
         });
+        timer->start();
       };
 
   scheduleConsentChoice("Cancel");
@@ -648,9 +675,15 @@ void StrategyTabTest::asksForConsentBeforeValidatingTrustedSource() {
 
   scheduleConsentChoice("Allow this source");
   QTest::mouseClick(validate, Qt::LeftButton);
-  QVERIFY(bte::test::waitUntil(
+  const auto validationCompleted = bte::test::waitUntil(
       [status] { return status->text().contains("Strategy is valid"); },
-      std::chrono::milliseconds{5000}));
+      std::chrono::milliseconds{5000});
+  QVERIFY2(validationCompleted,
+           qPrintable(QString{"Strategy validation did not complete: "
+                              "calls=%1, status='%2', consent prompts=%3"}
+                          .arg(validationCalls.load())
+                          .arg(status->text())
+                          .arg(*promptCount)));
   QCOMPARE(validationCalls.load(), 1);
   QCOMPARE(*promptCount, 2);
 

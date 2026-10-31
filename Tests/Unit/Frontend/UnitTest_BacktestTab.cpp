@@ -22,6 +22,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTableWidget>
@@ -286,6 +287,12 @@ private slots:
 
 void BacktestTabTest::initTestCase() {
   QStandardPaths::setTestModeEnabled(true);
+  QCoreApplication::setOrganizationName("StockBackTestSystemTests");
+  QCoreApplication::setApplicationName("BacktestTabTests");
+  QSettings::setDefaultFormat(QSettings::IniFormat);
+  QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                     QStandardPaths::writableLocation(
+                         QStandardPaths::TempLocation));
 }
 
 void BacktestTabTest::
@@ -1233,21 +1240,31 @@ void BacktestTabTest::pythonBacktestRequiresConsentBeforeStarting() {
 
   const auto scheduleConsentChoice =
       [promptCount, informativeText](const QString &buttonText) {
-        QTimer::singleShot(0, qApp, [buttonText, promptCount, informativeText] {
-          auto *dialog =
-              qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-          if (dialog == nullptr) {
-            return;
-          }
-          ++*promptCount;
-          *informativeText = dialog->informativeText();
-          for (auto *button : dialog->buttons()) {
-            if (button->text() == buttonText) {
-              button->click();
-              return;
-            }
-          }
+        auto *timer = new QTimer{qApp};
+        timer->setInterval(10);
+        QObject::connect(timer, &QTimer::timeout, qApp,
+                         [buttonText, promptCount, informativeText, timer] {
+                           auto *dialog = qobject_cast<QMessageBox *>(
+                               QApplication::activeModalWidget());
+                           if (dialog == nullptr) {
+                             return;
+                           }
+                           for (auto *button : dialog->buttons()) {
+                             if (button->text() == buttonText) {
+                               ++*promptCount;
+                               *informativeText = dialog->informativeText();
+                               timer->stop();
+                               timer->deleteLater();
+                               button->click();
+                               return;
+                             }
+                           }
+                         });
+        QTimer::singleShot(5000, timer, [timer] {
+          timer->stop();
+          timer->deleteLater();
         });
+        timer->start();
       };
 
   scheduleConsentChoice("Cancel");
@@ -1262,8 +1279,14 @@ void BacktestTabTest::pythonBacktestRequiresConsentBeforeStarting() {
 
   scheduleConsentChoice("Allow this source");
   QTest::mouseClick(run, Qt::LeftButton);
-  QVERIFY(bte::test::waitUntil(
-      [&calls, run] { return calls.load() == 1 && run->isEnabled(); }));
+  const auto backtestCompleted = bte::test::waitUntil(
+      [&calls, run] { return calls.load() == 1 && run->isEnabled(); });
+  QVERIFY2(backtestCompleted,
+           qPrintable(QString{"Backtest did not complete: calls=%1, "
+                              "status='%2', consent prompts=%3"}
+                          .arg(calls.load())
+                          .arg(status->text())
+                          .arg(*promptCount)));
   QCOMPARE(*promptCount, 2);
 
   scheduleConsentChoice("Cancel");
