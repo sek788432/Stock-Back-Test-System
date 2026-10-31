@@ -59,6 +59,8 @@ class ProjectScriptsTest(unittest.TestCase):
 
     def environment(self) -> dict[str, str]:
         environment = os.environ.copy()
+        environment.pop("CC", None)
+        environment.pop("CXX", None)
         environment["PATH"] = f"{self.bin_directory}{os.pathsep}{environment['PATH']}"
         environment["BTE_SCRIPT_TEST_LOG"] = str(self.command_log)
         return environment
