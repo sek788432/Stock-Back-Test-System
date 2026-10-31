@@ -286,7 +286,7 @@ startLoadedWorker(const std::string_view source) {
   if (!factory.ok()) {
     return factory.error();
   }
-  return std::move(worker);
+  return worker;
 }
 
 TEST(PythonWorkerBootstrapTest,
