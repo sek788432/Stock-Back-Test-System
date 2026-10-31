@@ -15,9 +15,10 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
-#include <QSignalSpy>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -45,32 +46,43 @@ bool writeSourceFile(const std::filesystem::path &path,
          file.write(source) == static_cast<qint64>(source.size());
 }
 
-std::shared_ptr<bool> chooseReplacementButton(const QString &buttonText) {
+std::pair<std::shared_ptr<bool>, std::unique_ptr<QTimer>>
+chooseReplacementButton(const QString &buttonText) {
   const auto clicked = std::make_shared<bool>(false);
-  auto *timer = new QTimer{qApp};
+  auto timer = std::make_unique<QTimer>();
   timer->setInterval(10);
-  QObject::connect(timer, &QTimer::timeout, qApp, [buttonText, clicked, timer] {
-    auto *dialog =
-        qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-    if (dialog == nullptr) {
+  const QPointer<QTimer> timerGuard{timer.get()};
+  QObject::connect(
+      timer.get(), &QTimer::timeout, qApp, [buttonText, clicked, timerGuard] {
+        if (timerGuard.isNull()) {
+          return;
+        }
+        auto *dialog =
+            qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (dialog == nullptr) {
+          return;
+        }
+        for (auto *button : dialog->buttons()) {
+          if (button->text() == buttonText) {
+            *clicked = true;
+            timerGuard->stop();
+            button->click();
+            return;
+          }
+        }
+      });
+  QTimer::singleShot(5000, timer.get(), [timerGuard] {
+    if (timerGuard.isNull() || !timerGuard->isActive()) {
       return;
     }
-    for (auto *button : dialog->buttons()) {
-      if (button->text() == buttonText) {
-        *clicked = true;
-        timer->stop();
-        timer->deleteLater();
-        button->click();
-        return;
-      }
+    timerGuard->stop();
+    if (auto *const dialog = QApplication::activeModalWidget();
+        dialog != nullptr) {
+      dialog->close();
     }
   });
-  QTimer::singleShot(5000, timer, [timer] {
-    timer->stop();
-    timer->deleteLater();
-  });
   timer->start();
-  return clicked;
+  return {clicked, std::move(timer)};
 }
 
 std::shared_ptr<bool> chooseFileDialogPath(const QString &path) {
@@ -136,9 +148,9 @@ void StrategyTabTest::initTestCase() {
   QCoreApplication::setOrganizationName("StockBackTestSystemTests");
   QCoreApplication::setApplicationName("StrategyTabTests");
   QSettings::setDefaultFormat(QSettings::IniFormat);
-  QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
-                     QStandardPaths::writableLocation(
-                         QStandardPaths::TempLocation));
+  QSettings::setPath(
+      QSettings::IniFormat, QSettings::UserScope,
+      QStandardPaths::writableLocation(QStandardPaths::TempLocation));
 }
 
 void StrategyTabTest::exposesSampleAndPersistsRecoverableDrafts() {
@@ -416,8 +428,9 @@ void StrategyTabTest::savesDirtyDraftBeforeLoadingReplacementWhenRequested() {
   QVERIFY(tab.saveDraft());
   editor->setPlainText("unsaved generation = True\n");
 
-  const auto clicked = chooseReplacementButton("Save Draft");
+  auto [clicked, clickTimer] = chooseReplacementButton("Save Draft");
   QVERIFY(tab.loadSourceFile(replacementPath));
+  clickTimer.reset();
   QVERIFY(*clicked);
   QCOMPARE(tab.sourceUtf8(), std::string{"# replacement\n"});
   QVERIFY(tab.autosaveDraft());
@@ -445,8 +458,9 @@ void StrategyTabTest::
   QVERIFY(tab.saveDraft());
   editor->setPlainText("discarded generation = True\n");
 
-  const auto clicked = chooseReplacementButton("Discard");
+  auto [clicked, clickTimer] = chooseReplacementButton("Discard");
   QVERIFY(tab.loadSourceFile(replacementPath));
+  clickTimer.reset();
   QVERIFY(*clicked);
   QCOMPARE(tab.sourceUtf8(), std::string{"# replacement\n"});
   QVERIFY(tab.autosaveDraft());
@@ -474,8 +488,9 @@ void StrategyTabTest::keepsDirtyDraftWhenReplacementIsCanceled() {
   QVERIFY(tab.saveDraft());
   editor->setPlainText("unsaved generation = True\n");
 
-  const auto clicked = chooseReplacementButton("Cancel");
+  auto [clicked, clickTimer] = chooseReplacementButton("Cancel");
   QVERIFY(!tab.loadSourceFile(replacementPath));
+  clickTimer.reset();
   QVERIFY(*clicked);
   QCOMPARE(tab.sourceUtf8(), std::string{"unsaved generation = True\n"});
 }
@@ -634,37 +649,48 @@ void StrategyTabTest::asksForConsentBeforeValidatingTrustedSource() {
           .arg(directory.path());
   editor->setPlainText(source);
 
-  const auto scheduleConsentChoice =
-      [promptCount, informativeText](const QString &buttonText) {
-        auto *timer = new QTimer{qApp};
-        timer->setInterval(10);
-        QObject::connect(timer, &QTimer::timeout, qApp,
-                         [buttonText, promptCount, informativeText, timer] {
-                           auto *dialog = qobject_cast<QMessageBox *>(
-                               QApplication::activeModalWidget());
-                           if (dialog == nullptr) {
-                             return;
-                           }
-                           for (auto *button : dialog->buttons()) {
-                             if (button->text() == buttonText) {
-                               ++*promptCount;
-                               *informativeText = dialog->informativeText();
-                               timer->stop();
-                               timer->deleteLater();
-                               button->click();
-                               return;
-                             }
-                           }
-                         });
-        QTimer::singleShot(5000, timer, [timer] {
-          timer->stop();
-          timer->deleteLater();
-        });
-        timer->start();
-      };
+  const auto scheduleConsentChoice = [promptCount, informativeText](
+                                         const QString &buttonText) {
+    auto timer = std::make_unique<QTimer>();
+    timer->setInterval(10);
+    const QPointer<QTimer> timerGuard{timer.get()};
+    QObject::connect(timer.get(), &QTimer::timeout, qApp,
+                     [buttonText, promptCount, informativeText, timerGuard] {
+                       if (timerGuard.isNull()) {
+                         return;
+                       }
+                       auto *dialog = qobject_cast<QMessageBox *>(
+                           QApplication::activeModalWidget());
+                       if (dialog == nullptr) {
+                         return;
+                       }
+                       for (auto *button : dialog->buttons()) {
+                         if (button->text() == buttonText) {
+                           ++*promptCount;
+                           *informativeText = dialog->informativeText();
+                           timerGuard->stop();
+                           button->click();
+                           return;
+                         }
+                       }
+                     });
+    QTimer::singleShot(5000, timer.get(), [timerGuard] {
+      if (timerGuard.isNull() || !timerGuard->isActive()) {
+        return;
+      }
+      timerGuard->stop();
+      if (auto *const dialog = QApplication::activeModalWidget();
+          dialog != nullptr) {
+        dialog->close();
+      }
+    });
+    timer->start();
+    return timer;
+  };
 
-  scheduleConsentChoice("Cancel");
+  auto consentTimer = scheduleConsentChoice("Cancel");
   QTest::mouseClick(validate, Qt::LeftButton);
+  consentTimer.reset();
   QVERIFY(bte::test::waitUntil(
       [status] { return status->text().contains("Consent was not granted"); },
       std::chrono::milliseconds{5000}));
@@ -673,8 +699,9 @@ void StrategyTabTest::asksForConsentBeforeValidatingTrustedSource() {
   QVERIFY(informativeText->contains("API version: 1"));
   QVERIFY(informativeText->contains("Source SHA-256:"));
 
-  scheduleConsentChoice("Allow this source");
+  consentTimer = scheduleConsentChoice("Allow this source");
   QTest::mouseClick(validate, Qt::LeftButton);
+  consentTimer.reset();
   const auto validationCompleted = bte::test::waitUntil(
       [status] { return status->text().contains("Strategy is valid"); },
       std::chrono::milliseconds{5000});
@@ -696,8 +723,9 @@ void StrategyTabTest::asksForConsentBeforeValidatingTrustedSource() {
   QCOMPARE(*promptCount, 2);
 
   editor->setPlainText(source + "# edited source identity\n");
-  scheduleConsentChoice("Cancel");
+  consentTimer = scheduleConsentChoice("Cancel");
   QTest::mouseClick(validate, Qt::LeftButton);
+  consentTimer.reset();
   QVERIFY(bte::test::waitUntil(
       [status] { return status->text().contains("Consent was not granted"); },
       std::chrono::milliseconds{5000}));
@@ -791,8 +819,9 @@ void StrategyTabTest::
               "def create_strategy(params):\n    return None\n"}
           .arg(directory.path()));
 
-  const auto consent = chooseReplacementButton("Allow this source");
+  auto [consent, consentTimer] = chooseReplacementButton("Allow this source");
   QTest::mouseClick(validate, Qt::LeftButton);
+  consentTimer.reset();
 
   QVERIFY(bte::test::waitUntil(
       [status] { return status->text() == "Validation failed"; },
