@@ -37,6 +37,7 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
