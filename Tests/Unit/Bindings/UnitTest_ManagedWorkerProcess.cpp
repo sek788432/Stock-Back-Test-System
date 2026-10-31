@@ -1120,9 +1120,16 @@ TEST(ManagedWorkerProcessTest,
             bte::core::ErrorCode::strategyProtocolViolation);
   EXPECT_EQ(received.error().message,
             "Protocol stream ended before the frame was complete.");
-  EXPECT_NE(
-      worker.diagnostics().standardError.retainedBytes.find("pipes-closed\n"),
-      std::string::npos);
+  const auto diagnosticDeadline = std::chrono::steady_clock::now() + 2s;
+  auto diagnostics = worker.diagnostics();
+  while (diagnostics.standardError.retainedBytes.find("pipes-closed\n") ==
+             std::string::npos &&
+         std::chrono::steady_clock::now() < diagnosticDeadline) {
+    std::this_thread::sleep_for(1ms);
+    diagnostics = worker.diagnostics();
+  }
+  EXPECT_NE(diagnostics.standardError.retainedBytes.find("pipes-closed\n"),
+            std::string::npos);
   ASSERT_TRUE(worker.isRunning());
 
   const auto sent = worker.sendMessage(

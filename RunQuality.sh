@@ -8,12 +8,15 @@ cd "$ROOT"
 base="origin/main"
 head="HEAD"
 run_scan_build=1
+run_project_standards=1
+run_static_analysis=1
 operating_system="${BTE_QUALITY_OS:-$(uname -s)}"
 
 usage() {
-  echo "Usage: $0 [--base <revision>] [--head <revision>] [--fast]"
+  echo "Usage: $0 [--base <revision>] [--head <revision>] [--fast | --coverage-only]"
   echo "  Runs full-project clang-tidy, cppcheck, IWYU, scan-build, and changed-code coverage."
   echo "  --fast skips the slower whole-tree scan-build pass."
+  echo "  --coverage-only runs changed-code coverage using Clang source-based profiles."
 }
 
 while [[ $# -gt 0 ]]; do
@@ -29,6 +32,12 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --fast)
+      run_scan_build=0
+      shift
+      ;;
+    --coverage-only)
+      run_project_standards=0
+      run_static_analysis=0
       run_scan_build=0
       shift
       ;;
@@ -244,17 +253,21 @@ bootstrap_python_tools() {
 if [[ -z "${BTE_QUALITY_PYTHON:-}" || -z "${BTE_QUALITY_DIFF_COVER:-}" ]]; then
   prepend_homebrew_paths
 fi
-bootstrap_system_tools
+if [[ "$run_static_analysis" -eq 1 || "$run_scan_build" -eq 1 ]]; then
+  bootstrap_system_tools
+fi
 bootstrap_python_tools
 
 find_command cmake >/dev/null
 find_command ctest >/dev/null
-find_command clang-tidy-18 clang-tidy >/dev/null
-find_command clang-format-18 clang-format >/dev/null
-find_command cppcheck >/dev/null
-find_command iwyu_tool.py iwyu_tool >/dev/null
-clang_compiler="$(find_command clang-18 clang)"
-clangxx_compiler="$(find_command clang++-18 clang++)"
+if [[ "$run_static_analysis" -eq 1 ]]; then
+  find_command clang-tidy-18 clang-tidy >/dev/null
+  find_command clang-format-18 clang-format >/dev/null
+  find_command cppcheck >/dev/null
+  find_command iwyu_tool.py iwyu_tool >/dev/null
+  clang_compiler="$(find_command clang-18 clang)"
+  clangxx_compiler="$(find_command clang++-18 clang++)"
+fi
 
 scan_build=""
 if [[ "$run_scan_build" -eq 1 ]]; then
@@ -266,22 +279,26 @@ fi
   exit 2
 }
 
-echo "== Project standards and clang-format: ${head} =="
-"$quality_python" Tools/CheckProjectStandards.py \
-  --full-tree --clang-format --base "$base" --head "$head"
-
-echo "== Full-project static analysis: ${head} =="
-analysis_arguments=(-DBTE_BUILD_QT_APP=ON)
-if [[ "$operating_system" == "Darwin" ]]; then
-  analysis_arguments+=("-DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)")
+if [[ "$run_project_standards" -eq 1 ]]; then
+  echo "== Project standards and clang-format: ${head} =="
+  "$quality_python" Tools/CheckProjectStandards.py \
+    --full-tree --clang-format --base "$base" --head "$head"
 fi
-cmake -E remove_directory Output/analysis
-CC="$clang_compiler" CXX="$clangxx_compiler" \
-  cmake --preset analysis "${analysis_arguments[@]}"
-cmake --build --preset analysis --parallel
-"$quality_python" Tools/RunStaticAnalysis.py clang-tidy
-"$quality_python" Tools/RunStaticAnalysis.py cppcheck
-"$quality_python" Tools/RunStaticAnalysis.py iwyu
+
+if [[ "$run_static_analysis" -eq 1 ]]; then
+  echo "== Full-project static analysis: ${head} =="
+  analysis_arguments=(-DBTE_BUILD_QT_APP=ON)
+  if [[ "$operating_system" == "Darwin" ]]; then
+    analysis_arguments+=("-DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)")
+  fi
+  cmake -E remove_directory Output/analysis
+  CC="$clang_compiler" CXX="$clangxx_compiler" \
+    cmake --preset analysis "${analysis_arguments[@]}"
+  cmake --build --preset analysis --parallel
+  "$quality_python" Tools/RunStaticAnalysis.py clang-tidy
+  "$quality_python" Tools/RunStaticAnalysis.py cppcheck
+  "$quality_python" Tools/RunStaticAnalysis.py iwyu
+fi
 
 if [[ "$run_scan_build" -eq 1 ]]; then
   cmake -E remove_directory Output/scan-build
@@ -296,6 +313,13 @@ if [[ "$run_scan_build" -eq 1 ]]; then
 fi
 
 echo "== Changed-code coverage: ${base}..${head} =="
+if [[ -z "${CC:-}" ]]; then
+  CC="${clang_compiler:-$(find_command clang-18 clang)}"
+fi
+if [[ -z "${CXX:-}" ]]; then
+  CXX="${clangxx_compiler:-$(find_command clang++-18 clang++)}"
+fi
+export CC CXX
 cmake -E remove_directory Output/coverage
 coverage_arguments=(-DBTE_BUILD_QT_APP=ON)
 if [[ "$operating_system" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
