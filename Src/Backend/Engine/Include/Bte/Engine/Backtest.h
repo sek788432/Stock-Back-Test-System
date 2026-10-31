@@ -106,10 +106,17 @@ public:
 
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   start(BacktestRequest request);
+  /// Allows cancellation while actual and warm-up bars are validated.
+  [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
+  start(BacktestRequest request, const core::CancellationToken &cancellation);
   /// Starts the same Engine lifecycle with a caller-owned typed Strategy.
   /// The request must not also contain a Selectable Conditions plan.
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   start(BacktestRequest request, std::unique_ptr<strategy::Strategy> strategy);
+  /// Preserves the startup validation cancellation path for typed Strategies.
+  [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
+  start(BacktestRequest request, std::unique_ptr<strategy::Strategy> strategy,
+        const core::CancellationToken &cancellation);
   /// Owns a durable writer; advance commits each complete bar before progress.
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   startRecorded(BacktestRequest request, const results::ResultStore &store,
@@ -139,7 +146,8 @@ private:
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   startWithStrategy(BacktestRequest request,
                     std::unique_ptr<strategy::Strategy> strategy,
-                    bool useLegacySelection);
+                    bool useLegacySelection,
+                    const core::CancellationToken &cancellation);
   [[nodiscard]] static core::Result<std::unique_ptr<BacktestExecution>>
   startRecordedWithStrategy(BacktestRequest request,
                             std::unique_ptr<strategy::Strategy> strategy,

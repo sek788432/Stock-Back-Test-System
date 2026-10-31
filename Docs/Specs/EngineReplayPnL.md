@@ -60,7 +60,9 @@ contract.
 - The implemented `BacktestExecution` session is the shared stateful seam:
   Batch runs it to completion, while Paced callers invoke one `advance` per
   authorized slice. Terminal cancellation and operational failure retain only
-  records from fully processed slices plus a terminal diagnostic.
+  records from fully processed slices plus a terminal diagnostic. Cancellation
+  tokens are checked while actual and warm-up bars are validated, so the
+  Engine stops a long validation scan after cancellation is requested.
 - **K-line Replay** reads an existing completed or diagnostic Backtest Result
   and its referenced bars; it never calls Strategy hooks, starts Python, or
   creates new fills.

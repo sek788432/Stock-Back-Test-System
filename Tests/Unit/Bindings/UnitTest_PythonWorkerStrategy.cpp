@@ -452,7 +452,7 @@ TEST(PythonWorkerStrategyTest, requiresConsentBeforeWorkerCreation) {
 
   ASSERT_FALSE(strategyResult.ok());
   EXPECT_EQ(strategyResult.error().code,
-            bte::core::ErrorCode::permissionDenied);
+            bte::core::ErrorCode::strategyConsentRequired);
 }
 
 TEST(PythonWorkerStrategyTest,
@@ -484,22 +484,31 @@ TEST(PythonWorkerStrategyTest,
 }
 
 TEST(PythonWorkerStrategyTest, rejectsMalformedSourceBeforeStartingAWorker) {
+  struct InvalidSource final {
+    std::string source;
+    bte::core::ErrorCode expectedCode;
+  };
   const auto startCountBefore =
       bte::bindings::python::testing::managedWorkerProcessStartCount();
   const std::array invalidSources{
-      std::string{},
-      std::string{"source\0text", 11},
-      std::string{"\xef\xbb\xbf", 3},
-      std::string{"\xff", 1},
-      std::string(bte::bindings::python::maximumWorkerSourceBytes + 1, 'x'),
+      InvalidSource{{}, bte::core::ErrorCode::invalidArgument},
+      InvalidSource{std::string{"source\0text", 11},
+                    bte::core::ErrorCode::strategySourceContainsNul},
+      InvalidSource{std::string{"\xef\xbb\xbf", 3},
+                    bte::core::ErrorCode::invalidArgument},
+      InvalidSource{std::string{"\xff", 1},
+                    bte::core::ErrorCode::invalidStrategyEncoding},
+      InvalidSource{
+          std::string(bte::bindings::python::maximumWorkerSourceBytes + 1, 'x'),
+          bte::core::ErrorCode::strategySourceTooLarge},
   };
 
-  for (const auto &source : invalidSources) {
+  for (const auto &[source, expectedCode] : invalidSources) {
     const auto rejected = PythonWorkerStrategy::createForTesting(
         BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
         parameters(), true);
     ASSERT_FALSE(rejected.ok());
-    EXPECT_EQ(rejected.error().code, bte::core::ErrorCode::strategyLoadFailed);
+    EXPECT_EQ(rejected.error().code, expectedCode);
     EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
               startCountBefore);
   }
@@ -1440,7 +1449,7 @@ TEST(PythonWorkerStrategyTest,
 
   ASSERT_FALSE(strategyResult.ok());
   EXPECT_EQ(strategyResult.error().code,
-            bte::core::ErrorCode::strategyLoadFailed);
+            bte::core::ErrorCode::strategySyntaxError);
   EXPECT_NE(strategyResult.error().message.find("traceback bytes omitted"),
             std::string::npos)
       << strategyResult.error().message;
@@ -1799,7 +1808,7 @@ TEST(PythonWorkerStrategyTest, mapsWorkerErrorDuringModuleLoad) {
       parameterBoundaryStrategySource, parameters(), true);
 
   ASSERT_FALSE(strategy.ok());
-  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::strategyLoadFailed);
+  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::strategySyntaxError);
   EXPECT_EQ(strategy.error().message,
             "StrategySyntaxError: fixture syntax failure");
 }
@@ -1811,6 +1820,14 @@ TEST(PythonWorkerStrategyTest,
     bte::core::ErrorCode expectedCode;
   };
   const std::array cases{
+      ErrorMappingCase{"InvalidStrategyEncoding",
+                       bte::core::ErrorCode::invalidStrategyEncoding},
+      ErrorMappingCase{"StrategySourceTooLarge",
+                       bte::core::ErrorCode::strategySourceTooLarge},
+      ErrorMappingCase{"InvalidStrategyParameters",
+                       bte::core::ErrorCode::invalidStrategyParameters},
+      ErrorMappingCase{"StrategyConsentRequired",
+                       bte::core::ErrorCode::strategyConsentRequired},
       ErrorMappingCase{"StrategyCommandRejected",
                        bte::core::ErrorCode::strategyCommandRejected},
       ErrorMappingCase{"StrategyContractViolation",
@@ -1818,13 +1835,13 @@ TEST(PythonWorkerStrategyTest,
       ErrorMappingCase{"StrategyLoadFailed",
                        bte::core::ErrorCode::strategyLoadFailed},
       ErrorMappingCase{"StrategySyntaxError",
-                       bte::core::ErrorCode::strategyLoadFailed},
+                       bte::core::ErrorCode::strategySyntaxError},
       ErrorMappingCase{"StrategyImportNotAllowed",
-                       bte::core::ErrorCode::strategyLoadFailed},
+                       bte::core::ErrorCode::strategyImportNotAllowed},
       ErrorMappingCase{"StrategySourceContainsNul",
-                       bte::core::ErrorCode::strategyLoadFailed},
+                       bte::core::ErrorCode::strategySourceContainsNul},
       ErrorMappingCase{"UnsupportedStrategyApiVersion",
-                       bte::core::ErrorCode::strategyLoadFailed},
+                       bte::core::ErrorCode::unsupportedStrategyApiVersion},
       ErrorMappingCase{"StrategyFactoryFailed",
                        bte::core::ErrorCode::strategyFactoryFailed},
       ErrorMappingCase{"RuntimeUnavailable",
@@ -2601,7 +2618,8 @@ TEST(PythonWorkerStrategyTest, validatesFrozenParametersBeforeLaunchingWorker) {
       validStrategySource, invalidParameters, true);
 
   ASSERT_FALSE(strategyResult.ok());
-  EXPECT_EQ(strategyResult.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_EQ(strategyResult.error().code,
+            bte::core::ErrorCode::invalidStrategyParameters);
 }
 
 TEST(PythonWorkerStrategyTest, acceptsRunParameterLimitBoundaries) {
@@ -2655,7 +2673,7 @@ TEST(PythonWorkerStrategyTest,
 
     ASSERT_FALSE(strategyResult.ok());
     EXPECT_EQ(strategyResult.error().code,
-              bte::core::ErrorCode::invalidArgument);
+              bte::core::ErrorCode::invalidStrategyParameters);
     EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
               startCountBefore);
   }
@@ -3516,13 +3534,13 @@ TEST(PythonWorkerStrategyTest,
       std::pair{std::string{"STOCKBT_API_VERSION = \"1\"\n"
                             "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
                             "def create_strategy(:\n    pass\n"},
-                std::pair{bte::core::ErrorCode::strategyLoadFailed,
+                std::pair{bte::core::ErrorCode::strategySyntaxError,
                           std::string{"strategy.py:3:"}}},
       std::pair{std::string{"STOCKBT_API_VERSION = \"1\"\n"
                             "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
                             "import subprocess\n"
                             "def create_strategy(params): return None\n"},
-                std::pair{bte::core::ErrorCode::strategyLoadFailed,
+                std::pair{bte::core::ErrorCode::strategyImportNotAllowed,
                           std::string{"strategy.py:3:"}}},
       std::pair{std::string{"STOCKBT_API_VERSION = \"1\"\n"
                             "STOCKBT_TEMPLATE_VERSION = \"1.0.0\"\n"
@@ -3562,7 +3580,7 @@ TEST(PythonWorkerStrategyTest, rejectsInvalidSourceWithoutReturningStrategy) {
 
   ASSERT_FALSE(strategyResult.ok());
   EXPECT_EQ(strategyResult.error().code,
-            bte::core::ErrorCode::strategyLoadFailed);
+            bte::core::ErrorCode::strategyImportNotAllowed);
   EXPECT_TRUE(
       strategyResult.error().message.starts_with("StrategyImportNotAllowed:"));
 }
@@ -3580,7 +3598,10 @@ TEST(PythonWorkerStrategyTest, reportsStableSyntaxAndApiVersionErrorCodes) {
         BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
         parameters(), true);
     ASSERT_FALSE(result.ok());
-    EXPECT_EQ(result.error().code, bte::core::ErrorCode::strategyLoadFailed);
+    EXPECT_EQ(result.error().code,
+              expectedCode.starts_with("StrategySyntaxError")
+                  ? bte::core::ErrorCode::strategySyntaxError
+                  : bte::core::ErrorCode::unsupportedStrategyApiVersion);
     EXPECT_TRUE(result.error().message.starts_with(expectedCode))
         << result.error().message;
   }

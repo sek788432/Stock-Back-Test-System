@@ -165,8 +165,13 @@ sellPriceWithDefaultSlippage(const std::int64_t openNanodollars) {
   return adjusted;
 }
 
-core::Result<void> validateActualBars(const std::vector<core::Bar> &bars) {
+core::Result<void>
+validateActualBars(const std::vector<core::Bar> &bars,
+                   const core::CancellationToken &cancellation) {
   for (std::size_t index = 0; index < bars.size(); ++index) {
+    if (cancellation.isCancellationRequested()) {
+      return cancelled();
+    }
     const auto &bar = bars[index];
     if (!bar.isValid() || !std::isfinite(bar.volume)) {
       return invalidArgument("all bars must satisfy OHLCV invariants");
@@ -185,14 +190,19 @@ core::Result<void> validateActualBars(const std::vector<core::Bar> &bars) {
   return {};
 }
 
-core::Result<void> validateWarmupBars(const std::vector<core::Bar> &bars,
-                                      const core::Timestamp firstRunTimestamp) {
+core::Result<void>
+validateWarmupBars(const std::vector<core::Bar> &bars,
+                   const core::Timestamp firstRunTimestamp,
+                   const core::CancellationToken &cancellation) {
   if (bars.size() >
       static_cast<std::size_t>(indicators::maximumIndicatorPeriod)) {
     return invalidArgument(
         "strategy warm-up history exceeds 10000 actual bars");
   }
   for (std::size_t index = 0; index < bars.size(); ++index) {
+    if (cancellation.isCancellationRequested()) {
+      return cancelled();
+    }
     const auto &bar = bars[index];
     if (!bar.isValid() || !std::isfinite(bar.volume)) {
       return invalidArgument(
@@ -214,7 +224,9 @@ core::Result<void> validateWarmupBars(const std::vector<core::Bar> &bars,
   return {};
 }
 
-core::Result<std::int64_t> validateRequest(const BacktestRequest &request) {
+core::Result<std::int64_t>
+validateRequest(const BacktestRequest &request,
+                const core::CancellationToken &cancellation) {
   if (request.initialCapitalMicrodollars <= 0) {
     return invalidArgument("initial capital must be positive");
   }
@@ -228,12 +240,12 @@ core::Result<std::int64_t> validateRequest(const BacktestRequest &request) {
   if (request.symbol.empty()) {
     return invalidArgument("backtest symbol is required");
   }
-  const auto actualBars = validateActualBars(request.bars);
+  const auto actualBars = validateActualBars(request.bars, cancellation);
   if (!actualBars.ok()) {
     return actualBars.error();
   }
-  const auto historyBars =
-      validateWarmupBars(request.historyBars, request.bars.front().ts);
+  const auto historyBars = validateWarmupBars(
+      request.historyBars, request.bars.front().ts, cancellation);
   if (!historyBars.ok()) {
     return historyBars.error();
   }
@@ -1084,23 +1096,39 @@ BacktestExecution::~BacktestExecution() = default;
 
 core::Result<std::unique_ptr<BacktestExecution>>
 BacktestExecution::start(BacktestRequest request) {
-  return startWithStrategy(std::move(request), nullptr, true);
+  return start(std::move(request), core::CancellationToken{});
+}
+
+core::Result<std::unique_ptr<BacktestExecution>>
+BacktestExecution::start(BacktestRequest request,
+                         const core::CancellationToken &cancellation) {
+  return startWithStrategy(std::move(request), nullptr, true, cancellation);
 }
 
 core::Result<std::unique_ptr<BacktestExecution>>
 BacktestExecution::start(BacktestRequest request,
                          std::unique_ptr<strategy::Strategy> strategy) {
-  return startWithStrategy(std::move(request), std::move(strategy), false);
+  return start(std::move(request), std::move(strategy),
+               core::CancellationToken{});
+}
+
+core::Result<std::unique_ptr<BacktestExecution>>
+BacktestExecution::start(BacktestRequest request,
+                         std::unique_ptr<strategy::Strategy> strategy,
+                         const core::CancellationToken &cancellation) {
+  return startWithStrategy(std::move(request), std::move(strategy), false,
+                           cancellation);
 }
 
 core::Result<std::unique_ptr<BacktestExecution>>
 BacktestExecution::startWithStrategy(
     BacktestRequest request, std::unique_ptr<strategy::Strategy> strategy,
-    const bool useLegacySelection) {
+    const bool useLegacySelection,
+    const core::CancellationToken &cancellation) {
 #if defined(BTE_ENABLE_TEST_HOOKS)
   testing::recordBacktestStart();
 #endif
-  const auto validation = validateRequest(request);
+  const auto validation = validateRequest(request, cancellation);
   if (!validation.ok()) {
     return validation.error();
   }
@@ -1182,7 +1210,7 @@ BacktestExecution::startRecordedWithStrategy(
     return cancelled();
   }
   auto execution = startWithStrategy(std::move(request), std::move(strategy),
-                                     useLegacySelection);
+                                     useLegacySelection, cancellation);
   if (!execution.ok()) {
     return execution.error();
   }
@@ -1381,7 +1409,7 @@ runBacktest(const BacktestRequest &request,
   if (cancellation.isCancellationRequested()) {
     return cancelled();
   }
-  auto execution = BacktestExecution::start(request);
+  auto execution = BacktestExecution::start(request, cancellation);
   if (!execution.ok()) {
     return execution.error();
   }
@@ -1399,7 +1427,7 @@ runBacktestAndRecord(const BacktestRequest &request,
   if (cancellation.isCancellationRequested()) {
     return cancelled();
   }
-  auto execution = BacktestExecution::start(request);
+  auto execution = BacktestExecution::start(request, cancellation);
   if (!execution.ok()) {
     return execution.error();
   }

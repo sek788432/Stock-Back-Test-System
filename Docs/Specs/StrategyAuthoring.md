@@ -503,6 +503,8 @@ Python syntax, `StrategyImportNotAllowed` for a forbidden or dynamic import,
 `RuntimeIntegrityFailure` means a profile manifest or installed file fails
 hash or identity validation. These failures retain source location metadata
 when available and occur before Result-writer creation.
+Bindings expose these input and consent categories as distinct stable
+`core::ErrorCode` values, separate from their human-readable messages.
 
 Each execution stores at most the diagnostic limits in §2.4. If the bound is
 reached, later log output is drained and counted rather than allocating more

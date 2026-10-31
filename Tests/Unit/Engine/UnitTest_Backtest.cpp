@@ -499,6 +499,22 @@ TEST(BacktestTest, rejectsInvalidWarmupHistoryBeforeStartingStrategy) {
   }
 }
 
+TEST(BacktestTest, cancellationIsObservedDuringActualBarValidation) {
+  const auto request = bte::engine::BacktestRequest{
+      .bars = {makeFlatBar(1, 10.0), makeFlatBar(2, 11.0)},
+      .initialCapitalMicrodollars = 1'000'000'000,
+      .quantityShares = 1,
+  };
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+
+  const auto execution =
+      bte::engine::BacktestExecution::start(request, cancellation.token());
+
+  ASSERT_FALSE(execution.ok());
+  EXPECT_EQ(execution.error().code, bte::core::ErrorCode::cancelled);
+}
+
 TEST(BacktestTest, cancellationDuringStrategyCallbacksRollsBackCurrentSlice) {
   const auto oneBar = std::vector{makeFlatBar(2, 10.0)};
   const auto twoBars = std::vector{makeFlatBar(2, 10.0), makeFlatBar(3, 11.0)};

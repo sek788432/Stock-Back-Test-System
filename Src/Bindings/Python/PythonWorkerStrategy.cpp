@@ -80,6 +80,22 @@ strategyDiagnosticCode(const core::ErrorCode code) {
     return "HistoryBudgetExceeded";
   case core::ErrorCode::futureDataRequest:
     return "FutureDataRequest";
+  case core::ErrorCode::invalidStrategyEncoding:
+    return "InvalidStrategyEncoding";
+  case core::ErrorCode::strategySourceTooLarge:
+    return "StrategySourceTooLarge";
+  case core::ErrorCode::strategySourceContainsNul:
+    return "StrategySourceContainsNul";
+  case core::ErrorCode::strategySyntaxError:
+    return "StrategySyntaxError";
+  case core::ErrorCode::strategyImportNotAllowed:
+    return "StrategyImportNotAllowed";
+  case core::ErrorCode::unsupportedStrategyApiVersion:
+    return "UnsupportedStrategyApiVersion";
+  case core::ErrorCode::invalidStrategyParameters:
+    return "InvalidStrategyParameters";
+  case core::ErrorCode::strategyConsentRequired:
+    return "StrategyConsentRequired";
   default:
     return "WorkerCallbackFailure";
   }
@@ -148,7 +164,7 @@ void storeTerminalDiagnostic(
   for (std::size_t index = 0; index < source.size(); ++index) {
     const auto character = source[index];
     if (character == '\0') {
-      return makeStrategyError(core::ErrorCode::strategyLoadFailed,
+      return makeStrategyError(core::ErrorCode::strategySourceContainsNul,
                                "Strategy source contains a NUL byte.");
     }
     if (character == '\r') {
@@ -160,13 +176,16 @@ void storeTerminalDiagnostic(
       normalized.push_back(character);
     }
   }
-  if (normalized.empty() || normalized.size() > maximumWorkerSourceBytes) {
-    return makeStrategyError(
-        core::ErrorCode::strategyLoadFailed,
-        "Strategy source must contain 1 byte through 1 MiB.");
+  if (normalized.empty()) {
+    return makeStrategyError(core::ErrorCode::invalidArgument,
+                             "Strategy source must contain at least one byte.");
+  }
+  if (normalized.size() > maximumWorkerSourceBytes) {
+    return makeStrategyError(core::ErrorCode::strategySourceTooLarge,
+                             "Strategy source must not exceed 1 MiB.");
   }
   if (!isStrictUtf8(normalized)) {
-    return makeStrategyError(core::ErrorCode::strategyLoadFailed,
+    return makeStrategyError(core::ErrorCode::invalidStrategyEncoding,
                              "Strategy source is not valid UTF-8.");
   }
   return normalized;
@@ -257,7 +276,7 @@ validateParameters(const nlohmann::json &parameters) {
   static const std::set<std::string> expectedKeys{"fast_period", "quantity",
                                                   "slow_period"};
   if (!hasExactKeys(parameters, expectedKeys)) {
-    return makeStrategyError(core::ErrorCode::invalidArgument,
+    return makeStrategyError(core::ErrorCode::invalidStrategyParameters,
                              "Python Strategy parameters must contain exactly "
                              "fast_period, slow_period, and quantity.");
   }
@@ -269,7 +288,7 @@ validateParameters(const nlohmann::json &parameters) {
       !readWholeInteger(parameters.at("quantity"), 1,
                         strategy::maximumStrategyQuantityShares, quantity) ||
       fastPeriod >= slowPeriod) {
-    return makeStrategyError(core::ErrorCode::invalidArgument,
+    return makeStrategyError(core::ErrorCode::invalidStrategyParameters,
                              "Python Strategy parameters require 1 <= "
                              "fast_period < slow_period <= 10000 and quantity "
                              "from 1 through 1000000000.");
@@ -279,7 +298,7 @@ validateParameters(const nlohmann::json &parameters) {
     return serialized.error();
   }
   if (serialized.value().size() > std::size_t{64} * 1024) {
-    return makeStrategyError(core::ErrorCode::invalidArgument,
+    return makeStrategyError(core::ErrorCode::invalidStrategyParameters,
                              "Python Strategy parameters exceed 64 KiB.");
   }
   return serialized.value();
@@ -311,10 +330,29 @@ validateParameters(const nlohmann::json &parameters) {
   if (code == "StrategyLoadFailed") {
     return core::ErrorCode::strategyLoadFailed;
   }
-  if (code == "StrategySyntaxError" || code == "StrategyImportNotAllowed" ||
-      code == "StrategySourceContainsNul" ||
-      code == "UnsupportedStrategyApiVersion") {
-    return core::ErrorCode::strategyLoadFailed;
+  if (code == "InvalidStrategyEncoding") {
+    return core::ErrorCode::invalidStrategyEncoding;
+  }
+  if (code == "StrategySourceTooLarge") {
+    return core::ErrorCode::strategySourceTooLarge;
+  }
+  if (code == "StrategySourceContainsNul") {
+    return core::ErrorCode::strategySourceContainsNul;
+  }
+  if (code == "StrategySyntaxError") {
+    return core::ErrorCode::strategySyntaxError;
+  }
+  if (code == "StrategyImportNotAllowed") {
+    return core::ErrorCode::strategyImportNotAllowed;
+  }
+  if (code == "UnsupportedStrategyApiVersion") {
+    return core::ErrorCode::unsupportedStrategyApiVersion;
+  }
+  if (code == "InvalidStrategyParameters") {
+    return core::ErrorCode::invalidStrategyParameters;
+  }
+  if (code == "StrategyConsentRequired") {
+    return core::ErrorCode::strategyConsentRequired;
   }
   if (code == "StrategyFactoryFailed") {
     return core::ErrorCode::strategyFactoryFailed;
@@ -352,6 +390,9 @@ validateParameters(const nlohmann::json &parameters) {
 
 [[nodiscard]] bool isKnownWorkerErrorCode(const std::string_view code) {
   static const std::set<std::string> knownErrorCodes{
+      "InvalidStrategyEncoding",
+      "InvalidStrategyParameters",
+      "StrategyConsentRequired",
       "RuntimeUnavailable",
       "RuntimeIntegrityFailure",
       "StrategyCommandRejected",
@@ -359,6 +400,7 @@ validateParameters(const nlohmann::json &parameters) {
       "StrategyFactoryFailed",
       "StrategyLoadFailed",
       "StrategyProtocolViolation",
+      "StrategySourceTooLarge",
       "StrategySyntaxError",
       "StrategyImportNotAllowed",
       "StrategySourceContainsNul",
@@ -1336,7 +1378,7 @@ PythonWorkerStrategy::createInternal(
   }
   if (!sourceConsentGranted) {
     return makeStrategyError(
-        core::ErrorCode::permissionDenied,
+        core::ErrorCode::strategyConsentRequired,
         "Consent is required before Python Strategy code runs.");
   }
   auto normalizedSource = normalizeSource(std::move(source));

@@ -44,6 +44,14 @@ enum class ErrorCode : std::uint8_t {
   historyUnavailable,
   historyBudgetExceeded,
   futureDataRequest,
+  invalidStrategyEncoding,
+  strategySourceTooLarge,
+  strategySourceContainsNul,
+  strategySyntaxError,
+  strategyImportNotAllowed,
+  unsupportedStrategyApiVersion,
+  invalidStrategyParameters,
+  strategyConsentRequired,
 };
 
 struct Error {
