@@ -703,22 +703,22 @@ void StrategyTabTest::reportsValidationWorkerFailures() {
   QVERIFY(diagnostics != nullptr);
 
   QTest::mouseClick(validate, Qt::LeftButton);
-  QVERIFY(bte::test::waitUntil([status] {
-    return status->text() == "Validation failed";
-  }, std::chrono::milliseconds{5000}));
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text() == "Validation failed"; },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(diagnostics->toPlainText(), QString{"strategy rejected"});
 
   QTest::mouseClick(validate, Qt::LeftButton);
-  QVERIFY(bte::test::waitUntil([status] {
-    return status->text() == "Validation failed";
-  }, std::chrono::milliseconds{5000}));
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text() == "Validation failed"; },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(diagnostics->toPlainText(),
            QString{"validation worker failed: worker exception"});
 
   QTest::mouseClick(validate, Qt::LeftButton);
-  QVERIFY(bte::test::waitUntil([status] {
-    return status->text() == "Validation failed";
-  }, std::chrono::milliseconds{5000}));
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text() == "Validation failed"; },
+      std::chrono::milliseconds{5000}));
   QCOMPARE(diagnostics->toPlainText(), QString{"validation worker failed"});
   QCOMPARE(invocation.load(), 3);
 }
@@ -761,9 +761,9 @@ void StrategyTabTest::
   const auto consent = chooseReplacementButton("Allow this source");
   QTest::mouseClick(validate, Qt::LeftButton);
 
-  QVERIFY(bte::test::waitUntil([status] {
-    return status->text() == "Validation failed";
-  }, std::chrono::milliseconds{5000}));
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text() == "Validation failed"; },
+      std::chrono::milliseconds{5000}));
   QVERIFY(*consent);
   QVERIFY(diagnostics->toPlainText().contains("runtime"));
 }

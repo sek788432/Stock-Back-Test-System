@@ -2002,8 +2002,9 @@ void BacktestTab::handleVerificationRequested() {
                 const results::VerificationEvidence &evidence) noexcept {
               try {
                 if (!guardedThis->isNull()) {
-                  emit (*guardedThis)->verificationProgressUpdated(
-                      verificationStatusText(evidence));
+                  emit(*guardedThis)
+                      ->verificationProgressUpdated(
+                          verificationStatusText(evidence));
                 }
               } catch (const std::exception &error) {
                 qWarning() << "Unable to publish verification progress:"

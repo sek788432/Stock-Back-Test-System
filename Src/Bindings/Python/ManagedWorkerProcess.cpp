@@ -522,8 +522,7 @@ ReadOnlySharedMemory::create(const std::string_view bytes) {
         sharedMemoryDescriptor =
             ::shm_open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
                         // shm_open requires this mode because O_CREAT is set.
-                sharedName.c_str(),
-                O_CREAT | O_EXCL | O_RDWR | closeOnExecFlag,
+                sharedName.c_str(), O_CREAT | O_EXCL | O_RDWR | closeOnExecFlag,
                 S_IRUSR | S_IWUSR);
       }
       writableDescriptor.reset(sharedMemoryDescriptor);
