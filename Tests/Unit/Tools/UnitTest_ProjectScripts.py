@@ -59,6 +59,10 @@ class ProjectScriptsTest(unittest.TestCase):
 
     def environment(self) -> dict[str, str]:
         environment = os.environ.copy()
+        environment.pop("CC", None)
+        environment.pop("CXX", None)
+        environment.pop("BTE_QUALITY_PYTHON", None)
+        environment.pop("BTE_QUALITY_DIFF_COVER", None)
         environment["PATH"] = f"{self.bin_directory}{os.pathsep}{environment['PATH']}"
         environment["BTE_SCRIPT_TEST_LOG"] = str(self.command_log)
         return environment
@@ -425,14 +429,77 @@ fi
             "ctest",
             "diff-cover",
             "iwyu_tool.py",
+            "llvm-profdata",
+            "llvm-profdata-18",
+            "llvm-cov",
+            "llvm-cov-18",
             "python3",
             "scan-build",
             "scan-build-18",
         ):
             version_output = "echo 'clang version 18.1.8'\n" if name in ("clang", "clang-18") else ""
+            command_behavior = ""
+            if name == "cmake":
+                command_behavior = """
+if [[ "$*" == *"-E remove_directory Output/coverage"* ]]; then
+  rm -rf Output/coverage
+fi
+if [[ "$*" == *"--preset coverage"* ]]; then
+  printf 'coverage-env CC=%s CXX=%s\\n' "${CC:-unset}" "${CXX:-unset}" >> "$BTE_SCRIPT_TEST_LOG"
+  mkdir -p Output/coverage
+  printf 'BTE_COVERAGE_FORMAT:INTERNAL=%s\\n' "${BTE_FAKE_COVERAGE_FORMAT:-gcov}" > Output/coverage/CMakeCache.txt
+fi
+"""
+            elif name == "python3":
+                command_behavior = """
+if [[ "$*" == *"BuildPythonRuntime.py"* ]]; then
+  exit "${BTE_FAKE_RUNTIME_VERIFY_STATUS:-0}"
+fi
+if [[ "$*" == *"ListCoverageBinaries.py"* ]]; then
+  mkdir -p Output/coverage
+  if [[ "${BTE_FAKE_COVERAGE_BINARY_COUNT:-1}" == "2" ]]; then
+    printf '/tmp/coverage-binary\\n' > Output/coverage/coverage-binaries.txt
+    printf '/tmp/coverage-binary-2\\n' >> Output/coverage/coverage-binaries.txt
+  else
+    printf '/tmp/coverage-binary\\n' > Output/coverage/coverage-binaries.txt
+  fi
+fi
+"""
+            elif name == "ctest":
+                command_behavior = """
+if [[ "$*" == *"--preset coverage"* ]]; then
+  printf 'LLVM_PROFILE_FILE=%s\\n' "${LLVM_PROFILE_FILE:-unset}" >> "$BTE_SCRIPT_TEST_LOG"
+  if [[ -n "${LLVM_PROFILE_FILE:-}" ]]; then
+    profile_path="${LLVM_PROFILE_FILE//%p/123}"
+    profile_path="${profile_path//%m/test}"
+    mkdir -p "$(dirname "$profile_path")"
+    touch "$profile_path"
+  fi
+fi
+"""
+            elif name == "llvm-profdata":
+                command_behavior = """
+if [[ "$1" == "merge" ]]; then
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "-o" ]]; then
+      shift
+      touch "$1"
+      break
+    fi
+    shift
+  done
+fi
+"""
+            elif name == "llvm-cov":
+                command_behavior = """
+if [[ "$1" == "export" ]]; then
+  printf 'SF:%s/Src/Example.cpp\\nDA:1,1\\nend_of_record\\n' "$PWD"
+fi
+"""
             self.install_fake_command(
                 name,
                 f"""{version_output}printf "{name} %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"
+{command_behavior}
 if [[ -n "${{BTE_FAIL_MATCH:-}}" && "{name} $*" == *"$BTE_FAIL_MATCH"* ]]; then
   exit 23
 fi
@@ -488,7 +555,10 @@ fi
             commands,
         )
         self.assertIn("cmake -E remove_directory Output/analysis", commands)
-        self.assertIn("ctest --preset coverage --no-tests=error", commands)
+        self.assertIn(
+            "ctest --preset coverage --no-tests=error",
+            commands,
+        )
         self.assertIn(
             "diff-cover Output/CoverageReport/coverage.xml --compare-branch=base-sha --fail-under=98",
             commands,
@@ -498,6 +568,263 @@ fi
             commands,
         )
         self.assertFalse(any(command.startswith("scan-build ") for command in commands))
+
+    def test_run_quality_coverage_only_uses_clang_and_skips_static_analysis(self) -> None:
+        script = self.copy_script("RunQuality.sh")
+        self.install_quality_commands()
+        environment = self.environment()
+        environment["BTE_FAKE_COVERAGE_FORMAT"] = "llvm-source-based"
+        environment["BTE_QUALITY_OS"] = "Linux"
+        environment["BTE_QUALITY_PYTHON"] = "python3"
+        environment["BTE_QUALITY_DIFF_COVER"] = "diff-cover"
+        environment["CC"] = "clang-18"
+        environment["CXX"] = "clang++-18"
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--coverage-only",
+                "--base",
+                "base-sha",
+                "--head",
+                "head-sha",
+            ],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = self.logged_commands()
+        self.assertIn("coverage-env CC=clang-18 CXX=clang++-18", commands)
+        self.assertIn("ctest --preset coverage --no-tests=error", commands)
+        self.assertTrue(
+            any("Tools/MergeLlvmLineCoverage.py" in command for command in commands)
+        )
+        self.assertTrue(
+            any(
+                "diff-cover Output/CoverageReport/coverage.xml" in command
+                for command in commands
+            )
+        )
+        self.assertFalse(any("CheckProjectStandards.py" in command for command in commands))
+        self.assertFalse(any("Tools/RunStaticAnalysis.py" in command for command in commands))
+        self.assertFalse(any(command.startswith("scan-build ") for command in commands))
+
+    def run_darwin_coverage_only(
+        self, architecture: str, runtime_verification_status: int = 0
+    ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        script = self.copy_script("RunQuality.sh")
+        self.install_quality_commands()
+        self.install_fake_command(
+            "uname", f'printf "{architecture}\\n"\n'
+        )
+        environment = self.environment()
+        environment["BTE_FAKE_COVERAGE_FORMAT"] = "llvm-source-based"
+        environment["BTE_QUALITY_OS"] = "Darwin"
+        environment["BTE_QUALITY_PYTHON"] = "python3"
+        environment["BTE_QUALITY_DIFF_COVER"] = "diff-cover"
+        environment["CC"] = "locked-clang"
+        environment["CXX"] = "locked-clang++"
+        environment["BTE_FAKE_RUNTIME_VERIFY_STATUS"] = str(
+            runtime_verification_status
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--coverage-only",
+                "--base",
+                "base-sha",
+                "--head",
+                "head-sha",
+            ],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result, self.logged_commands()
+
+    def test_run_quality_darwin_coverage_only_uses_verified_runtime_and_environment_compilers(self) -> None:
+        result, commands = self.run_darwin_coverage_only("arm64")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(
+            any(
+                command.startswith("python3 Tools/BuildPythonRuntime.py --verify-artifacts")
+                for command in commands
+            )
+        )
+        self.assertTrue(
+            any(
+                command.startswith("cmake --preset coverage ")
+                and "-DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON" in command
+                and "-DBTE_PYTHON_RUNTIME_ARTIFACTS_DIR=" in command
+                for command in commands
+            )
+        )
+        self.assertIn("coverage-env CC=locked-clang CXX=locked-clang++", commands)
+
+    def test_run_quality_darwin_coverage_only_skips_runtime_when_artifacts_are_invalid(self) -> None:
+        result, commands = self.run_darwin_coverage_only("arm64", 17)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "Skipping managed Python runtime coverage: locked runtime artifacts are unavailable.",
+            result.stdout,
+        )
+        self.assertTrue(
+            any(
+                command.startswith(
+                    "python3 Tools/BuildPythonRuntime.py --verify-artifacts"
+                )
+                for command in commands
+            )
+        )
+        self.assertFalse(
+            any("-DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON" in command for command in commands)
+        )
+        self.assertTrue(any(command.startswith("ctest --preset coverage") for command in commands))
+
+    def test_run_quality_darwin_non_arm64_coverage_omits_managed_runtime(self) -> None:
+        result, commands = self.run_darwin_coverage_only("x86_64")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(
+            any("Tools/BuildPythonRuntime.py --verify-artifacts" in command for command in commands)
+        )
+        self.assertFalse(
+            any("-DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON" in command for command in commands)
+        )
+        self.assertTrue(any(command.startswith("ctest --preset coverage") for command in commands))
+
+    def test_run_quality_uses_llvm_source_coverage_for_clang(self) -> None:
+        script = self.copy_script("RunQuality.sh")
+        self.install_quality_commands()
+        environment = self.environment()
+        environment["BTE_FAKE_COVERAGE_FORMAT"] = "llvm-source-based"
+        environment["BTE_QUALITY_OS"] = "Linux"
+        environment["BTE_QUALITY_PYTHON"] = "python3"
+        environment["BTE_QUALITY_DIFF_COVER"] = "diff-cover"
+
+        result = subprocess.run(
+            ["bash", str(script), "--fast"],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = self.logged_commands()
+        self.assertIn(
+            f"coverage-env CC={self.bin_directory / 'clang-18'} "
+            f"CXX={self.bin_directory / 'clang++-18'}",
+            commands,
+        )
+        coverage_runner = next(
+            command for command in commands if "ListCoverageBinaries.py" in command
+        )
+        self.assertIn("--output Output/coverage/coverage-binaries.txt", coverage_runner)
+        gcovr = next(command for command in commands if "-m gcovr" in command)
+        self.assertIn("--llvm-profdata-executable", gcovr)
+        self.assertIn("--llvm-cov-binary /tmp/coverage-binary", gcovr)
+        self.assertNotIn("--gcov-executable", gcovr)
+        self.assertTrue(
+            any(
+                command.startswith(("llvm-profdata merge ", "llvm-profdata-18 merge "))
+                for command in commands
+            )
+        )
+        self.assertTrue(
+            any(
+                command.startswith(("llvm-cov export ", "llvm-cov-18 export "))
+                for command in commands
+            )
+        )
+        self.assertTrue(
+            any("Tools/MergeLlvmLineCoverage.py" in command for command in commands)
+        )
+        self.assertTrue(
+            any(
+                "--json-add-tracefile" in command and "coverage.json" in command
+                for command in commands
+            )
+        )
+        merge_profiles = commands.index(
+            next(
+                command
+                for command in commands
+                if command.startswith(
+                    ("llvm-profdata merge ", "llvm-profdata-18 merge ")
+                )
+            )
+        )
+        export_coverage = commands.index(
+            next(
+                command
+                for command in commands
+                if command.startswith(("llvm-cov export ", "llvm-cov-18 export "))
+            )
+        )
+        initial_report = commands.index(
+            next(command for command in commands if "-m gcovr" in command)
+        )
+        merge_line_report = commands.index(
+            next(
+                command
+                for command in commands
+                if "Tools/MergeLlvmLineCoverage.py" in command
+            )
+        )
+        rendered_report = commands.index(
+            next(command for command in commands if "--json-add-tracefile" in command)
+        )
+        self.assertLess(merge_profiles, export_coverage)
+        self.assertLess(export_coverage, initial_report)
+        self.assertLess(initial_report, merge_line_report)
+        self.assertLess(merge_line_report, rendered_report)
+        self.assertTrue(
+            any(
+                command.startswith("LLVM_PROFILE_FILE=")
+                and command.endswith("/Output/coverage/profiles/%p-%m.profraw")
+                for command in commands
+            )
+        )
+
+    def test_run_quality_exports_every_llvm_coverage_binary(self) -> None:
+        script = self.copy_script("RunQuality.sh")
+        self.install_quality_commands()
+        environment = self.environment()
+        environment["BTE_FAKE_COVERAGE_FORMAT"] = "llvm-source-based"
+        environment["BTE_FAKE_COVERAGE_BINARY_COUNT"] = "2"
+        environment["BTE_QUALITY_PYTHON"] = "python3"
+        environment["BTE_QUALITY_DIFF_COVER"] = "diff-cover"
+
+        result = subprocess.run(
+            ["bash", str(script), "--fast"],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        export = next(
+            command
+            for command in self.logged_commands()
+            if command.startswith(("llvm-cov export ", "llvm-cov-18 export "))
+        )
+        self.assertIn("/tmp/coverage-binary", export)
+        self.assertIn("--object /tmp/coverage-binary-2", export)
 
     def test_run_quality_default_includes_whole_tree_scan_build(self) -> None:
         script = self.copy_script("RunQuality.sh")
@@ -624,6 +951,13 @@ fi
                 else
                 f'printf "{name} %s\\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n'
             )
+            if name == "cmake":
+                body += """
+if [[ "$*" == *"--preset coverage"* ]]; then
+  mkdir -p Output/coverage
+  printf 'BTE_COVERAGE_FORMAT:INTERNAL=gcov\\n' > Output/coverage/CMakeCache.txt
+fi
+"""
             self.install_fake_command(name, body)
         self.install_fake_command("xcrun", 'echo "/fake/macOS.sdk"\n')
         self.install_fake_command(

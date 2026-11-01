@@ -3,17 +3,22 @@
 #include "Bte/Frontend/BacktestTab.h"
 #include "Bte/Frontend/ReplayTab.h"
 #include "Bte/Frontend/ResultsTab.h"
+#include "Bte/Frontend/StrategyTab.h"
 
 #include <QAction>
 #include <QByteArray>
 #include <QComboBox>
+#include <QFile>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTest>
 
 #include <array>
+#include <filesystem>
 
 namespace {
 
@@ -25,6 +30,7 @@ private slots:
   void mountsBacktestAsTheSelectedApplicationPage();
   void exposesOnlyApprovedApplicationPages();
   void libraryPagesExplainCurrentDeliveryStatus();
+  void strategyHandoffSelectsBacktestAndPageChangesSaveDraft();
   void resultNavigationSelectsReplayAndPassesExactId();
   void buildInformationShowsLauncherIdentity();
 };
@@ -75,14 +81,58 @@ void MainWindowTest::libraryPagesExplainCurrentDeliveryStatus() {
   const auto *tabs = window.findChild<QTabWidget *>("mainTabWidget");
   QVERIFY(tabs != nullptr);
 
-  const auto *strategiesMessage = qobject_cast<QLabel *>(tabs->widget(0));
+  const auto *strategies =
+      qobject_cast<bte::frontend::StrategyTab *>(tabs->widget(0));
   const auto *results =
       qobject_cast<bte::frontend::ResultsTab *>(tabs->widget(2));
 
-  QVERIFY(strategiesMessage != nullptr);
-  QCOMPARE(strategiesMessage->text(),
-           QString{"Saved Strategy persistence is planned."});
+  QVERIFY(strategies != nullptr);
+  QVERIFY(strategies->findChild<QPlainTextEdit *>(
+              "pythonStrategySourceEditor") != nullptr);
   QVERIFY(results != nullptr);
+}
+
+void MainWindowTest::strategyHandoffSelectsBacktestAndPageChangesSaveDraft() {
+  bte::app::MainWindow window;
+  auto *tabs = window.findChild<QTabWidget *>("mainTabWidget");
+  QVERIFY(tabs != nullptr);
+  auto *strategies =
+      qobject_cast<bte::frontend::StrategyTab *>(tabs->widget(0));
+  auto *backtest = window.findChild<bte::frontend::BacktestTab *>();
+  QVERIFY(strategies != nullptr);
+  QVERIFY(backtest != nullptr);
+  tabs->setCurrentWidget(strategies);
+
+  auto *editor =
+      strategies->findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+  auto *use =
+      strategies->findChild<QPushButton *>("pythonStrategyUseInBacktestButton");
+  auto *strategy = backtest->findChild<QComboBox *>("backtestStrategyCombo");
+  auto *status = backtest->findChild<QLabel *>("backtestStatusLabel");
+  QVERIFY(editor != nullptr);
+  QVERIFY(use != nullptr);
+  QVERIFY(strategy != nullptr);
+  QVERIFY(status != nullptr);
+  const auto source =
+      QString{"def create_strategy(params):\n    return None\n"};
+  editor->setPlainText(source);
+
+  QTest::mouseClick(use, Qt::LeftButton);
+
+  QCOMPARE(tabs->currentWidget(), backtest);
+  QCOMPARE(strategy->currentIndex(), 2);
+  QCOMPARE(status->text(), QString{"Python Strategy draft is ready to run"});
+
+  const auto draftPath =
+      std::filesystem::path{
+          QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+              .toStdString()} /
+      "Strategies" / "PythonDraft" / "python-draft.json";
+  QFile savedDraft{QString::fromStdString(draftPath.string())};
+  QVERIFY(savedDraft.open(QIODevice::ReadOnly));
+  const auto saved = QString::fromUtf8(savedDraft.readAll());
+  QVERIFY(saved.contains("def create_strategy(params):"));
+  QVERIFY(saved.contains("\"fastPeriod\":5"));
 }
 
 void MainWindowTest::resultNavigationSelectsReplayAndPassesExactId() {

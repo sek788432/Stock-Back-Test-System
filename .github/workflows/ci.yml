@@ -167,14 +167,28 @@ jobs:
 
   coverage:
     name: Changed-code coverage
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    runs-on: macos-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout full history
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Download and verify locked managed Python runtime artifacts
+        run: |
+          python3 Tools/BuildPythonRuntime.py \
+            --download-artifacts \
+            --artifacts-dir Output/PythonRuntimeArtifacts
+          python3 Tools/BuildPythonRuntime.py \
+            --verify-artifacts \
+            --artifacts-dir Output/PythonRuntimeArtifacts
 
       - name: Bootstrap pinned vcpkg registry
         run: |
@@ -190,6 +204,14 @@ jobs:
           modules: qtcharts
           cache: true
 
+      - name: Install Clang coverage compiler
+        run: |
+          brew install llvm@18
+          llvm_prefix="$(brew --prefix llvm@18)"
+          echo "$llvm_prefix/bin" >> "$GITHUB_PATH"
+          "$llvm_prefix/bin/clang" --version
+          "$llvm_prefix/bin/llvm-profdata" --version
+
       - name: Install coverage tools
         run: |
           python3 -m pip install \
@@ -200,41 +222,15 @@ jobs:
           python3 -m gcovr --version
           diff-cover --version
 
-      - name: Configure coverage tests
-        env:
-          VCPKG_ROOT: ${{ runner.temp }}/vcpkg
-        run: >-
-          cmake --preset coverage
-          -DBTE_BUILD_QT_APP=ON
-          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-
-      - name: Build coverage tests
-        run: cmake --build --preset coverage --parallel
-
-      - name: Run coverage tests
-        run: ctest --preset coverage --no-tests=error
-
-      - name: Generate coverage reports
-        run: >-
-          python3 -m gcovr
-          --root .
-          --filter 'Src/'
-          --exclude 'Output/'
-          --merge-mode-functions merge-use-line-min
-          --decisions
-          --gcov-ignore-parse-errors negative_hits.warn_once_per_file
-          --cobertura coverage.xml
-          --json coverage.json
-          --markdown-summary coverage-summary.md
-          --html-details coverage.html
-
-      - name: Enforce changed-line and changed-branch coverage
+      - name: Run Clang source-based coverage and changed-code gates
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
-        run: |
-          Tools/RunCoverageGates.sh \
-            coverage.xml coverage.json "$BASE_SHA" "$GITHUB_SHA" \
-            "$GITHUB_SHA" coverage-summary.md
+          CC: clang
+          CXX: clang++
+          VCPKG_ROOT: ${{ runner.temp }}/vcpkg
+          BTE_QUALITY_PYTHON: python3
+          BTE_QUALITY_DIFF_COVER: diff-cover
+        run: ./RunQuality.sh --coverage-only --base "$BASE_SHA" --head "$GITHUB_SHA"
 
       - name: Upload coverage reports
         if: always()
@@ -242,13 +238,12 @@ jobs:
         with:
           name: coverage-reports
           path: |
-            coverage.html
-            coverage.*.html
-            coverage.xml
-            coverage.json
-            coverage-summary.md
-            changed-line-coverage.txt
-            changed-branch-coverage.txt
+            Output/CoverageReport/index.html
+            Output/CoverageReport/coverage.*.html
+            Output/CoverageReport/coverage.xml
+            Output/CoverageReport/coverage.json
+            Output/CoverageReport/summary.md
+            Output/coverage/coverage.lcov
           if-no-files-found: ignore
 
   sanitizers:

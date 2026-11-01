@@ -3,15 +3,20 @@
 #include "ResultRecoveryNoticeLabel.h"
 
 #include "Bte/Bindings/BacktestSessionVm.h"
+#include "Bte/Core/Digest.h"
 #include "Bte/Indicators/StreamingIndicator.h"
 #include "Bte/Strategy/SelectableStrategy.h"
+
+// IWYU pragma: no_include "Bte/Results/ResultStore.h"
 
 #include <QAbstractItemView>
 #include <QCalendarWidget>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateEdit>
 #include <QDateTime>
+#include <QDebug>
 #include <QDoubleSpinBox>
 #include <QFont>
 #include <QFuture> // IWYU pragma: keep
@@ -25,8 +30,12 @@
 #include <QLineEdit>
 #include <QList>
 #include <QLocale>
+#include <QMessageBox>
 #include <QObject>
+#include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QString>
 #include <QTableWidget>
@@ -38,6 +47,7 @@
 #include <QtCore/qchar.h>
 #include <QtCore/qtenvironmentvariables.h>
 #include <QtCore/qtimezone.h>
+#include <QtGlobal>
 #include <QtGui/qkeysequence.h>
 #include <algorithm>
 
@@ -635,10 +645,31 @@ void updateMetricDisplay(QComboBox *metric, QDoubleSpinBox *threshold,
   period->setAccessibleDescription(period->toolTip());
 }
 
+strategy::ConditionGroup makeConditionGroup(
+    const QComboBox *logic, const QComboBox *metric,
+    const QComboBox *comparison, const QDoubleSpinBox *threshold,
+    const QSpinBox *period, const QCheckBox *secondEnabled,
+    const QComboBox *secondMetric, const QComboBox *secondComparison,
+    const QDoubleSpinBox *secondThreshold, const QSpinBox *secondPeriod) {
+  auto group = strategy::ConditionGroup{
+      .logic = logicFrom(logic),
+      .conditions = {makeCondition(metricFrom(metric),
+                                   comparisonFrom(comparison),
+                                   threshold->value(), period->value())},
+  };
+  if (secondEnabled->isChecked()) {
+    group.conditions.push_back(makeCondition(
+        metricFrom(secondMetric), comparisonFrom(secondComparison),
+        secondThreshold->value(), secondPeriod->value()));
+  }
+  return group;
+}
+
 } // namespace
 
 struct BacktestTab::RunState final {
   using BacktestResult = core::Result<bindings::BacktestSnapshot>;
+  using VerificationResult = core::Result<results::VerificationEvidence>;
   using PublishResult = core::Result<std::string>;
   using DraftListResult = core::Result<bindings::ResultCatalogSnapshot>;
   using DiscardResult = core::Result<void>;
@@ -646,6 +677,7 @@ struct BacktestTab::RunState final {
   ~RunState() {
     cancellation.requestCancellation();
     watcher.waitForFinished();
+    verificationWatcher.waitForFinished();
     publishWatcher.waitForFinished();
     draftListWatcher.waitForFinished();
     discardWatcher.waitForFinished();
@@ -659,19 +691,62 @@ struct BacktestTab::RunState final {
 
   core::CancellationSource cancellation;
   QFutureWatcher<BacktestResult> watcher;
+  QFutureWatcher<VerificationResult> verificationWatcher;
   QFutureWatcher<PublishResult> publishWatcher;
   QFutureWatcher<DraftListResult> draftListWatcher;
   QFutureWatcher<DiscardResult> discardWatcher;
   bool selectableConditions = false;
   bool openAfterPublish = false;
+  QString pythonSourceUtf8;
+  QString pythonParametersJson;
+  BacktestTab::VerificationRunner verificationRunner;
+  BacktestTab::ConsentProvider consentProvider;
 };
 
 namespace {
 
 using BacktestResult = core::Result<bindings::BacktestSnapshot>;
+using VerificationResult = core::Result<results::VerificationEvidence>;
 using DraftListResult = core::Result<bindings::ResultCatalogSnapshot>;
 using PublishResult = core::Result<std::string>;
 using DiscardResult = core::Result<void>;
+
+VerificationResult runPersistedVerification(
+    const bindings::PersistedBacktestStorage &storage,
+    const bindings::PythonWorkerPaths &workerPaths,
+    const bindings::BacktestConfiguration &configuration,
+    const core::CancellationToken &cancellation,
+    const bindings::PythonVerificationProgressObserver &observe) {
+  return bindings::verifyPersistedPythonBacktestConfiguration(
+      configuration, storage, workerPaths.resourcesRoot,
+      workerPaths.workerBootstrapPath, observe, cancellation);
+}
+
+struct WorkerFailureMessage final {
+  const char *prefix;
+  const char *detail;
+};
+
+template <typename T>
+core::Result<T> workerFailure(const WorkerFailureMessage message) noexcept {
+  try {
+    auto text = std::string{message.prefix};
+    if (message.detail != nullptr) {
+      text.append(message.detail);
+    }
+    return core::Result<T>{
+        core::makeError(core::ErrorCode::internal, std::move(text))};
+  } catch (...) {
+    auto error = core::Error{};
+    error.code = core::ErrorCode::internal;
+    return core::Result<T>{std::move(error)};
+  } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+}
+
+template <typename T>
+core::Result<T> workerFailure(const char *message) noexcept {
+  return workerFailure<T>(WorkerFailureMessage{message, nullptr});
+}
 
 BacktestResult
 runConfigured(const bindings::PersistedBacktestStorage &storage,
@@ -694,6 +769,7 @@ struct DraftActionWidgets final {
   ResultRecoveryNoticeLabel *recoveryNotices = nullptr;
   QLabel *status = nullptr;
   QFutureWatcher<BacktestResult> *runWatcher = nullptr;
+  QFutureWatcher<VerificationResult> *verificationWatcher = nullptr;
   QFutureWatcher<DraftListResult> *draftListWatcher = nullptr;
   QFutureWatcher<PublishResult> *publishWatcher = nullptr;
   QFutureWatcher<DiscardResult> *discardWatcher = nullptr;
@@ -703,6 +779,7 @@ struct DraftActionWidgets final {
 
 void updateDraftActionAvailability(const DraftActionWidgets &controls) {
   const auto idle = !controls.runWatcher->isRunning() &&
+                    !controls.verificationWatcher->isRunning() &&
                     !controls.publishWatcher->isRunning() &&
                     !controls.discardWatcher->isRunning();
   const auto hasResult =
@@ -711,6 +788,86 @@ void updateDraftActionAvailability(const DraftActionWidgets &controls) {
   controls.saveAndReplay->setEnabled(hasResult && idle);
   controls.discardDraft->setEnabled(controls.drafts->currentIndex() >= 0 &&
                                     idle);
+}
+
+QString verificationStatusText(const results::VerificationEvidence &evidence) {
+  const auto attempts = static_cast<qulonglong>(evidence.attempts.size());
+  switch (evidence.status) {
+  case results::VerificationStatus::running:
+    return QObject::tr("Reproducibility verification: attempt %1 of 3…")
+        .arg(attempts + (evidence.progressOrdinal > attempts ? 1U : 0U));
+  case results::VerificationStatus::verified:
+    return QObject::tr("Reproducibility verified across 3 fresh runs");
+  case results::VerificationStatus::mismatch:
+    return QObject::tr("Reproducibility mismatch after %1 attempts")
+        .arg(attempts);
+  case results::VerificationStatus::failed:
+    return QObject::tr("Reproducibility verification failed after %1 attempts")
+        .arg(attempts);
+  case results::VerificationStatus::canceled:
+    return QObject::tr(
+               "Reproducibility verification canceled after %1 attempts")
+        .arg(attempts);
+  case results::VerificationStatus::interrupted:
+    return QObject::tr("Reproducibility verification was interrupted");
+  }
+  return QObject::tr("Reproducibility verification status is unavailable");
+}
+
+QString runStatusText(const results::RunStatus status) {
+  switch (status) {
+  case results::RunStatus::running:
+    return QObject::tr("running");
+  case results::RunStatus::completed:
+    return QObject::tr("completed");
+  case results::RunStatus::failed:
+    return QObject::tr("failed");
+  case results::RunStatus::canceled:
+    return QObject::tr("canceled");
+  case results::RunStatus::interrupted:
+    return QObject::tr("interrupted");
+  case results::RunStatus::incomplete:
+    return QObject::tr("incomplete");
+  }
+  return QObject::tr("unknown");
+}
+
+QString sourceConsentKey(const std::string &sourceHash) {
+  return QString{"pythonStrategy/consent/api-1/%1"}.arg(
+      QString::fromStdString(sourceHash));
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+
+bool requestPythonSourceConsent(const std::string &sourceHash) {
+  QSettings settings;
+  const auto key = sourceConsentKey(sourceHash);
+  if (settings.value(key, false).toBool()) {
+    return true;
+  }
+  QMessageBox dialog{QMessageBox::Warning,
+                     QObject::tr("Allow Python Strategy code?"),
+                     QObject::tr("Python strategies run trusted local code. "
+                                 "They are not sandboxed and may access the "
+                                 "same account and files as this application."),
+                     QMessageBox::NoButton};
+  dialog.setInformativeText(QObject::tr("API version: 1\nSource SHA-256: %1")
+                                .arg(QString::fromStdString(sourceHash)));
+  auto *allow = dialog.addButton(QObject::tr("Allow this source"),
+                                 QMessageBox::AcceptRole);
+  dialog.addButton(QMessageBox::Cancel);
+  dialog.exec();
+  if (dialog.clickedButton() != allow) {
+    return false;
+  }
+  settings.setValue(key, true);
+  settings.sync();
+  return settings.status() == QSettings::NoError;
+}
+
+bool ensurePythonConsent(const bindings::PythonStrategyConfiguration &config,
+                         const BacktestTab::ConsentProvider &provider) {
+  const auto sourceHash = core::sha256(config.sourceUtf8);
+  return provider ? provider(sourceHash)
+                  : requestPythonSourceConsent(sourceHash);
 }
 
 std::function<void()>
@@ -951,11 +1108,26 @@ BacktestTab::createApplicationConfigured(QWidget *parent) {
       .snapshotId = qEnvironmentVariable("BTE_DATA_SNAPSHOT_ID").toStdString(),
       .strategyHash = {},
   };
-  return std::make_unique<BacktestTab>(
+  auto tab = std::make_unique<BacktestTab>(
       std::bind_front(runConfigured, storage),
       std::bind_front(bindings::publishBacktestDraft, storage),
       std::bind_front(bindings::listBacktestDraftCatalog, storage),
       std::bind_front(bindings::discardBacktestDraft, storage), parent);
+  auto applicationPath = std::filesystem::path{
+      QCoreApplication::applicationDirPath().toStdString()};
+  auto resources = applicationPath / "Resources";
+  if (applicationPath.filename() == "MacOS" &&
+      applicationPath.parent_path().filename() == "Contents") {
+    resources = applicationPath.parent_path() / "Resources";
+  }
+  const auto bootstrap = resources / "Python" / "worker_bootstrap.py";
+  tab->setVerificationRunner(
+      std::bind_front(runPersistedVerification, storage,
+                      bindings::PythonWorkerPaths{
+                          .resourcesRoot = resources,
+                          .workerBootstrapPath = bootstrap,
+                      }));
+  return tab;
 }
 
 BacktestTab::BacktestTab(BacktestRunner runner, QWidget *parent)
@@ -1033,6 +1205,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   strategyCombo->setAccessibleName("Backtest strategy");
   strategyCombo->addItem(tr("Starter market buy"));
   strategyCombo->addItem(tr("Selectable conditions"));
+  strategyCombo->addItem(tr("Python Strategy draft"));
 
   auto *start =
       std::make_unique<QDateEdit>(QDate{2018, 5, 1}, configuration).release();
@@ -1067,6 +1240,17 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   run->setObjectName("backtestRunButton");
   run->setAccessibleName("Run backtest");
   run->setShortcut(QKeySequence{tr("Alt+R")});
+  auto *verify =
+      std::make_unique<QPushButton>(tr("Verify Reproducibility"), configuration)
+          .release();
+  verify->setObjectName("backtestVerifyReproducibilityButton");
+  verify->setAccessibleName(tr("Verify Python Strategy reproducibility"));
+  auto *cancel =
+      std::make_unique<QPushButton>(tr("Cancel"), configuration).release();
+  cancel->setObjectName("backtestCancelOperationButton");
+  cancel->setAccessibleName(tr("Cancel Backtest or verification"));
+  cancel->setEnabled(false);
+  verify->setVisible(false);
 
   form->addWidget(makeLabel(tr("Symbol"), "backtestSymbolLabel", configuration),
                   0, 0);
@@ -1086,7 +1270,9 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   form->addWidget(
       makeLabel(tr("Shares"), "backtestQuantityLabel", configuration), 1, 4);
   form->addWidget(quantity, 1, 5);
-  form->addWidget(run, 0, 6, 2, 1);
+  form->addWidget(run, 0, 6);
+  form->addWidget(verify, 0, 7);
+  form->addWidget(cancel, 1, 7);
   root->addWidget(configuration);
 
   auto *conditionEditor =
@@ -1247,53 +1433,16 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   conditionEditor->setVisible(false);
   root->addWidget(conditionEditor);
 
-  const auto setSecondConditionEnabled =
-      [](const bool enabled, QComboBox *metric, QComboBox *comparison,
-         QDoubleSpinBox *threshold, QSpinBox *period) {
-        metric->setEnabled(enabled);
-        comparison->setEnabled(enabled);
-        threshold->setEnabled(enabled);
-        period->setEnabled(enabled);
-        updateMetricDisplay(metric, threshold, period, comparison);
-      };
-  const auto connectMetricDisplay = [this](QComboBox *metric,
-                                           QComboBox *comparison,
-                                           QDoubleSpinBox *threshold,
-                                           QSpinBox *period) {
-    const auto refresh = [metric, comparison, threshold, period] {
-      updateMetricDisplay(metric, threshold, period, comparison);
-    };
-    QObject::connect(metric, qOverload<int>(&QComboBox::currentIndexChanged),
-                     this, [refresh](int) { refresh(); });
-    refresh();
-  };
-  connectMetricDisplay(buyMetric, buyComparison, buyThreshold, buyPeriod);
-  connectMetricDisplay(buySecondMetric, buySecondComparison, buySecondThreshold,
-                       buySecondPeriod);
-  connectMetricDisplay(sellMetric, sellComparison, sellThreshold, sellPeriod);
-  connectMetricDisplay(sellSecondMetric, sellSecondComparison,
-                       sellSecondThreshold, sellSecondPeriod);
-  setSecondConditionEnabled(false, buySecondMetric, buySecondComparison,
-                            buySecondThreshold, buySecondPeriod);
-  setSecondConditionEnabled(false, sellSecondMetric, sellSecondComparison,
-                            sellSecondThreshold, sellSecondPeriod);
-  QObject::connect(
-      buySecondEnabled, &QCheckBox::toggled, this, [=](const bool enabled) {
-        setSecondConditionEnabled(enabled, buySecondMetric, buySecondComparison,
-                                  buySecondThreshold, buySecondPeriod);
-      });
-  QObject::connect(
-      sellSecondEnabled, &QCheckBox::toggled, this, [=](const bool enabled) {
-        setSecondConditionEnabled(enabled, sellSecondMetric,
-                                  sellSecondComparison, sellSecondThreshold,
-                                  sellSecondPeriod);
-      });
-  QObject::connect(
-      strategyCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
-      [=](const int index) { conditionEditor->setVisible(index == 1); });
+  connectConditionControls();
 
   auto *status = makeLabel(tr("Ready to run"), "backtestStatusLabel", this);
   root->addWidget(status);
+  auto *strategyDiagnostics = std::make_unique<QPlainTextEdit>(this).release();
+  strategyDiagnostics->setObjectName("backtestStrategyDiagnostics");
+  strategyDiagnostics->setAccessibleName(tr("Backtest run diagnostics"));
+  strategyDiagnostics->setReadOnly(true);
+  strategyDiagnostics->setMaximumHeight(110);
+  root->addWidget(strategyDiagnostics);
 
   auto *saveActions = std::make_unique<QWidget>(this).release();
   saveActions->setObjectName("backtestSaveActions");
@@ -1381,6 +1530,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   root->addWidget(tradeLog, 1);
 
   auto *watcher = &runState_->watcher;
+  auto *verificationWatcher = &runState_->verificationWatcher;
   auto *publishWatcher = &runState_->publishWatcher;
   auto *draftListWatcher = &runState_->draftListWatcher;
   auto *discardWatcher = &runState_->discardWatcher;
@@ -1397,6 +1547,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
       .recoveryNotices = recoveryNotices,
       .status = status,
       .runWatcher = watcher,
+      .verificationWatcher = verificationWatcher,
       .draftListWatcher = draftListWatcher,
       .publishWatcher = publishWatcher,
       .discardWatcher = discardWatcher,
@@ -1408,163 +1559,563 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
   connectDraftDiscard(draftControls, std::move(draftDiscarder),
                       beginDraftRefresh);
   connectDraftPublish(draftControls, std::move(publisher), beginDraftRefresh);
-  QObject::connect(
-      watcher, &QFutureWatcher<RunState::BacktestResult>::finished, this,
-      [this, run, watcher, status, cash, position, market, equity, pnl, bars,
-       tradeLog, drafts, saveResult, saveAndReplay, discardDraft,
-       beginDraftRefresh]() {
-        run->setEnabled(true);
-        const auto result = watcher->result();
-        if (!result.ok()) {
-          setLabelText(
-              status, tr("Cannot run — %1")
-                          .arg(QString::fromStdString(result.error().message)));
-          beginDraftRefresh();
-          return;
-        }
-
-        const auto &snapshot = result.value();
-        const auto resultId = QString::fromStdString(snapshot.resultId);
-        if (!resultId.isEmpty()) {
-          saveResult->setProperty("resultId", resultId);
-          auto draftIndex = drafts->findData(resultId);
-          if (draftIndex < 0) {
-            drafts->addItem(resultId, resultId);
-            draftIndex = drafts->count() - 1;
-          }
-          drafts->setCurrentIndex(draftIndex);
-          saveResult->setEnabled(true);
-          saveAndReplay->setEnabled(true);
-          discardDraft->setEnabled(true);
-        }
-        setLabelText(status, statusText(snapshot.outcome,
-                                        runState_->selectableConditions));
-        setLabelText(cash, tr("Cash: %1").arg(formatMoney(snapshot.cash)));
-        setLabelText(position,
-                     tr("Position: %1 shares").arg(snapshot.positionShares));
-        setLabelText(
-            market,
-            tr("Market value: %1").arg(formatMoney(snapshot.marketValue)));
-        setLabelText(equity,
-                     tr("Equity: %1").arg(formatMoney(snapshot.equity)));
-        setLabelText(pnl, tr("PnL: %1").arg(formatMoney(snapshot.pnl)));
-        setLabelText(bars, tr("Bars: %1").arg(snapshot.barsProcessed));
-
-        for (const auto &fill : snapshot.fills) {
-          const auto milliseconds =
-              std::chrono::duration_cast<std::chrono::milliseconds>(
-                  fill.timestamp.time_since_epoch())
-                  .count();
-          const auto row = tradeLog->rowCount();
-          tradeLog->insertRow(row);
-          tradeLog->setItem(row, 0,
-                            makeItem(QDateTime::fromMSecsSinceEpoch(
-                                         milliseconds, QTimeZone::UTC)
-                                         .toString(Qt::ISODate)));
-          tradeLog->setItem(
-              row, 1,
-              makeItem(fill.side == bindings::BacktestFillSide::buy
-                           ? tr("Buy")
-                           : tr("Sell")));
-          tradeLog->setItem(
-              row, 2, makeItem(QString{"$%1"}.arg(fill.price, 0, 'f', 4)));
-          tradeLog->setItem(row, 3,
-                            makeItem(QString::number(fill.quantityShares)));
-          tradeLog->setItem(row, 4, makeItem(formatMoney(fill.amount)));
-        }
-      });
-
-  QObject::connect(
-      run, &QPushButton::clicked, this,
-      [this, tradeLog, status, cash, position, market, equity, pnl, bars, run,
-       saveResult, saveAndReplay, discardDraft, symbol, strategyCombo, start,
-       end, capital, quantity, watcher, buyLogic, buyMetric, buyComparison,
-       buyThreshold, buyPeriod, buySecondEnabled, buySecondMetric,
-       buySecondComparison, buySecondThreshold, buySecondPeriod, sellLogic,
-       sellMetric, sellComparison, sellThreshold, sellPeriod, sellSecondEnabled,
-       sellSecondMetric, sellSecondComparison, sellSecondThreshold,
-       sellSecondPeriod, executeBacktest = std::move(runner)]() {
-        tradeLog->setRowCount(0);
-        setLabelText(status, tr("Running…"));
-        setLabelText(cash, tr("Cash: --"));
-        setLabelText(position, tr("Position: --"));
-        setLabelText(market, tr("Market value: --"));
-        setLabelText(equity, tr("Equity: --"));
-        setLabelText(pnl, tr("PnL: --"));
-        setLabelText(bars, tr("Bars: --"));
-        run->setEnabled(false);
-        saveResult->setEnabled(false);
-        saveResult->setProperty("resultId", QString{});
-        saveAndReplay->setEnabled(false);
-        discardDraft->setEnabled(false);
-
-        auto backtestConfiguration = bindings::BacktestConfiguration{
-            .symbol = symbol->currentText(),
-            .schema = "ohlcv-1h",
-            .startDate = start->date(),
-            .endDate = end->date(),
-            .initialCapital = capital->value(),
-            .quantityShares = quantity->value(),
-            .selectableStrategy = {},
-        };
-        if (strategyCombo->currentIndex() == 1) {
-          const auto makeGroup = [](const QComboBox *logic,
-                                    const QComboBox *metric,
-                                    const QComboBox *comparison,
-                                    const QDoubleSpinBox *threshold,
-                                    const QSpinBox *period,
-                                    const QCheckBox *secondEnabled,
-                                    const QComboBox *secondMetric,
-                                    const QComboBox *secondComparison,
-                                    const QDoubleSpinBox *secondThreshold,
-                                    const QSpinBox *secondPeriod) {
-            auto group = strategy::ConditionGroup{
-                .logic = logicFrom(logic),
-                .conditions = {makeCondition(
-                    metricFrom(metric), comparisonFrom(comparison),
-                    threshold->value(), period->value())},
-            };
-            if (secondEnabled->isChecked()) {
-              group.conditions.push_back(makeCondition(
-                  metricFrom(secondMetric), comparisonFrom(secondComparison),
-                  secondThreshold->value(), secondPeriod->value()));
-            }
-            return group;
-          };
-          backtestConfiguration.selectableStrategy =
-              strategy::SelectableStrategyPlan{
-                  .buy = makeGroup(buyLogic, buyMetric, buyComparison,
-                                   buyThreshold, buyPeriod, buySecondEnabled,
-                                   buySecondMetric, buySecondComparison,
-                                   buySecondThreshold, buySecondPeriod),
-                  .sell =
-                      makeGroup(sellLogic, sellMetric, sellComparison,
-                                sellThreshold, sellPeriod, sellSecondEnabled,
-                                sellSecondMetric, sellSecondComparison,
-                                sellSecondThreshold, sellSecondPeriod),
-              };
-        }
-        runState_->selectableConditions =
-            backtestConfiguration.selectableStrategy.has_value();
-        runState_->cancellation = core::CancellationSource{};
-        const auto cancellation = runState_->cancellation.token();
-        watcher->setFuture(QtConcurrent::run(
-            [executeBacktest, backtestConfiguration, cancellation]() mutable {
-              try {
-                return executeBacktest(backtestConfiguration, cancellation);
-              } catch (const std::exception &error) {
-                return core::Result<bindings::BacktestSnapshot>{core::makeError(
-                    core::ErrorCode::internal,
-                    std::string{"backtest worker failed: "} + error.what())};
-              } catch (...) {
-                return core::Result<bindings::BacktestSnapshot>{core::makeError(
-                    core::ErrorCode::internal, "backtest worker failed")};
-              }
-            }));
-      });
+  connectOperationControls(std::move(runner), beginDraftRefresh);
   beginDraftRefresh();
 }
 
+void BacktestTab::connectConditionControls() {
+  auto *strategyCombo = findChild<QComboBox *>("backtestStrategyCombo");
+  auto *buyMetric = findChild<QComboBox *>("backtestBuyMetricCombo");
+  auto *buyComparison = findChild<QComboBox *>("backtestBuyComparisonCombo");
+  auto *buyThreshold =
+      findChild<QDoubleSpinBox *>("backtestBuyThresholdSpinBox");
+  auto *buyPeriod = findChild<QSpinBox *>("backtestBuyPeriodSpinBox");
+  auto *buySecondEnabled =
+      findChild<QCheckBox *>("backtestBuySecondEnabledCheckBox");
+  auto *buySecondMetric =
+      findChild<QComboBox *>("backtestBuySecondMetricCombo");
+  auto *buySecondComparison =
+      findChild<QComboBox *>("backtestBuySecondComparisonCombo");
+  auto *buySecondThreshold =
+      findChild<QDoubleSpinBox *>("backtestBuySecondThresholdSpinBox");
+  auto *buySecondPeriod =
+      findChild<QSpinBox *>("backtestBuySecondPeriodSpinBox");
+  auto *sellMetric = findChild<QComboBox *>("backtestSellMetricCombo");
+  auto *sellComparison = findChild<QComboBox *>("backtestSellComparisonCombo");
+  auto *sellThreshold =
+      findChild<QDoubleSpinBox *>("backtestSellThresholdSpinBox");
+  auto *sellPeriod = findChild<QSpinBox *>("backtestSellPeriodSpinBox");
+  auto *sellSecondEnabled =
+      findChild<QCheckBox *>("backtestSellSecondEnabledCheckBox");
+  auto *sellSecondMetric =
+      findChild<QComboBox *>("backtestSellSecondMetricCombo");
+  auto *sellSecondComparison =
+      findChild<QComboBox *>("backtestSellSecondComparisonCombo");
+  auto *sellSecondThreshold =
+      findChild<QDoubleSpinBox *>("backtestSellSecondThresholdSpinBox");
+  auto *sellSecondPeriod =
+      findChild<QSpinBox *>("backtestSellSecondPeriodSpinBox");
+
+  const auto setSecondConditionEnabled =
+      [](const bool enabled, QComboBox *metric, QComboBox *comparison,
+         QDoubleSpinBox *threshold, QSpinBox *period) {
+        metric->setEnabled(enabled);
+        comparison->setEnabled(enabled);
+        threshold->setEnabled(enabled);
+        period->setEnabled(enabled);
+        updateMetricDisplay(metric, threshold, period, comparison);
+      };
+  const auto connectMetricDisplay = [this](QComboBox *metric,
+                                           QComboBox *comparison,
+                                           QDoubleSpinBox *threshold,
+                                           QSpinBox *period) {
+    const auto refresh = [metric, comparison, threshold, period] {
+      updateMetricDisplay(metric, threshold, period, comparison);
+    };
+    QObject::connect(metric, qOverload<int>(&QComboBox::currentIndexChanged),
+                     this, [refresh](int) { refresh(); });
+    refresh();
+  };
+  connectMetricDisplay(buyMetric, buyComparison, buyThreshold, buyPeriod);
+  connectMetricDisplay(buySecondMetric, buySecondComparison, buySecondThreshold,
+                       buySecondPeriod);
+  connectMetricDisplay(sellMetric, sellComparison, sellThreshold, sellPeriod);
+  connectMetricDisplay(sellSecondMetric, sellSecondComparison,
+                       sellSecondThreshold, sellSecondPeriod);
+  setSecondConditionEnabled(false, buySecondMetric, buySecondComparison,
+                            buySecondThreshold, buySecondPeriod);
+  setSecondConditionEnabled(false, sellSecondMetric, sellSecondComparison,
+                            sellSecondThreshold, sellSecondPeriod);
+  QObject::connect(
+      buySecondEnabled, &QCheckBox::toggled, this,
+      [setSecondConditionEnabled, buySecondMetric, buySecondComparison,
+       buySecondThreshold, buySecondPeriod](const bool enabled) {
+        setSecondConditionEnabled(enabled, buySecondMetric, buySecondComparison,
+                                  buySecondThreshold, buySecondPeriod);
+      });
+  QObject::connect(
+      sellSecondEnabled, &QCheckBox::toggled, this,
+      [setSecondConditionEnabled, sellSecondMetric, sellSecondComparison,
+       sellSecondThreshold, sellSecondPeriod](const bool enabled) {
+        setSecondConditionEnabled(enabled, sellSecondMetric,
+                                  sellSecondComparison, sellSecondThreshold,
+                                  sellSecondPeriod);
+      });
+  QObject::connect(strategyCombo,
+                   qOverload<int>(&QComboBox::currentIndexChanged), this,
+                   &BacktestTab::handleStrategySelectionChanged);
+}
+
+void BacktestTab::connectOperationControls(
+    BacktestRunner runner, const std::function<void()> &beginDraftRefresh) {
+  auto *run = findChild<QPushButton *>("backtestRunButton");
+  auto *verify =
+      findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *cancel = findChild<QPushButton *>("backtestCancelOperationButton");
+  QObject::connect(
+      &runState_->watcher, &QFutureWatcher<RunState::BacktestResult>::finished,
+      this,
+      [this, beginDraftRefresh] { handleBacktestFinished(beginDraftRefresh); });
+  QObject::connect(verify, &QPushButton::clicked, this,
+                   &BacktestTab::handleVerificationRequested);
+  QObject::connect(this, &BacktestTab::verificationProgressUpdated, this,
+                   &BacktestTab::showVerificationProgress,
+                   Qt::QueuedConnection);
+  QObject::connect(&runState_->verificationWatcher,
+                   &QFutureWatcher<RunState::VerificationResult>::finished,
+                   this, [this, beginDraftRefresh] {
+                     handleVerificationFinished(beginDraftRefresh);
+                   });
+  QObject::connect(cancel, &QPushButton::clicked, this,
+                   &BacktestTab::handleCancelRequested);
+  QObject::connect(
+      run, &QPushButton::clicked, this,
+      [this, runner = std::move(runner)] { handleBacktestRequested(runner); });
+}
+
+void BacktestTab::handleStrategySelectionChanged(const int index) {
+  const auto operationActive = runState_->watcher.isRunning() ||
+                               runState_->verificationWatcher.isRunning();
+  auto *conditionEditor = findChild<QGroupBox *>("backtestConditionEditorBox");
+  auto *verify =
+      findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *strategyCombo = findChild<QComboBox *>("backtestStrategyCombo");
+  auto *quantity = findChild<QSpinBox *>("backtestQuantitySpinBox");
+  conditionEditor->setVisible(index == 1);
+  verify->setVisible(index == 2);
+  verify->setEnabled(!operationActive && index == 2 &&
+                     static_cast<bool>(runState_->verificationRunner));
+  strategyCombo->setEnabled(!operationActive);
+  quantity->setEnabled(index != 2);
+  quantity->setAccessibleName(index == 2
+                                  ? tr("Unused for Python Strategy")
+                                  : tr("Starter order quantity in shares"));
+}
+
+void BacktestTab::handleBacktestFinished(
+    const std::function<void()> &beginDraftRefresh) {
+  auto *run = findChild<QPushButton *>("backtestRunButton");
+  auto *status = findChild<QLabel *>("backtestStatusLabel");
+  auto *cash = findChild<QLabel *>("backtestCashLabel");
+  auto *position = findChild<QLabel *>("backtestPositionLabel");
+  auto *market = findChild<QLabel *>("backtestMarketValueLabel");
+  auto *equity = findChild<QLabel *>("backtestEquityLabel");
+  auto *pnl = findChild<QLabel *>("backtestPnlLabel");
+  auto *bars = findChild<QLabel *>("backtestBarsLabel");
+  auto *tradeLog = findChild<QTableWidget *>("backtestTradeLogTable");
+  auto *drafts = findChild<QComboBox *>("backtestUnsavedRunsCombo");
+  auto *saveResult = findChild<QPushButton *>("backtestSaveResultButton");
+  auto *saveAndReplay = findChild<QPushButton *>("backtestSaveAndReplayButton");
+  auto *discardDraft = findChild<QPushButton *>("backtestDiscardDraftButton");
+  auto *cancel = findChild<QPushButton *>("backtestCancelOperationButton");
+  auto *verify =
+      findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *strategyDiagnostics =
+      findChild<QPlainTextEdit *>("backtestStrategyDiagnostics");
+  auto *strategyCombo = findChild<QComboBox *>("backtestStrategyCombo");
+
+  run->setEnabled(true);
+  strategyCombo->setEnabled(true);
+  cancel->setEnabled(false);
+  verify->setEnabled(strategyCombo->currentIndex() == 2 &&
+                     static_cast<bool>(runState_->verificationRunner));
+  const auto result = runState_->watcher.result();
+  if (!result.ok()) {
+    setLabelText(status,
+                 tr("Cannot run — %1")
+                     .arg(QString::fromStdString(result.error().message)));
+    beginDraftRefresh();
+    return;
+  }
+
+  const auto &snapshot = result.value();
+  auto diagnostics = QString{};
+  for (const auto &message : snapshot.strategyDiagnostics) {
+    if (!diagnostics.isEmpty()) {
+      diagnostics.append('\n');
+    }
+    diagnostics.append(QString::fromStdString(message));
+  }
+  if (!snapshot.terminalReason.empty()) {
+    if (!diagnostics.isEmpty()) {
+      diagnostics.append('\n');
+    }
+    diagnostics.append(QString::fromStdString(snapshot.terminalReason));
+  }
+  if (snapshot.reproducibilityVerified) {
+    diagnostics.append(tr("\nReproducibility: verified"));
+  }
+  if (!snapshot.reproducibilityDiagnostic.empty()) {
+    if (!diagnostics.isEmpty()) {
+      diagnostics.append('\n');
+    }
+    diagnostics.append(
+        tr("Reproducibility status unavailable: %1")
+            .arg(QString::fromStdString(snapshot.reproducibilityDiagnostic)));
+  }
+  strategyDiagnostics->setPlainText(diagnostics);
+  const auto resultId = QString::fromStdString(snapshot.resultId);
+  if (!resultId.isEmpty()) {
+    saveResult->setProperty("resultId", resultId);
+    auto draftIndex = drafts->findData(resultId);
+    if (draftIndex < 0) {
+      drafts->addItem(resultId, resultId);
+      draftIndex = drafts->count() - 1;
+    }
+    drafts->setCurrentIndex(draftIndex);
+    saveResult->setEnabled(true);
+    saveAndReplay->setEnabled(true);
+    discardDraft->setEnabled(true);
+  }
+  setLabelText(status,
+               statusText(snapshot.outcome, runState_->selectableConditions));
+  setLabelText(cash, tr("Cash: %1").arg(formatMoney(snapshot.cash)));
+  setLabelText(position,
+               tr("Position: %1 shares").arg(snapshot.positionShares));
+  setLabelText(market,
+               tr("Market value: %1").arg(formatMoney(snapshot.marketValue)));
+  setLabelText(equity, tr("Equity: %1").arg(formatMoney(snapshot.equity)));
+  setLabelText(pnl, tr("PnL: %1").arg(formatMoney(snapshot.pnl)));
+  setLabelText(bars, tr("Bars: %1").arg(snapshot.barsProcessed));
+
+  for (const auto &fill : snapshot.fills) {
+    const auto milliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            fill.timestamp.time_since_epoch())
+            .count();
+    const auto row = tradeLog->rowCount();
+    tradeLog->insertRow(row);
+    tradeLog->setItem(
+        row, 0,
+        makeItem(QDateTime::fromMSecsSinceEpoch(milliseconds, QTimeZone::UTC)
+                     .toString(Qt::ISODate)));
+    tradeLog->setItem(row, 1,
+                      makeItem(fill.side == bindings::BacktestFillSide::buy
+                                   ? tr("Buy")
+                                   : tr("Sell")));
+    tradeLog->setItem(row, 2,
+                      makeItem(QString{"$%1"}.arg(fill.price, 0, 'f', 4)));
+    tradeLog->setItem(row, 3, makeItem(QString::number(fill.quantityShares)));
+    tradeLog->setItem(row, 4, makeItem(formatMoney(fill.amount)));
+  }
+}
+
+std::optional<bindings::PythonStrategyConfiguration>
+BacktestTab::currentPythonStrategyDraft() {
+  if (runState_->pythonSourceUtf8.isEmpty() ||
+      runState_->pythonParametersJson.isEmpty()) {
+    setLabelText(findChild<QLabel *>("backtestStatusLabel"),
+                 tr("Choose a Python Strategy draft first"));
+    return std::nullopt;
+  }
+  auto configuration = bindings::PythonStrategyConfiguration{
+      .sourceUtf8 = runState_->pythonSourceUtf8.toStdString(),
+      .canonicalParametersJson = runState_->pythonParametersJson.toStdString(),
+      .sourceConsentGranted = true,
+  };
+  if (!ensurePythonConsent(configuration, runState_->consentProvider)) {
+    setLabelText(findChild<QLabel *>("backtestStatusLabel"),
+                 tr("Consent was not granted"));
+    return std::nullopt;
+  }
+  return configuration;
+}
+
+bindings::BacktestConfiguration
+BacktestTab::backtestConfigurationFromWidgets() const {
+  auto *symbol = findChild<QComboBox *>("backtestSymbolCombo");
+  auto *start = findChild<QDateEdit *>("backtestStartDateEdit");
+  auto *end = findChild<QDateEdit *>("backtestEndDateEdit");
+  auto *capital = findChild<QDoubleSpinBox *>("backtestInitialCapitalSpinBox");
+  auto *quantity = findChild<QSpinBox *>("backtestQuantitySpinBox");
+  return bindings::BacktestConfiguration{
+      .symbol = symbol->currentText(),
+      .schema = "ohlcv-1h",
+      .startDate = start->date(),
+      .endDate = end->date(),
+      .initialCapital = capital->value(),
+      .quantityShares = quantity->value(),
+      .selectableStrategy = {},
+  };
+} // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+
+void BacktestTab::addSelectableConditions(
+    bindings::BacktestConfiguration &configuration) {
+  auto *buyLogic = findChild<QComboBox *>("backtestBuyLogicCombo");
+  auto *buyMetric = findChild<QComboBox *>("backtestBuyMetricCombo");
+  auto *buyComparison = findChild<QComboBox *>("backtestBuyComparisonCombo");
+  auto *buyThreshold =
+      findChild<QDoubleSpinBox *>("backtestBuyThresholdSpinBox");
+  auto *buyPeriod = findChild<QSpinBox *>("backtestBuyPeriodSpinBox");
+  auto *buySecondEnabled =
+      findChild<QCheckBox *>("backtestBuySecondEnabledCheckBox");
+  auto *buySecondMetric =
+      findChild<QComboBox *>("backtestBuySecondMetricCombo");
+  auto *buySecondComparison =
+      findChild<QComboBox *>("backtestBuySecondComparisonCombo");
+  auto *buySecondThreshold =
+      findChild<QDoubleSpinBox *>("backtestBuySecondThresholdSpinBox");
+  auto *buySecondPeriod =
+      findChild<QSpinBox *>("backtestBuySecondPeriodSpinBox");
+  auto *sellLogic = findChild<QComboBox *>("backtestSellLogicCombo");
+  auto *sellMetric = findChild<QComboBox *>("backtestSellMetricCombo");
+  auto *sellComparison = findChild<QComboBox *>("backtestSellComparisonCombo");
+  auto *sellThreshold =
+      findChild<QDoubleSpinBox *>("backtestSellThresholdSpinBox");
+  auto *sellPeriod = findChild<QSpinBox *>("backtestSellPeriodSpinBox");
+  auto *sellSecondEnabled =
+      findChild<QCheckBox *>("backtestSellSecondEnabledCheckBox");
+  auto *sellSecondMetric =
+      findChild<QComboBox *>("backtestSellSecondMetricCombo");
+  auto *sellSecondComparison =
+      findChild<QComboBox *>("backtestSellSecondComparisonCombo");
+  auto *sellSecondThreshold =
+      findChild<QDoubleSpinBox *>("backtestSellSecondThresholdSpinBox");
+  auto *sellSecondPeriod =
+      findChild<QSpinBox *>("backtestSellSecondPeriodSpinBox");
+  configuration.selectableStrategy = strategy::SelectableStrategyPlan{
+      .buy = makeConditionGroup(buyLogic, buyMetric, buyComparison,
+                                buyThreshold, buyPeriod, buySecondEnabled,
+                                buySecondMetric, buySecondComparison,
+                                buySecondThreshold, buySecondPeriod),
+      .sell = makeConditionGroup(sellLogic, sellMetric, sellComparison,
+                                 sellThreshold, sellPeriod, sellSecondEnabled,
+                                 sellSecondMetric, sellSecondComparison,
+                                 sellSecondThreshold, sellSecondPeriod),
+  };
+}
+
+void BacktestTab::resetBacktestView() {
+  findChild<QTableWidget *>("backtestTradeLogTable")->setRowCount(0);
+  setLabelText(findChild<QLabel *>("backtestStatusLabel"), tr("Running…"));
+  findChild<QPlainTextEdit *>("backtestStrategyDiagnostics")->clear();
+  setLabelText(findChild<QLabel *>("backtestCashLabel"), tr("Cash: --"));
+  setLabelText(findChild<QLabel *>("backtestPositionLabel"),
+               tr("Position: --"));
+  setLabelText(findChild<QLabel *>("backtestMarketValueLabel"),
+               tr("Market value: --"));
+  setLabelText(findChild<QLabel *>("backtestEquityLabel"), tr("Equity: --"));
+  setLabelText(findChild<QLabel *>("backtestPnlLabel"), tr("PnL: --"));
+  setLabelText(findChild<QLabel *>("backtestBarsLabel"), tr("Bars: --"));
+  auto *run = findChild<QPushButton *>("backtestRunButton");
+  auto *verify =
+      findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *strategyCombo = findChild<QComboBox *>("backtestStrategyCombo");
+  auto *saveResult = findChild<QPushButton *>("backtestSaveResultButton");
+  auto *saveAndReplay = findChild<QPushButton *>("backtestSaveAndReplayButton");
+  auto *discardDraft = findChild<QPushButton *>("backtestDiscardDraftButton");
+  auto *cancel = findChild<QPushButton *>("backtestCancelOperationButton");
+  run->setEnabled(false);
+  verify->setEnabled(false);
+  strategyCombo->setEnabled(false);
+  cancel->setEnabled(true);
+  saveResult->setEnabled(false);
+  saveResult->setProperty("resultId", QString{});
+  saveAndReplay->setEnabled(false);
+  discardDraft->setEnabled(false);
+}
+
+void BacktestTab::startBacktest(bindings::BacktestConfiguration configuration,
+                                const BacktestRunner &runner) {
+  runState_->selectableConditions =
+      configuration.selectableStrategy.has_value();
+  runState_->cancellation = core::CancellationSource{};
+  const auto cancellation = runState_->cancellation.token();
+  runState_->watcher.setFuture(
+      QtConcurrent::run([runner, configuration = std::move(configuration),
+                         cancellation]() mutable {
+        try {
+          return runner(configuration, cancellation);
+        } catch (const std::exception &error) {
+          return workerFailure<bindings::BacktestSnapshot>(
+              WorkerFailureMessage{"backtest worker failed: ", error.what()});
+        } catch (...) {
+          return workerFailure<bindings::BacktestSnapshot>(
+              "backtest worker failed");
+        }
+      }));
+}
+
+void BacktestTab::handleBacktestRequested(const BacktestRunner &runner) {
+  if (runState_->watcher.isRunning() ||
+      runState_->verificationWatcher.isRunning()) {
+    return;
+  }
+  auto *strategyCombo = findChild<QComboBox *>("backtestStrategyCombo");
+  auto pythonStrategy = std::optional<bindings::PythonStrategyConfiguration>{};
+  if (strategyCombo->currentIndex() == 2) {
+    pythonStrategy = currentPythonStrategyDraft();
+    if (!pythonStrategy.has_value()) {
+      return;
+    }
+  }
+
+  resetBacktestView();
+  auto configuration = backtestConfigurationFromWidgets();
+  configuration.pythonStrategy = std::move(pythonStrategy);
+  if (strategyCombo->currentIndex() == 1) {
+    addSelectableConditions(configuration);
+  }
+  startBacktest(std::move(configuration), runner);
+}
+
+void BacktestTab::handleVerificationRequested() {
+  if (runState_->watcher.isRunning() ||
+      runState_->verificationWatcher.isRunning()) {
+    return;
+  }
+  auto *strategyCombo = findChild<QComboBox *>("backtestStrategyCombo");
+  if (strategyCombo->currentIndex() != 2) {
+    setLabelText(findChild<QLabel *>("backtestStatusLabel"),
+                 tr("Choose a Python Strategy draft first"));
+    return;
+  }
+  if (!runState_->verificationRunner) {
+    setLabelText(findChild<QLabel *>("backtestStatusLabel"),
+                 tr("Managed reproducibility verification is unavailable"));
+    return;
+  }
+  const auto pythonStrategy = currentPythonStrategyDraft();
+  if (!pythonStrategy.has_value()) {
+    return;
+  }
+  auto configuration = backtestConfigurationFromWidgets();
+  configuration.pythonStrategy = pythonStrategy;
+  findChild<QPlainTextEdit *>("backtestStrategyDiagnostics")->clear();
+  findChild<QPushButton *>("backtestRunButton")->setEnabled(false);
+  findChild<QPushButton *>("backtestVerifyReproducibilityButton")
+      ->setEnabled(false);
+  strategyCombo->setEnabled(false);
+  findChild<QPushButton *>("backtestCancelOperationButton")->setEnabled(true);
+  setLabelText(findChild<QLabel *>("backtestStatusLabel"),
+               tr("Starting reproducibility verification…"));
+
+  runState_->cancellation = core::CancellationSource{};
+  const auto cancellation = runState_->cancellation.token();
+  const auto runner = runState_->verificationRunner;
+  const auto guardedThis = std::make_shared<QPointer<BacktestTab>>(this);
+  runState_->verificationWatcher.setFuture(
+      QtConcurrent::run([runner, configuration = std::move(configuration),
+                         cancellation, guardedThis]() noexcept {
+        const auto observe =
+            [guardedThis](
+                const results::VerificationEvidence &evidence) noexcept {
+              try {
+                if (!guardedThis->isNull()) {
+                  emit(*guardedThis)
+                      ->verificationProgressUpdated(
+                          verificationStatusText(evidence));
+                }
+              } catch (const std::exception &error) {
+                qWarning() << "Unable to publish verification progress:"
+                           << error.what();
+              } catch (...) {
+                qWarning() << "Unable to publish verification progress";
+              }
+            };
+        try {
+          return runner(configuration, cancellation, observe);
+        } catch (const std::exception &error) {
+          return workerFailure<results::VerificationEvidence>(
+              WorkerFailureMessage{"verification worker failed: ",
+                                   error.what()});
+        } catch (...) {
+          return workerFailure<results::VerificationEvidence>(
+              "verification worker failed");
+        }
+      }));
+}
+
+void BacktestTab::handleVerificationFinished(
+    const std::function<void()> &beginDraftRefresh) {
+  auto *verify =
+      findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+  auto *run = findChild<QPushButton *>("backtestRunButton");
+  auto *cancel = findChild<QPushButton *>("backtestCancelOperationButton");
+  auto *status = findChild<QLabel *>("backtestStatusLabel");
+  auto *strategyDiagnostics =
+      findChild<QPlainTextEdit *>("backtestStrategyDiagnostics");
+  auto *strategyCombo = findChild<QComboBox *>("backtestStrategyCombo");
+  run->setEnabled(true);
+  strategyCombo->setEnabled(true);
+  cancel->setEnabled(false);
+  verify->setEnabled(strategyCombo->currentIndex() == 2 &&
+                     static_cast<bool>(runState_->verificationRunner));
+  const auto result = runState_->verificationWatcher.result();
+  if (!result.ok()) {
+    setLabelText(status,
+                 tr("Verification could not complete — %1")
+                     .arg(QString::fromStdString(result.error().message)));
+    beginDraftRefresh();
+    return;
+  }
+  const auto &evidence = result.value();
+  setLabelText(status, verificationStatusText(evidence));
+  auto diagnostics = tr("Verification ID: %1")
+                         .arg(QString::fromStdString(evidence.verificationId));
+  for (const auto &attempt : evidence.attempts) {
+    diagnostics.append(
+        tr("\nAttempt %1: ").arg(static_cast<qulonglong>(attempt.ordinal)));
+    if (attempt.resultId.has_value()) {
+      diagnostics.append(QString::fromStdString(*attempt.resultId));
+    }
+    if (attempt.error.has_value()) {
+      diagnostics.append(QString{" — %1: %2"}.arg(
+          QString::fromStdString(attempt.error->code),
+          QString::fromStdString(attempt.error->message)));
+    }
+    if (attempt.terminalStatus.has_value()) {
+      diagnostics.append(
+          tr(" (%1)").arg(runStatusText(*attempt.terminalStatus)));
+    }
+  }
+  strategyDiagnostics->setPlainText(diagnostics);
+  beginDraftRefresh();
+}
+
+void BacktestTab::handleCancelRequested() {
+  if (!runState_->watcher.isRunning() &&
+      !runState_->verificationWatcher.isRunning()) {
+    return;
+  }
+  runState_->cancellation.requestCancellation();
+  findChild<QPushButton *>("backtestCancelOperationButton")->setEnabled(false);
+  setLabelText(findChild<QLabel *>("backtestStatusLabel"),
+               tr("Cancellation requested…"));
+}
+
+void BacktestTab::showVerificationProgress(const QString &statusText) {
+  if (auto *label = findChild<QLabel *>("backtestStatusLabel")) {
+    setLabelText(label, statusText);
+  }
+}
+
 BacktestTab::~BacktestTab() = default;
+
+void BacktestTab::setPythonStrategyDraft(QString sourceUtf8,
+                                         QString canonicalParametersJson) {
+  runState_->pythonSourceUtf8 = std::move(sourceUtf8);
+  runState_->pythonParametersJson = std::move(canonicalParametersJson);
+  if (auto *strategy = findChild<QComboBox *>("backtestStrategyCombo")) {
+    strategy->setCurrentIndex(2);
+  }
+  if (auto *status = findChild<QLabel *>("backtestStatusLabel")) {
+    setLabelText(status, tr("Python Strategy draft is ready to run"));
+  }
+}
+
+void BacktestTab::setVerificationRunner(VerificationRunner runner) {
+  runState_->verificationRunner = std::move(runner);
+  if (auto *verify =
+          findChild<QPushButton *>("backtestVerifyReproducibilityButton")) {
+    const auto *strategy = findChild<QComboBox *>("backtestStrategyCombo");
+    verify->setEnabled(strategy != nullptr && strategy->currentIndex() == 2 &&
+                       static_cast<bool>(runState_->verificationRunner));
+  }
+}
+
+void BacktestTab::setConsentProvider(ConsentProvider provider) {
+  runState_->consentProvider = std::move(provider);
+}
 
 } // namespace bte::frontend

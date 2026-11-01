@@ -1,6 +1,7 @@
 add_library(
   bte_strategy
   STATIC
+    Include/Bte/Strategy/Strategy.h
     Include/Bte/Strategy/SelectableStrategy.h
     Private/SelectableStrategyDetail.h
     Private/SelectableStrategy.cpp)

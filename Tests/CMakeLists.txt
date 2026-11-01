@@ -1,6 +1,7 @@
 add_executable(
   bte_core_tests
   Unit/Core/UnitTest_Bar.cpp
+  Unit/Core/UnitTest_CanonicalJson.cpp
   Unit/Core/UnitTest_Cancellation.cpp
   Unit/Core/UnitTest_Result.cpp
   Unit/Core/UnitTest_Time.cpp)
@@ -89,6 +90,7 @@ gtest_discover_tests(bte_strategy_tests DISCOVERY_TIMEOUT 30)
 add_executable(
   bte_engine_tests
   Unit/Engine/UnitTest_Backtest.cpp
+  Unit/Engine/UnitTest_StrategyAdapter.cpp
   Unit/Engine/UnitTest_RecordedBacktest.cpp
   Unit/Engine/UnitTest_Replay.cpp)
 
@@ -101,11 +103,91 @@ target_link_libraries(
 target_include_directories(
   bte_engine_tests
   PRIVATE
-    "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private")
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Results/Private"
+    "${PROJECT_SOURCE_DIR}/Src/Backend/Engine/Private")
 
 gtest_discover_tests(bte_engine_tests DISCOVERY_TIMEOUT 30)
 
+add_executable(
+  bte_python_strategy_tests
+  Unit/Bindings/UnitTest_ManagedWorkerProcess.cpp
+  Unit/Bindings/UnitTest_PythonWorkerBootstrap.cpp
+  Unit/Bindings/UnitTest_PythonWorkerStrategy.cpp
+  Unit/Bindings/UnitTest_RuntimeProfile.cpp
+  Unit/Bindings/UnitTest_StrategyProtocol.cpp)
+
+target_link_libraries(
+  bte_python_strategy_tests
+  PRIVATE
+    bte::engine
+    bte::python_strategy
+    bte::results
+    GTest::gtest_main)
+
+if(BTE_BUILD_QT_APP)
+  target_link_libraries(
+    bte_python_strategy_tests
+    PRIVATE
+      bte::result_replay_bindings)
+  target_compile_definitions(
+    bte_python_strategy_tests
+    PRIVATE
+      BTE_TEST_PYTHON_RESULT_REPLAY)
+endif()
+
+target_include_directories(
+  bte_python_strategy_tests
+  BEFORE
+  PRIVATE
+    "${googletest_SOURCE_DIR}/googletest/include")
+
+target_include_directories(
+  bte_python_strategy_tests
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src/Bindings/Python")
+
+gtest_discover_tests(bte_python_strategy_tests DISCOVERY_TIMEOUT 30)
+
+add_executable(bte_python_worker_fixture Unit/Bindings/StrategyWorkerFixture.cpp)
+
+target_link_libraries(
+  bte_python_worker_fixture
+  PRIVATE
+    bte::python_strategy)
+
+target_include_directories(
+  bte_python_worker_fixture
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/Src/Bindings/Python")
+
+target_compile_features(bte_python_worker_fixture PRIVATE cxx_std_20)
+
+target_compile_definitions(
+  bte_python_strategy_tests
+  PRIVATE
+    BTE_WORKER_FIXTURE_PATH="$<TARGET_FILE:bte_python_worker_fixture>")
+
+add_dependencies(bte_python_strategy_tests bte_python_worker_fixture)
+target_compile_features(bte_python_strategy_tests PRIVATE cxx_std_20)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+target_compile_definitions(
+  bte_python_strategy_tests
+  PRIVATE
+    BTE_ENABLE_TEST_HOOKS
+    BTE_TEST_PYTHON_EXECUTABLE="${Python3_EXECUTABLE}"
+    BTE_PYTHON_WORKER_BOOTSTRAP_PATH="${PROJECT_SOURCE_DIR}/Src/Bindings/Python/worker_bootstrap.py")
+
+if(BTE_BUNDLE_MANAGED_PYTHON_RUNTIME)
+  target_compile_definitions(
+    bte_python_strategy_tests
+    PRIVATE
+      BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH="${BTE_PYTHON_RUNTIME_PROFILE_OUTPUT_DIR}")
+  add_dependencies(
+    bte_python_strategy_tests
+    bte_python_runtime_profile)
+endif()
+
 add_test(
   NAME bte_project_standards_tests
   COMMAND
@@ -194,11 +276,55 @@ if(BTE_BUILD_QT_APP)
       Qt6::Test
       Qt6::Widgets)
 
+  if(BTE_BUNDLE_MANAGED_PYTHON_RUNTIME)
+    target_compile_definitions(
+      bte_backtest_frontend_tests
+      PRIVATE
+        BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH="${BTE_PYTHON_RUNTIME_PROFILE_OUTPUT_DIR}"
+        BTE_PYTHON_WORKER_BOOTSTRAP_PATH="${PROJECT_SOURCE_DIR}/Src/Bindings/Python/worker_bootstrap.py")
+    add_dependencies(
+      bte_backtest_frontend_tests
+      bte_python_runtime_profile)
+  endif()
+
   add_test(
     NAME bte_backtest_frontend_tests
     COMMAND bte_backtest_frontend_tests -platform offscreen)
   set_tests_properties(
     bte_backtest_frontend_tests
+    PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+  add_executable(
+    bte_strategy_frontend_tests
+    Unit/Frontend/UnitTest_StrategyTab.cpp)
+
+  set_target_properties(bte_strategy_frontend_tests PROPERTIES AUTOMOC ON)
+
+  target_link_libraries(
+    bte_strategy_frontend_tests
+    PRIVATE
+      bte::frontend
+      Qt6::Test
+      Qt6::Widgets)
+
+  target_include_directories(
+    bte_strategy_frontend_tests
+    PRIVATE
+      "${PROJECT_SOURCE_DIR}/Src/Bindings/Python")
+
+  target_compile_definitions(
+    bte_strategy_frontend_tests
+    PRIVATE
+      BTE_ENABLE_TEST_HOOKS
+      BTE_TEST_PYTHON_EXECUTABLE="${Python3_EXECUTABLE}"
+      BTE_PYTHON_WORKER_BOOTSTRAP_PATH="${PROJECT_SOURCE_DIR}/Src/Bindings/Python/worker_bootstrap.py")
+
+  add_test(
+    NAME bte_strategy_frontend_tests
+    COMMAND bte_strategy_frontend_tests -platform offscreen)
+  set_tests_properties(
+    bte_strategy_frontend_tests
     PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
@@ -269,6 +395,21 @@ if(BTE_BUILD_QT_APP)
     PROPERTIES
       TIMEOUT 5
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+  if(BTE_BUNDLE_MANAGED_PYTHON_RUNTIME)
+    add_test(
+      NAME bte_python_app_bundle_runtime
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/Tools/BuildPythonRuntime.py"
+        --verify-app-bundle
+        "$<TARGET_BUNDLE_DIR:stockBacktester>")
+    set_tests_properties(
+      bte_python_app_bundle_runtime
+      PROPERTIES
+        TIMEOUT 120
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+  endif()
 
   add_executable(
     bte_frontend_chart_tests
@@ -400,6 +541,8 @@ if(BTE_BUILD_QT_APP)
     bte_backtest_vm_tests
     PRIVATE
       bte::bindings
+      bte::engine
+      bte::python_strategy
       Qt6::Test)
 
   target_include_directories(
@@ -407,6 +550,17 @@ if(BTE_BUILD_QT_APP)
     PRIVATE
       "${CMAKE_SOURCE_DIR}/Src/Bindings/Backtest"
       "${CMAKE_SOURCE_DIR}/Src/Backend/Data/Private")
+
+  if(BTE_BUNDLE_MANAGED_PYTHON_RUNTIME)
+    target_compile_definitions(
+      bte_backtest_vm_tests
+      PRIVATE
+        BTE_TEST_MANAGED_RUNTIME_PROFILE_PATH="${BTE_PYTHON_RUNTIME_PROFILE_OUTPUT_DIR}"
+        BTE_PYTHON_WORKER_BOOTSTRAP_PATH="${PROJECT_SOURCE_DIR}/Src/Bindings/Python/worker_bootstrap.py")
+    add_dependencies(
+      bte_backtest_vm_tests
+      bte_python_runtime_profile)
+  endif()
 
   add_test(
     NAME bte_backtest_vm_tests
