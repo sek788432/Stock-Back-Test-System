@@ -360,11 +360,33 @@ class ChangedBranchCoverageTest(unittest.TestCase):
         self.assertIn("--decisions", RUN_QUALITY_TEXT)
 
     def test_workflow_renders_coverage_for_the_submitted_commit(self) -> None:
-        self.assertIn("RunQuality.sh --coverage-only", WORKFLOW_TEXT)
-        self.assertIn("CC: clang-18", WORKFLOW_TEXT)
-        self.assertIn("CXX: clang++-18", WORKFLOW_TEXT)
-        self.assertIn("Output/CoverageReport/coverage.xml", WORKFLOW_TEXT)
-        self.assertIn("Output/CoverageReport/summary.md", WORKFLOW_TEXT)
+        coverage_job = WORKFLOW_TEXT.split("  coverage:", 1)[1].split(
+            "  sanitizers:", 1
+        )[0]
+
+        self.assertIn("runs-on: macos-latest", coverage_job)
+        self.assertIn("timeout-minutes: 45", coverage_job)
+        self.assertIn(
+            "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            coverage_job,
+        )
+        self.assertIn("python-version: '3.12'", coverage_job)
+        self.assertIn("brew install llvm@18", coverage_job)
+        self.assertIn("--download-artifacts", coverage_job)
+        self.assertIn("--verify-artifacts", coverage_job)
+        self.assertIn("RunQuality.sh --coverage-only", coverage_job)
+        self.assertIn("CC: clang", coverage_job)
+        self.assertIn("CXX: clang++", coverage_job)
+        self.assertIn("Output/CoverageReport/coverage.xml", coverage_job)
+        self.assertIn("Output/CoverageReport/summary.md", coverage_job)
+        self.assertLess(
+            coverage_job.index("--download-artifacts"),
+            coverage_job.index("--verify-artifacts"),
+        )
+        self.assertLess(
+            coverage_job.index("--verify-artifacts"),
+            coverage_job.index("run: ./RunQuality.sh --coverage-only"),
+        )
 
     def test_changed_lines_parse_added_ranges_and_single_lines(self) -> None:
         diff = """+++ b/Src/Foo.cpp

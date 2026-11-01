@@ -335,12 +335,8 @@ if [[ "$operating_system" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
     echo "Skipping managed Python runtime coverage: locked runtime artifacts are unavailable."
   fi
 fi
-if [[ "$operating_system" == "Darwin" ]]; then
-  CC="$clang_compiler" CXX="$clangxx_compiler" \
-    cmake --preset coverage "${coverage_arguments[@]}"
-else
+CC="$CC" CXX="$CXX" \
   cmake --preset coverage "${coverage_arguments[@]}"
-fi
 cmake --build --preset coverage --parallel
 
 coverage_format="$(sed -n 's/^BTE_COVERAGE_FORMAT:INTERNAL=//p' Output/coverage/CMakeCache.txt)"

@@ -405,8 +405,10 @@ standards audit, all registered tests, complete-project clang-tidy/cppcheck/
 IWYU/scan-build analysis, separate ASan/UBSan/LSan and TSan jobs, and 98 percent
 changed-line plus 90 percent changed-branch coverage. `RunQuality.sh` is the
 matching local entry point. The CI coverage job uses its Clang source-based
-profile and report pipeline so changed-line results match the local quality
-workflow across compilers. External actions use immutable commit SHAs,
+profile and report pipeline on the supported macOS arm64 target, with verified
+locked managed Python runtime artifacts so successful Python Strategy paths
+are measured. Changed-line and branch thresholds remain the same as the local
+quality workflow. External actions use immutable commit SHAs,
 checkout credentials are not persisted, and coverage dependencies use an exact
 hash-locked closure. Generated reports stay untracked and CI publishes
 per-commit evidence.

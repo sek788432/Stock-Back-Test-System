@@ -29,7 +29,7 @@ pull requests, pushes to `main`, a weekly schedule, and manual dispatch.
 | `project-standards` | Runs `Tools/CheckProjectStandards.py --full-tree --clang-format` against the submitted Git revision on Ubuntu, including repository policy, module-direction, suppression, and formatting checks. | Implemented / merge-blocking |
 | `static-analysis` | Configures the complete Qt source tree with Clang 18 and stronger warnings, then runs clang-tidy (including selected `misc-*` checks), cppcheck, IWYU, and scan-build across every project translation unit on every event. Analyzer findings fail the job; scan-build reports are uploaded. | Implemented / merge-blocking |
 | `sanitizers` | Builds and runs every registered non-Qt CTest test with Clang 18 in separate ASan/UBSan/LSan and TSan matrix entries. Any sanitizer report fails the job. | Implemented / merge-blocking |
-| `coverage` | Builds and runs all registered tests with coverage instrumentation; requires 98% changed-line coverage and 90% changed-branch coverage; uploads gcovr reports. | Implemented / merge-blocking |
+| `coverage` | Builds and runs all registered tests with Clang coverage on macOS arm64, including verified locked managed Python runtime artifacts; requires 98% changed-line coverage and 90% changed-branch coverage; uploads gcovr reports. | Implemented / merge-blocking |
 | `merge-gate` | Fails unless both matrix test runs, project standards, static analysis, both sanitizer entries, and changed-code coverage succeed. Its display name is `Merge gate (all required checks)`. | Implemented / merge-blocking |
 
 The workflow does **not** currently run Windows, DataFetcher pytest, mutation
@@ -229,15 +229,15 @@ The following work is explicitly unimplemented:
 - Clazy analysis for Qt-specific correctness and performance findings.
 - CodeQL analysis and a custom Clang AST policy plugin.
 - Canonical functional-result fixture comparison.
-- Merge-blocking CI automation for the implemented optional macOS runtime
-  builder: offline profile assembly, license/notice and SPDX SBOM checks, and
-  the profile-backed `.app` verification test on Apple Silicon runners.
+- Independent SPDX format/content compliance verification and release review
+  for generated managed-runtime SBOMs. The runtime builder validates the
+  allowed license declarations, collects notices, and emits an SPDX SBOM.
 - Full managed-runtime integration tests for Python protocol, startup/hook
   deadlines, cancellation, process-tree cleanup, and shared-memory lifetime on
-  macOS 14+ Apple Silicon. The default CI suite still uses the host test
-  interpreter and synthetic fixtures; the optional bundled-runtime build adds
-  profile-backed C++ worker and `.app` verification tests and is verified by
-  the documented local workflow. Windows/Linux must prove the feature is
+  macOS 14+ Apple Silicon. The coverage job verifies the runtime artifacts and
+  runs the profile-backed module-load, GUI save/replay, and app-bundle tests;
+  the remaining lifecycle suite still uses the host test interpreter and
+  synthetic fixtures. Windows/Linux must prove the feature is
   unavailable without a system-Python fallback until their own profiles are
   accepted.
 - Repository-verifiable reviewer and branch-protection policy checks.
@@ -319,13 +319,25 @@ coverage dependency closure—including gcovr `8.7`, diff-cover `10.0.0`, Jinja2
 `Tools/CoverageRequirements.txt`; direct requirements remain in
 `Tools/CoverageRequirements.in`.
 
-The following commands describe the CI merge-blocking coverage job. The
-local `RunQuality.sh` workflow supplies platform-specific gcov options; run it
-for the complete local gate.
+The CI merge-blocking coverage job runs on the supported macOS arm64 target,
+downloads and verifies the locked managed Python runtime artifacts, then uses
+LLVM 18 and the hash-locked Python coverage tools. `RunQuality.sh` configures
+the coverage build with those artifacts when verification succeeds and applies
+the same local gates.
 
 ```bash
+python3 Tools/BuildPythonRuntime.py \\
+  --download-artifacts \\
+  --artifacts-dir Output/PythonRuntimeArtifacts
+python3 Tools/BuildPythonRuntime.py \\
+  --verify-artifacts \\
+  --artifacts-dir Output/PythonRuntimeArtifacts
+brew install llvm@18
 cmake -E remove_directory Output/coverage
-cmake --preset coverage -DBTE_BUILD_QT_APP=ON
+CC=clang CXX=clang++ cmake --preset coverage \\
+  -DBTE_BUILD_QT_APP=ON \\
+  -DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON \\
+  -DBTE_PYTHON_RUNTIME_ARTIFACTS_DIR=Output/PythonRuntimeArtifacts
 cmake --build --preset coverage --parallel
 ctest --preset coverage --no-tests=error
 python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --decisions --gcov-suspicious-hits-threshold 0 --cobertura coverage.xml --json coverage.json --html-details coverage.html
@@ -333,8 +345,8 @@ diff-cover coverage.xml --compare-branch=<base> --fail-under=98
 python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 90
 ```
 
-The CI coverage job above uses GCC gcov data. Clang coverage builds select
-LLVM source-based instrumentation (`-fprofile-instr-generate` and
+The CI coverage job uses Clang source-based instrumentation
+(`-fprofile-instr-generate` and
 `-fcoverage-mapping`) so gcovr receives source-mapped decision counts. The
 local `RunQuality.sh` workflow gathers one profile per process, lists the
 instrumented test binaries for gcovr, and applies the same changed-line and

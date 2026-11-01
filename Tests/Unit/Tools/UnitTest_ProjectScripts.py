@@ -452,6 +452,9 @@ fi
 """
             elif name == "python3":
                 command_behavior = """
+if [[ "$*" == *"BuildPythonRuntime.py"* ]]; then
+  exit "${BTE_FAKE_RUNTIME_VERIFY_STATUS:-0}"
+fi
 if [[ "$*" == *"ListCoverageBinaries.py"* ]]; then
   mkdir -p Output/coverage
   if [[ "${BTE_FAKE_COVERAGE_BINARY_COUNT:-1}" == "2" ]]; then
@@ -610,6 +613,96 @@ fi
         self.assertFalse(any("CheckProjectStandards.py" in command for command in commands))
         self.assertFalse(any("Tools/RunStaticAnalysis.py" in command for command in commands))
         self.assertFalse(any(command.startswith("scan-build ") for command in commands))
+
+    def run_darwin_coverage_only(
+        self, architecture: str, runtime_verification_status: int = 0
+    ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        script = self.copy_script("RunQuality.sh")
+        self.install_quality_commands()
+        self.install_fake_command(
+            "uname", f'printf "{architecture}\\n"\n'
+        )
+        environment = self.environment()
+        environment["BTE_FAKE_COVERAGE_FORMAT"] = "llvm-source-based"
+        environment["BTE_QUALITY_OS"] = "Darwin"
+        environment["BTE_QUALITY_PYTHON"] = "python3"
+        environment["BTE_QUALITY_DIFF_COVER"] = "diff-cover"
+        environment["CC"] = "locked-clang"
+        environment["CXX"] = "locked-clang++"
+        environment["BTE_FAKE_RUNTIME_VERIFY_STATUS"] = str(
+            runtime_verification_status
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--coverage-only",
+                "--base",
+                "base-sha",
+                "--head",
+                "head-sha",
+            ],
+            cwd=Path(self.temporary_directory.name),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result, self.logged_commands()
+
+    def test_run_quality_darwin_coverage_only_uses_verified_runtime_and_environment_compilers(self) -> None:
+        result, commands = self.run_darwin_coverage_only("arm64")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(
+            any(
+                command.startswith("python3 Tools/BuildPythonRuntime.py --verify-artifacts")
+                for command in commands
+            )
+        )
+        self.assertTrue(
+            any(
+                command.startswith("cmake --preset coverage ")
+                and "-DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON" in command
+                and "-DBTE_PYTHON_RUNTIME_ARTIFACTS_DIR=" in command
+                for command in commands
+            )
+        )
+        self.assertIn("coverage-env CC=locked-clang CXX=locked-clang++", commands)
+
+    def test_run_quality_darwin_coverage_only_skips_runtime_when_artifacts_are_invalid(self) -> None:
+        result, commands = self.run_darwin_coverage_only("arm64", 17)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "Skipping managed Python runtime coverage: locked runtime artifacts are unavailable.",
+            result.stdout,
+        )
+        self.assertTrue(
+            any(
+                command.startswith(
+                    "python3 Tools/BuildPythonRuntime.py --verify-artifacts"
+                )
+                for command in commands
+            )
+        )
+        self.assertFalse(
+            any("-DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON" in command for command in commands)
+        )
+        self.assertTrue(any(command.startswith("ctest --preset coverage") for command in commands))
+
+    def test_run_quality_darwin_non_arm64_coverage_omits_managed_runtime(self) -> None:
+        result, commands = self.run_darwin_coverage_only("x86_64")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(
+            any("Tools/BuildPythonRuntime.py --verify-artifacts" in command for command in commands)
+        )
+        self.assertFalse(
+            any("-DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON" in command for command in commands)
+        )
+        self.assertTrue(any(command.startswith("ctest --preset coverage") for command in commands))
 
     def test_run_quality_uses_llvm_source_coverage_for_clang(self) -> None:
         script = self.copy_script("RunQuality.sh")
