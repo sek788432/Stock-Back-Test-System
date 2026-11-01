@@ -27,7 +27,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <memory>
-#include <nlohmann/detail/input/json_sax.hpp> // IWYU pragma: keep
+#include <nlohmann/detail/input/json_sax.hpp>      // IWYU pragma: keep
 #include <nlohmann/detail/iterators/iter_impl.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/json_ref.hpp>
 #include <nlohmann/json.hpp>

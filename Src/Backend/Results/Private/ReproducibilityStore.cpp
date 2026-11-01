@@ -25,7 +25,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
-#include <nlohmann/detail/input/json_sax.hpp> // IWYU pragma: keep
+#include <nlohmann/detail/input/json_sax.hpp>      // IWYU pragma: keep
 #include <nlohmann/detail/iterators/iter_impl.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/json_ref.hpp>
 #include <nlohmann/json.hpp>
@@ -40,7 +40,7 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 #include <fcntl.h>
-#include <sys/file.h> // IWYU pragma: keep
+#include <sys/file.h>  // IWYU pragma: keep
 #include <sys/types.h> // IWYU pragma: keep
 #include <unistd.h>
 #endif

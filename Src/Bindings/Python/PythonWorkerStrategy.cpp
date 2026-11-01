@@ -24,7 +24,7 @@
 #include <filesystem>
 #include <functional> // IWYU pragma: keep
 #include <limits>
-#include <nlohmann/detail/input/json_sax.hpp> // IWYU pragma: keep
+#include <nlohmann/detail/input/json_sax.hpp>      // IWYU pragma: keep
 #include <nlohmann/detail/iterators/iter_impl.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/json_ref.hpp>
 #include <nlohmann/detail/output/serializer.hpp>
