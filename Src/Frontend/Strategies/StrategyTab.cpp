@@ -10,6 +10,7 @@
 #include <QFileDialog>
 #include <QFont>
 #include <QFormLayout>
+#include <QFuture> // IWYU pragma: keep
 #include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -35,6 +36,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <nlohmann/detail/input/json_sax.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/json_ref.hpp>
 #include <nlohmann/detail/output/serializer.hpp>
 #include <nlohmann/json.hpp>
@@ -42,9 +44,9 @@
 #include <optional>
 #include <string>
 #include <system_error>
-#include <tuple>
+#include <tuple> // IWYU pragma: keep
 #include <utility>
-#include <vector>
+#include <vector> // IWYU pragma: keep
 
 namespace bte::frontend {
 namespace {

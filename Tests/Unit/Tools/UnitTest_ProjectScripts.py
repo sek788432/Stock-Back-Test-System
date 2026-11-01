@@ -61,6 +61,8 @@ class ProjectScriptsTest(unittest.TestCase):
         environment = os.environ.copy()
         environment.pop("CC", None)
         environment.pop("CXX", None)
+        environment.pop("BTE_QUALITY_PYTHON", None)
+        environment.pop("BTE_QUALITY_DIFF_COVER", None)
         environment["PATH"] = f"{self.bin_directory}{os.pathsep}{environment['PATH']}"
         environment["BTE_SCRIPT_TEST_LOG"] = str(self.command_log)
         return environment
