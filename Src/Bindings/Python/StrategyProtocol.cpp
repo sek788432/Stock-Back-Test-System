@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <nlohmann/detail/input/json_sax.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/json_ref.hpp>
 #include <span>
 #include <string>

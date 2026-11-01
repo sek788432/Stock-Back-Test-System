@@ -22,17 +22,21 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <functional> // IWYU pragma: keep
 #include <limits>
+#include <nlohmann/detail/input/json_sax.hpp> // IWYU pragma: keep
+#include <nlohmann/detail/iterators/iter_impl.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/json_ref.hpp>
 #include <nlohmann/detail/output/serializer.hpp>
 #include <optional>
 #include <random>
-#include <ratio>
+#include <ratio> // IWYU pragma: keep
 #include <set>
 #include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits> // IWYU pragma: keep
 #include <utility>
 
 namespace bte::bindings::python {

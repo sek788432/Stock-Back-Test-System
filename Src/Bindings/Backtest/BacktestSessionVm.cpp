@@ -28,6 +28,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <nlohmann/detail/input/json_sax.hpp> // IWYU pragma: keep
 #include <nlohmann/json.hpp>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>

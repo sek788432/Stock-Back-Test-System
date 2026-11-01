@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map> // IWYU pragma: keep
 #include <span>
 #include <string>
 #include <string_view>

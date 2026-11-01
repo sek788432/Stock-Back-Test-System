@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <map>
 #include <nlohmann/detail/input/json_sax.hpp>
+#include <nlohmann/detail/iterators/iter_impl.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/output/serializer.hpp>
 #include <nlohmann/json.hpp>
 #include <optional>

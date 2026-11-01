@@ -25,10 +25,13 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <nlohmann/detail/input/json_sax.hpp> // IWYU pragma: keep
+#include <nlohmann/detail/iterators/iter_impl.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/json_ref.hpp>
 #include <nlohmann/json.hpp>
 #include <nlohmann/json_fwd.hpp>
 #include <random>
+#include <ranges> // IWYU pragma: keep
 #include <set>
 #include <string>
 #include <string_view>
@@ -38,7 +41,7 @@
 #if defined(__APPLE__) || defined(__linux__)
 #include <fcntl.h>
 #include <sys/file.h> // IWYU pragma: keep
-#include <sys/types.h>
+#include <sys/types.h> // IWYU pragma: keep
 #include <unistd.h>
 #endif
 
