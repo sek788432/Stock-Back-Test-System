@@ -3,6 +3,7 @@
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Indicators/StreamingIndicator.h"
+#include "Bte/Strategy/Strategy.h"
 
 #include <chrono>
 #include <cstddef>
@@ -127,5 +128,13 @@ public:
 private:
   std::unique_ptr<Impl> impl_;
 };
+
+/// Adapts an existing validated Selectable Conditions plan to the common
+/// command-producing Engine seam without changing its plan identity.
+[[nodiscard]] core::Result<std::unique_ptr<Strategy>>
+createSelectableStrategyAdapter(
+    SelectableStrategyPlan plan, std::int64_t quantityShares,
+    std::optional<PreviousDataDayClose> previousDataDayClose = std::nullopt,
+    std::vector<PreviousDataDaySummary> previousDataDays = {});
 
 } // namespace bte::strategy

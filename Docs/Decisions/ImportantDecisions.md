@@ -86,9 +86,10 @@ an engine redesign.
 
 **Current decision.** The project-owned C++ engine alone owns chronology,
 orders, fills, portfolio accounting, margin, metrics, and durable results.
-Selectable Conditions compile to a typed C++ plan; planned Python Script
-Strategies run as trusted local code in an isolated worker and submit commands
-to the same engine. Release execution reads an immutable versioned snapshot,
+Selectable Conditions compile to a typed C++ plan; Python Script Strategies run
+as trusted local code in an isolated worker and submit commands to the same
+engine when the pinned managed runtime is available. Release execution reads an
+immutable versioned snapshot,
 uses checked fixed-point accounting, exposes `bte::core::Result<T>` at fallible
 public C++ seams, and persists one transactional SQLite `.bteresult` container
 whose deterministic identity is its canonical functional records and hash.
@@ -321,13 +322,93 @@ distinct versioned identity rather than silently changing existing plans.
 [`Indicators.md`](../Specs/Indicators.md), and
 [`EngineReplayPnL.md`](../Specs/EngineReplayPnL.md).
 
+## Python Strategy boundary and runtime profile
+
+**Current decision.** Python strategies are trusted local command producers
+behind the same project-owned C++ Engine and Strategy seam as Selectable
+Conditions. Bindings creates one fresh `PythonWorkerStrategy` per execution;
+the adapter uses `ManagedWorkerProcess` to own the worker process, dedicated
+anonymous pipes, application-owned read-only shared memory, parent-enforced
+startup/hook deadlines, cancellation, and cleanup. The Engine owns chronology,
+C++ SMA, commands, fills, accounting, records, and replay. The first Python
+milestone supports one symbol, hourly actual bars, whole-share long market
+entry and full-position close, bounded read-only history, and the basic
+editor/`.py` workflow; it does not introduce a Strategy library or Debug Run.
+
+The macOS profile is pinned to CPython 3.14.9 from Astral
+`python-build-standalone` release `20261021`, plus project-owned `stockbt`,
+NumPy 2.5.4, pandas 3.0.6, python-dateutil 2.9.0.post0, six 1.17.0, and
+tzdata 2026.5. Exact artifact SHA-256 values and notices are owned by
+[`BuildDistribution.md`](../Specs/BuildDistribution.md). The selected
+standalone build and package licenses are permissive, subject to checking the
+exact bundled component notices and SPDX SBOM before any release. Python
+Strategy is available initially on macOS 14+ Apple Silicon only. Runtime
+profiles are immutable and app-managed; system Python, `pip install`,
+network resolution, and arbitrary packages are not allowed.
+
+Worker envelopes and schema-3 canonical objects use RFC 8785 bytes. Core owns
+the project canonical JSON parser and serializer shared by the worker protocol
+and Result hash frames. C++ parses JSON with the pinned vcpkg `nlohmann/json`
+3.12.0 port revision 2; worker fixtures must prove the Python serializer emits
+the same bytes. `nlohmann/json` is not treated as an RFC 8785 serializer.
+
+Result schema 3 preserves exact source and canonical parameters, API and
+template versions, runtime identity, seed, numeric policy, immutable data
+selection, canonical events, and structured diagnostics under a new hash
+framing. Schema 2 remains frozen and readable under its current framing. A
+schema-2 upgrade creates a new validated copy without changing the source or
+inventing absent runtime provenance. Three-run reproducibility evidence is
+stored separately from finalized Result hashes and can label a run verified
+only when all three sequential fresh-worker results complete with the same
+functional identity and canonical hash.
+
+**Why.** A fresh child process contains Python crashes and protects UI and
+Engine responsiveness without giving Python authority over trading. Immutable
+inputs, locked dependencies, parent deadlines, and versioned provenance let
+the project compare actual execution results while allowing Replay to remain
+independent of Python availability. A limited first order surface keeps the
+language API aligned with the Engine behavior that exists today. Pinning the
+transitive packages and timezone database prevents runtime resolution and
+host timezone data from silently changing strategy behavior.
+
+**Important rejected alternatives.** Embedding CPython in the App or Engine
+was rejected because interpreter hangs, crashes, and global runtime state
+would share the UI/Engine lifetime. A third-party backtest engine was rejected
+because it would duplicate chronology and accounting. System Python and
+runtime package installation were rejected because machines would execute
+different code and dependencies. Reinterpreting schema-2 bytes under new
+hash rules or migrating them in place was rejected because stored identity
+must remain trustworthy. Automatically publishing three verification runs
+was rejected because verification is evidence, not a user save decision.
+
+**Consequences.** Every Python-facing public behavior needs positive,
+negative, and boundary tests at the Strategy, process, Result, and UI seams.
+The release must retain all dependency notices and an SPDX SBOM; any unknown
+or disallowed bundled license blocks packaging. Linux and Windows must keep
+Python Strategy unavailable until their own managed runtime and process
+acceptance pass. A profile change creates a new runtime identity. Result
+Replay never loads Python, and schema-2 artifacts remain independently
+readable after an explicit copy migration.
+
+**Owning specification.** [`Architecture.md`](../Specs/Architecture.md),
+[`StrategyAuthoring.md`](../Specs/StrategyAuthoring.md),
+[`EngineReplayPnL.md`](../Specs/EngineReplayPnL.md),
+[`BacktestReplayProduct.md`](../Specs/BacktestReplayProduct.md),
+[`FrontendQt.md`](../Specs/FrontendQt.md),
+[`BuildDistribution.md`](../Specs/BuildDistribution.md), and
+[`Dependencies.md`](Dependencies.md).
+
 ## Layered merge-blocking quality gates
 
 **Current decision.** Every submitted revision must pass the full-tree project
 standards audit, all registered tests, complete-project clang-tidy/cppcheck/
 IWYU/scan-build analysis, separate ASan/UBSan/LSan and TSan jobs, and 98 percent
 changed-line plus 90 percent changed-branch coverage. `RunQuality.sh` is the
-matching local entry point. External actions use immutable commit SHAs,
+matching local entry point. The CI coverage job uses its Clang source-based
+profile and report pipeline on the supported macOS arm64 target, with verified
+locked managed Python runtime artifacts so successful Python Strategy paths
+are measured. Changed-line and branch thresholds remain the same as the local
+quality workflow. External actions use immutable commit SHAs,
 checkout credentials are not persisted, and coverage dependencies use an exact
 hash-locked closure. Generated reports stay untracked and CI publishes
 per-commit evidence.

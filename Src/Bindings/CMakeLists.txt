@@ -61,6 +61,7 @@ target_link_libraries(
     bte::core
     bte::result_replay_bindings
     bte::results
+    bte::python_strategy
     bte::strategy
     Qt6::Core
   PRIVATE
@@ -71,7 +72,8 @@ target_link_libraries(
 target_compile_definitions(
   bte_bindings
   PRIVATE
-    BTE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    BTE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    BTE_PROJECT_VERSION="${PROJECT_VERSION}")
 
 target_compile_features(bte_bindings PUBLIC cxx_std_20)
 

@@ -1,5 +1,7 @@
 #include "Bte/Engine/Backtest.h"
 
+#include "Bte/Core/CanonicalJson.h"
+#include "Bte/Core/Digest.h"
 #include "Bte/Core/Time.h"
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
@@ -7,10 +9,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <nlohmann/json.hpp>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -96,6 +101,81 @@ protected:
     };
   }
 
+  [[nodiscard]] bte::results::RunDescriptor
+  schemaThreePythonDescriptor() const {
+    auto value = descriptor();
+    value.schemaVersion = 3;
+    auto &provenance = value.provenance;
+    provenance.engineBuild = "fixture-build-1";
+    provenance.timeframe = selection_.timeframe;
+    provenance.costProfile = "retailUsEquityV1";
+    provenance.commissionRatePartsPerBillion = 0;
+    provenance.slippageRatePartsPerBillion = 10'000'000;
+    provenance.seed = 0;
+    provenance.strategyMode = bte::results::StrategyMode::python;
+    provenance.apiVersion = "1";
+    provenance.templateVersion = "1.0.0";
+    provenance.canonicalParametersJson = R"({"fast_period":2})";
+    provenance.sourceUtf8 = "STOCKBT_API_VERSION = \"1\"\n";
+    provenance.sourceHash = bte::core::sha256(provenance.sourceUtf8);
+    value.strategyId = "python-fixture";
+    value.strategyHash = provenance.sourceHash;
+
+    const auto numpyHash = std::string(64, 'd');
+    const auto stockbtHash = std::string(64, 'e');
+    const auto installedHash = std::string(64, 'f');
+    const auto manifest = nlohmann::json{
+        {"architecture", "arm64"},
+        {"components",
+         nlohmann::json::array({
+             {{"artifactSha256", numpyHash},
+              {"name", "numpy"},
+              {"licenses", nlohmann::json::array({"BSD-3-Clause"})},
+              {"upstreamUrl", "https://example.invalid/numpy"},
+              {"version", "2.5.4"}},
+             {{"artifactSha256", stockbtHash},
+              {"name", "stockbt"},
+              {"licenses", nlohmann::json::array({"Apache-2.0"})},
+              {"upstreamUrl", "project-owned"},
+              {"version", "1"}},
+         })},
+        {"installedFiles",
+         nlohmann::json::array(
+             {{{"path", "python/bin/python3"}, {"sha256", installedHash}}})},
+        {"platform", "macos"},
+        {"profileBuilderVersion", "fixture-builder-1"},
+        {"profileId", "fixture-profile"},
+        {"pythonAbi", "cp314"},
+        {"pythonExecutable", "python/bin/python3"},
+        {"pythonVersion", "3.14.9"},
+        {"schemaVersion", std::uint64_t{1}},
+        {"stockbtApiVersion", "1"},
+        {"stockbtSourceSha256", stockbtHash},
+    };
+    const auto canonicalManifest = bte::core::serializeCanonicalJson(manifest);
+    EXPECT_TRUE(canonicalManifest.ok());
+    provenance.runtime = bte::results::RuntimeProfileProvenance{
+        .profileId = "fixture-profile",
+        .canonicalManifestJson = canonicalManifest.value(),
+        .manifestHash = bte::core::sha256(canonicalManifest.value()),
+        .pythonVersion = "3.14.9",
+        .pythonAbi = "cp314",
+        .packages =
+            {{.name = "numpy", .version = "2.5.4", .artifactHash = numpyHash},
+             {.name = "stockbt", .version = "1", .artifactHash = stockbtHash}},
+        .stockbtSourceHash = stockbtHash,
+    };
+    for (const auto *key :
+         {"aggregationPolicy", "costs", "dataSelection", "engineBuild",
+          "numericPolicy", "runtimeProfile", "runtimePackages", "seed",
+          "strategyApi", "strategyArtifact", "strategyMode", "strategyTemplate",
+          "timeframe"}) {
+      provenance.provenanceAvailability.emplace(
+          key, bte::results::ProvenanceAvailabilityState::recorded);
+    }
+    return value;
+  }
+
   [[nodiscard]] static bte::core::Result<bte::results::OpenedResult>
   publishAndOpen(bte::results::ResultStore &store,
                  const std::string &resultId) {
@@ -108,6 +188,83 @@ protected:
 
   std::filesystem::path root_;
   bte::data::DataSelectionIdentity selection_;
+};
+
+class RecordedFirstBuyStrategy final : public bte::strategy::Strategy {
+public:
+  [[nodiscard]] bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &context,
+           const bte::core::CancellationToken &) override {
+    if (submitted_) {
+      return bte::strategy::StrategyCommandBatch{};
+    }
+    submitted_ = true;
+    return bte::strategy::StrategyCommandBatch{{
+        .kind = bte::strategy::StrategyCommandKind::buyMarket,
+        .symbol = std::string{context.symbol},
+        .quantityShares = 10,
+    }};
+  }
+
+private:
+  bool submitted_ = false;
+};
+
+class RecordedDiagnosticFailureStrategy final : public bte::strategy::Strategy {
+public:
+  bte::core::Result<void>
+  onStart(const bte::strategy::StrategyContext &,
+          const bte::core::CancellationToken &) override {
+    pending_.records.push_back({
+        .kind = bte::strategy::StrategyDiagnosticKind::log,
+        .hook = "on_start",
+        .level = "info",
+        .message = "started",
+    });
+    return {};
+  }
+
+  bte::core::Result<bte::strategy::StrategyCommandBatch>
+  onMarket(const bte::strategy::StrategyContext &,
+           const bte::core::CancellationToken &) override {
+    if (calls_++ == 0) {
+      pending_.records.push_back({
+          .kind = bte::strategy::StrategyDiagnosticKind::log,
+          .hook = "on_market",
+          .level = "info",
+          .message = "first slice",
+      });
+      return bte::strategy::StrategyCommandBatch{};
+    }
+    pending_.records.push_back({
+        .kind = bte::strategy::StrategyDiagnosticKind::log,
+        .hook = "on_market",
+        .level = "warning",
+        .message = "failed slice",
+    });
+    pending_.records.push_back({
+        .kind = bte::strategy::StrategyDiagnosticKind::terminal,
+        .hook = "on_market",
+        .level = "error",
+        .errorCode = "strategyRuntimeError",
+        .message = "script failed",
+        .sourceLine = 12,
+        .traceback = "Traceback (most recent call last):\n  File "
+                     "\"strategy.py\", line 12\nValueError: script failed",
+    });
+    return bte::core::makeError(bte::core::ErrorCode::strategyRuntimeError,
+                                "script failed");
+  }
+
+  bte::strategy::StrategyDiagnosticBatch takeDiagnostics() override {
+    auto result = std::move(pending_);
+    pending_ = {};
+    return result;
+  }
+
+private:
+  std::size_t calls_ = 0;
+  bte::strategy::StrategyDiagnosticBatch pending_;
 };
 
 TEST_F(RecordedBacktestTest, recordedAdvancePersistsOnlyCompleteBarPrefixes) {
@@ -140,6 +297,47 @@ TEST_F(RecordedBacktestTest, recordedAdvancePersistsOnlyCompleteBarPrefixes) {
     EXPECT_FALSE(opened.value().summary.finalEquityMicrodollars.has_value());
     EXPECT_FALSE(opened.value().summary.pnlMicrodollars.has_value());
   }
+}
+
+TEST_F(RecordedBacktestTest,
+       schemaThreeReopensEngineDiagnosticsAfterFailedSliceRollback) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "Diagnostics", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto execution = bte::engine::BacktestExecution::startRecorded(
+      request(), std::make_unique<RecordedDiagnosticFailureStrategy>(),
+      *store.value(), schemaThreePythonDescriptor());
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+  ASSERT_TRUE(execution.value()->advance().ok());
+  const auto committedPrefix = execution.value()->result().canonicalRecords;
+  ASSERT_EQ(committedPrefix.size(), 4U);
+
+  const auto failed = execution.value()->advance();
+
+  ASSERT_FALSE(failed.ok());
+  EXPECT_EQ(execution.value()->result().barsProcessed, 1U);
+  auto recorded = execution.value()->finalizeRecorded();
+  ASSERT_TRUE(recorded.ok()) << recorded.error().message;
+  ASSERT_EQ(recorded.value().backtest->canonicalRecords.size(),
+            committedPrefix.size() + 2U);
+  EXPECT_TRUE(std::equal(committedPrefix.begin(), committedPrefix.end(),
+                         recorded.value().backtest->canonicalRecords.begin()));
+  const auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
+  ASSERT_TRUE(opened.ok()) << opened.error().message;
+  EXPECT_EQ(opened.value().status, bte::results::RunStatus::failed);
+  EXPECT_TRUE(opened.value().capabilities.strategyLogs);
+  EXPECT_TRUE(opened.value().summary.diagnosticsComplete);
+  ASSERT_EQ(opened.value().records.size(), committedPrefix.size() + 2U);
+  EXPECT_EQ(opened.value().records[4].family, bte::results::RecordFamily::log);
+  EXPECT_NE(opened.value().records[4].text.find("failed slice"),
+            std::string::npos);
+  EXPECT_EQ(opened.value().records[5].family,
+            bte::results::RecordFamily::terminalDiagnostic);
+  EXPECT_NE(opened.value().records[5].text.find("strategyRuntimeError"),
+            std::string::npos);
+  EXPECT_NE(opened.value().records[5].text.find("strategy.py"),
+            std::string::npos);
 }
 
 TEST_F(RecordedBacktestTest,
@@ -613,6 +811,33 @@ TEST_F(RecordedBacktestTest,
             bte::results::RecordFamily::order);
   EXPECT_EQ(opened.value().records[2].family,
             bte::results::RecordFamily::portfolio);
+}
+
+TEST_F(RecordedBacktestTest,
+       callerSuppliedStrategyUsesTheRecordedEngineAndReplayPath) {
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+
+  auto recorded = bte::engine::runBacktestAndRecord(
+      request(), std::make_unique<RecordedFirstBuyStrategy>(), *store.value(),
+      descriptor());
+
+  ASSERT_TRUE(recorded.ok()) << recorded.error().message;
+  ASSERT_TRUE(recorded.value().backtest.has_value());
+  ASSERT_EQ(recorded.value().backtest->fills.size(), 1U);
+  EXPECT_EQ(recorded.value().backtest->fills.front().timestamp,
+            request().bars[1].ts);
+  auto opened =
+      publishAndOpen(*store.value(), recorded.value().persisted.resultId);
+  ASSERT_TRUE(opened.ok()) << opened.error().message;
+  EXPECT_EQ(opened.value().records.back().family,
+            bte::results::RecordFamily::portfolio);
+  EXPECT_EQ(std::ranges::count_if(opened.value().records,
+                                  [](const auto &record) {
+                                    return record.family ==
+                                           bte::results::RecordFamily::fill;
+                                  }),
+            1);
 }
 
 TEST_F(RecordedBacktestTest,

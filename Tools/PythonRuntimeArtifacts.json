@@ -1,0 +1,90 @@
+{
+  "architecture": "arm64",
+  "artifacts": [
+    {
+      "filename": "cpython-3.14.9+20261021-aarch64-apple-darwin-install_only.tar.gz",
+      "licenses": ["PSF-2.0"],
+      "name": "CPython",
+      "sha256": "226d696642a8a53d03b4d5b255b1c319b1575a6d44bd723a953c9f507755e36a",
+      "source": {
+        "kind": "url",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.14.9%2B20261021-aarch64-apple-darwin-install_only.tar.gz"
+      },
+      "upstreamUrl": "https://github.com/astral-sh/python-build-standalone/releases/tag/20261021",
+      "version": "3.14.9"
+    },
+    {
+      "filename": "numpy-2.5.4-cp314-cp314-macosx_11_0_arm64.whl",
+      "licenses": ["BSD-3-Clause"],
+      "name": "numpy",
+      "sha256": "ffa6ce09a1c6a08e9667dd9c97aa0b14184e8d18f2a14b78b2a2328c9147f076",
+      "source": {
+        "kind": "pypi",
+        "project": "numpy",
+        "version": "2.5.4"
+      },
+      "upstreamUrl": "https://pypi.org/project/numpy/2.5.4/",
+      "version": "2.5.4"
+    },
+    {
+      "filename": "pandas-3.0.6-cp314-cp314-macosx_11_0_arm64.whl",
+      "licenses": ["BSD-3-Clause"],
+      "name": "pandas",
+      "sha256": "ff51a4459ed036e93d1eb1bb5e6e7b28685d3cb6b7c12b91c05b31024e234729",
+      "source": {
+        "kind": "pypi",
+        "project": "pandas",
+        "version": "3.0.6"
+      },
+      "upstreamUrl": "https://pypi.org/project/pandas/3.0.6/",
+      "version": "3.0.6"
+    },
+    {
+      "filename": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+      "licenses": ["Apache-2.0", "BSD-3-Clause"],
+      "name": "python-dateutil",
+      "sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
+      "source": {
+        "kind": "pypi",
+        "project": "python-dateutil",
+        "version": "2.9.0.post0"
+      },
+      "upstreamUrl": "https://pypi.org/project/python-dateutil/2.9.0.post0/",
+      "version": "2.9.0.post0"
+    },
+    {
+      "filename": "six-1.17.0-py2.py3-none-any.whl",
+      "licenses": ["MIT"],
+      "name": "six",
+      "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+      "source": {
+        "kind": "pypi",
+        "project": "six",
+        "version": "1.17.0"
+      },
+      "upstreamUrl": "https://pypi.org/project/six/1.17.0/",
+      "version": "1.17.0"
+    },
+    {
+      "filename": "tzdata-2026.5-py2.py3-none-any.whl",
+      "licenses": ["Apache-2.0"],
+      "name": "tzdata",
+      "sha256": "b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac",
+      "source": {
+        "kind": "pypi",
+        "project": "tzdata",
+        "version": "2026.5"
+      },
+      "upstreamUrl": "https://pypi.org/project/tzdata/2026.5/",
+      "version": "2026.5"
+    }
+  ],
+  "platform": "macos",
+  "profileBuilderVersion": "1",
+  "profileId": "macos-arm64-cpython-3.14.9-stockbt-v1",
+  "pythonAbi": "cp314",
+  "pythonExecutable": "python/bin/python3",
+  "pythonVersion": "3.14.9",
+  "schemaVersion": 1,
+  "stockbtApiVersion": "1"
+}

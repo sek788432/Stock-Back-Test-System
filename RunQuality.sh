@@ -8,12 +8,15 @@ cd "$ROOT"
 base="origin/main"
 head="HEAD"
 run_scan_build=1
+run_project_standards=1
+run_static_analysis=1
 operating_system="${BTE_QUALITY_OS:-$(uname -s)}"
 
 usage() {
-  echo "Usage: $0 [--base <revision>] [--head <revision>] [--fast]"
+  echo "Usage: $0 [--base <revision>] [--head <revision>] [--fast | --coverage-only]"
   echo "  Runs full-project clang-tidy, cppcheck, IWYU, scan-build, and changed-code coverage."
   echo "  --fast skips the slower whole-tree scan-build pass."
+  echo "  --coverage-only runs changed-code coverage using Clang source-based profiles."
 }
 
 while [[ $# -gt 0 ]]; do
@@ -29,6 +32,12 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --fast)
+      run_scan_build=0
+      shift
+      ;;
+    --coverage-only)
+      run_project_standards=0
+      run_static_analysis=0
       run_scan_build=0
       shift
       ;;
@@ -244,17 +253,21 @@ bootstrap_python_tools() {
 if [[ -z "${BTE_QUALITY_PYTHON:-}" || -z "${BTE_QUALITY_DIFF_COVER:-}" ]]; then
   prepend_homebrew_paths
 fi
-bootstrap_system_tools
+if [[ "$run_static_analysis" -eq 1 || "$run_scan_build" -eq 1 ]]; then
+  bootstrap_system_tools
+fi
 bootstrap_python_tools
 
 find_command cmake >/dev/null
 find_command ctest >/dev/null
-find_command clang-tidy-18 clang-tidy >/dev/null
-find_command clang-format-18 clang-format >/dev/null
-find_command cppcheck >/dev/null
-find_command iwyu_tool.py iwyu_tool >/dev/null
-clang_compiler="$(find_command clang-18 clang)"
-clangxx_compiler="$(find_command clang++-18 clang++)"
+if [[ "$run_static_analysis" -eq 1 ]]; then
+  find_command clang-tidy-18 clang-tidy >/dev/null
+  find_command clang-format-18 clang-format >/dev/null
+  find_command cppcheck >/dev/null
+  find_command iwyu_tool.py iwyu_tool >/dev/null
+  clang_compiler="$(find_command clang-18 clang)"
+  clangxx_compiler="$(find_command clang++-18 clang++)"
+fi
 
 scan_build=""
 if [[ "$run_scan_build" -eq 1 ]]; then
@@ -266,22 +279,26 @@ fi
   exit 2
 }
 
-echo "== Project standards and clang-format: ${head} =="
-"$quality_python" Tools/CheckProjectStandards.py \
-  --full-tree --clang-format --base "$base" --head "$head"
-
-echo "== Full-project static analysis: ${head} =="
-analysis_arguments=(-DBTE_BUILD_QT_APP=ON)
-if [[ "$operating_system" == "Darwin" ]]; then
-  analysis_arguments+=("-DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)")
+if [[ "$run_project_standards" -eq 1 ]]; then
+  echo "== Project standards and clang-format: ${head} =="
+  "$quality_python" Tools/CheckProjectStandards.py \
+    --full-tree --clang-format --base "$base" --head "$head"
 fi
-cmake -E remove_directory Output/analysis
-CC="$clang_compiler" CXX="$clangxx_compiler" \
-  cmake --preset analysis "${analysis_arguments[@]}"
-cmake --build --preset analysis --parallel
-"$quality_python" Tools/RunStaticAnalysis.py clang-tidy
-"$quality_python" Tools/RunStaticAnalysis.py cppcheck
-"$quality_python" Tools/RunStaticAnalysis.py iwyu
+
+if [[ "$run_static_analysis" -eq 1 ]]; then
+  echo "== Full-project static analysis: ${head} =="
+  analysis_arguments=(-DBTE_BUILD_QT_APP=ON)
+  if [[ "$operating_system" == "Darwin" ]]; then
+    analysis_arguments+=("-DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)")
+  fi
+  cmake -E remove_directory Output/analysis
+  CC="$clang_compiler" CXX="$clangxx_compiler" \
+    cmake --preset analysis "${analysis_arguments[@]}"
+  cmake --build --preset analysis --parallel
+  "$quality_python" Tools/RunStaticAnalysis.py clang-tidy
+  "$quality_python" Tools/RunStaticAnalysis.py cppcheck
+  "$quality_python" Tools/RunStaticAnalysis.py iwyu
+fi
 
 if [[ "$run_scan_build" -eq 1 ]]; then
   cmake -E remove_directory Output/scan-build
@@ -296,19 +313,117 @@ if [[ "$run_scan_build" -eq 1 ]]; then
 fi
 
 echo "== Changed-code coverage: ${base}..${head} =="
+if [[ -z "${CC:-}" ]]; then
+  CC="${clang_compiler:-$(find_command clang-18 clang)}"
+fi
+if [[ -z "${CXX:-}" ]]; then
+  CXX="${clangxx_compiler:-$(find_command clang++-18 clang++)}"
+fi
+export CC CXX
 cmake -E remove_directory Output/coverage
-cmake --preset coverage -DBTE_BUILD_QT_APP=ON
+coverage_arguments=(-DBTE_BUILD_QT_APP=ON)
+if [[ "$operating_system" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+  runtime_artifacts_dir="${BTE_PYTHON_RUNTIME_ARTIFACTS_DIR:-${ROOT}/Output/PythonRuntimeArtifacts}"
+  if "$quality_python" Tools/BuildPythonRuntime.py \
+    --verify-artifacts --artifacts-dir "$runtime_artifacts_dir"; then
+    echo "Including verified managed Python runtime in coverage."
+    coverage_arguments+=(
+      -DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON
+      "-DBTE_PYTHON_RUNTIME_ARTIFACTS_DIR=$runtime_artifacts_dir"
+    )
+  else
+    echo "Skipping managed Python runtime coverage: locked runtime artifacts are unavailable."
+  fi
+fi
+CC="$CC" CXX="$CXX" \
+  cmake --preset coverage "${coverage_arguments[@]}"
 cmake --build --preset coverage --parallel
-ctest --preset coverage --no-tests=error
+
+coverage_format="$(sed -n 's/^BTE_COVERAGE_FORMAT:INTERNAL=//p' Output/coverage/CMakeCache.txt)"
+gcov_arguments=()
+case "$coverage_format" in
+  llvm-source-based)
+    profile_directory="$ROOT/Output/coverage/profiles"
+    coverage_binaries_file="Output/coverage/coverage-binaries.txt"
+    cmake -E make_directory "$profile_directory"
+    LLVM_PROFILE_FILE="$profile_directory/%p-%m.profraw" \
+      ctest --preset coverage --no-tests=error
+    "$quality_python" Tools/ListCoverageBinaries.py \
+      --build-dir Output/coverage \
+      --output "$coverage_binaries_file"
+
+    if has_command llvm-profdata-18 llvm-profdata; then
+      llvm_profdata="$(find_command llvm-profdata-18 llvm-profdata)"
+    elif [[ "$operating_system" == "Darwin" ]]; then
+      llvm_profdata="$(xcrun --find llvm-profdata)"
+    else
+      echo "llvm-profdata is required for Clang source-based coverage." >&2
+      exit 2
+    fi
+
+    llvm_coverage_binaries=()
+    while IFS= read -r coverage_binary; do
+      [[ -n "$coverage_binary" ]] || continue
+      llvm_coverage_binaries+=(--llvm-cov-binary "$coverage_binary")
+    done < "$coverage_binaries_file"
+    if [[ "${#llvm_coverage_binaries[@]}" -eq 0 ]]; then
+      echo "No instrumented test binaries were collected for LLVM coverage." >&2
+      exit 2
+    fi
+
+    llvm_cov="$(dirname "$llvm_profdata")/$(basename "$llvm_profdata" | sed 's/llvm-profdata/llvm-cov/')"
+    if [[ ! -x "$llvm_cov" ]]; then
+      echo "The matching llvm-cov executable is unavailable beside $llvm_profdata." >&2
+      exit 2
+    fi
+
+    llvm_cov_objects=()
+    first_coverage_binary=""
+    while IFS= read -r coverage_binary; do
+      [[ -n "$coverage_binary" ]] || continue
+      if [[ -z "$first_coverage_binary" ]]; then
+        first_coverage_binary="$coverage_binary"
+      else
+        llvm_cov_objects+=(--object "$coverage_binary")
+      fi
+    done < "$coverage_binaries_file"
+    merged_profile="Output/coverage/coverage.profdata"
+    "$llvm_profdata" merge -sparse "$profile_directory"/*.profraw \
+      -o "$merged_profile"
+    llvm_lcov="Output/coverage/coverage.lcov"
+    if [[ "${#llvm_cov_objects[@]}" -gt 0 ]]; then
+      "$llvm_cov" export --format=lcov \
+        --instr-profile="$merged_profile" \
+        "$first_coverage_binary" "${llvm_cov_objects[@]}" > "$llvm_lcov"
+    else
+      "$llvm_cov" export --format=lcov \
+        --instr-profile="$merged_profile" \
+        "$first_coverage_binary" > "$llvm_lcov"
+    fi
+    gcov_arguments+=(--llvm-profdata-executable "$llvm_profdata")
+    gcov_arguments+=("${llvm_coverage_binaries[@]}")
+    ;;
+  gcov)
+    ctest --preset coverage --no-tests=error
+    if [[ -n "${BTE_GCOV_EXECUTABLE:-}" ]]; then
+      gcov_arguments+=(--gcov-executable "$BTE_GCOV_EXECUTABLE")
+    elif [[ "$operating_system" == "Darwin" ]]; then
+      gcov_arguments+=(--gcov-executable "xcrun llvm-cov gcov")
+      # llvm-cov gcov can emit overflowed hit counts that gcovr misclassifies.
+      gcov_arguments+=(
+        --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file
+        --gcov-ignore-parse-errors negative_hits.warn_once_per_file
+      )
+    fi
+    ;;
+  *)
+    echo "Coverage configuration did not declare a supported format: ${coverage_format:-unset}" >&2
+    exit 2
+    ;;
+esac
 
 report_directory="Output/CoverageReport"
 cmake -E make_directory "$report_directory"
-gcov_arguments=()
-if [[ -n "${BTE_GCOV_EXECUTABLE:-}" ]]; then
-  gcov_arguments+=(--gcov-executable "$BTE_GCOV_EXECUTABLE")
-elif [[ "$operating_system" == "Darwin" ]]; then
-  gcov_arguments+=(--gcov-executable "xcrun llvm-cov gcov")
-fi
 
 "$quality_python" -m gcovr \
   --root . \
@@ -321,6 +436,30 @@ fi
   --markdown-summary "$report_directory/summary.md" \
   --html-details "$report_directory/index.html" \
   "${gcov_arguments[@]}"
+
+if [[ "$coverage_format" == "llvm-source-based" ]]; then
+  merged_line_report="Output/coverage/coverage-llvm-lines.json"
+  "$quality_python" Tools/MergeLlvmLineCoverage.py \
+    --root . \
+    --gcovr-json "$report_directory/coverage.json" \
+    --llvm-lcov "Output/coverage/coverage.lcov" \
+    --output "$merged_line_report"
+
+  # gcovr's LLVM segment merge can leave executed source lines at count zero.
+  # Re-render every report from the merged line counts and gcovr's original
+  # branch/decision records so all report formats describe the same data.
+  "$quality_python" -m gcovr \
+    --root . \
+    --filter 'Src/' \
+    --exclude 'Output/' \
+    --merge-mode-functions merge-use-line-min \
+    --decisions \
+    --json-add-tracefile "$merged_line_report" \
+    --cobertura "$report_directory/coverage.xml" \
+    --json "$report_directory/coverage.json" \
+    --markdown-summary "$report_directory/summary.md" \
+    --html-details "$report_directory/index.html"
+fi
 
 "$diff_cover" "$report_directory/coverage.xml" --compare-branch="$base" --fail-under=98
 "$quality_python" Tools/CheckDiffBranchCoverage.py \

@@ -4,11 +4,20 @@
   "builtin-baseline": "9e593bb18ea69cc5095e012465dcd675a822ed0d",
   "dependencies": [
     {
+      "name": "nlohmann-json",
+      "version>=": "3.12.0"
+    },
+    {
       "name": "sqlite3",
       "version>=": "3.53.4"
     }
   ],
   "overrides": [
+    {
+      "name": "nlohmann-json",
+      "version": "3.12.0",
+      "port-version": 2
+    },
     {
       "name": "sqlite3",
       "version": "3.53.4",

@@ -47,107 +47,130 @@ std::uint32_t readBigEndianWord(const std::span<const std::byte> bytes,
 
 } // namespace
 
-std::string sha256(const std::span<const std::byte> bytes) {
-  std::array<std::uint32_t, 8> hash{0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U,
-                                    0xa54ff53aU, 0x510e527fU, 0x9b05688cU,
-                                    0x1f83d9abU, 0x5be0cd19U};
-
+void Sha256Accumulator::update(const std::span<const std::byte> bytes) {
   constexpr std::size_t blockSize = 64;
-  constexpr std::span<const std::uint32_t, roundCount> constants{
-      roundConstants};
-  const auto compressBlock =
-      [&hash, constants](const std::span<const std::byte, blockSize> block) {
-        // All indices below are fixed or bounded by this round count; no caller
-        // controls them. Tie the schedule to the constants to preserve that
-        // bound.
-        std::array<std::uint32_t, roundCount> words{};
-        const std::span<std::uint32_t, roundCount> schedule{words};
-        for (std::size_t index = 0; index < 16; ++index) {
-          schedule[index] = readBigEndianWord(block, index * 4);
-        }
-        for (std::size_t index = 16; index < schedule.size(); ++index) {
-          const auto sigmaZero = rotateRight<7>(schedule[index - 15]) ^
-                                 rotateRight<18>(schedule[index - 15]) ^
-                                 (schedule[index - 15] >> 3U);
-          const auto sigmaOne = rotateRight<17>(schedule[index - 2]) ^
-                                rotateRight<19>(schedule[index - 2]) ^
-                                (schedule[index - 2] >> 10U);
-          schedule[index] =
-              schedule[index - 16] + sigmaZero + schedule[index - 7] + sigmaOne;
-        }
-        auto workingA = hash[0];
-        auto workingB = hash[1];
-        auto workingC = hash[2];
-        auto workingD = hash[3];
-        auto workingE = hash[4];
-        auto workingF = hash[5];
-        auto workingG = hash[6];
-        auto workingH = hash[7];
+  totalBytes_ += static_cast<std::uint64_t>(bytes.size());
+  std::size_t offset = 0;
 
-        for (std::size_t index = 0; index < schedule.size(); ++index) {
-          const auto sumOne = rotateRight<6>(workingE) ^
-                              rotateRight<11>(workingE) ^
-                              rotateRight<25>(workingE);
-          const auto choose = (workingE & workingF) ^ ((~workingE) & workingG);
-          const auto tempOne =
-              workingH + sumOne + choose + constants[index] + schedule[index];
-          const auto sumZero = rotateRight<2>(workingA) ^
-                               rotateRight<13>(workingA) ^
-                               rotateRight<22>(workingA);
-          const auto majority = (workingA & workingB) ^ (workingA & workingC) ^
-                                (workingB & workingC);
-          const auto tempTwo = sumZero + majority;
-          workingH = workingG;
-          workingG = workingF;
-          workingF = workingE;
-          workingE = workingD + tempOne;
-          workingD = workingC;
-          workingC = workingB;
-          workingB = workingA;
-          workingA = tempOne + tempTwo;
-        }
-
-        hash[0] += workingA;
-        hash[1] += workingB;
-        hash[2] += workingC;
-        hash[3] += workingD;
-        hash[4] += workingE;
-        hash[5] += workingF;
-        hash[6] += workingG;
-        hash[7] += workingH;
-      };
-
-  // Hash complete input blocks in place; only the final padding needs a copy.
-  // Subtracting the remainder avoids input-size-plus-padding overflow.
-  const auto remainder = bytes.size() % blockSize;
-  const auto completeSize = bytes.size() - remainder;
-  for (std::size_t offset = 0; offset < completeSize; offset += blockSize) {
-    compressBlock(std::span<const std::byte, blockSize>{
-        bytes.subspan(offset, blockSize)});
+  if (bufferedBytes_ > 0) {
+    const auto count = std::min(blockSize - bufferedBytes_, bytes.size());
+    std::ranges::copy(bytes.first(count), buffer_.begin() + bufferedBytes_);
+    bufferedBytes_ += count;
+    offset += count;
+    if (bufferedBytes_ == blockSize) {
+      compressBlock(std::span<const std::byte, blockSize>{buffer_});
+      bufferedBytes_ = 0;
+    }
+    if (bufferedBytes_ > 0) {
+      return;
+    }
   }
 
+  while (bytes.size() - offset >= blockSize) {
+    compressBlock(std::span<const std::byte, blockSize>{
+        bytes.subspan(offset, blockSize)});
+    offset += blockSize;
+  }
+
+  const auto remainder = bytes.subspan(offset);
+  std::ranges::copy(remainder, buffer_.begin());
+  bufferedBytes_ = remainder.size();
+}
+
+void Sha256Accumulator::compressBlock(
+    const std::span<const std::byte, 64> block) {
+  constexpr std::span<const std::uint32_t, roundCount> constants{
+      roundConstants};
+  std::array<std::uint32_t, roundCount> words{};
+  const std::span<std::uint32_t, roundCount> schedule{words};
+  for (std::size_t index = 0; index < 16; ++index) {
+    schedule[index] = readBigEndianWord(block, index * 4);
+  }
+  for (std::size_t index = 16; index < schedule.size(); ++index) {
+    const auto sigmaZero = rotateRight<7>(schedule[index - 15]) ^
+                           rotateRight<18>(schedule[index - 15]) ^
+                           (schedule[index - 15] >> 3U);
+    const auto sigmaOne = rotateRight<17>(schedule[index - 2]) ^
+                          rotateRight<19>(schedule[index - 2]) ^
+                          (schedule[index - 2] >> 10U);
+    schedule[index] =
+        schedule[index - 16] + sigmaZero + schedule[index - 7] + sigmaOne;
+  }
+  auto workingA = state_[0];
+  auto workingB = state_[1];
+  auto workingC = state_[2];
+  auto workingD = state_[3];
+  auto workingE = state_[4];
+  auto workingF = state_[5];
+  auto workingG = state_[6];
+  auto workingH = state_[7];
+
+  for (std::size_t index = 0; index < schedule.size(); ++index) {
+    const auto sumOne = rotateRight<6>(workingE) ^ rotateRight<11>(workingE) ^
+                        rotateRight<25>(workingE);
+    const auto choose = (workingE & workingF) ^ ((~workingE) & workingG);
+    const auto tempOne =
+        workingH + sumOne + choose + constants[index] + schedule[index];
+    const auto sumZero = rotateRight<2>(workingA) ^ rotateRight<13>(workingA) ^
+                         rotateRight<22>(workingA);
+    const auto majority =
+        (workingA & workingB) ^ (workingA & workingC) ^ (workingB & workingC);
+    const auto tempTwo = sumZero + majority;
+    workingH = workingG;
+    workingG = workingF;
+    workingF = workingE;
+    workingE = workingD + tempOne;
+    workingD = workingC;
+    workingC = workingB;
+    workingB = workingA;
+    workingA = tempOne + tempTwo;
+  }
+
+  state_[0] += workingA;
+  state_[1] += workingB;
+  state_[2] += workingC;
+  state_[3] += workingD;
+  state_[4] += workingE;
+  state_[5] += workingF;
+  state_[6] += workingG;
+  state_[7] += workingH;
+}
+
+std::string Sha256Accumulator::finalize() const {
+  constexpr std::size_t blockSize = 64;
+  auto finalized = *this;
   std::array<std::byte, blockSize * 2> tail{};
   auto tailBytes = std::span{tail};
-  std::ranges::copy(bytes.subspan(completeSize), tailBytes.begin());
-  tailBytes[remainder] = std::byte{0x80};
+  std::ranges::copy(std::span<const std::byte>{finalized.buffer_}.first(
+                        finalized.bufferedBytes_),
+                    tailBytes.begin());
+  tailBytes[finalized.bufferedBytes_] = std::byte{0x80};
   const auto tailSize =
-      remainder < blockSize - sizeof(std::uint64_t) ? blockSize : blockSize * 2;
-  const auto bitLength = static_cast<std::uint64_t>(bytes.size()) * 8U;
+      finalized.bufferedBytes_ < blockSize - sizeof(std::uint64_t)
+          ? blockSize
+          : blockSize * 2;
+  const auto bitLength = finalized.totalBytes_ * 8U;
   for (std::size_t index = 0; index < sizeof(bitLength); ++index) {
     tailBytes[tailSize - sizeof(bitLength) + index] =
         static_cast<std::byte>((bitLength >> (56U - index * 8U)) & 0xffU);
   }
   for (std::size_t offset = 0; offset < tailSize; offset += blockSize) {
-    compressBlock(std::span<const std::byte, blockSize>{
+    finalized.compressBlock(std::span<const std::byte, blockSize>{
         tailBytes.subspan(offset, blockSize)});
   }
 
   std::ostringstream output;
   output << std::hex << std::setfill('0');
-  for (const auto word : hash) {
+  for (const auto word : finalized.state_) {
     output << std::setw(8) << word;
   }
   return output.str();
+}
+
+std::string sha256(const std::span<const std::byte> bytes) {
+  Sha256Accumulator accumulator;
+  accumulator.update(bytes);
+  return accumulator.finalize();
 }
 
 std::string sha256(const std::string_view text) {

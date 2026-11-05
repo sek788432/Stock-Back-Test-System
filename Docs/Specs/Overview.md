@@ -37,6 +37,18 @@ multi-run concurrency are outside the accepted product scope.
   execution; fixed slippage; affordability rejection; final-close
   open-position marking; and a multi-fill trade log.
 - `DataFetcher/` developer pipeline for Databento ingestion into DuckDB and tracked CSV extraction.
+- Internal Python backend: bounded canonical protocol, owned POSIX process,
+  bootstrap, runtime-manifest verification, typed Strategy adapter, C++ SMA
+  scheduling, bounded actual-bar history, schema-3 provenance, and bounded
+  durable diagnostics. The optional macOS Apple Silicon app build assembles
+  the locked CPython profile, imports its pinned packages, and verifies the
+  embedded files; the default developer build omits that profile.
+- First-milestone Python UI and integration: recoverable editor draft,
+  `.py` import/export, managed-worker Validate, frozen Backtest handoff,
+  consent, Run/Cancel, and three-run reproducibility evidence/coordinator.
+  Python actions report a structured runtime-unavailable diagnostic in the
+  default build. Use the documented bundled-runtime build to include CPython
+  and its pinned packages so end users do not install Python separately.
 - Limited immutable snapshot/segment support and transactional SQLite
   `.bteresult` storage for the single-symbol Backtest path, with persisted
   order/fill/post-slice portfolio presentation in Replay. The owning
@@ -48,9 +60,13 @@ multi-run concurrency are outside the accepted product scope.
 - General canonical C++ strategy execution, synchronized `MarketSlice`, broker
   and margin modeling, complete accounting/metrics, and deterministic event
   sequencing beyond the limited starter run.
-- The complete typed C++ Selectable Conditions contract and an isolated trusted
-  Python worker using the same engine. The implemented conditions slice remains
-  limited to the indicators, comparisons, sizing, and actions listed above.
+- The complete typed C++ Selectable Conditions contract, signed Python-runtime
+  installer/release-baseline verification, and end-to-end macOS edit-to-Replay
+  manual acceptance. The optional macOS app bundle already assembles and
+  verifies the pinned profile. The internal schema-2 copy-migration operation
+  is implemented, but its Results UI action remains planned. The implemented
+  conditions slice remains limited to the indicators, comparisons, sizing, and
+  actions listed above.
 - Immutable release snapshots generated from `StockData/Extracted`.
 - Complete fixed-point accounting and the remaining canonical result families.
 - Complete K-line result replay, packaging, and release-profile retention.

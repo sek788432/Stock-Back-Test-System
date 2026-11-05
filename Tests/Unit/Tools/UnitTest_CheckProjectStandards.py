@@ -974,6 +974,18 @@ class AuditPathConventionsTest(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
+    def test_accepts_canonical_python_runtime_module_paths(self) -> None:
+        paths = {
+            Path("Src/Bindings/Python/stockbt/__init__.py"),
+            Path("Src/Bindings/Python/worker_bootstrap.py"),
+        }
+
+        self.assertEqual(audit_path_conventions(paths), [])
+        violations = audit_path_conventions(
+            {Path("Src/Bindings/Python/unapproved_module.py")}
+        )
+        self.assertEqual([violation.rule for violation in violations], ["PATH001"])
+
     def test_rejects_numbered_kebab_case_decision_archive_name(self) -> None:
         violations = audit_path_conventions(
             {Path("Docs/Decisions/0010-old-decision.md")}
