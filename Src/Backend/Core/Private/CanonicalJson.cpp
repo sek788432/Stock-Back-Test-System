@@ -24,12 +24,35 @@
 namespace bte::core {
 namespace {
 
-constexpr std::uint64_t maximumSafeInteger = 9007199254740991ULL;
+constexpr double signedIntegerLimit = 9223372036854775808.0;
+constexpr double unsignedIntegerLimit = 18446744073709551616.0;
 constexpr std::size_t maximumJsonNestingDepth = 128;
+
+[[nodiscard]] bool exactlyRepresentableAsBinary64(const std::int64_t value) {
+  const auto converted = static_cast<double>(value);
+  if (converted < -signedIntegerLimit || converted >= signedIntegerLimit) {
+    return false;
+  }
+  return static_cast<std::int64_t>(converted) == value;
+}
+
+[[nodiscard]] bool exactlyRepresentableAsBinary64(const std::uint64_t value) {
+  const auto converted = static_cast<double>(value);
+  if (converted >= unsignedIntegerLimit) {
+    return false;
+  }
+  return static_cast<std::uint64_t>(converted) == value;
+}
 
 [[nodiscard]] Error invalidJson(std::string message) {
   return makeError(ErrorCode::invalidArgument, std::move(message));
 } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+
+[[nodiscard]] Result<std::string> serializeNumber(double value);
+[[nodiscard]] bool
+hasCanonicalBinary64IntegerRepresentation(std::int64_t value);
+[[nodiscard]] bool
+hasCanonicalBinary64IntegerRepresentation(std::uint64_t value);
 
 class DuplicateKeyDetector final : public nlohmann::json_sax<nlohmann::json> {
 public:
@@ -40,16 +63,18 @@ public:
   }
 
   bool number_integer(number_integer_t value) override {
-    if (value < -static_cast<number_integer_t>(maximumSafeInteger)) {
-      failure_ = "JSON integer exceeds the exactly representable range.";
+    if (!exactlyRepresentableAsBinary64(value) &&
+        !hasCanonicalBinary64IntegerRepresentation(value)) {
+      failure_ = "JSON integer is not a canonical binary64 value.";
       return false;
     }
     return true;
   }
 
   bool number_unsigned(number_unsigned_t value) override {
-    if (value > maximumSafeInteger) {
-      failure_ = "JSON integer exceeds the exactly representable range.";
+    if (!exactlyRepresentableAsBinary64(value) &&
+        !hasCanonicalBinary64IntegerRepresentation(value)) {
+      failure_ = "JSON integer is not a canonical binary64 value.";
       return false;
     }
     return true;
@@ -304,6 +329,18 @@ formatFixedNumber(const std::string &digits, const int decimalPosition) {
   return result;
 }
 
+[[nodiscard]] bool
+hasCanonicalBinary64IntegerRepresentation(const std::int64_t value) {
+  const auto serialized = serializeNumber(static_cast<double>(value));
+  return serialized.ok() && serialized.value() == std::to_string(value);
+}
+
+[[nodiscard]] bool
+hasCanonicalBinary64IntegerRepresentation(const std::uint64_t value) {
+  const auto serialized = serializeNumber(static_cast<double>(value));
+  return serialized.ok() && serialized.value() == std::to_string(value);
+}
+
 [[nodiscard]] Result<void> appendCanonicalJson(const nlohmann::json &value,
                                                std::string &output,
                                                std::size_t depth);
@@ -389,20 +426,28 @@ formatFixedNumber(const std::string &digits, const int decimalPosition) {
   }
   if (value.is_number_unsigned()) {
     const auto number = value.get<std::uint64_t>();
-    if (number > maximumSafeInteger) {
-      return invalidJson(
-          "JSON integer exceeds the exactly representable range.");
+    if (!exactlyRepresentableAsBinary64(number) &&
+        !hasCanonicalBinary64IntegerRepresentation(number)) {
+      return invalidJson("JSON integer is not a canonical binary64 value.");
     }
-    output += std::to_string(number);
+    const auto serialized = serializeNumber(static_cast<double>(number));
+    if (!serialized.ok()) {
+      return serialized.error();
+    }
+    output += serialized.value();
     return {};
   }
   if (value.is_number_integer()) {
     const auto number = value.get<std::int64_t>();
-    if (number < -static_cast<std::int64_t>(maximumSafeInteger)) {
-      return invalidJson(
-          "JSON integer exceeds the exactly representable range.");
+    if (!exactlyRepresentableAsBinary64(number) &&
+        !hasCanonicalBinary64IntegerRepresentation(number)) {
+      return invalidJson("JSON integer is not a canonical binary64 value.");
     }
-    output += std::to_string(number);
+    const auto serialized = serializeNumber(static_cast<double>(number));
+    if (!serialized.ok()) {
+      return serialized.error();
+    }
+    output += serialized.value();
     return {};
   }
   if (value.is_number_float()) {

@@ -33,6 +33,12 @@ class ProjectScriptsTest(unittest.TestCase):
     def copy_script(self, name: str) -> Path:
         destination = self.root / name
         shutil.copy2(REPOSITORY_ROOT / name, destination)
+        if name == "Launch.sh":
+            self.install_fake_command(
+                "uname",
+                'if [[ "$1" == "-s" ]]; then printf "Linux\n"; '
+                'else printf "x86_64\n"; fi\n',
+            )
         return destination
 
     def install_fake_snapshot_builder(
@@ -81,6 +87,35 @@ class ProjectScriptsTest(unittest.TestCase):
         if not self.command_log.exists():
             return []
         return self.command_log.read_text(encoding="utf-8").splitlines()
+
+    def test_launch_bundles_managed_python_runtime_on_apple_silicon(self) -> None:
+        script = self.copy_script("Launch.sh")
+        self.install_fake_command(
+            "uname",
+            'if [[ "$1" == "-s" ]]; then printf "Darwin\n"; '
+            'else printf "arm64\n"; fi\n',
+        )
+        self.install_fake_command(
+            "cmake", 'printf "cmake %s\n" "$*" >> "$BTE_SCRIPT_TEST_LOG"\n'
+        )
+        self.install_fake_snapshot_builder()
+        app = (
+            self.root
+            / "Output/qt-dev/Src/App/stockBacktester.app/Contents/MacOS/stockBacktester"
+        )
+        app.parent.mkdir(parents=True)
+        app.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        app.chmod(app.stat().st_mode | stat.S_IXUSR)
+
+        result = self.run_script(script)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        configure_command = self.logged_commands()[0]
+        self.assertIn("-DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON", configure_command)
+        self.assertIn(
+            f"-DBTE_PYTHON_RUNTIME_ARTIFACTS_DIR={self.root / 'Output/PythonRuntimeArtifacts'}",
+            configure_command,
+        )
 
     def test_launch_configures_builds_and_starts_qt_app_from_any_directory(self) -> None:
         script = self.copy_script("Launch.sh")

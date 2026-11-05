@@ -55,8 +55,17 @@ TEST(StrategyProtocolTest, sortsObjectKeysByUtf16CodeUnits) {
 
 TEST(StrategyProtocolTest, rejectsDuplicatePropertiesAndOutOfModelNumbers) {
   EXPECT_FALSE(parseCanonicalJson(R"json({"key":1,"key":2})json").ok());
+  const auto exactBinary64Integer =
+      parseCanonicalJson(R"json({"value":10000000000000000})json");
+  ASSERT_TRUE(exactBinary64Integer.ok())
+      << exactBinary64Integer.error().message;
+  const auto exactBinary64Bytes =
+      serializeCanonicalJson(exactBinary64Integer.value());
+  ASSERT_TRUE(exactBinary64Bytes.ok()) << exactBinary64Bytes.error().message;
+  EXPECT_EQ(exactBinary64Bytes.value(),
+            R"json({"value":10000000000000000})json");
   EXPECT_FALSE(
-      parseCanonicalJson(R"json({"value":9007199254740993})json").ok());
+      parseCanonicalJson(R"json({"value":10000000000000001})json").ok());
 
   auto nonFinite = nlohmann::json::object();
   nonFinite["value"] = std::numeric_limits<double>::infinity();

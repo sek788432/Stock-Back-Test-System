@@ -163,7 +163,8 @@ a verified label. Only three completed attempts with identical canonical
 hashes and inputs do. The verification record references each Result ID and
 status/hash, stays separate from Result canonical records, and does not
 auto-publish attempts. The user may continue editing the draft while a run is
-active; the displayed active source hash and parameters remain frozen.
+active; edits to the current draft cannot change the frozen input used by
+that run.
 
 ### 2.3 Replay tab — implemented modes and deferred UX
 

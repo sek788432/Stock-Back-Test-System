@@ -334,6 +334,85 @@ TEST(PythonWorkerBootstrapTest,
 }
 
 TEST(PythonWorkerBootstrapTest,
+     discardsEarlierCommandsWhenTheStrategyCatchesARejection) {
+  const std::string source = R"python(
+import stockbt
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        ctx.orders.buy_market(ctx.symbol, quantity=1)
+        try:
+            ctx.orders.close_position(ctx.symbol)
+        except BaseException:
+            pass
+def create_strategy(params):
+    return Example()
+)python";
+  auto workerResult = startLoadedWorker(source);
+  ASSERT_TRUE(workerResult.ok()) << workerResult.error().message;
+  auto worker = std::move(workerResult).value();
+
+  const auto response = worker.callback("on_market", contextValue());
+  ASSERT_TRUE(response.ok()) << response.error().message;
+  EXPECT_EQ(response.value().messageType, "worker-error");
+  EXPECT_EQ(response.value().payload.at("errorCode"),
+            "StrategyCommandRejected");
+  EXPECT_TRUE(worker.shutdown().ok());
+}
+
+TEST(PythonWorkerBootstrapTest,
+     preservesLargeCanonicalBinary64LogValuesAcrossProtocol) {
+  const std::string source = R"python(
+import stockbt
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Example:
+    max_history_bars = 1
+    indicators = {}
+    def on_market(self, ctx):
+        ctx.log.info("large finite value", value=ctx.portfolio.cash, adjacent=ctx.portfolio.equity, integer=10**16)
+def create_strategy(params):
+    return Example()
+)python";
+  auto workerResult = startLoadedWorker(source);
+  ASSERT_TRUE(workerResult.ok()) << workerResult.error().message;
+  auto worker = std::move(workerResult).value();
+  auto context = contextValue();
+  context["portfolio"]["cash"] = 1.0e16;
+  context["portfolio"]["equity"] = 1.0000000000000001e18;
+
+  const auto response = worker.callback("on_market", context);
+  ASSERT_TRUE(response.ok()) << response.error().message;
+  ASSERT_EQ(response.value().messageType, "callback-result");
+  ASSERT_EQ(response.value().payload.at("logs").size(), 1U);
+  EXPECT_EQ(response.value()
+                .payload.at("logs")
+                .at(0)
+                .at("fields")
+                .at("value")
+                .get<double>(),
+            1.0e16);
+  EXPECT_EQ(response.value()
+                .payload.at("logs")
+                .at(0)
+                .at("fields")
+                .at("adjacent")
+                .get<double>(),
+            1.0000000000000001e18);
+  EXPECT_EQ(response.value()
+                .payload.at("logs")
+                .at(0)
+                .at("fields")
+                .at("integer")
+                .get<double>(),
+            1.0e16);
+  EXPECT_TRUE(worker.shutdown().ok());
+}
+
+TEST(PythonWorkerBootstrapTest,
      rejectsForbiddenImportsBeforeExecutingTheModule) {
   const std::array<std::string, 4> forbiddenImports{
       "import os",

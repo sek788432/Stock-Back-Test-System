@@ -83,6 +83,14 @@ extracts, publishes content-addressed artifacts under `Output/DevData`, then
 passes the resulting store and exact snapshot ID to the application. This is a
 local developer workflow, not release-data packaging; the empty calendar and
 split-manifest digests explicitly mean those release inputs are unavailable.
+On native macOS Apple Silicon, `Launch.sh` also enables the managed Python
+Strategy runtime and bundles it into the app. It expects the verified locked
+artifacts under `Output/PythonRuntimeArtifacts`; prepare them with the download
+command in [Bundled Python Strategy runtime](#bundled-python-strategy-runtime-macos-apple-silicon),
+or point `BTE_PYTHON_RUNTIME_ARTIFACTS_DIR` at an existing verified cache. If
+the cache is missing or invalid, CMake stops before the app launches. Other
+platforms keep the unbundled developer app because the locked runtime profile is
+currently supported only on Apple Silicon.
 
 Seven-column CSVs do not carry a timeframe in each row. `GetFromDb.py` therefore
 writes a hash-bound `SourceManifest.btesource` declaration for each exported
