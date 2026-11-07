@@ -32,6 +32,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QShowEvent>
 #include <QSplitter>
 #include <QStandardItemModel>
 #include <QStandardPaths>
@@ -145,6 +146,8 @@ struct ReplayTab::State final {
   QString requestedResultId;
   bool resultMode = false;
   bool resultRequestMade = false;
+  bool openingResult = false;
+  bool refreshCatalogAfterOpen = false;
 };
 
 ReplayTab::ReplayTab(QWidget *parent)
@@ -469,6 +472,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     stopPlayback();
     state_->openRequests->cancel();
     state_->resultMode = false;
+    state_->openingResult = false;
     state_->resultRequestMade = false;
     state_->requestedResultId.clear();
     state_->resultReplay.reset();
@@ -480,6 +484,9 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
         setup.symbolCombo->currentText(), setup.schemaCombo->currentText(),
         setup.startDate->date(), setup.endDate->date()));
     resetVisibleReplay();
+    if (std::exchange(state_->refreshCatalogAfterOpen, false)) {
+      state_->reloadCatalog();
+    }
   };
 
   QObject::connect(playback.stepForwardButton, &QToolButton::clicked, this,
@@ -555,13 +562,10 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
           advanceOneBar();
           return;
         }
-        // Result mode is entered only after publishing a non-null Replay.
-        // GCOVR_EXCL_START
         if (state_->resultReplay == nullptr) {
           stopPlayback();
           return;
         }
-        // GCOVR_EXCL_STOP
         std::size_t advanced = 0;
         while (advanced < maximumPlaybackBatchSize &&
                state_->resultReplay->stepForward()) {
@@ -639,7 +643,9 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     const auto resultId = requestedId.trimmed();
     stopPlayback();
     state_->openRequests->cancel();
-    state_->resultMode = false;
+    // Loading, failed and cleared results must never resume the CSV preview.
+    state_->resultMode = true;
+    state_->openingResult = false;
     state_->resultReplay.reset();
     state_->requestedResultId = resultId;
     renderResult();
@@ -671,6 +677,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     setLabelText(setup.resultStatusLabel,
                  tr("Loading result %1…").arg(resultId));
     setup.partialLabel->setVisible(false);
+    state_->openingResult = true;
     const auto timeframe = setup.resultTimeframeCombo->currentIndex() == 0
                                ? bindings::ResultReplayTimeframe::hourly
                                : bindings::ResultReplayTimeframe::dailyUtc;
@@ -679,12 +686,16 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
         [this, setup, resultId, renderResult, cursorAnchor,
          refreshCatalogAfterOpen](
             const bindings::ResultReplayRequests::OpenResult &opened) {
+          state_->openingResult = false;
+          const auto refreshCatalog =
+              refreshCatalogAfterOpen || state_->refreshCatalogAfterOpen;
+          state_->refreshCatalogAfterOpen = false;
           if (!opened.ok()) {
             setLabelText(
                 setup.resultStatusLabel,
                 tr("Cannot open result — %1")
                     .arg(QString::fromStdString(opened.error().message)));
-            if (refreshCatalogAfterOpen) {
+            if (refreshCatalog) {
               state_->reloadCatalog();
             }
             return;
@@ -711,7 +722,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
                              QString::fromStdString(
                                  state_->resultReplay->terminalReason())));
           renderResult();
-          if (refreshCatalogAfterOpen) {
+          if (refreshCatalog) {
             state_->reloadCatalog();
           }
         });
@@ -825,6 +836,15 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
 }
 
 ReplayTab::~ReplayTab() = default;
+
+void ReplayTab::showEvent(QShowEvent *event) {
+  QWidget::showEvent(event);
+  if (state_->openingResult) {
+    state_->refreshCatalogAfterOpen = true;
+  } else {
+    state_->reloadCatalog();
+  }
+}
 
 void ReplayTab::openResult(const QString &resultId) {
   if (state_->requestOpen) {

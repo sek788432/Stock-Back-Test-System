@@ -162,6 +162,14 @@ invoke Strategy, Python, indicator scheduling, order evaluation, or Engine
 execution. Complete warning/log/metric presentation and marker detail
 interaction remain planned. A limited Results-management page is implemented.
 
+Opening, failing to open, or clearing a Result keeps playback isolated from the
+bar-only preview: step, back, play, and preview-capital changes cannot display
+stale preview candles or placeholder accounting. Loading preview data explicitly
+returns to preview mode. Each time Replay becomes visible, it refreshes the saved
+Result selector without resetting the current result or cursor. If a Result open
+is pending, that catalog refresh waits for completion or an explicit return to
+preview mode.
+
 The headline UX. Layout:
 
 ```

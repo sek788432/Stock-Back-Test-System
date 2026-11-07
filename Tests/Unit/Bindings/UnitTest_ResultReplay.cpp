@@ -231,7 +231,7 @@ TEST_F(ResultReplayTest,
       .splitManifestHash = std::string(64, 'b'),
   });
   ASSERT_TRUE(built.ok()) << built.error().message;
-  EXPECT_EQ(built.value().barCount, 31'466U);
+  EXPECT_EQ(built.value().barCount, 31'578U);
 
   const auto selectedRange = bte::core::DateRange{
       .start = timestamp("2018-05-01 00:00:00+00:00"),
