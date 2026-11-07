@@ -312,6 +312,11 @@ construct their own pandas values from the read-only bars they requested.
   and the pipe envelope contains their bounded descriptors, lengths, and
   hashes rather than escaping source text into JSON. TCP, HTTP, localhost
   ports, and Unix-domain sockets are not used.
+  Writing to a worker-closed protocol pipe returns a typed worker error without
+  terminating the application or changing its process-wide signal disposition.
+  Darwin uses descriptor-scoped SIGPIPE suppression because masking only the
+  writer thread does not protect other application threads. A failed descriptor
+  setup prevents the write; interrupted setup follows the bounded retry path.
 - Each protocol frame is a 4-byte unsigned big-endian payload length, a
   32-byte SHA-256 digest of the payload, then UTF-8 RFC 8785 JSON bytes. The
   maximum payload is exactly 1 MiB. The closed envelope contains protocol
