@@ -51,6 +51,7 @@ createFixture(const std::filesystem::path &root) {
       .strategyId = "starter",
       .strategyHash = std::string(64, 'c'),
       .dataSelection = selected.value().identity,
+      .provenance = {},
   };
 }
 

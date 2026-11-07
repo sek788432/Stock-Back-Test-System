@@ -1,5 +1,6 @@
 #include "Bte/Strategy/SelectableStrategy.h"
 
+#include "Bte/Core/Cancellation.h"
 #include "Bte/Core/Digest.h"
 #include "SelectableStrategyDetail.h"
 
@@ -761,6 +762,73 @@ detail::SelectableStrategyTestAccess::create(
 core::Result<SelectableStrategySignal>
 SelectableStrategy::onBar(const core::Bar &bar) {
   return impl_->onBar(bar);
+}
+
+namespace {
+
+class SelectableStrategyCommandAdapter final : public Strategy {
+public:
+  SelectableStrategyCommandAdapter(
+      std::unique_ptr<SelectableStrategy> configuredStrategy,
+      const std::int64_t configuredQuantity)
+      : strategy_(std::move(configuredStrategy)),
+        quantityShares_(configuredQuantity) {}
+
+  [[nodiscard]] core::Result<StrategyCommandBatch>
+  onMarket(const StrategyContext &context,
+           const core::CancellationToken &cancellation) override {
+    if (cancellation.isCancellationRequested()) {
+      return core::makeError(core::ErrorCode::cancelled,
+                             "backtest was cancelled");
+    }
+    if (!context.bar.has_value()) {
+      return compileError("Selectable Conditions requires a market bar",
+                          core::ErrorCode::strategyRuntimeError);
+    }
+    if (context.positionShares < 0) {
+      return compileError("Engine supplied a negative position",
+                          core::ErrorCode::strategyRuntimeError);
+    }
+    const auto signal = strategy_->onBar(context.bar.value());
+    if (!signal.ok()) {
+      return signal.error();
+    }
+    if (context.positionShares == 0 && signal.value().buy) {
+      return StrategyCommandBatch{{.kind = StrategyCommandKind::buyMarket,
+                                   .symbol = std::string{context.symbol},
+                                   .quantityShares = quantityShares_}};
+    }
+    if (context.positionShares > 0 && signal.value().sell) {
+      return StrategyCommandBatch{{.kind = StrategyCommandKind::closePosition,
+                                   .symbol = std::string{context.symbol},
+                                   .quantityShares = 0}};
+    }
+    return StrategyCommandBatch{};
+  }
+
+private:
+  std::unique_ptr<SelectableStrategy> strategy_;
+  std::int64_t quantityShares_ = 0;
+};
+
+} // namespace
+
+core::Result<std::unique_ptr<Strategy>> createSelectableStrategyAdapter(
+    SelectableStrategyPlan plan, const std::int64_t quantityShares,
+    std::optional<PreviousDataDayClose> previousDataDayClose,
+    std::vector<PreviousDataDaySummary> previousDataDays) {
+  if (quantityShares <= 0 || quantityShares > maximumStrategyQuantityShares) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "strategy quantity is outside the supported range");
+  }
+  auto configured = SelectableStrategy::create(
+      std::move(plan), previousDataDayClose, std::move(previousDataDays));
+  if (!configured.ok()) {
+    return configured.error();
+  }
+  return std::unique_ptr<Strategy>{
+      std::make_unique<SelectableStrategyCommandAdapter>(
+          std::move(configured).value(), quantityShares)};
 }
 
 } // namespace bte::strategy

@@ -21,9 +21,19 @@ if [[ -n "${BTE_DATA_STORE:-}" &&
   exit 2
 fi
 
-cmake --preset qt-dev \
-  -DBTE_BUILD_TESTS=ON \
+cmake_arguments=(
+  --preset qt-dev
+  -DBTE_BUILD_TESTS=ON
   -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+)
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+  runtime_artifacts_dir="${BTE_PYTHON_RUNTIME_ARTIFACTS_DIR:-$ROOT/Output/PythonRuntimeArtifacts}"
+  cmake_arguments+=(
+    -DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON
+    "-DBTE_PYTHON_RUNTIME_ARTIFACTS_DIR=$runtime_artifacts_dir"
+  )
+fi
+cmake "${cmake_arguments[@]}"
 cmake --build --preset qt-dev --parallel
 
 if [[ -z "${BTE_DATA_STORE:-}" ]]; then
@@ -48,7 +58,11 @@ if [[ -z "${BTE_DATA_STORE:-}" ]]; then
   fi
 fi
 
-readonly APP="$ROOT/Output/qt-dev/Src/App/stockBacktester"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  readonly APP="$ROOT/Output/qt-dev/Src/App/stockBacktester.app/Contents/MacOS/stockBacktester"
+else
+  readonly APP="$ROOT/Output/qt-dev/Src/App/stockBacktester"
+fi
 if [[ ! -x "$APP" ]]; then
   echo "built application is missing or not executable: $APP" >&2
   exit 2

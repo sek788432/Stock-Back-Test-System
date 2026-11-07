@@ -43,6 +43,11 @@ CONVENTIONAL_FILE_NAMES = {
 PASCAL_CASE_NAME = re.compile(r"[A-Z][A-Za-z0-9]*")
 NUMBERED_PASCAL_CASE_NAME = re.compile(r"\d{2}[A-Z][A-Za-z0-9]*")
 UNIT_TEST_FILE_NAME = re.compile(r"UnitTest_[A-Z][A-Za-z0-9]*\.(?:cpp|py)")
+CANONICAL_PYTHON_RUNTIME_PATHS = {
+    Path("Src/Bindings/Python/stockbt"),
+    Path("Src/Bindings/Python/stockbt/__init__.py"),
+    Path("Src/Bindings/Python/worker_bootstrap.py"),
+}
 DOCUMENTATION_POLICY_PATH = Path("Tools/DocumentationPolicy.json")
 DOCUMENTATION_SUFFIXES = {
     ".adoc",
@@ -666,7 +671,7 @@ def audit_path_conventions(paths: set[Path]) -> list[Violation]:
             continue
 
         for parent in path.parents:
-            if parent == Path("."):
+            if parent == Path(".") or parent in CANONICAL_PYTHON_RUNTIME_PATHS:
                 continue
             if parent in reported_directories:
                 continue
@@ -683,7 +688,7 @@ def audit_path_conventions(paths: set[Path]) -> list[Violation]:
                 )
                 continue
 
-        if is_conventional_file(path):
+        if is_conventional_file(path) or path in CANONICAL_PYTHON_RUNTIME_PATHS:
             continue
 
         suffix_is_lowercase = path.suffix == path.suffix.lower()

@@ -1,16 +1,15 @@
 # Frontend (Qt)
 
-> **Status:** Partially implemented. The current application contains Qt tab,
-> chart, replay scaffolding, and a Backtest page for the limited engine slice
-> documented in [`EngineReplayPnL.md`](EngineReplayPnL.md) §1. That page supports the fixed starter strategy and the
-> implemented Selectable Conditions subset; saved-strategy authoring, Python
-> strategies, complete backtest workflows, the complete Results library, and
-> release-quality UX remain planned unless their owning spec says otherwise.
-> The current shell exposes Strategies, Backtest, Results, and Replay;
-> Strategies is a placeholder; Results has a limited management page with
-> catalog, details, Open Replay, Move to Trash and Restore. The complete
-> Results library remains planned.
-> Completed runs can nevertheless be persisted and handed directly to Replay.
+> **Status:** Partially implemented. The current application contains the
+> Strategies editor and first-milestone Python authoring workflow, the limited
+> starter and Selectable Conditions Backtest workflows, Python Validate/Run/
+> Cancel/Verify controls, Results management, and Replay. Python execution is
+> implemented behind the managed-runtime contract. The optional macOS Apple
+> Silicon build bundles the pinned profile; the default developer build omits
+> it. Complete Results management, broader engine workflows, signed installer
+> integration, manual release acceptance, and release-quality UX remain
+> planned. Completed runs can be
+> persisted and handed directly to Replay.
 
 This spec owns the Qt presentation interface: every screen the user sees, chart
 presentation, and how the UI communicates with backend modules without blocking
@@ -79,28 +78,29 @@ actual launched workflow.
 
 ### 2.1 Strategies tab
 
-A two-pane view contains a saved Strategy library and editor. The library and
-storage contract are defined by
-[`BacktestReplayProduct.md`](BacktestReplayProduct.md). Editor modes are:
+The first Python milestone is a focused editor and one recoverable draft, not a
+saved Strategy library. It contains a Python source editor with the SMA sample,
+fast/slow period and quantity controls (defaults 5/20/1), **Load `.py`**,
+**Export `.py`**, **Validate**, and **Use in Backtest**. Draft source and
+parameters are atomically autosaved; one prior valid generation supports
+restart recovery. Load performs strict UTF-8 and size checks before replacing
+the buffer. A dirty-buffer replacement presents **Save Draft**, **Discard**,
+and **Cancel**. Validation displays stable error codes and source line/column
+as selectable plain text.
 
-1. **Selectable Conditions** (default) — form-driven rows for typed indicators,
-   supported fields, comparisons, whole-share sizing, and current actions with
-   flat **ALL / ANY** logic. Each buy and sell group supports one to five rows.
-   The saved artifact is the versioned typed plan owned by
-   [`StrategyAuthoring.md`](StrategyAuthoring.md), not generated Python.
-2. **Python Script Strategy** — code editor with diagnostics and **Validate
-   Strategy**, using the authoring contract rather than a UI-specific compiler
-   interface.
+**Use in Backtest** copies the current draft and parameters into Backtest setup
+and switches pages; it never asks for consent or starts execution. At Run or
+Verify time, the app freezes source, API/template versions, parameters, and the
+selected immutable data/configuration identity, then requests explicit consent
+for that source hash if needed. Source edits after capture remain a new draft
+and cannot change the active execution.
 
-At widths of at least 1100 px, buy and sell groups are side by side; narrower
-layouts stack them. A group scrolls vertically inside its panel when its content
-exceeds the larger of 420 px or 40% of the viewport. Headers and Add controls
-remain sticky; rows are compact and keyboard-reorderable; horizontal scrolling
-is forbidden. Nested groups, portfolio gates, generated Python, and **Edit as
-Python** are outside scope.
+Selectable Conditions remains available in Backtest with its existing form
+contract; a complete reusable Strategy library, version history, import, Trash,
+and restore are deferred. Nested groups, portfolio gates, generated Python,
+and **Edit as Python** remain outside the first milestone.
 
-**Use in Backtest** fills the Backtest page with the selected immutable Strategy
-version. It does not start a run. Replay is entered from a stored Result.
+Replay is entered from a stored Result and never starts a worker.
 
 ### 2.2 Backtest tab
 
@@ -135,6 +135,36 @@ that value or change identity semantics.
 
 **Cross-link.** A completed or diagnostic stored Result has a dedicated **Open
 Replay** action.
+
+The Strategies page exposes **Validate** and **Cancel** for factory validation;
+Backtest exposes Python **Run**, **Verify Reproducibility**, and a shared
+**Cancel** action. These UI paths, source-hash consent, draft handoff, and
+coordinator progress are implemented. The default developer app omits the
+pinned managed runtime and reports a structured runtime-unavailable diagnostic.
+Configure the macOS Apple Silicon app with
+`BTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON` to assemble and embed the verified
+profile; the optional bundle test starts a worker with that real profile. Signed
+installer integration and manual end-to-end release acceptance remain planned.
+
+Validate checks static constraints and the factory in a fresh managed worker
+after hash-scoped consent; it creates no Result. Run freezes and executes one
+source/parameter snapshot. The run panel shows bounded structured logs,
+traceback with source line, terminal error code, fills, and Save Result / Save
+& Replay / Discard actions. A normal run has no verification evidence and is
+not shown with a verified label. The label appears only when matching three-run
+evidence is available. If reading that evidence fails after a completed run,
+the Result remains available and run diagnostics show the verification-status
+warning.
+
+Verify Reproducibility launches three fresh workers sequentially from one
+frozen functional-input identity and shows attempt progress 1/3 through 3/3.
+Cancel, mismatch, failure, and interruption remain distinct and never produce
+a verified label. Only three completed attempts with identical canonical
+hashes and inputs do. The verification record references each Result ID and
+status/hash, stays separate from Result canonical records, and does not
+auto-publish attempts. The user may continue editing the draft while a run is
+active; edits to the current draft cannot change the frozen input used by
+that run.
 
 ### 2.3 Replay tab — implemented modes and deferred UX
 
@@ -259,11 +289,11 @@ Imports are untrusted data. The UI validates them without executing embedded
 source. **Open Replay** remains disabled with a structured reason when the
 result or referenced data is invalid or unavailable.
 
-The current **View Details** pane lists every schema-2 Result capability as
-Supported or Unavailable using the persisted capability metadata. It also
-shows persisted warning records as selectable plain text; when no warning was
-recorded it says so explicitly. Unavailable families remain unavailable and
-are not represented by synthesized values.
+The current **View Details** pane lists the persisted capabilities for schema-2
+and schema-3 Results as Supported or Unavailable. It also shows persisted
+warning records as selectable plain text; when no warning was recorded it says
+so explicitly. Unavailable families remain unavailable and are not represented
+by synthesized values.
 
 ---
 
@@ -297,6 +327,13 @@ successful refresh returns no notices.
 - **Target:** Qt-facing adapters receive immutable progress/result values from
   an engine worker through queued delivery. Views never hold backend pointers or
   call widgets from workers.
+- **Python execution target:** an owned Bindings session carries immutable
+  source/configuration values into Engine and owns the associated
+  `PythonWorkerStrategy`. A generation ID travels with Validate, Run, Cancel,
+  and Verify completions; a view applies only values for its live request and
+  current widget lifetime. Destroying or switching a page cannot deliver a
+  stale completion to a replacement draft. Cancel reaches the active parent
+  process even while the worker is blocked in user code.
 - Fixed-point `Money`, `Price`, and `Quantity` remain authoritative through the
   engine/result seam. Conversion to display numbers or strings occurs only in
   the presentation adapter.
@@ -366,9 +403,9 @@ persisted result values rather than asking the chart to execute engine logic.
 
 | What | Location contract | Format/status |
 |---|---|---|
-| Strategies | `QStandardPaths::AppLocalDataLocation/Strategies/{Active,Trash}` | UUIDv7 `.btestrategy` typed plan or Python source plus versioned metadata |
-| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Staging,Drafts,Results,Trash,Quarantine}` | Implemented limited schema-2 `.bteresult` artifacts named by opaque 32-digit lowercase hexadecimal Result IDs; limited management UI exists, complete management remains planned |
-| Data and runtimes | `QStandardPaths::AppLocalDataLocation/{DataSegments,RuntimeProfiles}` | Limited immutable referenced segments are implemented; complete release profiles remain planned |
+| Strategies | `QStandardPaths::AppLocalDataLocation/Strategies/PythonDraft` | One recoverable `python-draft.json` plus its previous recovery copy; users can import and export source as `.py`. A saved Strategy library is not implemented. |
+| Backtest Results | `QStandardPaths::AppLocalDataLocation/Results/{Staging,Drafts,Results,Trash,Quarantine,Leases}` | Schema-2 and schema-3 `.bteresult` artifacts use opaque 32-digit lowercase hexadecimal Result IDs. The limited management UI supports the implemented catalog actions; the complete page remains planned. |
+| Data and runtimes | Immutable release snapshots are under `QStandardPaths::AppLocalDataLocation/Data`; the managed runtime is bundled under app `Resources/RuntimeProfiles/{profileId}`. | Referenced immutable data segments and the optional pinned macOS runtime bundle are implemented. Runtime profiles are not stored in a user-writable app-data directory. |
 | Settings and layout | OS-appropriate application data directory | Planned UI-only state; never a mutable market-data path |
 
 One future Core path resolver owns these locations and is redirectable in tests.
@@ -405,12 +442,15 @@ their exact paths are not a current contract.
 Current registered frontend tests cover the application shell, current Backtest
 page, bar-only and result-backed Replay states, asynchronous switching and
 destruction, the Qt Charts candle/volume/marker adapter, and Bindings result
-frames. They do not prove saved Strategy/complete Result library pages, the
-five-row editor, Python authoring, or the project-owned release chart.
+frames. The first Python Strategy milestone also covers draft editing,
+import/export, validation and consent flows, plus a managed-runtime GUI
+backtest that saves and opens the ordinary result in Replay when the runtime is
+available. These tests do not prove saved Strategy/complete Result library
+pages, the full five-row editor, or the project-owned release chart.
 
-Those accepted future behaviors require positive, negative, and boundary tests
+The remaining future behaviors require positive, negative, and boundary tests
 for one/five/six condition rows, invalid conditions, responsive layout, inner
-scroll threshold, keyboard reorder, Python validation, Result import,
-hash/schema failures, Trash/Restore, atomic recovery, and **Open Replay**
-eligibility. The release chart also requires deterministic render-geometry,
-interaction, and accessibility tests; visual inspection alone is not evidence.
+scroll threshold, keyboard reorder, complete Result library flows, hash/schema
+failures, Trash/Restore, atomic recovery, and **Open Replay** eligibility. The
+release chart also requires deterministic render-geometry, interaction, and
+accessibility tests; visual inspection alone is not evidence.

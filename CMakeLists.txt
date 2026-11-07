@@ -50,6 +50,58 @@ option(BTE_SANITIZERS "Enable ASan/UBSan on Clang/GNU builds" OFF)
 option(BTE_THREAD_SANITIZER "Enable TSan on Clang/GNU builds" OFF)
 option(BTE_BUILD_QT_APP "Build the Qt desktop app shell" OFF)
 option(BTE_COVERAGE "Instrument tests for gcov-compatible coverage" OFF)
+option(
+  BTE_BUNDLE_MANAGED_PYTHON_RUNTIME
+  "Build the locked Python profile into the macOS application bundle"
+  OFF)
+set(
+  BTE_PYTHON_RUNTIME_ARTIFACTS_DIR
+  "${PROJECT_SOURCE_DIR}/Output/PythonRuntimeArtifacts"
+  CACHE PATH
+  "Offline cache of the exact locked CPython archive and wheels")
+set(BTE_PYTHON_RUNTIME_PROFILE_ID "macos-arm64-cpython-3.14.9-stockbt-v1")
+
+if(BTE_BUNDLE_MANAGED_PYTHON_RUNTIME)
+  if(NOT BTE_BUILD_QT_APP)
+    message(FATAL_ERROR
+      "BTE_BUNDLE_MANAGED_PYTHON_RUNTIME requires BTE_BUILD_QT_APP=ON.")
+  endif()
+  set(bte_is_macos_arm64 FALSE)
+  if(APPLE AND
+     ((CMAKE_OSX_ARCHITECTURES STREQUAL "arm64") OR
+      (NOT CMAKE_OSX_ARCHITECTURES AND
+       CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")))
+    set(bte_is_macos_arm64 TRUE)
+  endif()
+  if(NOT bte_is_macos_arm64)
+    message(FATAL_ERROR
+      "The locked Python runtime is supported only on macOS Apple Silicon.")
+  endif()
+  find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
+  execute_process(
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/Tools/BuildPythonRuntime.py"
+      --verify-artifacts
+      --artifacts-dir "${BTE_PYTHON_RUNTIME_ARTIFACTS_DIR}"
+    RESULT_VARIABLE bte_runtime_artifact_result
+    OUTPUT_VARIABLE bte_runtime_artifact_output
+    ERROR_VARIABLE bte_runtime_artifact_error)
+  if(NOT bte_runtime_artifact_result EQUAL 0)
+    message(FATAL_ERROR
+      "Managed Python runtime artifact verification failed. Prepare the exact "
+      "locked cache with Tools/BuildPythonRuntime.py --download-artifacts.\n"
+      "${bte_runtime_artifact_output}${bte_runtime_artifact_error}")
+  endif()
+  set(
+    BTE_PYTHON_RUNTIME_PROFILE_OUTPUT_DIR
+    "${PROJECT_BINARY_DIR}/PythonRuntimeProfiles/${BTE_PYTHON_RUNTIME_PROFILE_ID}")
+  file(
+    GLOB bte_python_runtime_artifact_files
+    CONFIGURE_DEPENDS
+    LIST_DIRECTORIES false
+    "${BTE_PYTHON_RUNTIME_ARTIFACTS_DIR}/*")
+endif()
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -156,6 +208,10 @@ add_subdirectory(Src/Backend/Indicators)
 add_subdirectory(Src/Backend/Strategy)
 add_subdirectory(Src/Backend/Results)
 add_subdirectory(Src/Backend/Engine)
+
+if(BTE_BUILD_TESTS OR BTE_BUILD_QT_APP)
+  add_subdirectory(Src/Bindings/Python)
+endif()
 
 if(BTE_BUILD_QT_APP)
   set(BTE_QT_COMPONENTS Charts Concurrent Core Widgets)

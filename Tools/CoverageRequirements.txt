@@ -50,9 +50,9 @@ diff-cover==10.0.0 \
     --hash=sha256:92ead026726055bf4c1a90cd7ff83544049d467840e07c66289a4351126dbe25 \
     --hash=sha256:b3a095d733ba715df6098f51d9155607e4752f82be8a6cbba9bfcf77df736852
     # via -r Tools/CoverageRequirements.in
-gcovr==8.5 \
-    --hash=sha256:2a47b9af75d0658c6a72c2848ea3ca1da8e4f16f6f38d8d459c1c1b244b4a98e \
-    --hash=sha256:9f0e21aab72b70fc26a4a0b6e35f25b97eefb5ce6e9c57388bf4a065726f7965
+gcovr==8.7 \
+    --hash=sha256:2a68612c5981c388537f2e236c231a5d788b8bd9e406d13ced662c97b17e9784 \
+    --hash=sha256:cfb9b2c373cc5be4b1cbe53250a5e4446fe6d4723c6900d3f41aa83540c8ddc8
     # via -r Tools/CoverageRequirements.in
 jinja2==3.1.6 \
     --hash=sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d \

@@ -277,6 +277,11 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
                  tr("Equity: %1").arg(formatMoney(snapshot.equity)));
     setLabelText(portfolio.pnlLabel,
                  tr("PnL: %1").arg(formatMoney(snapshot.pnl)));
+    setLabelText(portfolio.realizedPnlLabel,
+                 tr("Realized P/L: %1").arg(formatMoney(snapshot.realizedPnl)));
+    setLabelText(
+        portfolio.unrealizedPnlLabel,
+        tr("Unrealized P/L: %1").arg(formatMoney(snapshot.unrealizedPnl)));
     setLabelText(portfolio.lastPriceLabel,
                  snapshot.hasLastPrice
                      ? tr("Last: %1").arg(formatPrice(snapshot.lastPrice))
@@ -327,6 +332,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
       setLabelText(portfolio.marketValueLabel, tr("Market: --"));
       setLabelText(portfolio.equityLabel, tr("Equity: --"));
       setLabelText(portfolio.pnlLabel, tr("PnL: --"));
+      setLabelText(portfolio.realizedPnlLabel, tr("Realized P/L: --"));
+      setLabelText(portfolio.unrealizedPnlLabel, tr("Unrealized P/L: --"));
       setLabelText(portfolio.lastPriceLabel, tr("Last: --"));
       setLabelText(portfolio.barIndexLabel, tr("Bar: 0/0"));
       setup.partialLabel->setVisible(false);
@@ -385,6 +392,12 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
                  tr("Equity: %1").arg(formatMoney(frame->portfolio.equity)));
     setLabelText(portfolio.pnlLabel,
                  tr("PnL: %1").arg(formatMoney(frame->portfolio.pnl)));
+    setLabelText(
+        portfolio.realizedPnlLabel,
+        tr("Realized P/L: %1").arg(formatMoney(frame->portfolio.realizedPnl)));
+    setLabelText(portfolio.unrealizedPnlLabel,
+                 tr("Unrealized P/L: %1")
+                     .arg(formatMoney(frame->portfolio.unrealizedPnl)));
     setLabelText(portfolio.lastPriceLabel,
                  tr("Last: %1").arg(formatPrice(frame->candle.close)));
     setLabelText(portfolio.barIndexLabel,

@@ -24,6 +24,7 @@ IWYU_MAPPINGS = json.loads(
 COVERAGE_REQUIREMENTS = (
     REPOSITORY_ROOT / "Tools/CoverageRequirements.txt"
 ).read_text(encoding="utf-8")
+RUN_QUALITY_TEXT = (REPOSITORY_ROOT / "RunQuality.sh").read_text(encoding="utf-8")
 
 
 def load_tool(name: str):
@@ -356,14 +357,36 @@ class ChangedBranchCoverageTest(unittest.TestCase):
     def test_workflow_installs_html_report_dependency_at_an_exact_version(self) -> None:
         self.assertIn("jinja2==3.1.6", COVERAGE_REQUIREMENTS)
         self.assertIn("markupsafe==3.0.3", COVERAGE_REQUIREMENTS)
-        self.assertIn("--decisions", WORKFLOW_TEXT)
+        self.assertIn("--decisions", RUN_QUALITY_TEXT)
 
     def test_workflow_renders_coverage_for_the_submitted_commit(self) -> None:
-        self.assertIn("--markdown-summary coverage-summary.md", WORKFLOW_TEXT)
-        self.assertIn("Tools/RunCoverageGates.sh", WORKFLOW_TEXT)
-        self.assertIn('"$GITHUB_SHA" coverage-summary.md', WORKFLOW_TEXT)
-        self.assertIn("changed-line-coverage.txt", WORKFLOW_TEXT)
-        self.assertIn("changed-branch-coverage.txt", WORKFLOW_TEXT)
+        coverage_job = WORKFLOW_TEXT.split("  coverage:", 1)[1].split(
+            "  sanitizers:", 1
+        )[0]
+
+        self.assertIn("runs-on: macos-latest", coverage_job)
+        self.assertIn("timeout-minutes: 45", coverage_job)
+        self.assertIn(
+            "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            coverage_job,
+        )
+        self.assertIn("python-version: '3.12'", coverage_job)
+        self.assertIn("brew install llvm@18", coverage_job)
+        self.assertIn("--download-artifacts", coverage_job)
+        self.assertIn("--verify-artifacts", coverage_job)
+        self.assertIn("RunQuality.sh --coverage-only", coverage_job)
+        self.assertIn("CC: clang", coverage_job)
+        self.assertIn("CXX: clang++", coverage_job)
+        self.assertIn("Output/CoverageReport/coverage.xml", coverage_job)
+        self.assertIn("Output/CoverageReport/summary.md", coverage_job)
+        self.assertLess(
+            coverage_job.index("--download-artifacts"),
+            coverage_job.index("--verify-artifacts"),
+        )
+        self.assertLess(
+            coverage_job.index("--verify-artifacts"),
+            coverage_job.index("run: ./RunQuality.sh --coverage-only"),
+        )
 
     def test_changed_lines_parse_added_ranges_and_single_lines(self) -> None:
         diff = """+++ b/Src/Foo.cpp

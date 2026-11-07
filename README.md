@@ -8,8 +8,14 @@ A cross-platform C++ desktop application for backtesting and replaying stock tra
 > conditions and two typed sell conditions with ALL/ANY logic; signals are
 > long-only orders eligible at the next actual bar open. The current single-symbol
 > path records `.bteresult` files and presents retained immutable segments,
-> volume, fills, and portfolio values in Replay. Complete order/accounting, the
-> managed Python worker, and public release snapshots remain planned. See
+> volume, fills, and portfolio values in Replay. Complete order/accounting and
+> public release snapshots remain planned. The Python editor, Backtest
+> integration, worker backend, C++ SMA scheduling, bounded history transport,
+> reproducibility evidence, and optional macOS Apple Silicon runtime bundle are
+> implemented and covered by tests. The default developer build omits that
+> profile; the documented bundle build includes CPython so users need not
+> install it separately. Signed installer integration and manual release
+> acceptance remain planned. See
 > [`Docs/Specs/BacktestReplayProduct.md`](Docs/Specs/BacktestReplayProduct.md)
 > for exact capability status.
 

@@ -343,6 +343,10 @@ ReplayPortfolioSection makeReplayPortfolioSection(QWidget *owner) {
   section.equityLabel =
       makeValueLabel(ReplayTab::tr("Equity: --"), "replayEquityLabel");
   section.pnlLabel = makeValueLabel(ReplayTab::tr("PnL: --"), "replayPnlLabel");
+  section.realizedPnlLabel = makeValueLabel(ReplayTab::tr("Realized P/L: --"),
+                                            "replayRealizedPnlLabel");
+  section.unrealizedPnlLabel = makeValueLabel(
+      ReplayTab::tr("Unrealized P/L: --"), "replayUnrealizedPnlLabel");
   section.lastPriceLabel =
       makeValueLabel(ReplayTab::tr("Last: --"), "replayLastPriceLabel");
   section.barIndexLabel =
@@ -353,8 +357,10 @@ ReplayPortfolioSection makeReplayPortfolioSection(QWidget *owner) {
   portfolioLayout->addWidget(section.marketValueLabel, 0, 2);
   portfolioLayout->addWidget(section.equityLabel, 0, 3);
   portfolioLayout->addWidget(section.pnlLabel, 1, 0);
-  portfolioLayout->addWidget(section.lastPriceLabel, 1, 1);
-  portfolioLayout->addWidget(section.barIndexLabel, 1, 2);
+  portfolioLayout->addWidget(section.realizedPnlLabel, 1, 1);
+  portfolioLayout->addWidget(section.unrealizedPnlLabel, 1, 2);
+  portfolioLayout->addWidget(section.lastPriceLabel, 1, 3);
+  portfolioLayout->addWidget(section.barIndexLabel, 2, 0);
   portfolioLayout->setColumnStretch(3, 1);
   return section;
 }

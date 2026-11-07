@@ -23,8 +23,8 @@ preservation of legacy artifacts.
 | Status | Scope |
 | --- | --- |
 | **Implemented** | CSV-backed bar loading; immutable snapshot/segment identity; forward/back bar stepping; replay clock controls; candlestick, volume, and persisted-fill presentation; transactional SQLite `.bteresult` storage; canonical hashing; the compatibility starter Backtest slice; and a limited long-only Selectable Conditions slice that records warnings, orders, fills, fixed-point slippage costs, and one post-slice portfolio checkpoint per processed bar. Task 17 and Task 18 UTC data-day conditions use bounded history from the same immutable snapshot without adding warm-up bars to Engine or Replay. |
-| **Planned** | Synchronized multi-symbol `MarketSlice`, complete strategy interfaces and authoring, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, the complete Results-management UI and migration workflow, and the remaining canonical record families. |
-| **Blocked** | Public product release of the planned engine is blocked until pricing-data redistribution rights and a verified redistribution-cleared split manifest are documented. |
+| **Planned** | Synchronized multi-symbol `MarketSlice`, the complete Strategy/`MarketSlice` interface and authoring beyond the first-milestone Python workflow, general order types, complete broker/portfolio/P&L behavior, short margin, corporate actions, metrics, the complete Results-management UI and migration workflow, and the remaining canonical record families. |
+| **Blocked** | Public product release of the planned engine is blocked until pricing-data redistribution rights, a verified redistribution-cleared split manifest, and exact snapshot hashes are documented. |
 
 The current starter and selectable slices are intentionally single-symbol; the
 selectable path supports only a flat position and whole-quantity long entry or
@@ -60,7 +60,9 @@ contract.
 - The implemented `BacktestExecution` session is the shared stateful seam:
   Batch runs it to completion, while Paced callers invoke one `advance` per
   authorized slice. Terminal cancellation and operational failure retain only
-  records from fully processed slices plus a terminal diagnostic.
+  records from fully processed slices plus a terminal diagnostic. Cancellation
+  tokens are checked while actual and warm-up bars are validated, so the
+  Engine stops a long validation scan after cancellation is requested.
 - **K-line Replay** reads an existing completed or diagnostic Backtest Result
   and its referenced bars; it never calls Strategy hooks, starts Python, or
   creates new fills.
@@ -147,7 +149,7 @@ V1 supports market, limit, stop, DAY, GTC, explicit OCO, and bracket orders. Sto
 - There is one net position per symbol. An order may reduce or close the opposite position but may not cross zero; reversal requires an explicit close and a later opposite entry.
 - Long purchases use unrestricted cash only. V1 has no long leverage, debit balance, or margin interest.
 - Long-sale proceeds are reusable immediately under `instantSettlementV1`.
-- Average-cost accounting applies to long and short positions. Partial close leaves remaining average cost unchanged; realized P&L uses the average cost and proportionally attributed entry/exit costs. It is not tax-lot accounting.
+- Average-cost accounting applies to long and short positions. Partial close leaves remaining average cost unchanged; realized P&L uses the average cost and proportionally attributed entry/exit costs. The allocated open basis is rounded to the nearest microdollar using half-even; unallocated microdollars remain in the open basis, and a full close consumes that exact remainder. It is not tax-lot accounting.
 - Exposure-increasing orders reserve estimated buying power. Buy limits reserve the limit-price cost; market/stops use latest price plus costs; shorts also reserve initial margin.
 - If the actual gap price makes a full fill unaffordable, reject it as `InsufficientBuyingPowerAtExecution`, release the reservation, and never resize or create negative unrestricted cash.
 - Default `retailUsEquityV1` is zero commission and 1 basis point adverse slippage. Per-run overrides are allowed and persisted. Forced covers use market slippage; limits still cannot violate their price.
@@ -178,6 +180,7 @@ Authoritative accounting uses checked fixed-point strong types:
 
 - Overflow and invalid precision are errors.
 - General monetary conversion rounds half-even once at the domain seam; intermediate arithmetic retains checked higher precision.
+- A partial close allocates `openCostBasis × closedShares / openShares` to the closed shares, rounded once to the nearest microdollar using half-even. Compute the quotient and remainder without overflowing an intermediate product, subtract the allocated integer basis from the remaining basis, and use the exact remaining basis on a full close.
 - Half-even tie parity applies to the complete integer monetary amount, not
   just a fractional-product component. For example, one share marked at
   $1.0000015 becomes 1,000,002 microdollars; three shares become 3,000,004.
@@ -204,7 +207,14 @@ warnings, logs, and data-segment references.
 
 Schema 2 also persists one validated capability-declaration row. The current
 limited Engine declares warnings, orders, fills, post-slice portfolio,
-slippage-cost, and terminal-diagnostic records as supported. Trades, metrics,
+slippage-cost, and terminal-diagnostic records as supported. Replay derives
+realized P&L from persisted long-only fill amounts using average cost and derives
+unrealized P&L as total recorded P&L less realized P&L. A valid positive-price
+fill may round to zero microdollars and remains replayable. Partial-close basis
+allocation follows the half-even rule in §7. These presentation values
+cover the current full-fill path; they do not add persisted P&L record families,
+short positions, partial fills, or fee models. Replay also exposes the zero-based
+selected source-bar index for each fill marker. Trades, metrics,
 strategy logs, indicator snapshots, corporate actions, and margin records are
 explicitly unsupported; readers expose these flags and the limited Engine never
 fabricates those families. Because this declaration is invariant for schema 2
@@ -219,12 +229,13 @@ not an additional canonical-hash frame.
 - Crash recovery produces `Interrupted`, never `Completed`.
 - `Failed`, `Canceled`, `Interrupted`, and `Incomplete` retain diagnostic events but expose no valid final performance metrics.
 - The schema has explicit major and minor versions. Schema 2 is the first
-  released canonical container and the implemented reader accepts schema 2
-  only; older prototypes and unknown newer majors fail as
-  `ResultSchemaUnsupported`. When a subsequent major ships, its migration must
-  read the immediately previous released major, validate the source, and
-  create a new copy. Compatible minor additions may be ignored only when their
-  schema declaration permits it.
+  released canonical container. The implemented reader accepts schemas 2 and 3
+  under separate validators and hash framings; older prototypes and unknown
+  newer majors fail as `ResultSchemaUnsupported`. Schema-2 bytes are never
+  reinterpreted as schema 3. A later major must read and
+  validate the immediately previous released major and create a new copy.
+  Compatible minor additions may be ignored only when their schema
+  declaration permits it.
 - Migration validates the source and creates a new copy; it never rewrites the
   original.
 - Imports are untrusted data. They validate size, schema, canonical hash,
@@ -304,6 +315,194 @@ Any change to the domain separator, tag, frame encoding, field inclusion,
 enum integer, or ordering rule requires a new result schema version plus an
 explained deterministic-fixture update. A reader must never reinterpret schema
 1 bytes under changed rules.
+
+### 8.2 Implemented schema 3 provenance and schema-2 copy migration
+
+Schema-3 provenance, writes, reads, canonical hash framing, and bounded Python
+diagnostic persistence are implemented and covered by registered round-trip,
+tampering, compatibility, and literal-hash tests. The internal
+`ResultStore::migrateSchema2Copy` operation creates and validates a new
+schema-3 copy from schema 2; no user-facing migration action invokes it yet.
+Schema 2 and its §8.1 framing remain frozen. A schema-3 reader dispatches by
+container version before parsing version-specific records and never retries a
+failed schema-3 parse as schema 2 or vice versa.
+
+Every schema-3 Result stores and validates:
+
+- Strategy mode, API version, template version, and canonical JSON parameters;
+- for Python mode, exact normalized UTF-8 source bytes and SHA-256 source
+  hash; for Selectable Conditions, the exact typed plan and its existing plan
+  hash; legacy copies explicitly mark unavailable strategy artifacts as
+  `legacy-unrecorded` instead of fabricating them;
+- Engine build/version and complete run configuration, including timeframe,
+  costs, numeric policy, and seed;
+- Runtime Profile ID and canonical manifest hash, CPython version/ABI, and
+  exact package names, versions, wheel hashes, and project-owned `stockbt`
+  source hash;
+- ordered universe, immutable snapshot/calendar/split identities, and exact
+  ordered data spans;
+- canonical event records and terminal status/reason; and
+- a `provenanceAvailability` entry for each versioned provenance field, with
+  `recorded` or `legacy-unrecorded` state, so missing legacy facts are never
+  represented as facts.
+
+The schema-3 `canonicalResultHash` is lowercase hexadecimal SHA-256 over a
+stream beginning with domain separator ASCII `BTE-CANONICAL-RESULT-V3`
+followed by one zero byte. Every following frame is one ASCII tag byte, an
+unsigned 64-bit big-endian payload byte count, and that many UTF-8 bytes of RFC
+8785 canonical JSON. Frames stream in this exact order:
+
+| Frame | Repetition and content |
+| --- | --- |
+| `h` | One header object with schema version `3`, hash-frame version `3`, Engine build, numeric and aggregation policies, complete Run Configuration, strategy mode/ID/hash, provenance-availability map, and ordered symbols |
+| `s` | One strategy object with the exact Python source bytes and source SHA-256 or exact typed Selectable Conditions plan and plan hash, plus API/template versions and canonical parameter object; a legacy-unrecorded artifact is represented explicitly as unavailable |
+| `r` | One runtime object with Runtime Profile ID/manifest hash, CPython ABI/version, exact package names/versions/artifact hashes, and `stockbt` source hash; absent only for non-Python modes and represented as explicit null |
+| `d` | One immutable data-selection object with snapshot, calendar, split manifest, source timeframe, and aggregation/profile identities |
+| `p` | One frame per ordered data span, preserving manifest ordinal and exact segment ID/hash, rows, and timestamps |
+| `e` | One frame per canonical event in Engine sequence order, with schema-defined event family, symbol, timestamp, integer-valued domain fields, and bounded diagnostic/log payloads |
+| `t` | One terminal object with run status, terminal reason, optional final fixed-point values, and diagnostic completeness state |
+
+The schema-3 JSON frame shapes are fixed. Object keys are exactly those shown
+below (with optional values represented by explicit JSON `null`); JCS provides
+the required UTF-16 key ordering. The `h` object has `aggregationPolicy`,
+`commissionRatePartsPerBillion`, `costProfile`, `engineBuild`,
+`hashFrameVersion`, `initialCapitalMicrodollars`, `numericPolicy`,
+`provenanceAvailability`, `rangeEndUnixMillis`, `rangeStartUnixMillis`,
+`schemaVersion`, `seed`, `slippageRatePartsPerBillion`, `strategyHash`,
+`strategyId`, `strategyMode`, `timeframe`, and `universe`. Schema and frame
+versions are JSON integers; every other integer value, including ordinals and
+event sequences, is a canonical base-10 JSON string. Availability keys are
+`aggregationPolicy`, `costs`, `dataSelection`, `engineBuild`, `numericPolicy`,
+`runtimeProfile`, `runtimePackages`, `seed`, `strategyApi`,
+`strategyArtifact`, `strategyMode`, `strategyTemplate`, and `timeframe`; each
+value is `recorded` or `legacy-unrecorded`.
+
+The `s` object has `apiVersion`, `canonicalParameters`, `canonicalPlan`,
+`planHash`, `sourceHash`, `sourceUtf8`, and `templateVersion`. Parameters and a
+typed plan are embedded JSON values, not escaped JSON text. Exactly one of
+`sourceUtf8`/`sourceHash` and `canonicalPlan`/`planHash` is populated for a
+recorded Python or Selectable Conditions artifact; all four are `null` for an
+unavailable legacy artifact. `canonicalParameters` is an object for recorded
+artifacts and `null` when legacy-unrecorded. The `r` object has `abi`,
+`manifest`, `manifestHash`, `packages`, `profileId`, `pythonVersion`, and
+`stockbtSourceHash`; each package object has `artifactHash`, `name`, and
+`version`. `manifest` is the parsed canonical manifest object. A known
+non-Python mode uses `null` for the whole `r` payload. A schema-2 migration
+uses `null` only when its strategy mode is known to be non-Python; otherwise
+the availability map identifies missing runtime provenance.
+
+The `d` object has `aggregationProfile`, `calendarHash`, `snapshotId`,
+`sourceTimeframe`, and `splitManifestHash`. Each `p` object has `firstRow`,
+`firstTimestampUnixMillis`, `lastTimestampUnixMillis`, `manifestOrdinal`,
+`rowCount`, `segmentHash`, `segmentId`, and `symbol`.
+Each `e` object has `amountMicrodollars`, `cashMicrodollars`,
+`diagnosticPayload`, `equityMicrodollars`, `family`, `marketValueMicrodollars`,
+`pnlMicrodollars`, `positionShares`, `priceNanodollars`, `quantityShares`,
+`sequence`, `side`, `symbol`, and `timestampUnixMillis`; all optional numeric
+fields are strings or `null`, and `family`/`side` use fixed lowercase names.
+The `t` object has `diagnosticComplete`, `finalEquityMicrodollars`, `pnlMicrodollars`,
+`status`, and `terminalReason`.
+`diagnosticComplete` is true only when all diagnostics produced by the run were
+captured within their declared bounds and durably persisted. Truncation or
+recovery that cannot establish a complete diagnostic stream sets it false; it
+is persisted independently from terminal status and participates in the hash.
+
+Every `int64` domain value is a canonical base-10 string; monetary,
+price, and quantity values use their declared integer fixed-point units; enum
+fields use fixed schema-defined strings; JSON floating-point values use RFC
+8785 serialization. Source bytes are embedded as UTF-8 and their byte hash is
+included. Runtime/package manifests are embedded as canonical bytes and their
+hashes are included. Result ID, migration ID, wall-clock create/save times,
+local paths, SQLite layout, pacing/UI state, and reproducibility evidence are
+excluded. `provenanceAvailability` and explicit null values distinguish an
+absent legacy value from an ordinary omitted field. A new required functional
+identity field, encoding, enum, or ordering rule requires another Result
+schema major. Streaming frames keeps hash calculation bounded; it never builds
+one in-memory JSON document from the full event history.
+
+Python exception, timeout, cancellation, protocol/runtime failure, and bounded
+structured logs are persisted as Result diagnostics with stable error code,
+hook/phase, source line/column when available, captured timestamp, traceback,
+and truncation counts. These are included in the canonical event stream when
+they are Result events; the reproducibility-check coordinator record described
+below is not a Result event and cannot change a Result hash. The Result's
+terminal status remains `Completed`, `Failed`, or another execution status.
+`reproducibilityStatus` is separate non-hash metadata and is `unverified`
+unless valid matching evidence exists for its exact functional-input identity.
+
+The backend schema-2-to-3 operation validates the complete source schema-2
+container, its schema-2 canonical hash, identifiers, records, and every
+referenced immutable data segment before copying. It writes a new Result ID
+and a `migrated-from` identity that
+contains the old Result ID and old schema-2 hash. It preserves event order,
+display metadata, data references, status, and capability declarations. It
+marks each schema-3 provenance field absent from schema 2 as
+`legacy-unrecorded` in the availability map; it never invents Python
+source/runtime/seed evidence or executes embedded source. It computes a new
+schema-3 hash under the schema-3 framing, and never claims that hash equals the
+source's schema-2 hash.
+
+Migration writes to a same-store staging destination, checkpoints and closes
+it, opens and validates the completed schema-3 copy and all segment references,
+then promotes it without clobbering an existing Result. A destination ID
+collision, unsupported/corrupt schema-2 source, invalid reference, source or
+destination hash mismatch, or any copy, write, validation, or catalog-visibility
+failure removes the new copy and releases its data references; the original
+remains byte-for-byte unchanged and visible. Registered tests independently
+verify source schema-2 and copy schema-3 hashes and cover source corruption,
+unavailable data, destination collisions, failure cleanup, and reopening both
+copies. Migration never publishes an invalid copy and never runs Python.
+Schema 2 stays independently openable after migration; there is no automatic
+or in-place migration. The **Create Schema-3 Copy** UI action remains planned.
+
+### 8.3 Reproducibility evidence
+
+**Implementation status:** the durable evidence store and sequential
+three-attempt coordinator are implemented and tested. The Qt Verify workflow
+uses this coordinator. The optional macOS Apple Silicon app build assembles and
+import-tests the pinned Python runtime, with profile-backed automated tests for
+the managed worker and Python Result workflow. Signed-installer integration and
+manual end-to-end release acceptance remain planned release checks.
+
+The Verify Reproducibility action freezes one functional-input
+identity containing exact
+source hash, canonical parameters, API/template version, Engine build, runtime
+profile ID/hash, seed, numeric and cost policies, ordered symbols, immutable
+snapshot/data spans, timeframe, range, and remaining run configuration. It
+launches at most one Backtest at a time and starts three fresh workers
+sequentially from those same frozen inputs. Each attempt is a normal
+unverified Result draft and is finalized through the existing explicit
+Save/Discard policy; verification does not auto-publish, change its canonical
+records/hash, or alter a finalized Result.
+
+A separate application metadata artifact at
+`Results/Verifications/<verification-id>.bteverify` contains a versioned RFC
+8785 JSON record of at most 64 KiB, an integrity hash, the verification ID,
+frozen functional-input identity, state, progress ordinal, and up to three
+attempt entries. The app atomically replaces and flushes that artifact after
+each attempt-state transition; it is not a Result and is not published to the
+Results catalog. A corrupt record is preserved for diagnosis and cannot
+verify a Result. Each attempt entry records its exact Result ID when a writer
+was created, terminal status, canonical Result hash when available, and
+structured startup/runtime error otherwise. Its terminal states are
+`verified`, `mismatch`, `failed`, `canceled`, and `interrupted`; partial
+attempts are retained as unverified evidence. Only three completed attempts
+with identical canonical functional hashes and identical frozen input
+identities produce `verified`. The run's terminal status remains `Completed`;
+`reproducibilityStatus` is separate metadata and is `unverified` until valid
+matching evidence exists. The first mismatch, failure, cancellation, or
+interruption stops further launch. Opening the verification store recovers
+nonterminal records as `interrupted`; it never resumes them automatically or
+gives them a verified label. Each running verification holds a per-record OS
+lease, so another application process leaves a live run alone and recovers it
+only after the owning process releases or loses that lease. Evidence may label
+a Result only when its complete frozen identity matches that Result.
+Discarding an attempt draft removes that attempt's detailed records under the
+existing explicit policy but does not
+rewrite the verification record or promote an incomplete set to verified.
+
+Opening, validating, migrating, saving, and replaying a Result never starts
+Python. Replay remains available when the profile is missing or tampered.
 
 ## 9. Determinism
 

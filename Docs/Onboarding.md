@@ -65,7 +65,7 @@ install Qt 6.8 or newer (including Charts) with the Qt online installer; do not
 assume a distribution's `qt6-*` packages satisfy that minimum without checking
 their version.
 
-The coverage job also uses the pinned Python tools `gcovr==8.5` and
+The coverage job also uses the pinned Python tools `gcovr==8.7` and
 `diff-cover==10.0.0`. See [`Specs/CiDevFlow.md`](Specs/CiDevFlow.md) §7 for
 the analyzer and coverage commands.
 

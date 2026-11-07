@@ -59,6 +59,8 @@ struct ReplayPortfolioSection {
   QLabel *marketValueLabel{};
   QLabel *equityLabel{};
   QLabel *pnlLabel{};
+  QLabel *realizedPnlLabel{};
+  QLabel *unrealizedPnlLabel{};
   QLabel *lastPriceLabel{};
   QLabel *barIndexLabel{};
 };
