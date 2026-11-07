@@ -100,9 +100,10 @@ does not add Result or Replay bars. See the
 contract.
 
 For Python Script Strategy, the Backtest page displays the selected symbol,
-range, capital, frozen source identity, and captured parameters. **Validate**
-checks syntax, imports, API/template, parameters, and factory output in the
-managed worker after hash-scoped consent; it never creates a Result.
+range, and capital; it captures the frozen source identity and parameters for
+the run and retains them in Result provenance. **Validate** checks syntax,
+imports, API/template, parameters, and factory output in the managed worker
+after hash-scoped consent; it never creates a Result.
 **Run** starts one worker and one Engine execution. **Cancel** stops the active
 callback under the parent-side deadline and preserves only committed slices.
 The run panel displays progress, bounded structured logs, source-line

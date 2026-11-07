@@ -123,52 +123,90 @@ public:
 
   [[nodiscard]] static core::Result<VerificationFileLock>
   acquire(const std::filesystem::path &directory) {
+    auto result = acquirePath(directory / ".verification-store.lock", true,
+                              "verification store lock");
+    if (!result.ok()) {
+      return result.error();
+    }
+    auto lock = std::move(result).value();
+    if (!lock.has_value()) {
+      return fileError("Unable to lock verification store",
+                       "blocking lock was not acquired");
+    }
+    return std::move(*lock);
+  }
+
+  [[nodiscard]] static core::Result<std::optional<VerificationFileLock>>
+  tryAcquireLease(const std::filesystem::path &directory,
+                  const std::string_view verificationId) {
+    return acquirePath(directory / (std::string{verificationId} + ".lock"),
+                       false, "verification lease");
+  }
+
+private:
+  [[nodiscard]] static core::Result<std::optional<VerificationFileLock>>
+  acquirePath(const std::filesystem::path &path, const bool blocking,
+              const std::string_view lockName) {
     VerificationFileLock lock;
 #if defined(__APPLE__) || defined(__linux__)
-    const auto path = (directory / ".verification-store.lock").string();
+    const auto pathString = path.string();
     int openResult = -1;
+    const bool injectedOpenFailure = [&] {
 #if defined(BTE_ENABLE_TEST_HOOKS)
-    if (const auto injectedError = injectedReproducibilitySystemCallError(
-            testing::ReproducibilitySystemCall::openLock);
-        injectedError != 0) {
-      errno = injectedError;
-    } else
+      if (const auto injectedError = injectedReproducibilitySystemCallError(
+              testing::ReproducibilitySystemCall::openLock);
+          injectedError != 0) {
+        errno = injectedError;
+        return true;
+      }
 #endif
-    {
+      return false;
+    }();
+    if (!injectedOpenFailure) {
       openResult = ::open( // NOLINT(cppcoreguidelines-pro-type-vararg): POSIX
                            // open requires a mode argument when O_CREAT is set.
-          path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
+          pathString.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
     }
     lock.descriptor_ = openResult;
     if (lock.descriptor_ < 0) {
       return fileError(
-          "Unable to open verification store lock",
+          "Unable to open " + std::string{lockName},
           std::error_code{errno, std::generic_category()}.message());
     }
+
+    const auto operation = blocking ? LOCK_EX : LOCK_EX | LOCK_NB;
     int lockResult = -1;
+    const bool injectedLockFailure = [&] {
 #if defined(BTE_ENABLE_TEST_HOOKS)
-    if (const auto injectedError = injectedReproducibilitySystemCallError(
-            testing::ReproducibilitySystemCall::lockExclusive);
-        injectedError != 0) {
-      errno = injectedError;
-    } else
+      if (const auto injectedError = injectedReproducibilitySystemCallError(
+              testing::ReproducibilitySystemCall::lockExclusive);
+          injectedError != 0) {
+        errno = injectedError;
+        return true;
+      }
 #endif
-    {
-      lockResult = ::flock(lock.descriptor_, LOCK_EX);
+      return false;
+    }();
+    if (!injectedLockFailure) {
+      lockResult = ::flock(lock.descriptor_, operation);
     }
     if (lockResult != 0) {
       const auto savedError = errno;
+      if (!blocking && (savedError == EWOULDBLOCK || savedError == EAGAIN)) {
+        return std::optional<VerificationFileLock>{};
+      }
       return fileError(
-          "Unable to lock verification store",
+          "Unable to lock " + std::string{lockName},
           std::error_code{savedError, std::generic_category()}.message());
     }
 #else
-    static_cast<void>(directory);
+    static_cast<void>(path);
+    static_cast<void>(blocking);
+    static_cast<void>(lockName);
 #endif
-    return lock;
+    return std::optional<VerificationFileLock>{std::move(lock)};
   }
 
-private:
   void release() noexcept {
 #if defined(__APPLE__) || defined(__linux__)
     if (descriptor_ >= 0) {
@@ -1205,6 +1243,7 @@ void testing::clearReproducibilitySystemCallFailure() noexcept {
 
 struct VerificationStore::Impl final {
   std::filesystem::path directory;
+  std::map<std::string, VerificationFileLock> activeLeases;
 };
 
 VerificationStore::VerificationStore(std::unique_ptr<Impl> impl)
@@ -1226,7 +1265,12 @@ VerificationStore::open(const std::filesystem::path &resultStoreRoot) {
   }
   auto impl = std::make_unique<Impl>();
   impl->directory = directory;
-  return std::make_unique<VerificationStore>(std::move(impl));
+  auto store = std::make_unique<VerificationStore>(std::move(impl));
+  const auto recovered = store->recoverInterrupted();
+  if (!recovered.ok()) {
+    return recovered.error();
+  }
+  return store;
 }
 
 core::Result<VerificationEvidence>
@@ -1274,8 +1318,18 @@ VerificationStore::create(const RunDescriptor &descriptor) {
         .attempts = {},
         .integrityHash = {},
     };
+    auto leaseResult = VerificationFileLock::tryAcquireLease(
+        impl_->directory, evidence.verificationId);
+    if (!leaseResult.ok()) {
+      return leaseResult.error();
+    }
+    auto lease = std::move(leaseResult).value();
+    if (!lease.has_value()) {
+      continue;
+    }
     auto persisted = persistEvidence(impl_->directory, evidence, true);
     if (persisted.ok()) {
+      impl_->activeLeases.emplace(evidence.verificationId, std::move(*lease));
       return evidence;
     }
     if (persisted.error().code != core::ErrorCode::resourceBusy) {
@@ -1334,6 +1388,9 @@ VerificationStore::beginAttempt(const std::string &verificationId) {
   if (!evidence.ok()) {
     return evidence.error();
   }
+  if (!impl_->activeLeases.contains(verificationId)) {
+    return invalidArgument("Verification lease is not owned by this store");
+  }
   if (evidence.value().status != VerificationStatus::running ||
       evidence.value().attempts.size() >= requiredAttemptCount ||
       (!evidence.value().attempts.empty() &&
@@ -1371,6 +1428,9 @@ VerificationStore::attachResultId(const std::string &verificationId,
   if (!evidence.ok()) {
     return evidence.error();
   }
+  if (!impl_->activeLeases.contains(std::string{verificationId})) {
+    return invalidArgument("Verification lease is not owned by this store");
+  }
   auto updated = std::move(evidence).value();
   auto active = activeAttempt(updated);
   if (!active.ok()) {
@@ -1404,6 +1464,9 @@ core::Result<VerificationEvidence> VerificationStore::completeAttempt(
   auto evidence = loadEvidence(impl_->directory, verificationId);
   if (!evidence.ok()) {
     return evidence.error();
+  }
+  if (!impl_->activeLeases.contains(verificationId)) {
+    return invalidArgument("Verification lease is not owned by this store");
   }
   auto updated = std::move(evidence).value();
   auto active = activeAttempt(updated);
@@ -1448,6 +1511,9 @@ core::Result<VerificationEvidence> VerificationStore::completeAttempt(
   if (!persisted.ok()) {
     return persisted.error();
   }
+  if (updated.status != VerificationStatus::running) {
+    impl_->activeLeases.erase(verificationId);
+  }
   return updated;
 }
 
@@ -1469,6 +1535,9 @@ VerificationStore::failAttempt(const std::string_view verificationId,
   if (!evidence.ok()) {
     return evidence.error();
   }
+  if (!impl_->activeLeases.contains(std::string{verificationId})) {
+    return invalidArgument("Verification lease is not owned by this store");
+  }
   auto updated = std::move(evidence).value();
   auto active = activeAttempt(updated);
   if (!active.ok()) {
@@ -1489,6 +1558,7 @@ VerificationStore::failAttempt(const std::string_view verificationId,
   if (!persisted.ok()) {
     return persisted.error();
   }
+  impl_->activeLeases.erase(std::string{verificationId});
   return updated;
 }
 
@@ -1509,6 +1579,9 @@ VerificationStore::cancelAttempt(const std::string_view verificationId,
   auto evidence = loadEvidence(impl_->directory, verificationId);
   if (!evidence.ok()) {
     return evidence.error();
+  }
+  if (!impl_->activeLeases.contains(std::string{verificationId})) {
+    return invalidArgument("Verification lease is not owned by this store");
   }
   auto updated = std::move(evidence).value();
   auto active = activeAttempt(updated);
@@ -1534,6 +1607,7 @@ VerificationStore::cancelAttempt(const std::string_view verificationId,
   if (!persisted.ok()) {
     return persisted.error();
   }
+  impl_->activeLeases.erase(std::string{verificationId});
   return updated;
 }
 
@@ -1548,6 +1622,9 @@ VerificationStore::cancel(const std::string &verificationId) {
   if (!evidence.ok()) {
     return evidence.error();
   }
+  if (!impl_->activeLeases.contains(verificationId)) {
+    return invalidArgument("Verification lease is not owned by this store");
+  }
   auto updated = std::move(evidence).value();
   if (updated.status != VerificationStatus::running ||
       (!updated.attempts.empty() && attemptIsActive(updated.attempts.back()))) {
@@ -1559,6 +1636,7 @@ VerificationStore::cancel(const std::string &verificationId) {
   if (!persisted.ok()) {
     return persisted.error();
   }
+  impl_->activeLeases.erase(verificationId);
   return updated;
 }
 
@@ -1576,8 +1654,19 @@ VerificationStore::recoverInterrupted() {
   std::vector<VerificationEvidence> recovered;
   for (const auto &path : paths.value()) {
     auto evidence = parseEvidence(path, path.stem().string());
+    const auto verificationId = path.stem().string();
     if (!evidence.ok() ||
-        evidence.value().status != VerificationStatus::running) {
+        evidence.value().status != VerificationStatus::running ||
+        impl_->activeLeases.contains(verificationId)) {
+      continue;
+    }
+    auto leaseResult =
+        VerificationFileLock::tryAcquireLease(impl_->directory, verificationId);
+    if (!leaseResult.ok()) {
+      return leaseResult.error();
+    }
+    auto lease = std::move(leaseResult).value();
+    if (!lease.has_value()) {
       continue;
     }
     auto updated = std::move(evidence).value();

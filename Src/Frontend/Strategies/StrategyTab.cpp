@@ -53,6 +53,8 @@ namespace {
 
 constexpr std::size_t maximumStrategySourceBytes =
     std::size_t{1024} * std::size_t{1024};
+constexpr std::size_t maximumDraftJsonBytes =
+    maximumStrategySourceBytes * 6U + 1024U;
 constexpr auto draftSchemaVersion = 1;
 
 constexpr auto sampleSource = R"PY(import stockbt
@@ -115,7 +117,7 @@ QString normalizedSource(QString source) {
 std::optional<StrategyDraft> readDraft(const std::filesystem::path &path) {
   QFile file{QString::fromStdString(path.string())};
   if (!file.open(QIODevice::ReadOnly) ||
-      file.size() > qint64{2} * 1024 * 1024) {
+      file.size() > static_cast<qint64>(maximumDraftJsonBytes)) {
     return std::nullopt;
   }
   const auto parsed =

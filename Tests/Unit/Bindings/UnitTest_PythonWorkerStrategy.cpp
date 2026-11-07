@@ -372,6 +372,20 @@ TEST(PythonWorkerStrategyTest, cancellationInterruptsModuleStartup) {
   EXPECT_EQ(result.error().code, bte::core::ErrorCode::cancelled);
 }
 
+TEST(PythonWorkerStrategyTest,
+     rejectsStartupWhenCancellationWasRequestedBeforeWorkerCreation) {
+  bte::core::CancellationSource cancellation;
+  cancellation.requestCancellation();
+
+  const auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH,
+      validStrategySource, parameters(), true, true, cancellation.token());
+
+  ASSERT_FALSE(strategy.ok());
+  EXPECT_EQ(strategy.error().code, bte::core::ErrorCode::cancelled);
+  EXPECT_EQ(strategy.error().message, "Python Strategy startup was cancelled.");
+}
+
 TEST(PythonWorkerStrategyTest, cancellationInterruptsStrategyFactoryStartup) {
   bte::core::CancellationSource cancellation;
   const std::string source = R"python(

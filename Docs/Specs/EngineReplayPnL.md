@@ -491,11 +491,14 @@ with identical canonical functional hashes and identical frozen input
 identities produce `verified`. The run's terminal status remains `Completed`;
 `reproducibilityStatus` is separate metadata and is `unverified` until valid
 matching evidence exists. The first mismatch, failure, cancellation, or
-interruption stops further launch. Recovery of any nonterminal verification
-sets it to `interrupted`; it never resumes automatically or receives a
-verified label. Evidence may label a Result only when its complete frozen
-identity matches that Result. Discarding an attempt draft removes that
-attempt's detailed records under the existing explicit policy but does not
+interruption stops further launch. Opening the verification store recovers
+nonterminal records as `interrupted`; it never resumes them automatically or
+gives them a verified label. Each running verification holds a per-record OS
+lease, so another application process leaves a live run alone and recovers it
+only after the owning process releases or loses that lease. Evidence may label
+a Result only when its complete frozen identity matches that Result.
+Discarding an attempt draft removes that attempt's detailed records under the
+existing explicit policy but does not
 rewrite the verification record or promote an incomplete set to verified.
 
 Opening, validating, migrating, saving, and replaying a Result never starts

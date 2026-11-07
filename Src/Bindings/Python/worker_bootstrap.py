@@ -129,10 +129,30 @@ class _NumberRejected(ValueError):
     pass
 
 
-def _parse_integer(text: str) -> int:
+def _exactly_representable_as_binary64(value: int) -> bool:
+    try:
+        converted = float(value)
+    except OverflowError:
+        return False
+    return math.isfinite(converted) and int(converted) == value
+
+
+def _parse_integer(text: str) -> int | float:
     value = int(text)
     if abs(value) > MAXIMUM_SAFE_INTEGER:
-        raise _NumberRejected("JSON integer exceeds the exactly representable range")
+        if _exactly_representable_as_binary64(value):
+            return value
+        try:
+            rounded = float(value)
+        except OverflowError as error:
+            raise _NumberRejected(
+                "JSON integer is not a canonical binary64 value"
+            ) from error
+        if not math.isfinite(rounded) or _serialize_number(rounded) != text:
+            raise _NumberRejected(
+                "JSON integer is not a canonical binary64 value"
+            )
+        return rounded
     return value
 
 
@@ -232,7 +252,14 @@ def _serialize_json(value: object, depth: int = 0) -> str:
         return "false"
     if isinstance(value, int):
         if abs(value) > MAXIMUM_SAFE_INTEGER:
-            raise ProtocolViolation("JSON integer exceeds the exactly representable range")
+            if not _exactly_representable_as_binary64(value):
+                rounded = _serialize_number(float(value))
+                if rounded != str(value):
+                    raise ProtocolViolation(
+                        "JSON integer is not a canonical binary64 value"
+                    )
+                return rounded
+            return _serialize_number(float(value))
         return str(value)
     if isinstance(value, float):
         return _serialize_number(value)
@@ -371,33 +398,42 @@ class _OrderCommands:
         self._symbol = symbol
         self._enabled = enabled
         self._commands: list[dict[str, object]] = []
+        self._rejection: tuple[str, str] | None = None
 
     def __getattr__(self, name: str) -> object:
         if name.startswith("_"):
             raise AttributeError(name)
-        raise WorkerFailure(
-            "StrategyCommandRejected", f"unsupported order method {name!r}"
-        )
+        self._reject("StrategyCommandRejected", f"unsupported order method {name!r}")
+
+    def _reject(self, code: str, message: str) -> None:
+        if self._rejection is None:
+            self._rejection = (code, message)
+        raise WorkerFailure(*self._rejection)
+
+    def _raise_if_rejected(self) -> None:
+        if self._rejection is not None:
+            raise WorkerFailure(*self._rejection)
 
     def _append(self, command: dict[str, object]) -> None:
+        self._raise_if_rejected()
         if not self._enabled:
-            raise WorkerFailure("StrategyCommandRejected", "orders are unavailable in this hook")
+            self._reject("StrategyCommandRejected", "orders are unavailable in this hook")
         if len(self._commands) >= MAXIMUM_COMMANDS_PER_CALLBACK:
-            raise WorkerFailure("StrategyCommandRejected", "only one command is allowed per callback")
+            self._reject("StrategyCommandRejected", "only one command is allowed per callback")
         self._commands.append(command)
 
     def buy_market(self, symbol: str, *, quantity: int) -> None:
         if symbol != self._symbol:
-            raise WorkerFailure("StrategyCommandRejected", "command symbol must equal ctx.symbol")
+            self._reject("StrategyCommandRejected", "command symbol must equal ctx.symbol")
         if isinstance(quantity, bool) or not isinstance(quantity, int):
-            raise WorkerFailure("StrategyCommandRejected", "quantity must be a whole-share integer")
+            self._reject("StrategyCommandRejected", "quantity must be a whole-share integer")
         if quantity < 1 or quantity > 1_000_000_000:
-            raise WorkerFailure("StrategyCommandRejected", "quantity is outside the supported range")
+            self._reject("StrategyCommandRejected", "quantity is outside the supported range")
         self._append({"kind": "buy_market", "quantity_shares": quantity, "symbol": symbol})
 
     def close_position(self, symbol: str) -> None:
         if symbol != self._symbol:
-            raise WorkerFailure("StrategyCommandRejected", "command symbol must equal ctx.symbol")
+            self._reject("StrategyCommandRejected", "command symbol must equal ctx.symbol")
         self._append({"kind": "close_position", "quantity_shares": 0, "symbol": symbol})
 
 
@@ -1011,8 +1047,10 @@ def _run_hook(strategy: object, hook_name: str, payload: object,
     try:
         if hook is not None:
             result = hook(context) if hook_name != "on_fill" else hook(immutable_fill, context)
-            if hook_name == "on_market" and result is not None:
-                raise WorkerFailure("StrategyContractViolation", "on_market must submit commands through ctx.orders")
+            if hook_name == "on_market":
+                context.orders._raise_if_rejected()
+                if result is not None:
+                    raise WorkerFailure("StrategyContractViolation", "on_market must submit commands through ctx.orders")
     except WorkerFailure as error:
         error.diagnostics = _hook_diagnostics(hook_name, context.log, error)
         raise

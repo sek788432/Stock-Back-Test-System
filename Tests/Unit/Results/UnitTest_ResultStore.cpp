@@ -923,6 +923,28 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
+       reproducibilityVerificationCreateReportsLeaseOpenFailure) {
+  using bte::results::testing::ReproducibilitySystemCall;
+  const auto directory = root_ / "VerificationLeaseOpenFailure";
+  auto store = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(store.ok()) << store.error().message;
+
+  const auto created = [&] {
+    ReproducibilitySystemCallFailure inject{ReproducibilitySystemCall::openLock,
+                                            1};
+    return store.value()->create(schemaThreeDescriptor());
+  }();
+
+  ASSERT_FALSE(created.ok());
+  EXPECT_EQ(created.error().code, bte::core::ErrorCode::permissionDenied);
+  EXPECT_NE(created.error().message.find("Unable to open verification lease"),
+            std::string::npos);
+  const auto listed = store.value()->list();
+  ASSERT_TRUE(listed.ok()) << listed.error().message;
+  EXPECT_TRUE(listed.value().empty());
+}
+
+TEST_F(ResultStoreFixture,
        reproducibilityEvidenceReplacementFailurePreservesPriorEvidence) {
   using bte::results::testing::ReproducibilitySystemCall;
   const auto directory = root_ / "VerificationReplaceFailure";
@@ -964,7 +986,7 @@ TEST_F(ResultStoreFixture,
   std::string secondErrorMessage;
   {
     ReproducibilitySystemCallFailure inject{ReproducibilitySystemCall::openLock,
-                                            1};
+                                            2};
     const auto first = store.value()->create(schemaThreeDescriptor());
     ASSERT_TRUE(first.ok()) << first.error().message;
     firstVerificationId = first.value().verificationId;
@@ -982,6 +1004,177 @@ TEST_F(ResultStoreFixture,
   ASSERT_EQ(listed.value().size(), 1U);
   EXPECT_EQ(listed.value().front().verificationId, firstVerificationId);
   EXPECT_TRUE(listed.value().front().evidence.has_value());
+}
+
+TEST_F(ResultStoreFixture, verificationMutationsRequireTheOwningStoreLease) {
+  const auto directory = root_ / "VerificationForeignLease";
+  const auto descriptor = schemaThreeDescriptor();
+  auto owner = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(owner.ok()) << owner.error().message;
+  const auto created = owner.value()->create(descriptor);
+  ASSERT_TRUE(created.ok()) << created.error().message;
+
+  auto observer = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(observer.ok()) << observer.error().message;
+  const auto &verificationId = created.value().verificationId;
+  const std::string resultId(32, 'a');
+  const bte::results::FinalizedResult result{
+      .resultId = resultId,
+      .canonicalResultHash = std::string(64, 'b'),
+  };
+
+  EXPECT_FALSE(
+      observer.value()->attachResultId("missing-verification", resultId).ok());
+  EXPECT_FALSE(observer.value()->beginAttempt(verificationId).ok());
+
+  const auto ownerAttempt = owner.value()->beginAttempt(verificationId);
+  ASSERT_TRUE(ownerAttempt.ok()) << ownerAttempt.error().message;
+  EXPECT_EQ(ownerAttempt.value().progressOrdinal, 1U);
+  EXPECT_FALSE(observer.value()->attachResultId(verificationId, resultId).ok());
+  const auto ownerAttached =
+      owner.value()->attachResultId(verificationId, resultId);
+  ASSERT_TRUE(ownerAttached.ok()) << ownerAttached.error().message;
+  const auto beforeObserverMutations = owner.value()->load(verificationId);
+  ASSERT_TRUE(beforeObserverMutations.ok())
+      << beforeObserverMutations.error().message;
+  EXPECT_FALSE(observer.value()
+                   ->completeAttempt(verificationId, descriptor, result,
+                                     bte::results::RunStatus::completed)
+                   .ok());
+  EXPECT_FALSE(observer.value()
+                   ->failAttempt(verificationId, "fixtureFailure",
+                                 "Observer does not own the lease")
+                   .ok());
+  EXPECT_FALSE(
+      observer.value()
+          ->cancelAttempt(verificationId, "Observer does not own the lease")
+          .ok());
+  const auto afterObserverMutations = owner.value()->load(verificationId);
+  ASSERT_TRUE(afterObserverMutations.ok())
+      << afterObserverMutations.error().message;
+  EXPECT_EQ(afterObserverMutations.value(), beforeObserverMutations.value());
+
+  const auto cancelDirectory = root_ / "VerificationForeignLeaseCancel";
+  auto cancelOwner = bte::results::VerificationStore::open(cancelDirectory);
+  ASSERT_TRUE(cancelOwner.ok()) << cancelOwner.error().message;
+  const auto cancelCreated = cancelOwner.value()->create(descriptor);
+  ASSERT_TRUE(cancelCreated.ok()) << cancelCreated.error().message;
+  auto cancelObserver = bte::results::VerificationStore::open(cancelDirectory);
+  ASSERT_TRUE(cancelObserver.ok()) << cancelObserver.error().message;
+  EXPECT_FALSE(cancelObserver.value()
+                   ->cancel(cancelCreated.value().verificationId)
+                   .ok());
+  const auto cancelUnchanged =
+      cancelOwner.value()->load(cancelCreated.value().verificationId);
+  ASSERT_TRUE(cancelUnchanged.ok()) << cancelUnchanged.error().message;
+  EXPECT_EQ(cancelUnchanged.value(), cancelCreated.value());
+}
+
+TEST_F(ResultStoreFixture,
+       verificationOperationsFailClosedWhenStoreLockCannotOpen) {
+  using bte::results::testing::ReproducibilitySystemCall;
+  const auto directory = root_ / "VerificationLockOpenFailures";
+  const auto descriptor = schemaThreeDescriptor();
+  using Operation =
+      std::function<bool(bte::results::VerificationStore &, const std::string &,
+                         const bte::results::RunDescriptor &,
+                         const bte::results::FinalizedResult &)>;
+  struct OperationCase final {
+    const char *name;
+    bool needsActiveAttempt;
+    bool needsResultId;
+    Operation operation;
+  };
+  const std::array<OperationCase, 10> operations{
+      OperationCase{"beginAttempt", false, false,
+                    [&](auto &store, const auto &id, const auto &,
+                        const auto &) { return store.beginAttempt(id).ok(); }},
+      OperationCase{
+          "attachResultId", true, false,
+          [&](auto &store, const auto &id, const auto &, const auto &result) {
+            return store.attachResultId(id, result.resultId).ok();
+          }},
+      OperationCase{"completeAttempt", true, true,
+                    [&](auto &store, const auto &id,
+                        const auto &attemptDescriptor, const auto &result) {
+                      return store
+                          .completeAttempt(id, attemptDescriptor, result,
+                                           bte::results::RunStatus::completed)
+                          .ok();
+                    }},
+      OperationCase{
+          "failAttempt", true, false,
+          [&](auto &store, const auto &id, const auto &, const auto &) {
+            return store.failAttempt(id, "fixtureFailure", "Fixture failure")
+                .ok();
+          }},
+      OperationCase{
+          "cancelAttempt", true, false,
+          [&](auto &store, const auto &id, const auto &, const auto &) {
+            return store.cancelAttempt(id, "Fixture cancellation").ok();
+          }},
+      OperationCase{"cancel", false, false,
+                    [&](auto &store, const auto &id, const auto &,
+                        const auto &) { return store.cancel(id).ok(); }},
+      OperationCase{"recoverInterrupted", false, false,
+                    [&](auto &store, const auto &, const auto &, const auto &) {
+                      return store.recoverInterrupted().ok();
+                    }},
+      OperationCase{
+          "hasVerifiedEvidence", false, false,
+          [&](auto &store, const auto &, const auto &input, const auto &) {
+            return store.hasVerifiedEvidence(input).ok();
+          }},
+      OperationCase{"hasVerifiedResult", false, false,
+                    [&](auto &store, const auto &, const auto &input,
+                        const auto &result) {
+                      return store.hasVerifiedResult(input, result).ok();
+                    }},
+      OperationCase{"list", false, false,
+                    [&](auto &store, const auto &, const auto &, const auto &) {
+                      return store.list().ok();
+                    }},
+  };
+
+  for (const auto &operation : operations) {
+    const auto operationDirectory = directory / operation.name;
+    auto storeResult =
+        bte::results::VerificationStore::open(operationDirectory);
+    ASSERT_TRUE(storeResult.ok()) << storeResult.error().message;
+    auto store = std::move(storeResult).value();
+    const auto created = store->create(descriptor);
+    ASSERT_TRUE(created.ok()) << created.error().message;
+    const auto verificationId = created.value().verificationId;
+    const auto resultId = std::string(32, 'a');
+    const bte::results::FinalizedResult result{
+        .resultId = resultId,
+        .canonicalResultHash = std::string(64, 'b'),
+    };
+    if (operation.needsActiveAttempt) {
+      const auto started = store->beginAttempt(verificationId);
+      ASSERT_TRUE(started.ok())
+          << operation.name << ": " << started.error().message;
+    }
+    if (operation.needsResultId) {
+      const auto attached = store->attachResultId(verificationId, resultId);
+      ASSERT_TRUE(attached.ok())
+          << operation.name << ": " << attached.error().message;
+    }
+    const auto before = store->load(verificationId);
+    ASSERT_TRUE(before.ok())
+        << operation.name << ": " << before.error().message;
+
+    const auto succeeded = [&] {
+      ReproducibilitySystemCallFailure inject{
+          ReproducibilitySystemCall::openLock};
+      return operation.operation(*store, verificationId, descriptor, result);
+    }();
+    EXPECT_FALSE(succeeded) << operation.name;
+
+    const auto after = store->load(verificationId);
+    ASSERT_TRUE(after.ok()) << operation.name << ": " << after.error().message;
+    EXPECT_EQ(after.value(), before.value()) << operation.name;
+  }
 }
 
 TEST_F(
@@ -1858,36 +2051,8 @@ TEST_F(ResultStoreFixture, verificationStoreRejectsSymlinkedLockFile) {
   std::filesystem::create_symlink(target, lockPath);
 
   const auto store = bte::results::VerificationStore::open(resultStoreRoot);
-  ASSERT_TRUE(store.ok()) << store.error().message;
-  const auto verificationId = std::string(32, '1');
-  const auto descriptor = schemaThreeDescriptor();
-  const auto finalized = bte::results::FinalizedResult{
-      .resultId = std::string(32, '2'),
-      .canonicalResultHash = std::string(64, 'a'),
-  };
-  const auto expectLockFailure = [](const auto &result) {
-    EXPECT_FALSE(result.ok());
-    if (!result.ok()) {
-      EXPECT_EQ(result.error().code, bte::core::ErrorCode::permissionDenied);
-    }
-  };
-
-  expectLockFailure(store.value()->create(descriptor));
-  expectLockFailure(store.value()->load(verificationId));
-  expectLockFailure(store.value()->list());
-  expectLockFailure(store.value()->beginAttempt(verificationId));
-  expectLockFailure(
-      store.value()->attachResultId(verificationId, finalized.resultId));
-  expectLockFailure(
-      store.value()->completeAttempt(verificationId, descriptor, finalized,
-                                     bte::results::RunStatus::completed));
-  expectLockFailure(
-      store.value()->failAttempt(verificationId, "workerFailed", "failed"));
-  expectLockFailure(store.value()->cancelAttempt(verificationId, "canceled"));
-  expectLockFailure(store.value()->cancel(verificationId));
-  expectLockFailure(store.value()->recoverInterrupted());
-  expectLockFailure(store.value()->hasVerifiedEvidence(descriptor));
-  expectLockFailure(store.value()->hasVerifiedResult(descriptor, finalized));
+  ASSERT_FALSE(store.ok());
+  EXPECT_EQ(store.error().code, bte::core::ErrorCode::permissionDenied);
   EXPECT_TRUE(std::filesystem::is_symlink(lockPath));
   std::ifstream preserved{target};
   ASSERT_TRUE(preserved.is_open());
@@ -2123,6 +2288,85 @@ TEST_F(ResultStoreFixture,
   EXPECT_EQ(nonTerminal.error().code, bte::core::ErrorCode::invalidArgument);
 }
 
+TEST_F(ResultStoreFixture,
+       verificationStoreOpenRecoversAbandonedRunsAutomatically) {
+  const auto directory = root_ / "VerificationAutomaticRecovery";
+  const auto descriptor = schemaThreeDescriptor();
+  auto abandonedStoreResult = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(abandonedStoreResult.ok())
+      << abandonedStoreResult.error().message;
+  auto abandonedStore = std::move(abandonedStoreResult).value();
+  const auto created = abandonedStore->create(descriptor);
+  ASSERT_TRUE(created.ok()) << created.error().message;
+  const auto started =
+      abandonedStore->beginAttempt(created.value().verificationId);
+  ASSERT_TRUE(started.ok()) << started.error().message;
+  abandonedStore.reset();
+
+  auto reopened = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(reopened.ok()) << reopened.error().message;
+  const auto recovered = reopened.value()->load(created.value().verificationId);
+  ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+  EXPECT_EQ(recovered.value().status,
+            bte::results::VerificationStatus::interrupted);
+  ASSERT_EQ(recovered.value().attempts.size(), 1U);
+  EXPECT_EQ(recovered.value().attempts.front().error->code,
+            "applicationInterrupted");
+}
+
+TEST_F(ResultStoreFixture,
+       verificationStoreOpenReportsLeaseFailureDuringRecovery) {
+  using bte::results::testing::ReproducibilitySystemCall;
+  const auto directory = root_ / "VerificationRecoveryLeaseFailure";
+  const auto descriptor = schemaThreeDescriptor();
+  auto abandonedStoreResult = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(abandonedStoreResult.ok())
+      << abandonedStoreResult.error().message;
+  auto abandonedStore = std::move(abandonedStoreResult).value();
+  const auto created = abandonedStore->create(descriptor);
+  ASSERT_TRUE(created.ok()) << created.error().message;
+  ASSERT_TRUE(
+      abandonedStore->beginAttempt(created.value().verificationId).ok());
+  abandonedStore.reset();
+
+  const auto failedOpen = [&] {
+    ReproducibilitySystemCallFailure inject{ReproducibilitySystemCall::openLock,
+                                            1};
+    return bte::results::VerificationStore::open(directory);
+  }();
+
+  ASSERT_FALSE(failedOpen.ok());
+  EXPECT_EQ(failedOpen.error().code, bte::core::ErrorCode::permissionDenied);
+  EXPECT_NE(
+      failedOpen.error().message.find("Unable to open verification lease"),
+      std::string::npos);
+  auto reopened = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(reopened.ok()) << reopened.error().message;
+  const auto recovered = reopened.value()->load(created.value().verificationId);
+  ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+  EXPECT_EQ(recovered.value().status,
+            bte::results::VerificationStatus::interrupted);
+}
+
+TEST_F(ResultStoreFixture, verificationStoreOpenLeavesAnotherLiveRunAlone) {
+  const auto directory = root_ / "VerificationLiveRun";
+  auto activeStore = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(activeStore.ok()) << activeStore.error().message;
+  const auto created = activeStore.value()->create(schemaThreeDescriptor());
+  ASSERT_TRUE(created.ok()) << created.error().message;
+  ASSERT_TRUE(
+      activeStore.value()->beginAttempt(created.value().verificationId).ok());
+
+  auto observer = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(observer.ok()) << observer.error().message;
+  const auto stillActive =
+      observer.value()->load(created.value().verificationId);
+  ASSERT_TRUE(stillActive.ok()) << stillActive.error().message;
+  EXPECT_EQ(stillActive.value().status,
+            bte::results::VerificationStatus::running);
+  EXPECT_TRUE(observer.value()->recoverInterrupted().value().empty());
+}
+
 TEST_F(
     ResultStoreFixture,
     reproducibilityVerificationRecoversInterruptedAndPreservesCorruptEvidence) {
@@ -2130,35 +2374,35 @@ TEST_F(
   const auto value = schemaThreeDescriptor();
   auto results = bte::results::ResultStore::open(directory, root_ / "Data");
   ASSERT_TRUE(results.ok()) << results.error().message;
-  auto verifications = bte::results::VerificationStore::open(directory);
-  ASSERT_TRUE(verifications.ok()) << verifications.error().message;
-  auto evidence = verifications.value()->create(value);
+  auto verificationsResult = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(verificationsResult.ok()) << verificationsResult.error().message;
+  auto verifications = std::move(verificationsResult).value();
+  auto evidence = verifications->create(value);
   ASSERT_TRUE(evidence.ok()) << evidence.error().message;
   const auto attemptResult = createSchemaThreeResult(
       *results.value(), value, bte::results::RunStatus::completed, "attempt");
   ASSERT_TRUE(attemptResult.ok()) << attemptResult.error().message;
-  ASSERT_TRUE(verifications.value()
-                  ->beginAttempt(evidence.value().verificationId)
-                  .ok());
-  EXPECT_FALSE(verifications.value()
-                   ->beginAttempt(evidence.value().verificationId)
-                   .ok());
-  ASSERT_TRUE(verifications.value()
+  ASSERT_TRUE(
+      verifications->beginAttempt(evidence.value().verificationId).ok());
+  EXPECT_FALSE(
+      verifications->beginAttempt(evidence.value().verificationId).ok());
+  ASSERT_TRUE(verifications
                   ->attachResultId(evidence.value().verificationId,
                                    attemptResult.value().resultId)
                   .ok());
 
+  verifications.reset();
   auto reopened = bte::results::VerificationStore::open(directory);
   ASSERT_TRUE(reopened.ok()) << reopened.error().message;
-  const auto recovered = reopened.value()->recoverInterrupted();
+  const auto recovered =
+      reopened.value()->load(evidence.value().verificationId);
   ASSERT_TRUE(recovered.ok()) << recovered.error().message;
-  ASSERT_EQ(recovered.value().size(), 1U);
-  EXPECT_EQ(recovered.value().front().status,
+  EXPECT_EQ(recovered.value().status,
             bte::results::VerificationStatus::interrupted);
-  ASSERT_EQ(recovered.value().front().attempts.size(), 1U);
-  EXPECT_EQ(recovered.value().front().attempts.front().resultId,
+  ASSERT_EQ(recovered.value().attempts.size(), 1U);
+  EXPECT_EQ(recovered.value().attempts.front().resultId,
             attemptResult.value().resultId);
-  EXPECT_EQ(recovered.value().front().attempts.front().terminalStatus,
+  EXPECT_EQ(recovered.value().attempts.front().terminalStatus,
             bte::results::RunStatus::interrupted);
   EXPECT_FALSE(
       reopened.value()->beginAttempt(evidence.value().verificationId).ok());
@@ -2229,25 +2473,26 @@ TEST_F(
 TEST_F(ResultStoreFixture,
        reproducibilityRecoveryPreservesAnAttemptWithoutPublishedResultId) {
   const auto directory = root_ / "VerificationRecoveryWithoutResult";
-  auto store = bte::results::VerificationStore::open(directory);
-  ASSERT_TRUE(store.ok()) << store.error().message;
-  auto evidence = store.value()->create(schemaThreeDescriptor());
+  auto storeResult = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(storeResult.ok()) << storeResult.error().message;
+  auto store = std::move(storeResult).value();
+  auto evidence = store->create(schemaThreeDescriptor());
   ASSERT_TRUE(evidence.ok()) << evidence.error().message;
   const auto verificationId = evidence.value().verificationId;
-  const auto started = store.value()->beginAttempt(verificationId);
+  const auto started = store->beginAttempt(verificationId);
   ASSERT_TRUE(started.ok()) << started.error().message;
   ASSERT_FALSE(started.value().attempts.back().resultId.has_value());
 
+  store.reset();
   auto reopened = bte::results::VerificationStore::open(directory);
   ASSERT_TRUE(reopened.ok()) << reopened.error().message;
-  const auto recovered = reopened.value()->recoverInterrupted();
+  const auto recovered = reopened.value()->load(verificationId);
 
   ASSERT_TRUE(recovered.ok()) << recovered.error().message;
-  ASSERT_EQ(recovered.value().size(), 1U);
-  EXPECT_EQ(recovered.value().front().status,
+  EXPECT_EQ(recovered.value().status,
             bte::results::VerificationStatus::interrupted);
-  ASSERT_EQ(recovered.value().front().attempts.size(), 1U);
-  const auto &attempt = recovered.value().front().attempts.front();
+  ASSERT_EQ(recovered.value().attempts.size(), 1U);
+  const auto &attempt = recovered.value().attempts.front();
   EXPECT_FALSE(attempt.resultId.has_value());
   EXPECT_FALSE(attempt.terminalStatus.has_value());
   ASSERT_TRUE(attempt.error.has_value());
@@ -2369,10 +2614,11 @@ TEST_F(ResultStoreFixture,
 TEST_F(ResultStoreFixture,
        reproducibilityRecoveryBeforeFirstAttemptDoesNotInventProgress) {
   const auto directory = root_ / "VerificationRecoveryBeforeAttempt";
-  auto store = bte::results::VerificationStore::open(directory);
-  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto storeResult = bte::results::VerificationStore::open(directory);
+  ASSERT_TRUE(storeResult.ok()) << storeResult.error().message;
+  auto store = std::move(storeResult).value();
   const auto descriptor = schemaThreeDescriptor();
-  const auto created = store.value()->create(descriptor);
+  const auto created = store->create(descriptor);
   ASSERT_TRUE(created.ok()) << created.error().message;
   ASSERT_TRUE(created.value().attempts.empty());
   EXPECT_EQ(created.value().progressOrdinal, 0U);
@@ -2381,44 +2627,43 @@ TEST_F(ResultStoreFixture,
       .resultId = std::string(32, '1'),
       .canonicalResultHash = std::string(64, 'a'),
   };
-  const auto noResultAssignment = store.value()->attachResultId(
-      created.value().verificationId, result.resultId);
+  const auto noResultAssignment =
+      store->attachResultId(created.value().verificationId, result.resultId);
   ASSERT_FALSE(noResultAssignment.ok());
   EXPECT_EQ(noResultAssignment.error().code,
             bte::core::ErrorCode::invalidArgument);
-  const auto noCompletion = store.value()->completeAttempt(
-      created.value().verificationId, descriptor, result,
-      bte::results::RunStatus::completed);
+  const auto noCompletion =
+      store->completeAttempt(created.value().verificationId, descriptor, result,
+                             bte::results::RunStatus::completed);
   ASSERT_FALSE(noCompletion.ok());
   EXPECT_EQ(noCompletion.error().code, bte::core::ErrorCode::invalidArgument);
-  const auto noFailure = store.value()->failAttempt(
-      created.value().verificationId, "workerFailed", "worker failed");
+  const auto noFailure = store->failAttempt(created.value().verificationId,
+                                            "workerFailed", "worker failed");
   ASSERT_FALSE(noFailure.ok());
   EXPECT_EQ(noFailure.error().code, bte::core::ErrorCode::invalidArgument);
-  const auto noAttemptCancellation = store.value()->cancelAttempt(
+  const auto noAttemptCancellation = store->cancelAttempt(
       created.value().verificationId, "cancellation requested");
   ASSERT_FALSE(noAttemptCancellation.ok());
   EXPECT_EQ(noAttemptCancellation.error().code,
             bte::core::ErrorCode::invalidArgument);
-  const auto stillRunning = store.value()->load(created.value().verificationId);
+  const auto stillRunning = store->load(created.value().verificationId);
   ASSERT_TRUE(stillRunning.ok()) << stillRunning.error().message;
   EXPECT_EQ(stillRunning.value(), created.value());
 
+  store.reset();
   auto reopened = bte::results::VerificationStore::open(directory);
   ASSERT_TRUE(reopened.ok()) << reopened.error().message;
-  const auto recovered = reopened.value()->recoverInterrupted();
+  const auto recovered = reopened.value()->load(created.value().verificationId);
   ASSERT_TRUE(recovered.ok()) << recovered.error().message;
-  ASSERT_EQ(recovered.value().size(), 1U);
-  EXPECT_EQ(recovered.value().front().verificationId,
-            created.value().verificationId);
-  EXPECT_EQ(recovered.value().front().status,
+  EXPECT_EQ(recovered.value().verificationId, created.value().verificationId);
+  EXPECT_EQ(recovered.value().status,
             bte::results::VerificationStatus::interrupted);
-  EXPECT_EQ(recovered.value().front().progressOrdinal, 0U);
-  EXPECT_TRUE(recovered.value().front().attempts.empty());
+  EXPECT_EQ(recovered.value().progressOrdinal, 0U);
+  EXPECT_TRUE(recovered.value().attempts.empty());
 
   const auto persisted = reopened.value()->load(created.value().verificationId);
   ASSERT_TRUE(persisted.ok()) << persisted.error().message;
-  EXPECT_EQ(persisted.value(), recovered.value().front());
+  EXPECT_EQ(persisted.value(), recovered.value());
   const auto repeatedRecovery = reopened.value()->recoverInterrupted();
   ASSERT_TRUE(repeatedRecovery.ok()) << repeatedRecovery.error().message;
   EXPECT_TRUE(repeatedRecovery.value().empty());

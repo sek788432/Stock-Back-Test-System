@@ -120,6 +120,7 @@ private slots:
   void importsUtf8NormalizesLineEndingsAndRejectsInvalidFiles();
   void fileDialogButtonsLoadAndExportPythonSource();
   void acceptsSourceAtTheOneMiBLimit();
+  void restoresOneMiBSourceAfterJsonEscaping();
   void autosavesAfterFiveHundredMillisecondsOfIdle();
   void savesDirtyDraftBeforeLoadingReplacementWhenRequested();
   void discardsDirtyDraftBeforeLoadingReplacementWhenRequested();
@@ -385,6 +386,25 @@ void StrategyTabTest::acceptsSourceAtTheOneMiBLimit() {
   QCOMPARE(QString::fromStdString(tab.sourceUtf8()),
            QString::fromUtf8(expectedSource));
   QCOMPARE(tab.sourceUtf8().size(), std::size_t{1024 * 1024});
+}
+
+void StrategyTabTest::restoresOneMiBSourceAfterJsonEscaping() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  const std::string expectedSource(1024 * 1024, '\t');
+  {
+    bte::frontend::StrategyTab tab{root, {}};
+    auto *editor =
+        tab.findChild<QPlainTextEdit *>("pythonStrategySourceEditor");
+    QVERIFY(editor != nullptr);
+    editor->setPlainText(QString::fromStdString(expectedSource));
+    QCOMPARE(tab.sourceUtf8().size(), std::size_t{1024 * 1024});
+    QVERIFY(tab.saveDraft());
+  }
+
+  bte::frontend::StrategyTab recovered{root, {}};
+  QCOMPARE(recovered.sourceUtf8(), expectedSource);
 }
 
 void StrategyTabTest::autosavesAfterFiveHundredMillisecondsOfIdle() {

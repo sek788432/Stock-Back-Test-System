@@ -325,24 +325,23 @@ LLVM 18 and the hash-locked Python coverage tools. `RunQuality.sh` configures
 the coverage build with those artifacts when verification succeeds and applies
 the same local gates.
 
+On macOS arm64, prepare the verified runtime artifacts first when the
+managed Python runtime tests should be included. `RunQuality.sh` skips that
+optional coverage when the cache is unavailable. The script owns build setup,
+per-process profile collection, report generation, and both changed-code
+thresholds; use it instead of invoking gcovr directly.
+
 ```bash
-python3 Tools/BuildPythonRuntime.py \\
-  --download-artifacts \\
+python3 Tools/BuildPythonRuntime.py \
+  --download-artifacts \
   --artifacts-dir Output/PythonRuntimeArtifacts
-python3 Tools/BuildPythonRuntime.py \\
-  --verify-artifacts \\
+python3 Tools/BuildPythonRuntime.py \
+  --verify-artifacts \
   --artifacts-dir Output/PythonRuntimeArtifacts
-brew install llvm@18
-cmake -E remove_directory Output/coverage
-CC=clang CXX=clang++ cmake --preset coverage \\
-  -DBTE_BUILD_QT_APP=ON \\
-  -DBTE_BUNDLE_MANAGED_PYTHON_RUNTIME=ON \\
-  -DBTE_PYTHON_RUNTIME_ARTIFACTS_DIR=Output/PythonRuntimeArtifacts
-cmake --build --preset coverage --parallel
-ctest --preset coverage --no-tests=error
-python3 -m gcovr --root . --filter 'Src/' --merge-mode-functions merge-use-line-min --decisions --gcov-suspicious-hits-threshold 0 --cobertura coverage.xml --json coverage.json --html-details coverage.html
-diff-cover coverage.xml --compare-branch=<base> --fail-under=98
-python3 Tools/CheckDiffBranchCoverage.py coverage.json --base <base> --head <head> --fail-under 90
+VCPKG_ROOT="$PWD/Output/Vcpkg" ./RunQuality.sh \
+  --coverage-only \
+  --base origin/main \
+  --head HEAD
 ```
 
 The CI coverage job uses Clang source-based instrumentation

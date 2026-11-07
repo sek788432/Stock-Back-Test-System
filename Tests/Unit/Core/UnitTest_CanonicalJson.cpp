@@ -40,6 +40,36 @@ TEST(CanonicalJsonTest, normalizesSignedFixedAndScientificBinary64Values) {
       R"json({"negativeFixed":-12.5,"negativeScientific":-1.25e-7,"positiveScientific":1.25e+30,"smallFixed":0.0000012})json");
 }
 
+TEST(CanonicalJsonTest,
+     roundTripsCanonicalBinary64ValuesWithIntegerLookingDecimals) {
+  const nlohmann::json value{
+      {"value", 1.0000000000000001e18},
+  };
+  const auto bytes = bte::core::serializeCanonicalJson(value);
+  ASSERT_TRUE(bytes.ok()) << bytes.error().message;
+  EXPECT_EQ(bytes.value(), R"json({"value":1000000000000000100})json");
+
+  const auto parsed = bte::core::parseCanonicalJson(bytes.value());
+  ASSERT_TRUE(parsed.ok()) << parsed.error().message;
+  const auto roundTripped = bte::core::serializeCanonicalJson(parsed.value());
+  ASSERT_TRUE(roundTripped.ok()) << roundTripped.error().message;
+  EXPECT_EQ(roundTripped.value(), bytes.value());
+
+  const auto minimumIntegerBytes = bte::core::serializeCanonicalJson(
+      std::numeric_limits<std::int64_t>::min());
+  ASSERT_TRUE(minimumIntegerBytes.ok()) << minimumIntegerBytes.error().message;
+  EXPECT_EQ(minimumIntegerBytes.value(), "-9223372036854776000");
+  const auto parsedMinimumInteger =
+      bte::core::parseCanonicalJson(minimumIntegerBytes.value());
+  ASSERT_TRUE(parsedMinimumInteger.ok())
+      << parsedMinimumInteger.error().message;
+  const auto roundTrippedMinimumInteger =
+      bte::core::serializeCanonicalJson(parsedMinimumInteger.value());
+  ASSERT_TRUE(roundTrippedMinimumInteger.ok())
+      << roundTrippedMinimumInteger.error().message;
+  EXPECT_EQ(roundTrippedMinimumInteger.value(), minimumIntegerBytes.value());
+}
+
 TEST(CanonicalJsonTest, sortsObjectKeysByUtf16CodeUnits) {
   const auto value = bte::core::parseCanonicalJson(
       R"json({"€":"Euro","\r":"Carriage","﮳":"Hebrew","1":"One","😀":"Emoji","\u0080":"Control","ö":"Latin"})json");
@@ -66,8 +96,17 @@ TEST(CanonicalJsonTest,
   ASSERT_TRUE(exactIntegerBytes.ok()) << exactIntegerBytes.error().message;
   EXPECT_EQ(exactIntegerBytes.value(),
             R"json({"max":9007199254740991,"min":-9007199254740991})json");
+  const auto exactBinary64Integer =
+      bte::core::parseCanonicalJson(R"json({"value":9007199254740992})json");
+  ASSERT_TRUE(exactBinary64Integer.ok())
+      << exactBinary64Integer.error().message;
+  const auto exactBinary64Bytes =
+      bte::core::serializeCanonicalJson(exactBinary64Integer.value());
+  ASSERT_TRUE(exactBinary64Bytes.ok()) << exactBinary64Bytes.error().message;
+  EXPECT_EQ(exactBinary64Bytes.value(),
+            R"json({"value":9007199254740992})json");
   EXPECT_FALSE(
-      bte::core::parseCanonicalJson(R"json({"value":9007199254740992})json")
+      bte::core::parseCanonicalJson(R"json({"value":9007199254740993})json")
           .ok());
   const std::string nestedBoundary(128, '[');
   const auto atNestingLimit = bte::core::parseCanonicalJson(
@@ -130,7 +169,7 @@ TEST(CanonicalJsonTest, rejectsInvalidUtf8InParsedKeysAndStringValues) {
   }
 }
 
-TEST(CanonicalJsonTest, acceptsJsonScalarsAndRejectsMalformedOrUnsafeNumbers) {
+TEST(CanonicalJsonTest, acceptsExactBinary64IntegersAndRejectsInexactValues) {
   for (const auto input :
        {"null", "true", "false", "0", "-1", "1.25", "\"text\"", "[]", "{}"}) {
     const auto parsed = bte::core::parseCanonicalJson(input);
@@ -141,16 +180,30 @@ TEST(CanonicalJsonTest, acceptsJsonScalarsAndRejectsMalformedOrUnsafeNumbers) {
        {"", "{", "[1,]", "true false", R"({"outer":{"key":1,"key":2}})"}) {
     EXPECT_FALSE(bte::core::parseCanonicalJson(input).ok()) << input;
   }
-  EXPECT_FALSE(bte::core::parseCanonicalJson("-9007199254740992").ok());
+  EXPECT_TRUE(bte::core::parseCanonicalJson("-9007199254740992").ok());
+  EXPECT_FALSE(bte::core::parseCanonicalJson("9007199254740993").ok());
+  EXPECT_FALSE(bte::core::parseCanonicalJson("-9007199254740993").ok());
   EXPECT_FALSE(bte::core::parseCanonicalJson("1e400").ok());
 }
 
-TEST(CanonicalJsonTest, rejectsUnsafeIntegerBinaryAndExcessivelyNestedValues) {
-  const auto oversizedUnsigned =
+TEST(CanonicalJsonTest, rejectsInexactIntegerBinaryAndExcessivelyNestedValues) {
+  const auto exactUnsigned =
       nlohmann::json::number_unsigned_t{9007199254740992ULL};
-  EXPECT_FALSE(bte::core::serializeCanonicalJson(oversizedUnsigned).ok());
+  EXPECT_TRUE(bte::core::serializeCanonicalJson(exactUnsigned).ok());
+  const auto inexactUnsigned =
+      nlohmann::json::number_unsigned_t{9007199254740993ULL};
+  EXPECT_FALSE(bte::core::serializeCanonicalJson(inexactUnsigned).ok());
+  EXPECT_FALSE(
+      bte::core::serializeCanonicalJson(std::int64_t{-9007199254740993LL})
+          .ok());
+  EXPECT_TRUE(bte::core::serializeCanonicalJson(
+                  std::numeric_limits<std::int64_t>::min())
+                  .ok());
   EXPECT_FALSE(bte::core::serializeCanonicalJson(
-                   std::numeric_limits<std::int64_t>::min())
+                   std::numeric_limits<std::int64_t>::max())
+                   .ok());
+  EXPECT_FALSE(bte::core::serializeCanonicalJson(
+                   std::numeric_limits<std::uint64_t>::max())
                    .ok());
   EXPECT_FALSE(
       bte::core::serializeCanonicalJson(nlohmann::json::binary({0x01U})).ok());
