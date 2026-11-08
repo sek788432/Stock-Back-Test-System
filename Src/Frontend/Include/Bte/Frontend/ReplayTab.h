@@ -7,8 +7,6 @@
 #include <filesystem>
 #include <memory>
 
-class QShowEvent;
-
 namespace bte::frontend {
 
 class ReplayTab final : public QWidget {

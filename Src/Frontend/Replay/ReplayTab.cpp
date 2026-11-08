@@ -32,7 +32,6 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
-#include <QShowEvent>
 #include <QSplitter>
 #include <QStandardItemModel>
 #include <QStandardPaths>
