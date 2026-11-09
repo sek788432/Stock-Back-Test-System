@@ -70,7 +70,7 @@ def parse_llvm_lcov_line_counts(lcov_text: str, root: Path) -> dict[str, dict[in
 def merge_line_hits(
     report: dict[str, Any], lcov_text: str, root: Path
 ) -> int:
-    """Raise existing gcovr line counts using LLVM hits without adding lines."""
+    """Overlay LLVM hits and discard compiler-unmapped noncode pseudo-lines."""
     files = report.get("files")
     if not isinstance(files, list):
         raise ValueError("gcovr JSON report does not contain a files list")
@@ -91,10 +91,27 @@ def merge_line_hits(
         if not isinstance(lines, list):
             raise ValueError(f"gcovr JSON source {source} has no lines list")
 
+        source_counts = llvm_counts.get(source, {})
+        source_path = resolved_root / source
+        source_lines = (
+            source_path.read_text(encoding="utf-8").split("\n")
+            if source_counts and source_path.is_file()
+            else []
+        )
+        # Avoid inferring lexical context across multiline constructs. Preserve
+        # the whole file unless line-leading comment/directive syntax is safe.
+        if any(
+            'R"' in line or "/*" in line or line.rstrip().endswith("\\")
+            for line in source_lines
+        ):
+            source_lines = []
+        retained_lines = []
+
         for line_entry in lines:
             if not isinstance(line_entry, dict):
                 raise ValueError(f"gcovr JSON source {source} has a malformed line")
             if line_entry.get("gcovr/excluded"):
+                retained_lines.append(line_entry)
                 continue
             source_line = line_entry.get("line_number")
             count = line_entry.get("count")
@@ -108,10 +125,34 @@ def merge_line_hits(
             ):
                 raise ValueError(f"gcovr JSON source {source} has invalid line data")
 
-            llvm_count = llvm_counts.get(source, {}).get(source_line)
+            llvm_count = source_counts.get(source_line)
+            source_text = (
+                source_lines[source_line - 1].lstrip()
+                if source_line <= len(source_lines)
+                else ""
+            )
+            directive = source_text.split(maxsplit=1)[0] if source_text else ""
+            is_noncode = source_text.startswith("//") or directive in {
+                "#if",
+                "#ifdef",
+                "#ifndef",
+                "#elif",
+                "#else",
+                "#endif",
+            }
+            if (
+                llvm_count is None
+                and is_noncode
+                and not line_entry.get("branches")
+                and not line_entry.get("gcovr/decision")
+            ):
+                continue
+            retained_lines.append(line_entry)
             if llvm_count is not None and llvm_count > count:
                 line_entry["count"] = llvm_count
                 updated_lines += 1
+
+        file_entry["lines"] = retained_lines
 
     return updated_lines
 

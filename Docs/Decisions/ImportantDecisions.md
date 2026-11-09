@@ -413,12 +413,27 @@ checkout credentials are not persisted, and coverage dependencies use an exact
 hash-locked closure. Generated reports stay untracked and CI publishes
 per-commit evidence.
 
+The line-hit merge removes a gcovr noncode record only when a readable source
+and LLVM DA records for that file establish that the line is not compiler-mapped,
+the line starts with `//` or an exact conditional-directive token (`#if`,
+`#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif`), and the record has no branch or
+decision evidence. Files containing `R"`, `/*`, or a trailing backslash retain
+all records to avoid ambiguous multiline lexical context. Physical source line
+numbers use newline splitting. Missing evidence, macro definitions, executable
+lines, compiler-mapped zero-hit lines, and excluded records are preserved. The
+98/90 percent thresholds and all branch/decision data remain unchanged.
+
 **Why.** A diff-only standards check can hide existing violations, while
 changed-unit analysis cannot prove the submitted toolchain still accepts the
 whole project. Diff coverage measures the behavior introduced by a change
 without redistributing historic test debt. Independent analyzers, sanitizers,
 and line-oriented rules catch different defect classes; no one layer can claim
 semantic completeness.
+
+gcovr can introduce uncovered pseudo-lines while converting LLVM source-based
+profiles, including comments and conditional directives that LLVM does not map
+to executable source. Requiring both compiler and unambiguous source evidence
+prevents those records from distorting the changed-line denominator.
 
 **Important rejected alternatives.** A standards suppression baseline was
 rejected because the correctable tree can remain fully compliant. Whole-project
@@ -430,6 +445,12 @@ supply-chain exposure. Committed generated reports were rejected because they
 can be stale and create merge noise. Treating regular expressions as proof of
 design, performance, or ownership was rejected because those judgments require
 AST/runtime evidence and review.
+
+Blanket removal of zero-hit or compiler-unmapped records was rejected because
+it could hide executable code or decision evidence. Inferring multiline C++
+lexical context from a line prefix was rejected because raw strings, block
+comments, and continuations can make that prefix misleading; ambiguous files
+retain the original records instead.
 
 **Consequences.** Tightening a direct rule requires cleaning the complete
 baseline and adding focused checker tests. Quality jobs add build time and tool

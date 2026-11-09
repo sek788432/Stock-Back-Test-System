@@ -19,6 +19,134 @@ SPECIFICATION.loader.exec_module(coverage_merge)
 
 
 class LlvmLineCoverageMergeTest(unittest.TestCase):
+    def test_preserves_compiler_line_numbers_across_non_newline_whitespace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "Src" / "Example.cpp"
+            source.parent.mkdir(parents=True)
+            for whitespace in ("\f", "\v"):
+                with self.subTest(whitespace=repr(whitespace)):
+                    source.write_text(
+                        "int covered() { return 1; }\n"
+                        f"{whitespace}// harmless comment\n"
+                        "void uncovered() { performWork(); }\n",
+                        encoding="utf-8",
+                    )
+                    original = {
+                        "files": [{
+                            "file": "Src/Example.cpp",
+                            "lines": [{"line_number": 3, "count": 0, "branches": []}],
+                        }]
+                    }
+                    report = copy.deepcopy(original)
+                    coverage_merge.merge_line_hits(
+                        report, f"SF:{source}\nDA:1,1\nend_of_record\n", root
+                    )
+                    self.assertEqual(report, original)
+
+    def test_preserves_files_with_ambiguous_multiline_lexical_context(self) -> None:
+        sources = (
+            'void uncovered() { const char *text = R"(\n//)"; performWork(); }\n',
+            'void uncovered() { const char *text = R"(\n#)"; performWork(); }\n',
+            'const char *text = "continued\\\n// string"; performWork();\n',
+            '#define BODY \\\n// macro continuation\n',
+            '/* block comment\n// */ performWork();\n',
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "Src" / "Example.cpp"
+            source.parent.mkdir(parents=True)
+            for text in sources:
+                with self.subTest(source=text):
+                    source.write_text(text, encoding="utf-8")
+                    original = {
+                        "files": [{
+                            "file": "Src/Example.cpp",
+                            "lines": [{"line_number": 2, "count": 0, "branches": []}],
+                        }]
+                    }
+                    report = copy.deepcopy(original)
+                    coverage_merge.merge_line_hits(
+                        report, f"SF:{source}\nDA:1,1\nend_of_record\n", root
+                    )
+                    self.assertEqual(report, original)
+
+    def test_removes_only_unmapped_comment_and_directive_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "Src" / "Example.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "// compiler-unmapped comment\n"
+                "#else\n"
+                "return untested();\n"
+                "// compiler-mapped comment\n"
+                "#endif\n"
+                "// comment with decision evidence\n"
+                "#define BODY performWork()\n",
+                encoding="utf-8",
+            )
+            branch = {"branchno": 0, "count": 0}
+            decision = {"type": "conditional", "count_true": 0, "count_false": 2}
+            report = {
+                "files": [
+                    {
+                        "file": "Src/Example.cpp",
+                        "lines": [
+                            {"line_number": 1, "count": 0, "branches": []},
+                            {"line_number": 2, "count": 0, "branches": []},
+                            {"line_number": 3, "count": 0, "branches": []},
+                            {"line_number": 4, "count": 0, "branches": []},
+                            {"line_number": 5, "count": 0, "branches": [branch]},
+                            {
+                                "line_number": 6,
+                                "count": 0,
+                                "branches": [],
+                                "gcovr/decision": decision,
+                            },
+                            {"line_number": 7, "count": 0, "branches": []},
+                        ],
+                    }
+                ]
+            }
+            lcov = f"SF:{source}\nDA:3,0\nDA:4,0\nend_of_record\n"
+
+            coverage_merge.merge_line_hits(report, lcov, root)
+
+            lines = report["files"][0]["lines"]
+            self.assertEqual([line["line_number"] for line in lines], [3, 4, 5, 6, 7])
+            self.assertEqual([line["count"] for line in lines], [0, 0, 0, 0, 0])
+            self.assertEqual(lines[2]["branches"], [branch])
+            self.assertEqual(lines[3]["gcovr/decision"], decision)
+
+    def test_preserves_noncode_without_compiler_and_source_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "Src" / "Example.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text("// comment\n", encoding="utf-8")
+            original = {
+                "files": [{
+                    "file": "Src/Example.cpp",
+                    "lines": [
+                        {"line_number": 1, "count": 0, "branches": []},
+                        {"line_number": 2, "count": 0, "branches": []},
+                    ],
+                }]
+            }
+            for lcov in ("", f"SF:{source}\nend_of_record\n"):
+                with self.subTest(lcov=lcov):
+                    report = copy.deepcopy(original)
+                    coverage_merge.merge_line_hits(report, lcov, root)
+                    self.assertEqual(report, original)
+
+            source.unlink()
+            report = copy.deepcopy(original)
+            coverage_merge.merge_line_hits(
+                report, f"SF:{source}\nDA:2,0\nend_of_record\n", root
+            )
+            self.assertEqual(report, original)
+
     def test_updates_existing_report_lines_and_preserves_branch_data(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
