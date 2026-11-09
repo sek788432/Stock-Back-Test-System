@@ -59,6 +59,11 @@ std::atomic_uint64_t &workerProcessSystemCallFailureStorage() {
   return value;
 }
 
+std::atomic_uint64_t &workerProtocolWriteCountStorage() {
+  static std::atomic_uint64_t value{0};
+  return value;
+}
+
 [[nodiscard]] int injectedSystemCallError(
     const testing::ManagedWorkerSystemCall systemCall) noexcept {
   auto &failure = workerProcessSystemCallFailureStorage();
@@ -319,6 +324,31 @@ private:
       descriptor, F_DUPFD_CLOEXEC, 10);
 }
 
+enum class DescriptorOption : std::uint8_t {
+  descriptorFlags = F_SETFD,
+  statusFlags = F_SETFL,
+#if defined(__APPLE__)
+  noSigpipe = F_SETNOSIGPIPE,
+#endif
+};
+
+[[nodiscard]] int setDescriptorOption(const int descriptor,
+                                      const DescriptorOption option,
+                                      const int value) {
+#if defined(BTE_ENABLE_TEST_HOOKS) && defined(__APPLE__)
+  if (option == DescriptorOption::noSigpipe) {
+    if (const auto injectedError = injectedSystemCallError(
+            testing::ManagedWorkerSystemCall::noSigpipe);
+        injectedError != 0) {
+      errno = injectedError;
+      return -1;
+    }
+  }
+#endif
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): POSIX fcntl varargs.
+  return ::fcntl(descriptor, static_cast<int>(option), value);
+}
+
 [[nodiscard]] int setCloseOnExec(const int descriptor) {
 #if defined(BTE_ENABLE_TEST_HOOKS)
   if (const auto injectedError = injectedSystemCallError(
@@ -335,8 +365,8 @@ private:
   if (flags < 0) {
     return -1;
   }
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): POSIX fcntl varargs.
-  return ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
+  return setDescriptorOption(descriptor, DescriptorOption::descriptorFlags,
+                             flags | FD_CLOEXEC);
 }
 
 [[nodiscard]] int setNonBlocking(const int descriptor) {
@@ -355,8 +385,8 @@ private:
   if (flags < 0) {
     return -1;
   }
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): POSIX fcntl varargs.
-  return ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK);
+  return setDescriptorOption(descriptor, DescriptorOption::statusFlags,
+                             flags | O_NONBLOCK);
 }
 
 [[nodiscard]] bool isWritableDescriptor(const int descriptor) {
@@ -370,6 +400,20 @@ private:
 [[nodiscard]] ssize_t writeWithoutSigpipe(const int descriptor,
                                           const void *data,
                                           const std::size_t size) {
+  const auto writeBytes = [descriptor, data, size] {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+    workerProtocolWriteCountStorage().fetch_add(1, std::memory_order_relaxed);
+#endif
+    return ::write(descriptor, data, size);
+  };
+#if defined(__APPLE__)
+  // Darwin raises pipe-write SIGPIPE process-wide, so a writer-only signal
+  // mask cannot protect other app threads. Suppress it on the owned pipe.
+  if (setDescriptorOption(descriptor, DescriptorOption::noSigpipe, 1) != 0) {
+    return -1;
+  }
+  return writeBytes();
+#else
   sigset_t blockedSignals{};
   sigset_t oldSignals{};
   sigemptyset(&blockedSignals);
@@ -381,7 +425,7 @@ private:
   const auto hasPendingResult = ::sigpending(&pendingSignals);
   const bool wasAlreadyPending =
       hasPendingResult == 0 && sigismember(&pendingSignals, SIGPIPE) == 1;
-  const auto result = ::write(descriptor, data, size);
+  const auto result = writeBytes();
   const auto writeError = errno;
   if (result < 0 && writeError == EPIPE && !wasAlreadyPending) {
     int receivedSignal = 0;
@@ -390,6 +434,7 @@ private:
   static_cast<void>(::pthread_sigmask(SIG_SETMASK, &oldSignals, nullptr));
   errno = writeError;
   return result;
+#endif
 }
 
 [[nodiscard]] bool processGroupExists(const pid_t processGroup) {
@@ -425,6 +470,10 @@ struct DiagnosticEvents final {
 #if defined(BTE_ENABLE_TEST_HOOKS)
 std::uint64_t testing::managedWorkerProcessStartCount() noexcept {
   return workerProcessStartCountStorage().load(std::memory_order_relaxed);
+}
+
+std::uint64_t testing::managedWorkerProtocolWriteCount() noexcept {
+  return workerProtocolWriteCountStorage().load(std::memory_order_relaxed);
 }
 
 bool testing::managedWorkerSystemCallFailurePending() noexcept {

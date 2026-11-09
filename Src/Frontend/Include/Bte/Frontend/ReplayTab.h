@@ -25,6 +25,9 @@ public:
   Q_SLOT void openResult(const QString &resultId);
   Q_SLOT void closeResultIfId(const QString &resultId);
 
+protected:
+  void showEvent(QShowEvent *event) override;
+
 private:
   struct State;
   std::unique_ptr<State> state_;

@@ -1105,10 +1105,31 @@ TEST(ManagedWorkerProcessTest,
 TEST(ManagedWorkerProcessTest,
      handlesWorkerClosingProtocolPipesWithoutRaisingSigpipe) {
 #if defined(__unix__) || defined(__APPLE__)
+  struct sigaction originalAction {};
+  ASSERT_EQ(::sigaction(SIGPIPE, nullptr, &originalAction), 0);
+  // A blocked writer thread must not redirect SIGPIPE to another app thread.
+  // Declare the future before its promise so early assertion returns release
+  // the waiter before the future joins it.
+  std::future<void> bystander;
+  std::promise<void> releaseBystander;
+  std::promise<void> bystanderStarted;
+  auto ready = bystanderStarted.get_future();
+  bystander = std::async(
+      std::launch::async, [release = releaseBystander.get_future(),
+                           started = std::move(bystanderStarted)]() mutable {
+        started.set_value();
+        while (release.wait_for(0s) != std::future_status::ready) {
+          std::this_thread::yield();
+        }
+      });
+  ready.wait();
+
   auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
       .executable = std::filesystem::path{BTE_TEST_PYTHON_EXECUTABLE},
-      .arguments = {"-c", "import os, time; os.close(0); os.close(3); "
-                          "os.write(2, b'pipes-closed\\n'); time.sleep(10)"},
+      // Publish diagnostics before EOF makes the parent's protocol read return.
+      .arguments = {"-c", "import os, time; os.close(0); "
+                          "os.write(2, b'pipes-closed\\n'); "
+                          "os.close(3); time.sleep(10)"},
   });
   ASSERT_TRUE(started.ok()) << started.error().message;
   auto worker = std::move(started).value();
@@ -1132,16 +1153,66 @@ TEST(ManagedWorkerProcessTest,
             std::string::npos);
   ASSERT_TRUE(worker.isRunning());
 
-  const auto sent = worker.sendMessage(
-      request(), 2s, bte::core::ErrorCode::workerHandshakeTimeout);
-  ASSERT_FALSE(sent.ok());
-  EXPECT_EQ(sent.error().code, bte::core::ErrorCode::workerHandshakeFailed);
-  EXPECT_EQ(sent.error().message,
-            "Could not write a managed worker protocol frame.");
+  for (int attempt = 0; attempt < 64; ++attempt) {
+    const auto sent = worker.sendMessage(
+        request(), 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+    ASSERT_FALSE(sent.ok());
+    EXPECT_EQ(sent.error().code, bte::core::ErrorCode::workerHandshakeFailed);
+    EXPECT_EQ(sent.error().message,
+              "Could not write a managed worker protocol frame.");
+  }
+  struct sigaction currentAction {};
+  ASSERT_EQ(::sigaction(SIGPIPE, nullptr, &currentAction), 0);
+  EXPECT_EQ(currentAction.sa_handler, originalAction.sa_handler);
   ASSERT_TRUE(worker.terminateProcessTree(50ms).ok());
 #else
   GTEST_SKIP()
       << "POSIX worker process fixture is unavailable on this platform.";
+#endif
+}
+
+TEST(ManagedWorkerProcessTest,
+     handlesDarwinSigpipeSetupFailureWithoutWritingAndRetriesInterruption) {
+#if defined(__APPLE__)
+  for (const auto failure : {EIO, EINTR}) {
+    auto started = ManagedWorkerProcess::start(WorkerProcessLaunch{
+        .executable = fixturePath(), .arguments = {"echo", "0"}});
+    ASSERT_TRUE(started.ok()) << started.error().message;
+    auto worker = std::move(started).value();
+    ManagedWorkerSystemCallFailure inject{ManagedWorkerSystemCall::noSigpipe, 0,
+                                          failure};
+    const auto writesBefore =
+        bte::bindings::python::testing::managedWorkerProtocolWriteCount();
+    const auto sent = worker.sendMessage(
+        request(), 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+    EXPECT_FALSE(bte::bindings::python::testing::
+                     managedWorkerSystemCallFailurePending());
+    if (failure == EIO) {
+      ASSERT_FALSE(sent.ok());
+      EXPECT_EQ(
+          bte::bindings::python::testing::managedWorkerProtocolWriteCount(),
+          writesBefore);
+      EXPECT_EQ(sent.error().code, bte::core::ErrorCode::workerHandshakeFailed);
+      EXPECT_EQ(sent.error().message,
+                "Could not write a managed worker protocol frame.");
+      EXPECT_TRUE(worker.isRunning());
+      const auto stopped = worker.terminateProcessTree(50ms);
+      ASSERT_TRUE(stopped.ok()) << stopped.error().message;
+    } else {
+      ASSERT_TRUE(sent.ok()) << sent.error().message;
+      EXPECT_GT(
+          bte::bindings::python::testing::managedWorkerProtocolWriteCount(),
+          writesBefore);
+      const auto received = worker.receiveMessage(
+          "fixture-run", 0, 2s, bte::core::ErrorCode::workerHandshakeTimeout);
+      ASSERT_TRUE(received.ok()) << received.error().message;
+      EXPECT_EQ(received.value().messageType, "ready");
+      const auto exited = worker.waitForExit(2s);
+      ASSERT_TRUE(exited.ok()) << exited.error().message;
+    }
+  }
+#else
+  GTEST_SKIP() << "Descriptor-scoped SIGPIPE suppression is Darwin-specific.";
 #endif
 }
 

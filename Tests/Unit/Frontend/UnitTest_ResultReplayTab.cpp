@@ -17,6 +17,7 @@
 #include <QComboBox>
 #include <QDate>
 #include <QDateTime>
+#include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QGraphicsItem>
 #include <QGraphicsScene>
@@ -103,6 +104,11 @@ private slots:
   void renamedResultRefreshesSelectorWithoutChangingOpenId();
   void thirtyTwoCharacterNamedOptionOpensItsStoredResultId();
   void preservedLegacyArtifactsWarnBesideUsableSavedResults();
+  void resultWithoutFramesCannotFallBackToPreview_data();
+  void resultWithoutFramesCannotFallBackToPreview();
+  void showingReplayRefreshesSavedResultsWithoutResettingPlayback();
+  void selectorOpenDefersVisibilityRefresh_data();
+  void selectorOpenDefersVisibilityRefresh();
 
 private:
   std::filesystem::path root_;
@@ -115,6 +121,205 @@ private:
   std::string multiDayMultiFillResultId_;
   std::string unavailableResultId_ = std::string(32, 'd');
 };
+
+void ResultReplayTabTest::selectorOpenDefersVisibilityRefresh_data() {
+  QTest::addColumn<QString>("completion");
+  QTest::newRow("success") << QString{"success"};
+  QTest::newRow("failure") << QString{"failure"};
+  QTest::newRow("preview cancellation") << QString{"preview"};
+}
+
+void ResultReplayTabTest::selectorOpenDefersVisibilityRefresh() {
+  QFETCH(QString, completion);
+  bte::frontend::ReplayTab tab{root_ / "Store", root_ / "Data"};
+  auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  auto *open = tab.findChild<QPushButton *>("replayOpenResultButton");
+  auto *load = tab.findChild<QPushButton *>("replayLoadButton");
+  QVERIFY(selector && status && open && load);
+  tab.show();
+  QVERIFY(bte::test::waitUntil([&] { return selector->count() > 0; }));
+  selector->setCurrentIndex(
+      selector->findData(QString::fromStdString(firstResultId_)));
+  bte::bindings::testing::blockNextResultOpenUntilCancelled();
+  open->click();
+  QVERIFY(bte::test::waitUntil(
+      [] { return bte::bindings::testing::resultOpenWorkerStarted(); }));
+  const auto requestsBeforeShow =
+      bte::bindings::testing::resultCatalogRequestCount();
+  tab.hide();
+  tab.show();
+  QCOMPARE(bte::bindings::testing::resultCatalogRequestCount(),
+           requestsBeforeShow);
+
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  QVERIFY(store.ok());
+  const auto name = QString{"Updated during %1"}.arg(completion);
+  QVERIFY(
+      store.value()->renameResult(secondResultId_, name.toStdString()).ok());
+  if (completion == "preview") {
+    load->click();
+    QCOMPARE(status->text(), QString{"Bar-only preview"});
+  } else {
+    if (completion == "failure") {
+      selector->setCurrentText(QString(32, '0'));
+    }
+    // Replace the blocked open through the selector's normal action.
+    open->click();
+    QVERIFY(bte::test::waitUntil([&] {
+      return status->text().startsWith(
+          completion == "success" ? "Result " : "Cannot open result");
+    }));
+  }
+  bte::bindings::testing::clearResultReplayRequestHooks();
+  QVERIFY(bte::test::waitUntil([&] {
+    const auto index =
+        selector->findData(QString::fromStdString(secondResultId_));
+    return index >= 0 && selector->itemText(index).startsWith(name);
+  }));
+}
+
+void ResultReplayTabTest::
+    showingReplayRefreshesSavedResultsWithoutResettingPlayback() {
+  bte::frontend::ReplayTab tab{root_ / "Store", root_ / "Data"};
+  auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  auto *seek = tab.findChild<QSlider *>("replaySeekSlider");
+  auto *chart = tab.findChild<bte::frontend::QtChartsCandlestickView *>(
+      "replayCandlestickChartView");
+  QVERIFY(selector && status && seek && chart);
+  tab.show();
+  const auto activeId = QString::fromStdString(firstResultId_);
+  tab.openResult(activeId);
+  QVERIFY(bte::test::waitUntil([&] {
+    return status->text().startsWith("Result ") &&
+           selector->findData(activeId) >= 0;
+  }));
+  seek->setValue(1);
+  const auto priorCount = selector->count();
+  tab.hide();
+
+  const auto run = bte::bindings::runPersistedBacktestConfiguration(
+      {.symbol = "SYN",
+       .schema = "ohlcv-1h",
+       .startDate = QDate{2024, 1, 1},
+       .endDate = QDate{2024, 1, 2},
+       .initialCapital = 2'000,
+       .quantityShares = 1,
+       .selectableStrategy = {}},
+      {.resultStore = root_ / "Store",
+       .dataStore = root_ / "Data",
+       .snapshotId = snapshotId_,
+       .strategyHash = std::string(64, 'c')});
+  QVERIFY2(run.ok(), run.error().message.c_str());
+  auto store = bte::results::ResultStore::open(root_ / "Store", root_ / "Data");
+  QVERIFY(store.ok());
+  QVERIFY(store.value()->publishDraft(run.value().resultId).ok());
+  QVERIFY(store.value()->renameResult(run.value().resultId, "Just saved").ok());
+  const auto savedId = QString::fromStdString(run.value().resultId);
+  QCOMPARE(selector->findData(savedId), -1);
+
+  tab.show();
+  QVERIFY(
+      bte::test::waitUntil([&] { return selector->findData(savedId) >= 0; }));
+  QCOMPARE(selector->count(), priorCount + 1);
+  QVERIFY(
+      selector->itemText(selector->findData(savedId)).startsWith("Just saved"));
+  QCOMPARE(selector->currentData().toString(), activeId);
+  QCOMPARE(seek->value(), 1);
+  QCOMPARE(chart->candleCount(), 2U);
+
+  // A later refresh also removes trashed entries without touching the cursor.
+  tab.hide();
+  QVERIFY(store.value()->moveToTrash(run.value().resultId).ok());
+  tab.show();
+  QVERIFY(
+      bte::test::waitUntil([&] { return selector->findData(savedId) < 0; }));
+  QCOMPARE(selector->count(), priorCount);
+  QCOMPARE(selector->currentData().toString(), activeId);
+  QCOMPARE(seek->value(), 1);
+  QCOMPARE(chart->candleCount(), 2U);
+}
+
+void ResultReplayTabTest::resultWithoutFramesCannotFallBackToPreview_data() {
+  QTest::addColumn<QString>("scenario");
+  QTest::newRow("pending") << QString{"pending"};
+  QTest::newRow("missing") << QString{"missing"};
+  QTest::newRow("unavailable") << QString{"unavailable"};
+  QTest::newRow("empty selection") << QString{"empty"};
+  QTest::newRow("closed") << QString{"closed"};
+}
+
+void ResultReplayTabTest::resultWithoutFramesCannotFallBackToPreview() {
+  QFETCH(QString, scenario);
+  bte::frontend::ReplayTab tab{root_ / "Store", root_ / "Data"};
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  auto *chart = tab.findChild<bte::frontend::QtChartsCandlestickView *>(
+      "replayCandlestickChartView");
+  auto *step = tab.findChild<QToolButton *>("replayStepForwardButton");
+  auto *back = tab.findChild<QToolButton *>("replayStepBackButton");
+  auto *play = tab.findChild<QToolButton *>("replayPlayPauseButton");
+  auto *timer = tab.findChild<QTimer *>("replayPlaybackTimer");
+  auto *load = tab.findChild<QPushButton *>("replayLoadButton");
+  auto *capital =
+      tab.findChild<QDoubleSpinBox *>("replayInitialCapitalSpinBox");
+  auto *speed = tab.findChild<QComboBox *>("replaySpeedCombo");
+  auto *cash = tab.findChild<QLabel *>("replayCashLabel");
+  auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
+  QVERIFY(status && chart && step && back && play && timer && load && capital &&
+          cash && selector && speed);
+  QVERIFY(bte::test::waitUntil([&] { return selector->count() > 0; }));
+
+  // Leave a real preview cursor behind before entering Result Replay.
+  step->click();
+  QCOMPARE(chart->candleCount(), 1U);
+  const auto validId = QString::fromStdString(firstResultId_);
+  if (scenario == "pending") {
+    bte::bindings::testing::blockNextResultOpenUntilCancelled();
+    tab.openResult(validId);
+    QVERIFY(status->text().startsWith("Loading result"));
+  } else if (scenario == "missing") {
+    tab.openResult(QString(32, '0'));
+    QVERIFY(bte::test::waitUntil(
+        [&] { return status->text().startsWith("Cannot open result"); }));
+  } else if (scenario == "unavailable") {
+    tab.openResult(QString::fromStdString(unavailableResultId_));
+    QVERIFY(status->text().startsWith("Result unavailable"));
+  } else if (scenario == "empty") {
+    tab.openResult("   ");
+    QCOMPARE(status->text(), QString{"Select a saved result"});
+  } else {
+    tab.openResult(validId);
+    QVERIFY(bte::test::waitUntil(
+        [&] { return status->text().startsWith("Result "); }));
+    tab.closeResultIfId(validId);
+    QCOMPARE(status->text(), QString{"Select a saved result"});
+  }
+  const auto resultStatus = status->text();
+  QCOMPARE(chart->candleCount(), 0U);
+  back->click();
+  step->click();
+  play->click();
+  QVERIFY(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection));
+  capital->setValue(12345.0);
+  speed->setCurrentText("max");
+  QVERIFY(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection));
+  QCOMPARE(chart->candleCount(), 0U);
+  QCOMPARE(cash->text(), QString{"Cash: --"});
+  QCOMPARE(status->text(), resultStatus);
+  QVERIFY(!timer->isActive());
+
+  // An explicit preview load is the way back; valid results remain usable.
+  load->click();
+  bte::bindings::testing::clearResultReplayRequestHooks();
+  step->click();
+  QCOMPARE(chart->candleCount(), 1U);
+  tab.openResult(validId);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return status->text().startsWith("Result "); }));
+  step->click();
+  QCOMPARE(chart->candleCount(), 2U);
+}
 
 void ResultReplayTabTest::
     preservedLegacyArtifactsWarnBesideUsableSavedResults() {
@@ -354,6 +559,7 @@ void ResultReplayTabTest::externalOpenDefersCatalogRefreshUntilOpenCompletes() {
     std::this_thread::yield();
   }
   QVERIFY(bte::bindings::testing::resultOpenWorkerStarted());
+  tab.show();
   QCOMPARE(bte::bindings::testing::resultCatalogRequestCount(),
            catalogRequestsBeforeOpen);
   QCOMPARE(selector->findData(QString::fromStdString(run.value().resultId)),

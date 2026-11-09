@@ -356,6 +356,19 @@ original branch and decision data. This avoids interpreting Apple Clang's gcov
 compatibility output with the GCC-oriented decision heuristic while retaining
 the same coverage thresholds.
 
+The merge removes a non-excluded gcovr line record only when LLVM supplies DA
+records for its readable source file but none for that line, the source line
+starts with `//` or an exact conditional-directive token (`#if`, `#ifdef`,
+`#ifndef`, `#elif`, `#else`, `#endif`), and the record has neither branch nor
+decision evidence. Filtering is disabled for an entire file containing a raw
+string opener `R"`, block-comment opener `/*`, or a line ending in a backslash
+after trimming whitespace. Source lines are split on newlines so form-feed and
+vertical-tab whitespace do not alter compiler line numbers. Missing evidence,
+macro definitions, executable lines, compiler-mapped zero-hit lines, and
+excluded records are preserved. The hit overlay still applies to retained
+records. The 98 percent changed-line and 90 percent changed-decision thresholds
+and all branch and decision evidence remain unchanged.
+
 CI regenerates these reports for the submitted revision and renders the gcovr
 summary plus changed-code gate results on the GitHub Actions workflow summary
 page. XML, JSON, Markdown, and HTML reports are generated evidence, not source
