@@ -236,12 +236,7 @@ private:
   [[nodiscard]] static double blend(const double older, const double newer,
                                     const double olderWeight,
                                     const double newerWeight) noexcept {
-    if (olderWeight == 0.0) {
-      return newer;
-    }
-    if (newerWeight == 0.0) {
-      return older;
-    }
+    // Both weights are positive masses of nonempty sample groups.
     const auto total = olderWeight + newerWeight;
     // Interpolate from the larger weight, so a tiny weight on a large value
     // is not lost by rounding its complementary fraction to one.
