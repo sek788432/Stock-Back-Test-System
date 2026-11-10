@@ -110,7 +110,10 @@ Crossing has one definition: `a` crosses above `b` only when the previous compar
   including warm-up boundaries, actual-bar gaps, all implemented output kinds,
   and all bar-field passthroughs. Focused regressions additionally cover tiny
   spreads, expired outliers, zero-volume recovery, unit domains, and finite
-  results whose naive intermediate products would overflow.
+  results whose naive intermediate products would overflow. Strategy/Engine
+  integration cases retain structured-error propagation using a truly
+  unrepresentable upper volume band; a finite VWAP with an overflowing naive
+  product must instead execute its next-actual-open fill with exact accounting.
 - Cross tests must cover equality boundaries and both directions.
 - Composition tests prove the same implementation is used by conditions,
   Python, and Backtest execution. Result-replay tests prove persisted

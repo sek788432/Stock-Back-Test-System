@@ -1492,35 +1492,61 @@ TEST(BacktestTest, selectableConditionsPropagateExecutionAndPlanErrors) {
 }
 
 TEST(BacktestTest, selectableConditionsPropagateNonFiniteIndicatorOutput) {
-  auto overflowBar = makeFlatBar(2, 1'000'000'000.0);
+  auto seed = makeFlatBar(1, 1.0);
+  seed.volume = 1.0;
+  auto overflowBar = makeFlatBar(2, 2.0);
   overflowBar.volume = std::numeric_limits<double>::max();
-  const auto result =
-      bte::engine::runBacktest(
-          {
-              .bars = {overflowBar},
-              .initialCapitalMicrodollars = 1'000'000,
-              .quantityShares = 1,
-              .selectableStrategy =
-                  bte::strategy::SelectableStrategyPlan{
-                      .buy = {.conditions = {bte::strategy::Condition{
-                                  .source =
-                                      bte::strategy::ConditionSource::indicator,
-                                  .comparison =
-                                      bte::strategy::Comparison::greaterThan,
-                                  .threshold = 0.0,
-                                  .indicator =
-                                      {
-                                          .kind = bte::indicators::IndicatorKind::vwap,
-                                          .period = 1,
-                                      },
-                              }}},
-                      .sell = {},
-                  },
-              .previousDataDays = {},
-          });
+  // The actual upper volume band exceeds DBL_MAX, while prices remain valid
+  // fixed-point engine inputs. This exercises indicator-error propagation.
+  const auto overflowCondition = bte::strategy::Condition{
+      .source = bte::strategy::ConditionSource::indicator,
+      .comparison = bte::strategy::Comparison::greaterThan,
+      .threshold = 0.0,
+      .thresholdDomain = bte::indicators::NumericDomain::volume,
+      .indicator = {.kind = bte::indicators::IndicatorKind::bollingerBands,
+                    .period = 2,
+                    .output = bte::indicators::IndicatorOutput::upper,
+                    .field = bte::indicators::BarField::volume}};
+  const auto result = bte::engine::runBacktest(
+      {.bars = {seed, overflowBar},
+       .initialCapitalMicrodollars = 1'000'000,
+       .quantityShares = 1,
+       .selectableStrategy =
+           bte::strategy::SelectableStrategyPlan{
+               .buy = {.conditions = {overflowCondition}}, .sell = {}},
+       .previousDataDays = {}});
 
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.error().code, bte::core::ErrorCode::invalidArgument);
+}
+
+TEST(BacktestTest, finiteVwapProductOverflowStillTriggersCorrectNextOpenFill) {
+  auto first = makeFlatBar(1, 10.0);
+  auto second = makeFlatBar(2, 20.0);
+  first.volume = second.volume = std::numeric_limits<double>::max();
+  const auto result = bte::engine::runBacktest(
+      {.bars = {first, second},
+       .initialCapitalMicrodollars = 100'000'000,
+       .quantityShares = 1,
+       .selectableStrategy =
+           bte::strategy::SelectableStrategyPlan{
+               .buy = {.conditions = {bte::strategy::Condition{
+                           .source = bte::strategy::ConditionSource::indicator,
+                           .comparison = bte::strategy::Comparison::greaterThan,
+                           .threshold = 0.0,
+                           .indicator =
+                               {.kind = bte::indicators::IndicatorKind::vwap,
+                                .period = 1}}}},
+               .sell = {}},
+       .previousDataDays = {}});
+  ASSERT_TRUE(result.ok()) << result.error().message;
+  ASSERT_EQ(result.value().fills.size(), 1U);
+  EXPECT_EQ(result.value().fills.front().timestamp, second.ts);
+  EXPECT_EQ(result.value().fills.front().priceNanodollars, 20'002'000'000);
+  EXPECT_EQ(result.value().cashMicrodollars, 79'998'000);
+  EXPECT_EQ(result.value().equityMicrodollars, 99'998'000);
+  EXPECT_EQ(result.value().pnlMicrodollars, -2'000);
+  EXPECT_EQ(result.value().positionShares, 1);
 }
 
 TEST(BacktestTest, selectableConditionsPropagateEveryReachableAccountingError) {
