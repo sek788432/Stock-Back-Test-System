@@ -172,45 +172,56 @@ public:
 
   RollingStatistics(const std::size_t capacity, const IndicatorKind kind)
       : capacity_(capacity), kind_(kind) {
-    incoming_.reserve(capacity);
-    outgoing_.reserve(capacity);
+    if (kind == IndicatorKind::sma || kind == IndicatorKind::wma ||
+        kind == IndicatorKind::bollingerBands || kind == IndicatorKind::vwap) {
+      incoming_.resize(capacity);
+      outgoing_.resize(capacity);
+    }
   }
 
   void push(const double value, const double volume = 0.0) noexcept {
     if (size_ == capacity_) {
-      if (outgoing_.empty()) {
-        while (!incoming_.empty()) {
-          const auto transferredValue = incoming_.back().value;
-          const auto transferredVolume = incoming_.back().volume;
-          incoming_.pop_back();
+      if (outgoingCount_ == 0U) {
+        while (incomingCount_ != 0U) {
+          --incomingCount_;
+          const auto transferredValue = incoming_[incomingCount_].value;
+          const auto transferredVolume = incoming_[incomingCount_].volume;
           const auto leaf = single(transferredValue, transferredVolume);
           const auto aggregate =
-              outgoing_.empty() ? leaf
-                                : combine(leaf, outgoing_.back().aggregate);
-          outgoing_.push_back({transferredValue, transferredVolume, aggregate});
+              outgoingCount_ == 0U
+                  ? leaf
+                  : combine(leaf, outgoing_[outgoingCount_ - 1U].aggregate);
+          outgoing_[outgoingCount_] = {transferredValue, transferredVolume,
+                                       aggregate};
+          ++outgoingCount_;
         }
       }
-      outgoing_.pop_back();
+      --outgoingCount_;
       --size_;
     }
     const auto leaf = single(value, volume);
     const auto aggregate =
-        incoming_.empty() ? leaf : combine(incoming_.back().aggregate, leaf);
-    incoming_.push_back({value, volume, aggregate});
+        incomingCount_ == 0U
+            ? leaf
+            : combine(incoming_[incomingCount_ - 1U].aggregate, leaf);
+    incoming_[incomingCount_] = {value, volume, aggregate};
+    ++incomingCount_;
     ++size_;
   }
 
   [[nodiscard]] Statistics latest() const noexcept {
-    const auto older =
-        outgoing_.empty() ? Statistics{} : outgoing_.back().aggregate;
-    const auto newer =
-        incoming_.empty() ? Statistics{} : incoming_.back().aggregate;
+    const auto older = outgoingCount_ == 0U
+                           ? Statistics{}
+                           : outgoing_[outgoingCount_ - 1U].aggregate;
+    const auto newer = incomingCount_ == 0U
+                           ? Statistics{}
+                           : incoming_[incomingCount_ - 1U].aggregate;
     return combine(older, newer);
   }
 
   void reset() noexcept {
-    incoming_.clear();
-    outgoing_.clear();
+    incomingCount_ = 0;
+    outgoingCount_ = 0;
     size_ = 0;
   }
 
@@ -303,6 +314,8 @@ private:
   std::size_t capacity_ = 1;
   IndicatorKind kind_ = IndicatorKind::sma;
   std::size_t size_ = 0;
+  std::size_t incomingCount_ = 0;
+  std::size_t outgoingCount_ = 0;
   std::vector<Entry> incoming_;
   std::vector<Entry> outgoing_;
 };
@@ -548,15 +561,9 @@ struct StreamingIndicator::Impl final {
         atrWilder(std::max(configuredDefinition.period, 1)),
         plusDmWilder(std::max(configuredDefinition.period, 1)),
         minusDmWilder(std::max(configuredDefinition.period, 1)),
-        adxWilder(std::max(configuredDefinition.period, 1)) {
-    if (definition.kind == IndicatorKind::bollingerBands ||
-        definition.kind == IndicatorKind::sma ||
-        definition.kind == IndicatorKind::wma ||
-        definition.kind == IndicatorKind::vwap) {
-      statisticsWindow.emplace(static_cast<std::size_t>(definition.period),
-                               definition.kind);
-    }
-  }
+        adxWilder(std::max(configuredDefinition.period, 1)),
+        statisticsWindow(static_cast<std::size_t>(configuredDefinition.period),
+                         configuredDefinition.kind) {}
 
   [[nodiscard]] std::optional<double> update(const core::Bar &bar) noexcept {
     ++consumedBars;
@@ -633,9 +640,7 @@ struct StreamingIndicator::Impl final {
     plusDmWilder.reset();
     minusDmWilder.reset();
     adxWilder.reset();
-    if (statisticsWindow.has_value()) {
-      statisticsWindow->reset();
-    }
+    statisticsWindow.reset();
     secondarySum = 0.0;
     previousInput.reset();
     previousBar.reset();
@@ -643,8 +648,8 @@ struct StreamingIndicator::Impl final {
   }
 
   [[nodiscard]] std::optional<double> updateSma(const double input) noexcept {
-    statisticsWindow->push(input);
-    const auto statistics = statisticsWindow->latest();
+    statisticsWindow.push(input);
+    const auto statistics = statisticsWindow.latest();
     if (statistics.count != static_cast<std::size_t>(definition.period)) {
       return std::nullopt;
     }
@@ -652,8 +657,8 @@ struct StreamingIndicator::Impl final {
   }
 
   [[nodiscard]] std::optional<double> updateWma(const double input) noexcept {
-    statisticsWindow->push(input);
-    const auto statistics = statisticsWindow->latest();
+    statisticsWindow.push(input);
+    const auto statistics = statisticsWindow.latest();
     if (statistics.count != static_cast<std::size_t>(definition.period)) {
       return std::nullopt;
     }
@@ -698,8 +703,8 @@ struct StreamingIndicator::Impl final {
 
   [[nodiscard]] std::optional<double>
   updateBollinger(const double input) noexcept {
-    statisticsWindow->push(input);
-    const auto statistics = statisticsWindow->latest();
+    statisticsWindow.push(input);
+    const auto statistics = statisticsWindow.latest();
     if (statistics.count != static_cast<std::size_t>(definition.period)) {
       return std::nullopt;
     }
@@ -812,8 +817,8 @@ struct StreamingIndicator::Impl final {
   [[nodiscard]] std::optional<double>
   updateVwap(const core::Bar &bar) noexcept {
     const auto price = barFieldValue(bar, definition.field).value;
-    statisticsWindow->push(price, bar.volume);
-    const auto statistics = statisticsWindow->latest();
+    statisticsWindow.push(price, bar.volume);
+    const auto statistics = statisticsWindow.latest();
     if (statistics.count != static_cast<std::size_t>(definition.period) ||
         statistics.volumeTotal.empty()) {
       return std::nullopt;
@@ -893,7 +898,7 @@ struct StreamingIndicator::Impl final {
   std::optional<double> latest;
   std::optional<double> previousInput;
   std::optional<core::Bar> previousBar;
-  std::optional<RollingStatistics> statisticsWindow;
+  RollingStatistics statisticsWindow;
   double secondarySum = 0.0;
   double obv = 0.0;
 };

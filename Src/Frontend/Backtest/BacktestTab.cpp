@@ -139,7 +139,7 @@ QTableWidgetItem *makeItem(const QString &text) {
   return std::make_unique<QTableWidgetItem>(text).release();
 }
 
-enum class RunStrategy { starter, selectable, python };
+enum class RunStrategy : std::uint8_t { starter, selectable, python };
 
 QString statusText(const bindings::BacktestOutcome outcome,
                    const RunStrategy mode) {
@@ -1944,10 +1944,12 @@ void BacktestTab::resetBacktestView() {
 
 void BacktestTab::startBacktest(bindings::BacktestConfiguration configuration,
                                 const BacktestRunner &runner) {
-  runState_->strategyMode =
-      configuration.pythonStrategy.has_value()       ? RunStrategy::python
-      : configuration.selectableStrategy.has_value() ? RunStrategy::selectable
-                                                     : RunStrategy::starter;
+  runState_->strategyMode = RunStrategy::starter;
+  if (configuration.pythonStrategy.has_value()) {
+    runState_->strategyMode = RunStrategy::python;
+  } else if (configuration.selectableStrategy.has_value()) {
+    runState_->strategyMode = RunStrategy::selectable;
+  }
   runState_->cancellation = core::CancellationSource{};
   const auto cancellation = runState_->cancellation.token();
   runState_->watcher.setFuture(
