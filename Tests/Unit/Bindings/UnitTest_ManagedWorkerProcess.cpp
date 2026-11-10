@@ -634,13 +634,17 @@ TEST(ManagedWorkerProcessTest,
      reportsSpawnSetupFailuresAndReleasesEveryDescriptor) {
 #if defined(__unix__) || defined(__APPLE__)
   ScopedReservedDescriptors reserved;
-  ASSERT_TRUE(reserved.reserve(3));
+  // Reserve every child target (0..5), even when a runner closed stdin.
+  // The injected close-call indices require source/history to be above them.
+  ASSERT_TRUE(reserved.reserve(6));
   auto sourceResult = ReadOnlySharedMemory::create("strategy source");
   ASSERT_TRUE(sourceResult.ok()) << sourceResult.error().message;
   auto source = std::move(sourceResult).value();
   auto historyResult = ReadOnlySharedMemory::create("warmup history");
   ASSERT_TRUE(historyResult.ok()) << historyResult.error().message;
   auto history = std::move(historyResult).value();
+  ASSERT_GT(source.descriptor(), 5);
+  ASSERT_GT(history.descriptor(), 5);
 
   struct ExpectedFailure final {
     ManagedWorkerSystemCall systemCall;

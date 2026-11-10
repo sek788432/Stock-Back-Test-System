@@ -68,6 +68,10 @@ target_link_libraries(
     bte::indicators
     GTest::gtest_main)
 
+target_compile_definitions(
+  bte_indicators_tests
+  PRIVATE BTE_INDICATOR_FIXTURE_DIR="${CMAKE_CURRENT_BINARY_DIR}/IndicatorReference")
+
 gtest_discover_tests(bte_indicators_tests DISCOVERY_TIMEOUT 30)
 
 add_executable(
@@ -171,6 +175,21 @@ add_dependencies(bte_python_strategy_tests bte_python_worker_fixture)
 target_compile_features(bte_python_strategy_tests PRIVATE cxx_std_20)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/IndicatorReference/Bars.csv"
+         "${CMAKE_CURRENT_BINARY_DIR}/IndicatorReference/Expected.csv"
+  COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/Fixtures/Indicators/GenerateReference.py"
+          "${CMAKE_CURRENT_BINARY_DIR}/IndicatorReference"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Fixtures/Indicators/GenerateReference.py"
+  VERBATIM)
+add_custom_target(
+  bte_indicator_reference
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/IndicatorReference/Bars.csv"
+          "${CMAKE_CURRENT_BINARY_DIR}/IndicatorReference/Expected.csv")
+add_dependencies(bte_indicators_tests bte_indicator_reference)
+
 target_compile_definitions(
   bte_python_strategy_tests
   PRIVATE

@@ -139,9 +139,25 @@ QTableWidgetItem *makeItem(const QString &text) {
   return std::make_unique<QTableWidgetItem>(text).release();
 }
 
+enum class RunStrategy { starter, selectable, python };
+
 QString statusText(const bindings::BacktestOutcome outcome,
-                   const bool selectableConditions) {
-  const auto strategyName = selectableConditions
+                   const RunStrategy mode) {
+  if (mode == RunStrategy::python) {
+    switch (outcome) {
+    case bindings::BacktestOutcome::filled:
+      return BacktestTab::tr("Completed — Python strategy");
+    case bindings::BacktestOutcome::rejectedInsufficientCash:
+      return BacktestTab::tr(
+          "Completed — Python order rejected: insufficient cash");
+    case bindings::BacktestOutcome::cancelledNoFutureMarketData:
+      return BacktestTab::tr(
+          "Completed — Python order cancelled: no future market data");
+    default:
+      return BacktestTab::tr("Completed — Python strategy submitted no orders");
+    }
+  }
+  const auto strategyName = mode == RunStrategy::selectable
                                 ? BacktestTab::tr("selectable strategy")
                                 : BacktestTab::tr("starter order");
   if (outcome == bindings::BacktestOutcome::filled) {
@@ -695,7 +711,7 @@ struct BacktestTab::RunState final {
   QFutureWatcher<PublishResult> publishWatcher;
   QFutureWatcher<DraftListResult> draftListWatcher;
   QFutureWatcher<DiscardResult> discardWatcher;
-  bool selectableConditions = false;
+  RunStrategy strategyMode = RunStrategy::starter;
   bool openAfterPublish = false;
   QString pythonSourceUtf8;
   QString pythonParametersJson;
@@ -1767,8 +1783,7 @@ void BacktestTab::handleBacktestFinished(
     saveAndReplay->setEnabled(true);
     discardDraft->setEnabled(true);
   }
-  setLabelText(status,
-               statusText(snapshot.outcome, runState_->selectableConditions));
+  setLabelText(status, statusText(snapshot.outcome, runState_->strategyMode));
   setLabelText(cash, tr("Cash: %1").arg(formatMoney(snapshot.cash)));
   setLabelText(position,
                tr("Position: %1 shares").arg(snapshot.positionShares));
@@ -1917,8 +1932,10 @@ void BacktestTab::resetBacktestView() {
 
 void BacktestTab::startBacktest(bindings::BacktestConfiguration configuration,
                                 const BacktestRunner &runner) {
-  runState_->selectableConditions =
-      configuration.selectableStrategy.has_value();
+  runState_->strategyMode =
+      configuration.pythonStrategy.has_value()       ? RunStrategy::python
+      : configuration.selectableStrategy.has_value() ? RunStrategy::selectable
+                                                     : RunStrategy::starter;
   runState_->cancellation = core::CancellationSource{};
   const auto cancellation = runState_->cancellation.token();
   runState_->watcher.setFuture(

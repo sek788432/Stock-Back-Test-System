@@ -1,16 +1,16 @@
 # Indicators
 
 Indicators are project-owned C++ streaming calculations shared by Selectable
-Conditions, Python strategies, and Backtest execution. K-line Replay
-displays persisted indicator snapshots from a Backtest Result; it does not
-recompute executable strategy decisions.
+Conditions, Python strategies, and Backtest execution. Displaying persisted
+indicator snapshots in K-line Replay is **Planned**; Replay does not recompute
+executable strategy decisions.
 
 ## 1. Delivery status
 
 | Status | Scope |
 | --- | --- |
 | **Implemented** | `StreamingIndicator` provides validated construction, chronological update, `latest`, consumed-bar count, and reset. It implements SMA, EMA, WMA, RSI, MACD, Bollinger bands, ATR, ADX, stochastic, Donchian, rolling VWAP, OBV, ROC, momentum, true range, and bar-field outputs for the Selectable Conditions path. Its per-bar update uses preconfigured state only. |
-| **Planned** | Registry-by-name construction, bounded display history, checkpointing, session-reset VWAP, crossover composition, chart snapshots, and Python exposure. |
+| **Planned** | Registry-by-name construction, bounded display history, checkpointing, session-reset VWAP, crossover composition, chart snapshots, and Python exposure beyond SMA. |
 | **Blocked** | No indicator may be labelled available until its implementation and required tests land. |
 
 ## 2. Contract
@@ -29,7 +29,7 @@ The planned narrow interface provides update, latest typed value, bounded histor
 
 | Kind | Required behavior |
 | --- | --- |
-| SMA, EMA, WMA | Price moving averages. |
+| SMA, EMA, WMA | Selected-field moving averages. |
 | RSI | Wilder smoothing; default period 14. |
 | MACD | Line, signal, and histogram. |
 | Bollinger bands | Upper, middle, lower, width, and percent-B. |
@@ -50,6 +50,11 @@ the accepted scope.
 - Internal analytics may use `double`; authoritative accounting types remain the fixed-point types in [`EngineReplayPnL.md`](EngineReplayPnL.md) §7.
 - `IndicatorValue` carries both a finite `double` and its price, volume,
   percentage, or scalar domain at the C++ seam.
+- Moving averages, MACD, momentum, rolling VWAP, and Bollinger band levels
+  preserve the selected input domain: volume input produces volume output.
+  Bollinger width/percent-B remain scalar; RSI, ADX, stochastic, and ROC retain
+  their dimensionless percent category. ATR, true range, and Donchian use
+  OHLC prices, while OBV uses volume.
 - Python receives finite `float` values for warmed indicators and `None` before warm-up.
 - Selectable Conditions compare typed values and reject incompatible operands at compile time.
 - The current Backtest editor labels quote-price and price-difference outputs in
@@ -69,6 +74,20 @@ the accepted scope.
   [`StrategyAuthoring.md`](StrategyAuthoring.md) §3; exceeding a display ring
   never changes indicator correctness.
 - Rolling algorithms periodically rebase when needed to bound floating-point drift. The chosen formula and rebase interval are versioned because they affect canonical strategy decisions.
+- The `stableWindowV2` implementation, identified by application/Engine build
+  version 0.1.1, uses two bounded prefix stacks for SMA, WMA, Bollinger bands,
+  and rolling VWAP. Expiring a sample selects a precomputed suffix instead of
+  subtracting large totals. Each sample transfers once, giving O(1) amortized
+  updates with no allocation after construction. Bollinger population deviation
+  merges centered moments and never subtracts squared price means; percent-B
+  uses the centered offset. VWAP accumulates positive price-volume products
+  and volumes with separate binary exponents to avoid premature overflow or
+  underflow. Its final quotient is bounded by the largest contributing price.
+  EMA/Wilder smoothing uses bounded interpolation, and ratio/midpoint operations
+  avoid avoidable intermediate overflow in the corrected operations. These
+  fixes can change decisions near a threshold; the Engine build identity
+  distinguishes new Python runs. Fixed-point monetary policy, Strategy API 1,
+  persisted historical records, and historical Result hashes are unchanged.
 - Chart snapshots may use `NaN` only as a rendering gap outside executable strategy interfaces.
 
 Crossing has one definition: `a` crosses above `b` only when the previous comparable values satisfy `a <= b` and the current values satisfy `a > b`; below is the exact mirror. No event occurs without two comparable warmed samples.
@@ -84,6 +103,14 @@ Crossing has one definition: `a` crosses above `b` only when the previous compar
 
 - Every public indicator behavior requires positive, negative, and boundary unit tests, including parameter validation, exact warm-up boundary, reset/checkpoint, missing bars, and history capacity.
 - Numeric fixtures use independently verified expected values and tolerances appropriate to the formula; tests must not reproduce the implementation as their oracle.
+- `Tests/Fixtures/Indicators/GenerateReference.py` generates the synthetic
+  build-local `Bars.csv` and `Expected.csv` using Decimal batch formulas, including closed
+  weighted-series EMA/Wilder calculations and two-pass population variance.
+  The registered catalog test checks 124 configurations and 17,360 outputs,
+  including warm-up boundaries, actual-bar gaps, all implemented output kinds,
+  and all bar-field passthroughs. Focused regressions additionally cover tiny
+  spreads, expired outliers, zero-volume recovery, unit domains, and finite
+  results whose naive intermediate products would overflow.
 - Cross tests must cover equality boundaries and both directions.
 - Composition tests prove the same implementation is used by conditions,
   Python, and Backtest execution. Result-replay tests prove persisted

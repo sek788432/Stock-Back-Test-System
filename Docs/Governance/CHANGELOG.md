@@ -32,7 +32,14 @@ living changelog describes only the maintained product direction.
   identity, durable-result compatibility, and release packaging contracts.
 
 ### Fixed
-- (none)
+- Made worker spawn-failure descriptor tests independent of whether the runner
+  leaves standard input open, retaining every injected failure and leak check.
+- Corrected Python completion labels so they identify the frozen Python run
+  instead of starter/selectable strategies.
+- Corrected rolling indicator cancellation, Bollinger population variance,
+  volume-derived numeric domains, and avoidable smoothing/ratio overflow.
+  Development build version 0.1.1 distinguishes the corrected analytics in
+  recorded Python Engine provenance; historical Results remain readable.
 
 ### Removed
 - Native-plugin and AI-assisted authoring specifications; neither is an
@@ -40,8 +47,9 @@ living changelog describes only the maintained product direction.
 - Obsolete K-line roadmap and organizational ownership guidance.
 
 ### Strategy API
-- Not yet declared. The first implemented Python strategy contract will declare
-  its version independently from the application.
+- Version 1 remains unchanged. The implemented managed Python milestone exposes
+  C++ SMA, bounded history, and long-only market commands; the remaining
+  indicator catalog is not yet exposed as Python declarations.
 
 ---
 

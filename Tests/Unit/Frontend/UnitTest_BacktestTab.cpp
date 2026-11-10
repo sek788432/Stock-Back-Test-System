@@ -263,6 +263,7 @@ private slots:
   void workerExceptionIsPresentedAsAnError();
   void unknownWorkerExceptionIsPresentedAsAnError();
   void pythonDraftIsFrozenAndPassedToTheRunWorker();
+  void pythonCompletionStatusNeverNamesAnotherStrategy();
   void pythonActionsExplainWhenNoDraftIsAvailable();
   void verificationWithoutRunnerShowsUnavailableStateAndIdleCancelIsIgnored();
   void backtestAndVerificationActionsRejectOverlap();
@@ -1095,6 +1096,37 @@ void BacktestTabTest::pythonDraftIsFrozenAndPassedToTheRunWorker() {
       QString{"{\"quantity\":3}"});
   QVERIFY(captured->pythonStrategy->sourceConsentGranted);
   QVERIFY(!captured->selectableStrategy.has_value());
+}
+
+void BacktestTabTest::pythonCompletionStatusNeverNamesAnotherStrategy() {
+  using Outcome = bte::bindings::BacktestOutcome;
+  for (const auto outcome :
+       {Outcome::filled, Outcome::rejectedInsufficientCash,
+        Outcome::cancelledNoFutureMarketData, Outcome::completedNoSignal}) {
+    bte::frontend::BacktestTab tab{
+        [outcome](bte::bindings::BacktestConfiguration,
+                  bte::core::CancellationToken) {
+          auto snapshot = outcome == Outcome::filled ? filledSnapshot()
+                                                     : noFillSnapshot(outcome);
+          snapshot.outcome = outcome;
+          return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+        }};
+    tab.setConsentProvider([](const std::string &) { return true; });
+    tab.setPythonStrategyDraft("source", "{}");
+    auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+    auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+    QVERIFY(run != nullptr);
+    QVERIFY(status != nullptr);
+    QTest::mouseClick(run, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil(
+        [status] { return status->text().contains("Completed"); }));
+    QVERIFY(status->text().contains("Python"));
+    QVERIFY(!status->text().contains("starter"));
+    QVERIFY(!status->text().contains("selectable"));
+    if (outcome == Outcome::completedNoSignal) {
+      QVERIFY(status->text().contains("no orders"));
+    }
+  }
 }
 
 void BacktestTabTest::pythonActionsExplainWhenNoDraftIsAvailable() {

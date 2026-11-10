@@ -2950,6 +2950,63 @@ def create_strategy(params):
   EXPECT_EQ(diagnostics.streams.standardError.bytesSeen, 0U);
 }
 
+TEST(PythonWorkerStrategyTest, expiredSmaOutlierCannotSuppressNextOpenOrder) {
+  const std::string source = R"python(
+import stockbt
+STOCKBT_API_VERSION = "1"
+STOCKBT_TEMPLATE_VERSION = "1.0.0"
+class Strategy:
+    max_history_bars = 2
+    indicators = {"mean": stockbt.SMA("mean", period=2)}
+    def __init__(self):
+        self.step = 0
+    def on_market(self, ctx):
+        self.step += 1
+        mean = ctx.indicators.get("mean")
+        ctx.log.info("mean", value=mean)
+        if self.step == 3 and mean > 0.75e-9:
+            ctx.orders.buy_market(ctx.symbol, quantity=1)
+def create_strategy(params):
+    return Strategy()
+)python";
+  auto strategy = PythonWorkerStrategy::createForTesting(
+      BTE_TEST_PYTHON_EXECUTABLE, BTE_PYTHON_WORKER_BOOTSTRAP_PATH, source,
+      parameters(), true);
+  ASSERT_TRUE(strategy.ok()) << strategy.error().message;
+  const auto start = std::int64_t{1'700'000'000'000};
+  std::vector<bte::core::Bar> bars;
+  const std::array prices{1e9, 1e-9, 1e-9, 2.0};
+  for (std::size_t index = 0; index < prices.size(); ++index) {
+    bars.push_back(
+        {.ts = bte::core::Timestamp{std::chrono::milliseconds{
+             start + static_cast<std::int64_t>(index * index) * 3'600'000}},
+         .open = prices[index],
+         .high = prices[index],
+         .low = prices[index],
+         .close = prices[index],
+         .volume = 100.0});
+  }
+  auto execution = bte::engine::BacktestExecution::start(
+      {.bars = std::move(bars),
+       .symbol = "AAPL",
+       .initialCapitalMicrodollars = 1'000'000'000,
+       .quantityShares = 1},
+      std::move(strategy).value());
+  ASSERT_TRUE(execution.ok()) << execution.error().message;
+  const auto completed = execution.value()->runToCompletion();
+  ASSERT_TRUE(completed.ok()) << completed.error().message;
+  const auto &result = execution.value()->result();
+  ASSERT_EQ(result.fills.size(), 1U);
+  EXPECT_EQ(result.fills.front().priceNanodollars, 2'000'200'000);
+  EXPECT_EQ(
+      result.fills.front().timestamp,
+      bte::core::Timestamp{std::chrono::milliseconds{start + 9 * 3'600'000}});
+  EXPECT_EQ(result.positionShares, 1);
+  EXPECT_EQ(result.cashMicrodollars, 997'999'800);
+  EXPECT_EQ(result.equityMicrodollars, 999'999'800);
+  EXPECT_EQ(result.pnlMicrodollars, -200);
+}
+
 TEST(PythonWorkerStrategyTest, historyReturnsImmutableInclusiveActualBars) {
   const std::string source = R"python(
 import stockbt
