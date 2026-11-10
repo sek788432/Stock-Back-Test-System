@@ -1,6 +1,6 @@
 """Generate synthetic indicator goldens with independent batch formulas.
 
-Run this file to regenerate Bars.csv and Expected.csv. The fixed seed and
+Pass an output directory to regenerate build-local Bars.csv and Expected.csv. The fixed seed and
 Decimal weighted-series/two-pass formulas do not call production indicators.
 CSV names refer to the public enum names, not their ordinal encodings.
 """

@@ -264,6 +264,7 @@ private slots:
   void unknownWorkerExceptionIsPresentedAsAnError();
   void pythonDraftIsFrozenAndPassedToTheRunWorker();
   void pythonCompletionStatusNeverNamesAnotherStrategy();
+  void terminalRunStatusTakesPrecedenceOverOrderOutcome();
   void pythonActionsExplainWhenNoDraftIsAvailable();
   void verificationWithoutRunnerShowsUnavailableStateAndIdleCancelIsIgnored();
   void backtestAndVerificationActionsRejectOverlap();
@@ -1126,6 +1127,38 @@ void BacktestTabTest::pythonCompletionStatusNeverNamesAnotherStrategy() {
     if (outcome == Outcome::completedNoSignal) {
       QVERIFY(status->text().contains("no orders"));
     }
+  }
+}
+
+void BacktestTabTest::terminalRunStatusTakesPrecedenceOverOrderOutcome() {
+  using Status = bte::results::RunStatus;
+  const std::array cases{
+      std::pair{Status::failed, QString{"Backtest failed"}},
+      std::pair{Status::canceled, QString{"Backtest canceled"}},
+      std::pair{Status::interrupted, QString{"Backtest interrupted"}},
+      std::pair{Status::incomplete, QString{"Backtest incomplete"}},
+      std::pair{Status::running, QString{"Backtest running"}},
+      std::pair{static_cast<Status>(255), QString{"Backtest unknown"}}};
+  for (const auto &example : cases) {
+    bte::frontend::BacktestTab tab{
+        [example](bte::bindings::BacktestConfiguration,
+                  bte::core::CancellationToken) {
+          auto snapshot = filledSnapshot();
+          snapshot.status = example.first;
+          snapshot.terminalReason = "audit callback failure";
+          return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+        }};
+    auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+    auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+    auto *diagnostics =
+        tab.findChild<QPlainTextEdit *>("backtestStrategyDiagnostics");
+    QVERIFY(run != nullptr);
+    QVERIFY(status != nullptr);
+    QVERIFY(diagnostics != nullptr);
+    QTest::mouseClick(run, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil([run] { return run->isEnabled(); }));
+    QCOMPARE(status->text(), example.second);
+    QVERIFY(diagnostics->toPlainText().contains("audit callback failure"));
   }
 }
 

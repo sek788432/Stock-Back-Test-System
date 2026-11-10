@@ -34,8 +34,9 @@ living changelog describes only the maintained product direction.
 ### Fixed
 - Made worker spawn-failure descriptor tests independent of whether the runner
   leaves standard input open, retaining every injected failure and leak check.
-- Corrected Python completion labels so they identify the frozen Python run
-  instead of starter/selectable strategies.
+- Corrected Backtest completion labels to prioritize the recorded terminal
+  status and identify the frozen Python run instead of starter/selectable
+  strategies. Failed/canceled diagnostic runs no longer appear completed.
 - Corrected rolling indicator cancellation, Bollinger population variance,
   volume-derived numeric domains, and avoidable smoothing/ratio overflow.
   Development build version 0.1.1 distinguishes the corrected analytics in

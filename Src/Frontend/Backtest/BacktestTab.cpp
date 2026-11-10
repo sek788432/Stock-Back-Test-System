@@ -1783,7 +1783,10 @@ void BacktestTab::handleBacktestFinished(
     saveAndReplay->setEnabled(true);
     discardDraft->setEnabled(true);
   }
-  setLabelText(status, statusText(snapshot.outcome, runState_->strategyMode));
+  setLabelText(status,
+               snapshot.status == results::RunStatus::completed
+                   ? statusText(snapshot.outcome, runState_->strategyMode)
+                   : tr("Backtest %1").arg(runStatusText(snapshot.status)));
   setLabelText(cash, tr("Cash: %1").arg(formatMoney(snapshot.cash)));
   setLabelText(position,
                tr("Position: %1 shares").arg(snapshot.positionShares));
