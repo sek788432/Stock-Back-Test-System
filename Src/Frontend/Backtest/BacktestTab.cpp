@@ -692,6 +692,7 @@ struct BacktestTab::RunState final {
 
   ~RunState() {
     cancellation.requestCancellation();
+    draftCancellation.requestCancellation();
     watcher.waitForFinished();
     verificationWatcher.waitForFinished();
     publishWatcher.waitForFinished();
@@ -706,6 +707,8 @@ struct BacktestTab::RunState final {
   RunState &operator=(RunState &&) = delete;
 
   core::CancellationSource cancellation;
+  // Draft I/O survives run/verification cancellation and stops on destruction.
+  core::CancellationSource draftCancellation;
   QFutureWatcher<BacktestResult> watcher;
   QFutureWatcher<VerificationResult> verificationWatcher;
   QFutureWatcher<PublishResult> publishWatcher;
@@ -913,6 +916,12 @@ connectDraftListing(const DraftActionWidgets &controls,
           const auto previousIndex = controls.drafts->findData(previous);
           if (previousIndex >= 0) {
             controls.drafts->setCurrentIndex(previousIndex);
+            if (controls.saveResult->property("resultId")
+                    .toString()
+                    .isEmpty()) {
+              controls.saveResult->setProperty("resultId",
+                                               controls.drafts->currentData());
+            }
           } else if (previous.isEmpty() && controls.drafts->count() > 0) {
             controls.drafts->setCurrentIndex(0);
             controls.saveResult->setProperty("resultId",
@@ -1567,7 +1576,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
       .draftListWatcher = draftListWatcher,
       .publishWatcher = publishWatcher,
       .discardWatcher = discardWatcher,
-      .cancellation = &runState_->cancellation,
+      .cancellation = &runState_->draftCancellation,
       .openAfterPublish = &runState_->openAfterPublish,
   };
   const auto beginDraftRefresh =

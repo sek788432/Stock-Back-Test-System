@@ -32,6 +32,8 @@ living changelog describes only the maintained product direction.
   identity, durable-result compatibility, and release packaging contracts.
 
 ### Fixed
+- Isolated draft I/O cancellation from Backtest/verification cancellation so
+  refresh, Save, and Discard remain usable after canceling a run.
 - Made worker spawn-failure descriptor tests independent of whether the runner
   leaves standard input open, retaining every injected failure and leak check.
 - Corrected Backtest completion labels to prioritize the recorded terminal

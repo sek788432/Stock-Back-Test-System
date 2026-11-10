@@ -137,7 +137,9 @@ outcome. Failed, canceled, interrupted, and incomplete diagnostic runs must not
 be labelled completed, even when earlier orders filled. Completed Python runs
 identify the Python strategy and distinguish no-order, rejected-order, and
 no-future-market-data outcomes from starter/selectable strategies. Terminal
-diagnostics and recoverable drafts remain available for inspection.
+diagnostics and recoverable drafts remain available for inspection. Canceling
+a run or reproducibility verification does not cancel draft listing, saving,
+or discarding; closing the tab cancels and joins both operation lifetimes.
 
 ## Result library and storage
 
