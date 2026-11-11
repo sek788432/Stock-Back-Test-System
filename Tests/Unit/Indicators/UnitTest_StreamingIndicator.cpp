@@ -9,11 +9,147 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <optional>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
+
+std::vector<std::string> csvCells(const std::string &row) {
+  std::istringstream stream{row};
+  std::vector<std::string> result;
+  for (std::string cell; std::getline(stream, cell, ',');) {
+    result.push_back(std::move(cell));
+  }
+  return result;
+}
+
+template <typename Enum, std::size_t Size>
+std::optional<Enum>
+namedEnum(const std::string_view name,
+          const std::array<std::pair<std::string_view, Enum>, Size> &entries) {
+  const auto found = std::ranges::find_if(
+      entries, [name](const auto &entry) { return entry.first == name; });
+  if (found == entries.end()) {
+    return std::nullopt;
+  }
+  return found->second;
+}
+
+TEST(StreamingIndicatorTest, catalogMatchesIndependentDecimalBatchReference) {
+  using Kind = bte::indicators::IndicatorKind;
+  using Output = bte::indicators::IndicatorOutput;
+  using Field = bte::indicators::BarField;
+  using Name = std::string_view;
+  const std::array kinds{
+      std::pair{Name{"sma"}, Kind::sma},
+      std::pair{Name{"ema"}, Kind::ema},
+      std::pair{Name{"wma"}, Kind::wma},
+      std::pair{Name{"rsi"}, Kind::rsi},
+      std::pair{Name{"macd"}, Kind::macd},
+      std::pair{Name{"bollingerBands"}, Kind::bollingerBands},
+      std::pair{Name{"atr"}, Kind::atr},
+      std::pair{Name{"adx"}, Kind::adx},
+      std::pair{Name{"stochastic"}, Kind::stochastic},
+      std::pair{Name{"donchian"}, Kind::donchian},
+      std::pair{Name{"vwap"}, Kind::vwap},
+      std::pair{Name{"obv"}, Kind::obv},
+      std::pair{Name{"roc"}, Kind::roc},
+      std::pair{Name{"momentum"}, Kind::momentum},
+      std::pair{Name{"trueRange"}, Kind::trueRange},
+      std::pair{Name{"barField"}, Kind::barField},
+  };
+  const std::array outputs{
+      std::pair{Name{"value"}, Output::value},
+      std::pair{Name{"signal"}, Output::signal},
+      std::pair{Name{"histogram"}, Output::histogram},
+      std::pair{Name{"upper"}, Output::upper},
+      std::pair{Name{"middle"}, Output::middle},
+      std::pair{Name{"lower"}, Output::lower},
+      std::pair{Name{"width"}, Output::width},
+      std::pair{Name{"percentB"}, Output::percentB},
+      std::pair{Name{"positiveDirectionalIndex"},
+                Output::positiveDirectionalIndex},
+      std::pair{Name{"negativeDirectionalIndex"},
+                Output::negativeDirectionalIndex},
+      std::pair{Name{"percentK"}, Output::percentK},
+      std::pair{Name{"percentD"}, Output::percentD},
+  };
+  const std::array fields{
+      std::pair{Name{"open"}, Field::open},
+      std::pair{Name{"high"}, Field::high},
+      std::pair{Name{"low"}, Field::low},
+      std::pair{Name{"close"}, Field::close},
+      std::pair{Name{"volume"}, Field::volume},
+  };
+  const auto directory = std::filesystem::path{BTE_INDICATOR_FIXTURE_DIR};
+  std::ifstream barFile{directory / "Bars.csv"};
+  ASSERT_TRUE(barFile.is_open());
+  std::string row;
+  ASSERT_TRUE(static_cast<bool>(std::getline(barFile, row)));
+  std::vector<bte::core::Bar> bars;
+  while (std::getline(barFile, row)) {
+    const auto cells = csvCells(row);
+    ASSERT_EQ(cells.size(), 6U);
+    bars.push_back({
+        .ts = bte::core::Timestamp{std::chrono::milliseconds{
+            std::stoll(cells[0])}},
+        .open = std::stod(cells[1]),
+        .high = std::stod(cells[2]),
+        .low = std::stod(cells[3]),
+        .close = std::stod(cells[4]),
+        .volume = std::stod(cells[5]),
+    });
+  }
+  ASSERT_EQ(bars.size(), 140U);
+  std::ifstream expectedFile{directory / "Expected.csv"};
+  ASSERT_TRUE(expectedFile.is_open());
+  ASSERT_TRUE(static_cast<bool>(std::getline(expectedFile, row)));
+  std::size_t configurations = 0;
+  while (std::getline(expectedFile, row)) {
+    const auto cells = csvCells(row);
+    ASSERT_EQ(cells.size(), 6U + bars.size());
+    SCOPED_TRACE(cells[0] + ":" + cells[1] + ":" + cells[4] + ":" + cells[5]);
+    const auto kind = namedEnum(cells[0], kinds);
+    const auto output = namedEnum(cells[4], outputs);
+    const auto field = namedEnum(cells[5], fields);
+    ASSERT_TRUE(kind.has_value());
+    ASSERT_TRUE(output.has_value());
+    ASSERT_TRUE(field.has_value());
+    auto created = bte::indicators::StreamingIndicator::create({
+        .kind = *kind,
+        .period = std::stoi(cells[1]),
+        .secondaryPeriod = std::stoi(cells[2]),
+        .signalPeriod = std::stoi(cells[3]),
+        .output = *output,
+        .field = *field,
+    });
+    ASSERT_TRUE(created.ok());
+    auto indicator = std::move(created).value();
+    for (std::size_t index = 0; index < bars.size(); ++index) {
+      SCOPED_TRACE(index);
+      const auto updated = indicator.update(bars[index]);
+      ASSERT_TRUE(updated.ok());
+      const auto &expected = cells[index + 6U];
+      if (expected == "none") {
+        EXPECT_FALSE(updated.value().has_value());
+      } else {
+        ASSERT_TRUE(updated.value().has_value());
+        const auto reference = std::stod(expected);
+        EXPECT_NEAR(updated.value()->value, reference,
+                    std::max(1e-8, std::abs(reference) * 1e-10));
+      }
+    }
+    ++configurations;
+  }
+  EXPECT_EQ(configurations, 124U);
+}
 
 bte::core::Bar makeBar(const int day, const double close) {
   return bte::core::Bar{
@@ -97,6 +233,145 @@ TEST(StreamingIndicatorTest, bollingerAndDonchianExposeRequestedOutputs) {
   EXPECT_DOUBLE_EQ(donchian.latest()->value, 9.0);
 }
 
+TEST(StreamingIndicatorTest, bollingerPreservesSmallSpreadsAtNonzeroPrice) {
+  auto created = bte::indicators::StreamingIndicator::create({
+      .kind = bte::indicators::IndicatorKind::bollingerBands,
+      .period = 2,
+      .output = bte::indicators::IndicatorOutput::upper,
+  });
+  ASSERT_TRUE(created.ok());
+  auto indicator = std::move(created).value();
+  EXPECT_FALSE(indicator.update(makeBar(1, 100.0)).value().has_value());
+  const std::array closes{100.000001, 100.000002, 100.000003, 100.000003,
+                          100.000003};
+  // A two-value population has sigma = abs(b-a)/2, so upper is
+  // (a+b)/2 + abs(b-a). Equal values have exactly zero deviation.
+  const std::array expected{100.0000015, 100.0000025, 100.0000035, 100.000003,
+                            100.000003};
+  for (std::size_t index = 0; index < closes.size(); ++index) {
+    const auto updated =
+        indicator.update(makeBar(static_cast<int>(index) + 2, closes[index]));
+    ASSERT_TRUE(updated.ok());
+    ASSERT_TRUE(updated.value().has_value());
+    EXPECT_NEAR(updated.value()->value, expected[index], 1e-12);
+  }
+}
+
+TEST(StreamingIndicatorTest, expiredLargeValuesCannotCorruptRemainingWindow) {
+  for (const auto kind : {bte::indicators::IndicatorKind::sma,
+                          bte::indicators::IndicatorKind::wma,
+                          bte::indicators::IndicatorKind::vwap}) {
+    SCOPED_TRACE(static_cast<int>(kind));
+    auto created = bte::indicators::StreamingIndicator::create({
+        .kind = kind,
+        .period = 2,
+    });
+    ASSERT_TRUE(created.ok());
+    auto indicator = std::move(created).value();
+    ASSERT_TRUE(indicator.update(makeBar(1, 1e16)).ok());
+    ASSERT_TRUE(indicator.update(makeBar(2, 1.0)).ok());
+    for (int day = 3; day <= 12; ++day) {
+      const auto updated = indicator.update(makeBar(day, 1.0));
+      ASSERT_TRUE(updated.ok());
+      ASSERT_TRUE(updated.value().has_value());
+      EXPECT_DOUBLE_EQ(updated.value()->value, 1.0);
+    }
+  }
+}
+
+TEST(StreamingIndicatorTest, derivedVolumeValuesRetainTheirNumericDomain) {
+  using Kind = bte::indicators::IndicatorKind;
+  for (const auto kind : {Kind::sma, Kind::ema, Kind::wma, Kind::macd,
+                          Kind::bollingerBands, Kind::vwap, Kind::momentum}) {
+    SCOPED_TRACE(static_cast<int>(kind));
+    auto created = bte::indicators::StreamingIndicator::create({
+        .kind = kind,
+        .period = 2,
+        .secondaryPeriod = 3,
+        .signalPeriod = 2,
+        .output = kind == Kind::bollingerBands
+                      ? bte::indicators::IndicatorOutput::upper
+                      : bte::indicators::IndicatorOutput::value,
+        .field = bte::indicators::BarField::volume,
+    });
+    ASSERT_TRUE(created.ok());
+    auto indicator = std::move(created).value();
+    for (int day = 1; day <= 6; ++day) {
+      auto bar = makeBar(day, 100.0);
+      bar.volume = 10.0 * static_cast<double>(day);
+      ASSERT_TRUE(indicator.update(bar).ok());
+    }
+    ASSERT_TRUE(indicator.latest().has_value());
+    EXPECT_EQ(indicator.latest()->domain,
+              bte::indicators::NumericDomain::volume);
+  }
+}
+
+TEST(StreamingIndicatorTest, finiteSmoothingMustNotOverflowAnIntermediateSum) {
+  using Kind = bte::indicators::IndicatorKind;
+  const auto maximum = std::numeric_limits<double>::max();
+  for (const auto kind : {Kind::ema, Kind::atr}) {
+    SCOPED_TRACE(static_cast<int>(kind));
+    auto created = bte::indicators::StreamingIndicator::create({
+        .kind = kind,
+        .period = 2,
+    });
+    ASSERT_TRUE(created.ok());
+    auto indicator = std::move(created).value();
+    for (int day = 1; day <= 5; ++day) {
+      auto bar = makeBar(day, 100.0);
+      bar.open = bar.high = bar.close = maximum;
+      bar.low = kind == Kind::atr ? 1.0 : maximum;
+      const auto updated = indicator.update(bar);
+      ASSERT_TRUE(updated.ok());
+      if (day >= 2) {
+        ASSERT_TRUE(updated.value().has_value());
+        EXPECT_DOUBLE_EQ(updated.value()->value, maximum);
+      }
+    }
+  }
+}
+
+TEST(StreamingIndicatorTest, ratiosAndMidpointsAvoidPrematureOverflow) {
+  using Kind = bte::indicators::IndicatorKind;
+  using Output = bte::indicators::IndicatorOutput;
+  const auto maximum = std::numeric_limits<double>::max();
+  const std::array definitions{
+      bte::indicators::IndicatorDefinition{
+          .kind = Kind::stochastic, .period = 1, .output = Output::percentK},
+      bte::indicators::IndicatorDefinition{
+          .kind = Kind::donchian, .period = 1, .output = Output::middle},
+      bte::indicators::IndicatorDefinition{.kind = Kind::roc, .period = 1},
+      bte::indicators::IndicatorDefinition{
+          .kind = Kind::adx,
+          .period = 1,
+          .output = Output::positiveDirectionalIndex},
+  };
+  const std::array expected{100.0, maximum * 0.75, -50.0, 100.0};
+  for (std::size_t index = 0; index < definitions.size(); ++index) {
+    SCOPED_TRACE(index);
+    auto created =
+        bte::indicators::StreamingIndicator::create(definitions[index]);
+    ASSERT_TRUE(created.ok());
+    auto indicator = std::move(created).value();
+    auto first =
+        makeBar(1, definitions[index].kind == Kind::roc ? maximum : 1.0);
+    first.open = first.high = first.low = first.close;
+    ASSERT_TRUE(indicator.update(first).ok());
+    auto last = makeBar(2, maximum);
+    last.open = last.close = maximum;
+    last.high = maximum;
+    last.low = definitions[index].kind == Kind::donchian ? maximum / 2.0 : 1.0;
+    if (definitions[index].kind == Kind::roc) {
+      last.open = last.close = last.high = last.low = maximum / 2.0;
+    }
+    const auto updated = indicator.update(last);
+    ASSERT_TRUE(updated.ok());
+    ASSERT_TRUE(updated.value().has_value());
+    EXPECT_DOUBLE_EQ(updated.value()->value, expected[index]);
+  }
+}
+
 TEST(StreamingIndicatorTest, invalidDefinitionsAndBarsReturnStructuredErrors) {
   const auto noPeriod = bte::indicators::StreamingIndicator::create({
       .kind = bte::indicators::IndicatorKind::rsi,
@@ -127,11 +402,13 @@ TEST(StreamingIndicatorTest, invalidDefinitionsAndBarsReturnStructuredErrors) {
 
 TEST(StreamingIndicatorTest, nonFiniteComputedOutputReturnsStructuredError) {
   auto created = bte::indicators::StreamingIndicator::create({
-      .kind = bte::indicators::IndicatorKind::vwap,
-      .period = 1,
+      .kind = bte::indicators::IndicatorKind::bollingerBands,
+      .period = 2,
+      .output = bte::indicators::IndicatorOutput::upper,
   });
   ASSERT_TRUE(created.ok());
   auto indicator = std::move(created).value();
+  ASSERT_TRUE(indicator.update(makeBar(1, 1.0)).ok());
   auto overflowBar = makeBar(2, std::numeric_limits<double>::max());
   overflowBar.open = std::numeric_limits<double>::max();
   overflowBar.high = std::numeric_limits<double>::max();
@@ -143,6 +420,75 @@ TEST(StreamingIndicatorTest, nonFiniteComputedOutputReturnsStructuredError) {
   EXPECT_FALSE(updated.ok());
   EXPECT_EQ(updated.error().code, bte::core::ErrorCode::invalidArgument);
   EXPECT_FALSE(indicator.latest().has_value());
+}
+
+TEST(StreamingIndicatorTest,
+     vwapAvoidsIntermediateOverflowAndRecoversZeroVolume) {
+  auto created = bte::indicators::StreamingIndicator::create({
+      .kind = bte::indicators::IndicatorKind::vwap,
+      .period = 2,
+  });
+  ASSERT_TRUE(created.ok());
+  auto indicator = std::move(created).value();
+  auto bar = makeBar(1, 100.0);
+  bar.volume = std::numeric_limits<double>::max();
+  ASSERT_TRUE(indicator.update(bar).ok());
+  bar.ts += std::chrono::hours{1};
+  const auto large = indicator.update(bar);
+  ASSERT_TRUE(large.ok());
+  ASSERT_TRUE(large.value().has_value());
+  EXPECT_DOUBLE_EQ(large.value()->value, 100.0);
+  bar.volume = 0.0;
+  bar.ts += std::chrono::hours{1};
+  ASSERT_TRUE(indicator.update(bar).ok());
+  bar.ts += std::chrono::hours{1};
+  const auto empty = indicator.update(bar);
+  ASSERT_TRUE(empty.ok());
+  EXPECT_FALSE(empty.value().has_value());
+  bar.close = bar.open = 101.0;
+  bar.high = 102.0;
+  bar.volume = 1.0;
+  bar.ts += std::chrono::hours{1};
+  const auto recovered = indicator.update(bar);
+  ASSERT_TRUE(recovered.ok());
+  ASSERT_TRUE(recovered.value().has_value());
+  EXPECT_DOUBLE_EQ(recovered.value()->value, 101.0);
+  indicator.reset();
+  EXPECT_EQ(indicator.consumedBars(), 0);
+  EXPECT_FALSE(indicator.latest().has_value());
+  EXPECT_FALSE(indicator.update(bar).value().has_value());
+}
+
+TEST(StreamingIndicatorTest, vwapPreservesExtremePriceVolumeProducts) {
+  struct Case {
+    double firstPrice;
+    double firstVolume;
+    double secondPrice;
+    double secondVolume;
+    double expected;
+  };
+  const auto maximum = std::numeric_limits<double>::max();
+  for (const auto &example :
+       std::array{Case{1e308, 1e-200, 1e-200, 1e200, 1e-92},
+                  Case{1e308, 1e-20, 1e-100, 1e308, 1e-20},
+                  Case{maximum, maximum, maximum, maximum, maximum},
+                  Case{1e-200, 1e-200, 1e-200, 1e-200, 1e-200}}) {
+    auto created = bte::indicators::StreamingIndicator::create(
+        {.kind = bte::indicators::IndicatorKind::vwap, .period = 2});
+    ASSERT_TRUE(created.ok());
+    auto indicator = std::move(created).value();
+    auto bar = makeBar(1, example.firstPrice);
+    bar.open = bar.high = bar.low = bar.close = example.firstPrice;
+    bar.volume = example.firstVolume;
+    ASSERT_TRUE(indicator.update(bar).ok());
+    bar.ts += std::chrono::hours{1};
+    bar.open = bar.high = bar.low = bar.close = example.secondPrice;
+    bar.volume = example.secondVolume;
+    const auto updated = indicator.update(bar);
+    ASSERT_TRUE(updated.ok());
+    ASSERT_TRUE(updated.value().has_value());
+    EXPECT_NEAR(updated.value()->value / example.expected, 1.0, 1e-14);
+  }
 }
 
 TEST(StreamingIndicatorTest, rejectsInvalidEnumAndMultiPeriodDefinitions) {
@@ -523,6 +869,37 @@ TEST(StreamingIndicatorTest, catalogOutputsMatchFixedOracles) {
     ASSERT_TRUE(latest.has_value());
     EXPECT_NEAR(latest->value, outputCase.expected, 0.000001);
     EXPECT_EQ(latest->domain, outputCase.domain);
+  }
+}
+
+TEST(StreamingIndicatorTest, resetDiscardsBothRollingStacks) {
+  using bte::indicators::IndicatorKind;
+  for (const auto kind : {IndicatorKind::sma, IndicatorKind::wma,
+                          IndicatorKind::bollingerBands, IndicatorKind::vwap}) {
+    auto created = bte::indicators::StreamingIndicator::create(
+        {.kind = kind,
+         .period = 3,
+         .output = kind == IndicatorKind::bollingerBands
+                       ? bte::indicators::IndicatorOutput::upper
+                       : bte::indicators::IndicatorOutput::value});
+    ASSERT_TRUE(created.ok());
+    auto indicator = std::move(created).value();
+    for (int day = 1; day <= 10; ++day) {
+      ASSERT_TRUE(indicator.update(makeBar(day, 1e15 + day)).ok());
+    }
+    indicator.reset();
+    EXPECT_EQ(indicator.consumedBars(), 0);
+    EXPECT_FALSE(indicator.latest().has_value());
+    for (int day = 1; day <= 10; ++day) {
+      const auto updated = indicator.update(makeBar(day, 5.0));
+      ASSERT_TRUE(updated.ok());
+      if (day < 3) {
+        EXPECT_FALSE(updated.value().has_value());
+      } else {
+        ASSERT_TRUE(updated.value().has_value());
+        EXPECT_DOUBLE_EQ(updated.value()->value, 5.0);
+      }
+    }
   }
 }
 

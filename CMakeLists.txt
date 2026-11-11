@@ -20,7 +20,7 @@ endif()
 
 project(
   stockBacktester
-  VERSION 0.1.0
+  VERSION 0.1.1
   LANGUAGES CXX)
 
 if(NOT VCPKG_TOOLCHAIN OR NOT VCPKG_MANIFEST_MODE OR

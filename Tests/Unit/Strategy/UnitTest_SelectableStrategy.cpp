@@ -1555,10 +1555,13 @@ TEST(SelectableStrategyTest, nonFiniteBuyAndSellIndicatorOutputsArePropagated) {
       .source = bte::strategy::ConditionSource::indicator,
       .comparison = bte::strategy::Comparison::greaterThan,
       .threshold = 0.0,
+      .thresholdDomain = bte::indicators::NumericDomain::volume,
       .indicator =
           {
-              .kind = bte::indicators::IndicatorKind::vwap,
-              .period = 1,
+              .kind = bte::indicators::IndicatorKind::bollingerBands,
+              .period = 2,
+              .output = bte::indicators::IndicatorOutput::upper,
+              .field = bte::indicators::BarField::volume,
           },
   };
   const auto harmlessCondition = bte::strategy::Condition{
@@ -1578,6 +1581,11 @@ TEST(SelectableStrategyTest, nonFiniteBuyAndSellIndicatorOutputsArePropagated) {
   ASSERT_TRUE(sellResult.ok());
   auto buyStrategy = std::move(buyResult).value();
   auto sellStrategy = std::move(sellResult).value();
+  auto seed = makeBar(1, 1.0);
+  seed.volume = 1.0;
+  ASSERT_TRUE(buyStrategy->onBar(seed).ok());
+  ASSERT_TRUE(sellStrategy->onBar(seed).ok());
+  // The true upper volume band is 1.5 * DBL_MAX and cannot be represented.
   auto overflowBar = makeBar(2, std::numeric_limits<double>::max());
   overflowBar.open = std::numeric_limits<double>::max();
   overflowBar.high = std::numeric_limits<double>::max();

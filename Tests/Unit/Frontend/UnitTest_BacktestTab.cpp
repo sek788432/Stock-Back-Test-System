@@ -263,6 +263,10 @@ private slots:
   void workerExceptionIsPresentedAsAnError();
   void unknownWorkerExceptionIsPresentedAsAnError();
   void pythonDraftIsFrozenAndPassedToTheRunWorker();
+  void pythonCompletionStatusNeverNamesAnotherStrategy();
+  void terminalRunStatusTakesPrecedenceOverOrderOutcome();
+  void canceledOperationsDoNotCancelDraftActions();
+  void destructionCancelsDraftListing();
   void pythonActionsExplainWhenNoDraftIsAvailable();
   void verificationWithoutRunnerShowsUnavailableStateAndIdleCancelIsIgnored();
   void backtestAndVerificationActionsRejectOverlap();
@@ -1095,6 +1099,194 @@ void BacktestTabTest::pythonDraftIsFrozenAndPassedToTheRunWorker() {
       QString{"{\"quantity\":3}"});
   QVERIFY(captured->pythonStrategy->sourceConsentGranted);
   QVERIFY(!captured->selectableStrategy.has_value());
+}
+
+void BacktestTabTest::pythonCompletionStatusNeverNamesAnotherStrategy() {
+  using Outcome = bte::bindings::BacktestOutcome;
+  for (const auto outcome :
+       {Outcome::filled, Outcome::rejectedInsufficientCash,
+        Outcome::cancelledNoFutureMarketData, Outcome::completedNoSignal}) {
+    bte::frontend::BacktestTab tab{
+        [outcome](bte::bindings::BacktestConfiguration,
+                  bte::core::CancellationToken) {
+          auto snapshot = outcome == Outcome::filled ? filledSnapshot()
+                                                     : noFillSnapshot(outcome);
+          snapshot.outcome = outcome;
+          return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+        }};
+    tab.setConsentProvider([](const std::string &) { return true; });
+    tab.setPythonStrategyDraft("source", "{}");
+    auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+    auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+    QVERIFY(run != nullptr);
+    QVERIFY(status != nullptr);
+    QTest::mouseClick(run, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil(
+        [status] { return status->text().contains("Completed"); }));
+    QVERIFY(status->text().contains("Python"));
+    QVERIFY(!status->text().contains("starter"));
+    QVERIFY(!status->text().contains("selectable"));
+    if (outcome == Outcome::completedNoSignal) {
+      QVERIFY(status->text().contains("no orders"));
+    }
+  }
+}
+
+void BacktestTabTest::terminalRunStatusTakesPrecedenceOverOrderOutcome() {
+  using Status = bte::results::RunStatus;
+  const std::array cases{
+      std::pair{Status::failed, QString{"Backtest failed"}},
+      std::pair{Status::canceled, QString{"Backtest canceled"}},
+      std::pair{Status::interrupted, QString{"Backtest interrupted"}},
+      std::pair{Status::incomplete, QString{"Backtest incomplete"}},
+      std::pair{Status::running, QString{"Backtest running"}},
+      std::pair{static_cast<Status>(255), QString{"Backtest unknown"}}};
+  for (const auto &example : cases) {
+    bte::frontend::BacktestTab tab{
+        [example](bte::bindings::BacktestConfiguration,
+                  bte::core::CancellationToken) {
+          auto snapshot = filledSnapshot();
+          snapshot.status = example.first;
+          snapshot.terminalReason = "audit callback failure";
+          return bte::core::Result<bte::bindings::BacktestSnapshot>{snapshot};
+        }};
+    auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+    auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+    auto *diagnostics =
+        tab.findChild<QPlainTextEdit *>("backtestStrategyDiagnostics");
+    QVERIFY(run != nullptr);
+    QVERIFY(status != nullptr);
+    QVERIFY(diagnostics != nullptr);
+    QTest::mouseClick(run, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil([run] { return run->isEnabled(); }));
+    QCOMPARE(status->text(), example.second);
+    QVERIFY(diagnostics->toPlainText().contains("audit callback failure"));
+  }
+}
+
+void BacktestTabTest::canceledOperationsDoNotCancelDraftActions() {
+  for (const auto verification : {false, true}) {
+    std::atomic_bool started = false;
+    std::atomic_bool canceledDraft = false;
+    std::atomic_int listed = 0;
+    std::atomic_int published = 0;
+    std::atomic_int discarded = 0;
+    const auto resultId = std::string(32, 'a');
+    const auto awaitCancellation =
+        [&started](const bte::core::CancellationToken &token) {
+          started = true;
+          const auto deadline =
+              std::chrono::steady_clock::now() + std::chrono::seconds{2};
+          while (!token.isCancellationRequested() &&
+                 std::chrono::steady_clock::now() < deadline) {
+            QThread::msleep(1);
+          }
+          return bte::core::makeError(bte::core::ErrorCode::cancelled,
+                                      "audit operation canceled");
+        };
+    bte::frontend::BacktestTab tab{
+        [awaitCancellation](bte::bindings::BacktestConfiguration,
+                            const bte::core::CancellationToken &token) {
+          return bte::core::Result<bte::bindings::BacktestSnapshot>{
+              awaitCancellation(token)};
+        },
+        [&published,
+         &canceledDraft](const std::string &id, const std::string &,
+                         const bte::core::CancellationToken &token) {
+          ++published;
+          canceledDraft = token.isCancellationRequested();
+          return bte::core::Result<std::string>{id};
+        },
+        [&listed, &canceledDraft,
+         resultId](const bte::core::CancellationToken &token)
+            -> bte::core::Result<bte::bindings::ResultCatalogSnapshot> {
+          ++listed;
+          if (token.isCancellationRequested()) {
+            canceledDraft = true;
+            return bte::core::makeError(bte::core::ErrorCode::cancelled,
+                                        "draft list canceled");
+          }
+          return draftCatalog({resultId});
+        },
+        [&discarded, &canceledDraft](
+            const std::string &, const bte::core::CancellationToken &token) {
+          ++discarded;
+          canceledDraft = token.isCancellationRequested();
+          return bte::core::Result<void>{};
+        }};
+    tab.setConsentProvider([](const std::string &) { return true; });
+    tab.setPythonStrategyDraft("source", "{}");
+    tab.setVerificationRunner(
+        [awaitCancellation](
+            const bte::bindings::BacktestConfiguration &,
+            const bte::core::CancellationToken &token,
+            const bte::bindings::PythonVerificationProgressObserver &) {
+          return bte::core::Result<bte::results::VerificationEvidence>{
+              awaitCancellation(token)};
+        });
+    auto *run = tab.findChild<QPushButton *>("backtestRunButton");
+    auto *verify =
+        tab.findChild<QPushButton *>("backtestVerifyReproducibilityButton");
+    auto *cancel =
+        tab.findChild<QPushButton *>("backtestCancelOperationButton");
+    auto *refresh =
+        tab.findChild<QPushButton *>("backtestRefreshUnsavedRunsButton");
+    auto *save = tab.findChild<QPushButton *>("backtestSaveResultButton");
+    auto *discard = tab.findChild<QPushButton *>("backtestDiscardDraftButton");
+    auto *status = tab.findChild<QLabel *>("backtestStatusLabel");
+    QVERIFY(bte::test::waitUntil(
+        [&] { return listed == 1 && refresh->isEnabled(); }));
+    QTest::mouseClick(verification ? verify : run, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil([&] { return started.load(); }));
+    QTest::mouseClick(cancel, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil([&] {
+      return listed >= 2 && refresh->isEnabled() && run->isEnabled();
+    }));
+    QVERIFY(!canceledDraft.load());
+    QVERIFY(status->text().contains("audit operation canceled"));
+    QVERIFY(save->isEnabled());
+    QTest::mouseClick(save, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil(
+        [&] { return published == 1 && discard->isEnabled(); }));
+    QVERIFY(!canceledDraft.load());
+    QTest::mouseClick(discard, Qt::LeftButton);
+    QVERIFY(bte::test::waitUntil(
+        [&] { return discarded == 1 && run->isEnabled(); }));
+    QVERIFY(!canceledDraft.load());
+  }
+}
+
+void BacktestTabTest::destructionCancelsDraftListing() {
+  std::atomic_bool started = false;
+  std::atomic_bool observedCancellation = false;
+  auto tab = std::make_unique<bte::frontend::BacktestTab>(
+      [](bte::bindings::BacktestConfiguration, bte::core::CancellationToken) {
+        return bte::core::Result<bte::bindings::BacktestSnapshot>{
+            filledSnapshot()};
+      },
+      [](const std::string &id, const std::string &,
+         bte::core::CancellationToken) {
+        return bte::core::Result<std::string>{id};
+      },
+      [&started,
+       &observedCancellation](const bte::core::CancellationToken &token) {
+        started = true;
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds{2};
+        while (!token.isCancellationRequested() &&
+               std::chrono::steady_clock::now() < deadline) {
+          QThread::msleep(1);
+        }
+        observedCancellation = token.isCancellationRequested();
+        return bte::core::Result<bte::bindings::ResultCatalogSnapshot>{
+            draftCatalog({})};
+      },
+      [](const std::string &, bte::core::CancellationToken) {
+        return bte::core::Result<void>{};
+      });
+  QVERIFY(bte::test::waitUntil([&] { return started.load(); }));
+  tab.reset();
+  QVERIFY(observedCancellation.load());
 }
 
 void BacktestTabTest::pythonActionsExplainWhenNoDraftIsAvailable() {

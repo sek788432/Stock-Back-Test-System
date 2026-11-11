@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <numeric>
 #ifdef __APPLE__
 #include <string>
 #endif
@@ -40,6 +41,9 @@ IndicatorValue barFieldValue(const core::Bar &bar,
 
 NumericDomain
 indicatorOutputDomain(const IndicatorDefinition &definition) noexcept {
+  const auto inputDomain = definition.field == BarField::volume
+                               ? NumericDomain::volume
+                               : NumericDomain::price;
   switch (definition.kind) {
   case IndicatorKind::rsi:
   case IndicatorKind::adx:
@@ -50,20 +54,19 @@ indicatorOutputDomain(const IndicatorDefinition &definition) noexcept {
     return definition.output == IndicatorOutput::width ||
                    definition.output == IndicatorOutput::percentB
                ? NumericDomain::scalar
-               : NumericDomain::price;
+               : inputDomain;
   case IndicatorKind::obv:
     return NumericDomain::volume;
   case IndicatorKind::barField:
-    return definition.field == BarField::volume ? NumericDomain::volume
-                                                : NumericDomain::price;
   case IndicatorKind::sma:
   case IndicatorKind::ema:
   case IndicatorKind::wma:
   case IndicatorKind::macd:
-  case IndicatorKind::atr:
-  case IndicatorKind::donchian:
   case IndicatorKind::vwap:
   case IndicatorKind::momentum:
+    return inputDomain;
+  case IndicatorKind::atr:
+  case IndicatorKind::donchian:
   case IndicatorKind::trueRange:
     return NumericDomain::price;
   }
@@ -101,6 +104,220 @@ private:
   std::vector<double> values_;
   std::size_t head_ = 0;
   std::size_t count_ = 0;
+};
+
+// Positive sums keep the binary exponent separate, so products and totals can
+// exceed double's range without discarding a small volume's large-price term.
+class ScaledPositiveSum final {
+public:
+  [[nodiscard]] static ScaledPositiveSum value(const double input) noexcept {
+    ScaledPositiveSum result;
+    result.mantissa_ = std::frexp(input, &result.exponent_);
+    return result;
+  }
+
+  [[nodiscard]] static ScaledPositiveSum product(const double first,
+                                                 const double second) noexcept {
+    const auto left = value(first);
+    const auto right = value(second);
+    auto result = value(left.mantissa_ * right.mantissa_);
+    result.exponent_ += left.exponent_ + right.exponent_;
+    return result;
+  }
+
+  [[nodiscard]] ScaledPositiveSum
+  plus(const ScaledPositiveSum other) const noexcept {
+    if (empty()) {
+      return other;
+    }
+    if (other.empty()) {
+      return *this;
+    }
+    const auto exponent = std::max(exponent_, other.exponent_);
+    auto result =
+        value(std::ldexp(mantissa_, exponent_ - exponent) +
+              std::ldexp(other.mantissa_, other.exponent_ - exponent));
+    result.exponent_ += exponent;
+    return result;
+  }
+
+  [[nodiscard]] bool empty() const noexcept { return mantissa_ == 0.0; }
+
+  [[nodiscard]] double
+  dividedBy(const ScaledPositiveSum divisor) const noexcept {
+    return std::ldexp(mantissa_ / divisor.mantissa_,
+                      exponent_ - divisor.exponent_);
+  }
+
+private:
+  double mantissa_ = 0.0;
+  int exponent_ = 0;
+};
+
+// Two prefix stacks discard expired samples without subtracting nearly equal
+// large totals. Each sample transfers once, keeping updates amortized O(1).
+class RollingStatistics final {
+public:
+  struct Statistics {
+    std::size_t count = 0;
+    double mean = 0.0;
+    double origin = 0.0;
+    double meanOffset = 0.0;
+    double deviation = 0.0;
+    double weightedMean = 0.0;
+    ScaledPositiveSum volumeTotal{};
+    ScaledPositiveSum volumePriceTotal{};
+    double maximumVolumePrice = 0.0;
+  };
+
+  RollingStatistics(const std::size_t capacity, const IndicatorKind kind)
+      : capacity_(capacity), kind_(kind) {
+    if (kind == IndicatorKind::sma || kind == IndicatorKind::wma ||
+        kind == IndicatorKind::bollingerBands || kind == IndicatorKind::vwap) {
+      incoming_.resize(capacity);
+      outgoing_.resize(capacity);
+    }
+  }
+
+  void push(const double value, const double volume = 0.0) noexcept {
+    if (size_ == capacity_) {
+      if (outgoingCount_ == 0U) {
+        while (incomingCount_ != 0U) {
+          --incomingCount_;
+          const auto transferredValue = incoming_[incomingCount_].value;
+          const auto transferredVolume = incoming_[incomingCount_].volume;
+          const auto leaf = single(transferredValue, transferredVolume);
+          const auto aggregate =
+              outgoingCount_ == 0U
+                  ? leaf
+                  : combine(leaf, outgoing_[outgoingCount_ - 1U].aggregate);
+          outgoing_[outgoingCount_] = {transferredValue, transferredVolume,
+                                       aggregate};
+          ++outgoingCount_;
+        }
+      }
+      --outgoingCount_;
+      --size_;
+    }
+    const auto leaf = single(value, volume);
+    const auto aggregate =
+        incomingCount_ == 0U
+            ? leaf
+            : combine(incoming_[incomingCount_ - 1U].aggregate, leaf);
+    incoming_[incomingCount_] = {value, volume, aggregate};
+    ++incomingCount_;
+    ++size_;
+  }
+
+  [[nodiscard]] Statistics latest() const noexcept {
+    const auto older = outgoingCount_ == 0U
+                           ? Statistics{}
+                           : outgoing_[outgoingCount_ - 1U].aggregate;
+    const auto newer = incomingCount_ == 0U
+                           ? Statistics{}
+                           : incoming_[incomingCount_ - 1U].aggregate;
+    return combine(older, newer);
+  }
+
+  void reset() noexcept {
+    incomingCount_ = 0;
+    outgoingCount_ = 0;
+    size_ = 0;
+  }
+
+private:
+  struct Entry {
+    double value = 0.0;
+    double volume = 0.0;
+    Statistics aggregate;
+  };
+
+  [[nodiscard]] Statistics single(const double value,
+                                  const double volume) const noexcept {
+    Statistics result{
+        .count = 1, .mean = value, .origin = value, .weightedMean = value};
+    if (kind_ == IndicatorKind::vwap) {
+      result.volumeTotal = ScaledPositiveSum::value(volume);
+      result.volumePriceTotal = ScaledPositiveSum::product(value, volume);
+      result.maximumVolumePrice = volume == 0.0 ? 0.0 : value;
+    }
+    return result;
+  }
+
+  [[nodiscard]] static double blend(const double older, const double newer,
+                                    const double olderWeight,
+                                    const double newerWeight) noexcept {
+    // Both weights are positive masses of nonempty sample groups.
+    const auto total = olderWeight + newerWeight;
+    // Interpolate from the larger weight, so a tiny weight on a large value
+    // is not lost by rounding its complementary fraction to one.
+    return olderWeight >= newerWeight
+               ? std::lerp(older, newer, newerWeight / total)
+               : std::lerp(newer, older, olderWeight / total);
+  }
+
+  [[nodiscard]] Statistics combine(const Statistics &older,
+                                   const Statistics &newer) const noexcept {
+    if (older.count == 0U) {
+      return newer;
+    }
+    if (newer.count == 0U) {
+      return older;
+    }
+    const auto olderCount = static_cast<double>(older.count);
+    const auto newerCount = static_cast<double>(newer.count);
+    const auto count = older.count + newer.count;
+    Statistics result{
+        .count = count,
+        .mean = blend(older.mean, newer.mean, olderCount, newerCount),
+    };
+    switch (kind_) {
+    case IndicatorKind::bollingerBands: {
+      const auto newerFraction = newerCount / static_cast<double>(count);
+      const auto olderFraction = olderCount / static_cast<double>(count);
+      const auto shiftedNewerMean =
+          (newer.origin - older.origin) + newer.meanOffset;
+      const auto difference = shiftedNewerMean - older.meanOffset;
+      result.origin = older.origin;
+      result.meanOffset =
+          std::lerp(older.meanOffset, shiftedNewerMean, newerFraction);
+      result.deviation =
+          std::hypot(older.deviation * std::sqrt(olderFraction),
+                     newer.deviation * std::sqrt(newerFraction),
+                     difference * std::sqrt(olderFraction * newerFraction));
+      break;
+    }
+    case IndicatorKind::wma: {
+      const auto olderMass = olderCount * (olderCount + 1.0) / 2.0;
+      const auto newerMass = newerCount * (newerCount + 1.0) / 2.0;
+      const auto offsetMass = olderCount * newerCount;
+      const auto shiftedMean =
+          blend(newer.weightedMean, newer.mean, newerMass, offsetMass);
+      result.weightedMean = blend(older.weightedMean, shiftedMean, olderMass,
+                                  newerMass + offsetMass);
+      break;
+    }
+    case IndicatorKind::vwap: {
+      result.volumeTotal = older.volumeTotal.plus(newer.volumeTotal);
+      result.volumePriceTotal =
+          older.volumePriceTotal.plus(newer.volumePriceTotal);
+      result.maximumVolumePrice =
+          std::max(older.maximumVolumePrice, newer.maximumVolumePrice);
+      break;
+    }
+    default:
+      break;
+    }
+    return result;
+  }
+
+  std::size_t capacity_ = 1;
+  IndicatorKind kind_ = IndicatorKind::sma;
+  std::size_t size_ = 0;
+  std::size_t incomingCount_ = 0;
+  std::size_t outgoingCount_ = 0;
+  std::vector<Entry> incoming_;
+  std::vector<Entry> outgoing_;
 };
 
 class MonotonicWindow final {
@@ -159,28 +376,29 @@ public:
   [[nodiscard]] std::optional<double> update(const double input) noexcept {
     if (!value_.has_value()) {
       seed_.push(input);
-      seedSum_ += input;
+      seedMean_ =
+          std::lerp(seedMean_, input, 1.0 / static_cast<double>(seed_.size()));
       if (seed_.size() != static_cast<std::size_t>(period_)) {
         return std::nullopt;
       }
-      value_ = seedSum_ / static_cast<double>(period_);
+      value_ = seedMean_;
       return value_;
     }
     const auto alpha = 2.0 / (static_cast<double>(period_) + 1.0);
-    value_ = alpha * input + (1.0 - alpha) * *value_;
+    value_ = std::lerp(*value_, input, alpha);
     return value_;
   }
 
   void reset() noexcept {
     seed_.reset();
-    seedSum_ = 0.0;
+    seedMean_ = 0.0;
     value_.reset();
   }
 
 private:
   std::int32_t period_ = 1;
   FixedRing seed_;
-  double seedSum_ = 0.0;
+  double seedMean_ = 0.0;
   std::optional<double> value_;
 };
 
@@ -192,28 +410,28 @@ public:
   [[nodiscard]] std::optional<double> update(const double input) noexcept {
     if (!value_.has_value()) {
       seed_.push(input);
-      seedSum_ += input;
+      seedMean_ =
+          std::lerp(seedMean_, input, 1.0 / static_cast<double>(seed_.size()));
       if (seed_.size() != static_cast<std::size_t>(period_)) {
         return std::nullopt;
       }
-      value_ = seedSum_ / static_cast<double>(period_);
+      value_ = seedMean_;
       return value_;
     }
-    value_ = ((*value_ * static_cast<double>(period_ - 1)) + input) /
-             static_cast<double>(period_);
+    value_ = std::lerp(*value_, input, 1.0 / static_cast<double>(period_));
     return value_;
   }
 
   void reset() noexcept {
     seed_.reset();
-    seedSum_ = 0.0;
+    seedMean_ = 0.0;
     value_.reset();
   }
 
 private:
   std::int32_t period_ = 1;
   FixedRing seed_;
-  double seedSum_ = 0.0;
+  double seedMean_ = 0.0;
   std::optional<double> value_;
 };
 
@@ -343,7 +561,9 @@ struct StreamingIndicator::Impl final {
         atrWilder(std::max(configuredDefinition.period, 1)),
         plusDmWilder(std::max(configuredDefinition.period, 1)),
         minusDmWilder(std::max(configuredDefinition.period, 1)),
-        adxWilder(std::max(configuredDefinition.period, 1)) {}
+        adxWilder(std::max(configuredDefinition.period, 1)),
+        statisticsWindow(static_cast<std::size_t>(configuredDefinition.period),
+                         configuredDefinition.kind) {}
 
   [[nodiscard]] std::optional<double> update(const core::Bar &bar) noexcept {
     ++consumedBars;
@@ -420,46 +640,29 @@ struct StreamingIndicator::Impl final {
     plusDmWilder.reset();
     minusDmWilder.reset();
     adxWilder.reset();
-    sum = 0.0;
-    sumSquares = 0.0;
-    weightedSum = 0.0;
+    statisticsWindow.reset();
     secondarySum = 0.0;
-    volumeSum = 0.0;
     previousInput.reset();
     previousBar.reset();
     obv = 0.0;
   }
 
   [[nodiscard]] std::optional<double> updateSma(const double input) noexcept {
-    if (window.size() == window.capacity()) {
-      sum -= window.oldest();
-    }
-    window.push(input);
-    sum += input;
-    if (window.size() != window.capacity()) {
+    statisticsWindow.push(input);
+    const auto statistics = statisticsWindow.latest();
+    if (statistics.count != static_cast<std::size_t>(definition.period)) {
       return std::nullopt;
     }
-    return sum / static_cast<double>(definition.period);
+    return statistics.mean;
   }
 
   [[nodiscard]] std::optional<double> updateWma(const double input) noexcept {
-    const auto wasFull = window.size() == window.capacity();
-    const auto previousSum = sum;
-    if (wasFull) {
-      sum -= window.oldest();
-      weightedSum -= previousSum;
-      weightedSum += static_cast<double>(definition.period) * input;
-    } else {
-      weightedSum += static_cast<double>(window.size() + 1U) * input;
-    }
-    window.push(input);
-    sum += input;
-    if (!wasFull && window.size() != window.capacity()) {
+    statisticsWindow.push(input);
+    const auto statistics = statisticsWindow.latest();
+    if (statistics.count != static_cast<std::size_t>(definition.period)) {
       return std::nullopt;
     }
-    const auto denominator = static_cast<double>(definition.period) *
-                             static_cast<double>(definition.period + 1) / 2.0;
-    return weightedSum / denominator;
+    return statistics.weightedMean;
   }
 
   [[nodiscard]] std::optional<double> updateRsi(const double input) noexcept {
@@ -500,21 +703,13 @@ struct StreamingIndicator::Impl final {
 
   [[nodiscard]] std::optional<double>
   updateBollinger(const double input) noexcept {
-    if (window.size() == window.capacity()) {
-      const auto removed = window.oldest();
-      sum -= removed;
-      sumSquares -= removed * removed;
-    }
-    window.push(input);
-    sum += input;
-    sumSquares += input * input;
-    if (window.size() != window.capacity()) {
+    statisticsWindow.push(input);
+    const auto statistics = statisticsWindow.latest();
+    if (statistics.count != static_cast<std::size_t>(definition.period)) {
       return std::nullopt;
     }
-    const auto mean = sum / static_cast<double>(definition.period);
-    const auto variance = std::max(
-        0.0, sumSquares / static_cast<double>(definition.period) - mean * mean);
-    const auto deviation = std::sqrt(variance);
+    const auto mean = statistics.mean;
+    const auto deviation = statistics.deviation;
     const auto upper = mean + 2.0 * deviation;
     const auto lower = mean - 2.0 * deviation;
     if (definition.output == IndicatorOutput::upper) {
@@ -528,11 +723,13 @@ struct StreamingIndicator::Impl final {
     }
     if (definition.output == IndicatorOutput::width) {
       return mean == 0.0 ? std::nullopt
-                         : std::optional<double>{(upper - lower) / mean};
+                         : std::optional<double>{4.0 * (deviation / mean)};
     }
-    return upper == lower
+    return deviation == 0.0
                ? std::optional<double>{0.5}
-               : std::optional<double>{(input - lower) / (upper - lower)};
+               : std::optional<double>{0.5 + ((input - statistics.origin) -
+                                              statistics.meanOffset) /
+                                                 deviation / 4.0};
   }
 
   [[nodiscard]] std::optional<double> updateAtr(const core::Bar &bar) noexcept {
@@ -559,8 +756,8 @@ struct StreamingIndicator::Impl final {
         !smoothedMinus.has_value() || *smoothedTr == 0.0) {
       return std::nullopt;
     }
-    const auto plusDi = 100.0 * *smoothedPlus / *smoothedTr;
-    const auto minusDi = 100.0 * *smoothedMinus / *smoothedTr;
+    const auto plusDi = 100.0 * (*smoothedPlus / *smoothedTr);
+    const auto minusDi = 100.0 * (*smoothedMinus / *smoothedTr);
     if (definition.output == IndicatorOutput::positiveDirectionalIndex) {
       return plusDi;
     }
@@ -584,7 +781,7 @@ struct StreamingIndicator::Impl final {
     const auto high = highWindow.front();
     const auto low = lowWindow.front();
     const auto percentK =
-        high == low ? 50.0 : 100.0 * (bar.close - low) / (high - low);
+        high == low ? 50.0 : 100.0 * ((bar.close - low) / (high - low));
     if (secondaryWindow.size() == secondaryWindow.capacity()) {
       secondarySum -= secondaryWindow.oldest();
     }
@@ -612,7 +809,7 @@ struct StreamingIndicator::Impl final {
       return upper;
     }
     if (definition.output == IndicatorOutput::middle) {
-      return (upper + lower) / 2.0;
+      return std::midpoint(upper, lower);
     }
     return lower;
   }
@@ -620,21 +817,17 @@ struct StreamingIndicator::Impl final {
   [[nodiscard]] std::optional<double>
   updateVwap(const core::Bar &bar) noexcept {
     const auto price = barFieldValue(bar, definition.field).value;
-    const auto contribution = price * bar.volume;
-    if (window.size() == window.capacity()) {
-      const auto removedPrice = window.oldest();
-      const auto removedVolume = secondaryWindow.oldest();
-      sum -= removedPrice * removedVolume;
-      volumeSum -= removedVolume;
-    }
-    window.push(price);
-    secondaryWindow.push(bar.volume);
-    sum += contribution;
-    volumeSum += bar.volume;
-    if (window.size() != window.capacity() || volumeSum == 0.0) {
+    statisticsWindow.push(price, bar.volume);
+    const auto statistics = statisticsWindow.latest();
+    if (statistics.count != static_cast<std::size_t>(definition.period) ||
+        statistics.volumeTotal.empty()) {
       return std::nullopt;
     }
-    return sum / volumeSum;
+    // A positive weighted mean cannot exceed its largest contributing price.
+    // Bound final quotient rounding, including a rounded overflow at DBL_MAX.
+    return std::min(
+        statistics.maximumVolumePrice,
+        statistics.volumePriceTotal.dividedBy(statistics.volumeTotal));
   }
 
   [[nodiscard]] std::optional<double> updateObv(const core::Bar &bar) noexcept {
@@ -660,9 +853,9 @@ struct StreamingIndicator::Impl final {
     if (reference == 0.0 && percent) {
       return std::nullopt;
     }
-    return percent
-               ? std::optional<double>{100.0 * (input - reference) / reference}
-               : std::optional<double>{input - reference};
+    return percent ? std::optional<double>{100.0 *
+                                           ((input - reference) / reference)}
+                   : std::optional<double>{input - reference};
   }
 
   [[nodiscard]] std::optional<double>
@@ -705,11 +898,8 @@ struct StreamingIndicator::Impl final {
   std::optional<double> latest;
   std::optional<double> previousInput;
   std::optional<core::Bar> previousBar;
-  double sum = 0.0;
-  double sumSquares = 0.0;
-  double weightedSum = 0.0;
+  RollingStatistics statisticsWindow;
   double secondarySum = 0.0;
-  double volumeSum = 0.0;
   double obv = 0.0;
 };
 

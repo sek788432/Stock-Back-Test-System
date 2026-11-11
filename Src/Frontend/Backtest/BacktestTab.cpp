@@ -139,9 +139,25 @@ QTableWidgetItem *makeItem(const QString &text) {
   return std::make_unique<QTableWidgetItem>(text).release();
 }
 
+enum class RunStrategy : std::uint8_t { starter, selectable, python };
+
 QString statusText(const bindings::BacktestOutcome outcome,
-                   const bool selectableConditions) {
-  const auto strategyName = selectableConditions
+                   const RunStrategy mode) {
+  if (mode == RunStrategy::python) {
+    switch (outcome) {
+    case bindings::BacktestOutcome::filled:
+      return BacktestTab::tr("Completed — Python strategy");
+    case bindings::BacktestOutcome::rejectedInsufficientCash:
+      return BacktestTab::tr(
+          "Completed — Python order rejected: insufficient cash");
+    case bindings::BacktestOutcome::cancelledNoFutureMarketData:
+      return BacktestTab::tr(
+          "Completed — Python order cancelled: no future market data");
+    default:
+      return BacktestTab::tr("Completed — Python strategy submitted no orders");
+    }
+  }
+  const auto strategyName = mode == RunStrategy::selectable
                                 ? BacktestTab::tr("selectable strategy")
                                 : BacktestTab::tr("starter order");
   if (outcome == bindings::BacktestOutcome::filled) {
@@ -676,6 +692,7 @@ struct BacktestTab::RunState final {
 
   ~RunState() {
     cancellation.requestCancellation();
+    draftCancellation.requestCancellation();
     watcher.waitForFinished();
     verificationWatcher.waitForFinished();
     publishWatcher.waitForFinished();
@@ -690,12 +707,14 @@ struct BacktestTab::RunState final {
   RunState &operator=(RunState &&) = delete;
 
   core::CancellationSource cancellation;
+  // Draft I/O survives run/verification cancellation and stops on destruction.
+  core::CancellationSource draftCancellation;
   QFutureWatcher<BacktestResult> watcher;
   QFutureWatcher<VerificationResult> verificationWatcher;
   QFutureWatcher<PublishResult> publishWatcher;
   QFutureWatcher<DraftListResult> draftListWatcher;
   QFutureWatcher<DiscardResult> discardWatcher;
-  bool selectableConditions = false;
+  RunStrategy strategyMode = RunStrategy::starter;
   bool openAfterPublish = false;
   QString pythonSourceUtf8;
   QString pythonParametersJson;
@@ -897,6 +916,12 @@ connectDraftListing(const DraftActionWidgets &controls,
           const auto previousIndex = controls.drafts->findData(previous);
           if (previousIndex >= 0) {
             controls.drafts->setCurrentIndex(previousIndex);
+            if (controls.saveResult->property("resultId")
+                    .toString()
+                    .isEmpty()) {
+              controls.saveResult->setProperty("resultId",
+                                               controls.drafts->currentData());
+            }
           } else if (previous.isEmpty() && controls.drafts->count() > 0) {
             controls.drafts->setCurrentIndex(0);
             controls.saveResult->setProperty("resultId",
@@ -1551,7 +1576,7 @@ BacktestTab::BacktestTab(BacktestRunner runner, ResultPublisher publisher,
       .draftListWatcher = draftListWatcher,
       .publishWatcher = publishWatcher,
       .discardWatcher = discardWatcher,
-      .cancellation = &runState_->cancellation,
+      .cancellation = &runState_->draftCancellation,
       .openAfterPublish = &runState_->openAfterPublish,
   };
   const auto beginDraftRefresh =
@@ -1768,7 +1793,9 @@ void BacktestTab::handleBacktestFinished(
     discardDraft->setEnabled(true);
   }
   setLabelText(status,
-               statusText(snapshot.outcome, runState_->selectableConditions));
+               snapshot.status == results::RunStatus::completed
+                   ? statusText(snapshot.outcome, runState_->strategyMode)
+                   : tr("Backtest %1").arg(runStatusText(snapshot.status)));
   setLabelText(cash, tr("Cash: %1").arg(formatMoney(snapshot.cash)));
   setLabelText(position,
                tr("Position: %1 shares").arg(snapshot.positionShares));
@@ -1917,8 +1944,12 @@ void BacktestTab::resetBacktestView() {
 
 void BacktestTab::startBacktest(bindings::BacktestConfiguration configuration,
                                 const BacktestRunner &runner) {
-  runState_->selectableConditions =
-      configuration.selectableStrategy.has_value();
+  runState_->strategyMode = RunStrategy::starter;
+  if (configuration.pythonStrategy.has_value()) {
+    runState_->strategyMode = RunStrategy::python;
+  } else if (configuration.selectableStrategy.has_value()) {
+    runState_->strategyMode = RunStrategy::selectable;
+  }
   runState_->cancellation = core::CancellationSource{};
   const auto cancellation = runState_->cancellation.token();
   runState_->watcher.setFuture(
