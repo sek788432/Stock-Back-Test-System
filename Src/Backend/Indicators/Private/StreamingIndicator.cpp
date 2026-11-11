@@ -165,8 +165,8 @@ public:
     double meanOffset = 0.0;
     double deviation = 0.0;
     double weightedMean = 0.0;
-    ScaledPositiveSum volumeTotal;
-    ScaledPositiveSum volumePriceTotal;
+    ScaledPositiveSum volumeTotal{};
+    ScaledPositiveSum volumePriceTotal{};
     double maximumVolumePrice = 0.0;
   };
 
