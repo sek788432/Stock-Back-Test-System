@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Bte/Core/Result.h"
 #include "Bte/Results/ResultStore.h"
 
 #include <optional>

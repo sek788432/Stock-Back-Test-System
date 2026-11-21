@@ -1,10 +1,12 @@
 #include "ResultProvenanceCodec.h"
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <map>
+#include <nlohmann/detail/json_ref.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
-#include <ranges>
 #include <set>
 #include <string>
 #include <string_view>
