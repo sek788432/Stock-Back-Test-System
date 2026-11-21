@@ -5,6 +5,8 @@ add_library(
     Include/Bte/Results/ReproducibilityCoordinator.h
     Include/Bte/Results/ReproducibilityStore.h
     Private/ResultStore.cpp
+    Private/ResultProvenanceCodec.cpp
+    Private/ResultProvenanceCodec.h
     Private/ReproducibilityCoordinator.cpp
     Private/ReproducibilityStore.cpp
     Private/ResultStoreTestHooks.h
