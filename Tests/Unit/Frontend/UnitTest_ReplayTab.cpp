@@ -22,6 +22,7 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
@@ -85,23 +86,20 @@ void ReplayTabTest::exposesReplaySetupControls() {
 }
 
 void ReplayTabTest::exactResultIdStartsOwnedAsynchronousOpen() {
-  const auto root =
-      std::filesystem::temp_directory_path() / "bte-replay-tab-missing-result";
-  std::filesystem::remove_all(root);
-  {
-    bte::frontend::ReplayTab tab{root / "Results", root / "Data"};
-    auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
-    auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
-    QVERIFY(selector != nullptr);
-    QVERIFY(status != nullptr);
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const auto root = std::filesystem::path{directory.path().toStdString()};
+  bte::frontend::ReplayTab tab{root / "Results", root / "Data"};
+  auto *selector = tab.findChild<QComboBox *>("replayResultCombo");
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  QVERIFY(selector != nullptr);
+  QVERIFY(status != nullptr);
 
-    const QString resultId{"0123456789abcdef0123456789abcdef"};
-    tab.openResult(resultId);
-    QCOMPARE(selector->currentText(), resultId);
-    QVERIFY(bte::test::waitUntil(
-        [status] { return status->text().contains("Cannot open result"); }));
-  }
-  std::filesystem::remove_all(root);
+  const QString resultId{"0123456789abcdef0123456789abcdef"};
+  tab.openResult(resultId);
+  QCOMPARE(selector->currentText(), resultId);
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text().contains("Cannot open result"); }));
 }
 
 void ReplayTabTest::exposesPlaybackControls() {

@@ -1975,12 +1975,13 @@ void BacktestTabTest::defaultRunnerExecutesTrackedBars() {
 }
 
 void BacktestTabTest::applicationConfiguredRunnerUsesEnvironmentStorage() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
   const ScopedEnvironmentRestore resultStoreRestore{"BTE_RESULT_STORE"};
   const ScopedEnvironmentRestore dataStoreRestore{"BTE_DATA_STORE"};
   const ScopedEnvironmentRestore snapshotRestore{"BTE_DATA_SNAPSHOT_ID"};
   const auto configuredRoot =
-      std::filesystem::temp_directory_path() / "bte-configured-backtest-tab";
-  std::filesystem::remove_all(configuredRoot);
+      std::filesystem::path{directory.path().toStdString()};
   QVERIFY(qputenv("BTE_RESULT_STORE",
                   (configuredRoot / "Results").string().c_str()));
   QVERIFY(
@@ -1999,7 +2000,6 @@ void BacktestTabTest::applicationConfiguredRunnerUsesEnvironmentStorage() {
   }));
   QVERIFY(run->isEnabled());
   QVERIFY(!std::filesystem::exists(configuredRoot / "Results" / "Results"));
-  std::filesystem::remove_all(configuredRoot);
 }
 
 void BacktestTabTest::applicationConfiguredRunnerWiresPersistedVerification() {
