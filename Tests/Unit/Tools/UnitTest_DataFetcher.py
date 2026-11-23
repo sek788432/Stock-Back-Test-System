@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import argparse
+import concurrent.futures
 import gc
 import os
 from pathlib import Path
@@ -172,6 +173,55 @@ class DataFetcherTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "write failed"):
                 FetchDatabento._runBatchesParallel(arguments, batches)
         self.assertLessEqual(len(started), 2)
+
+    def test_parallel_completed_fetch_failure_does_not_schedule_next_batch(self) -> None:
+        started = []
+        submitted = []
+        written = []
+        realExecutor = concurrent.futures.ThreadPoolExecutor
+
+        class CountingExecutor(realExecutor):
+            def submit(self, function: object, *args: object, **kwargs: object) -> object:
+                submitted.append(args[0][0])
+                return super().submit(function, *args, **kwargs)
+
+        def fetch(batch: object, *args: object, **kwargs: object) -> object:
+            symbol = batch[0]
+            started.append(symbol)
+            if symbol == "S1":
+                raise RuntimeError("fetch failed")
+            frame = FetchDatabento.normalizeFrame(self.frame(1.0))
+            frame["symbol"] = symbol
+            return frame
+
+        arguments = argparse.Namespace(parallel_batches=2, schema_name="ohlcv-1h",
+                                       start_ts="2024-01-01", end_ts="2024-01-02",
+                                       strict_symbols=False, db_path="unused")
+        batches = [[f"S{index}"] for index in range(3)]
+        realWait = concurrent.futures.wait
+        waitCalls = 0
+
+        def waitForAllInitialFutures(futures: object, *args: object, **kwargs: object) -> object:
+            nonlocal waitCalls
+            waitCalls += 1
+            done, notDone = realWait(futures, return_when=concurrent.futures.ALL_COMPLETED)
+            if waitCalls == 1:
+                submitted = list(futures)
+                self.assertEqual(len(submitted), 2)
+                # The implementation pops from the end; force the successful future first.
+                return [submitted[1], submitted[0]], notDone
+            return done, notDone
+
+        with (patch.object(FetchDatabento, "_fetchBatchToFrame", side_effect=fetch),
+              patch.object(FetchDatabento, "ThreadPoolExecutor", CountingExecutor),
+              patch.object(FetchDatabento, "saveToDuckdb", side_effect=lambda frame, *args: written.append(frame)),
+              patch.object(FetchDatabento, "wait", side_effect=waitForAllInitialFutures)):
+            with self.assertRaisesRegex(RuntimeError, "fetch failed"):
+                FetchDatabento._runBatchesParallel(arguments, batches)
+
+        self.assertCountEqual(started, ["S0", "S1"])
+        self.assertEqual(submitted, ["S0", "S1"])
+        self.assertEqual(len(written), 1)
 
     def test_parallel_slow_writer_bounds_frames_and_writes_each_batch(self) -> None:
         references = []

@@ -957,6 +957,7 @@ def _runBatchesParallel(
         try:
             while futureToContext:
                 done, _ = wait(futureToContext, return_when=FIRST_COMPLETED)
+                completedThisRound = len(done)
                 while done:
                     future = done.pop()
                     idx, batch = futureToContext.pop(future)
@@ -979,6 +980,7 @@ def _runBatchesParallel(
                             f"({len(batch)} symbol(s)): ingested {len(frame):,} rows for "
                             f"{frame['symbol'].nunique()} symbol(s)."
                         )
+                for _ in range(completedThisRound):
                     submitNext()
         except BaseException:
             for future in futureToContext:
