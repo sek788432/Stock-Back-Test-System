@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include <atomic>
 #include <mutex>
