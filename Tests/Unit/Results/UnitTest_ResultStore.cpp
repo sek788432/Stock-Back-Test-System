@@ -2870,6 +2870,25 @@ TEST_F(ResultStoreFixture,
   EXPECT_TRUE(opened.value().capabilities.strategyLogs);
 }
 
+TEST_F(ResultStoreFixture, schemaThreePersistsMaximumSignedSeedAndReopensIt) {
+  constexpr auto maximumSeed = std::numeric_limits<std::int64_t>::max();
+  auto value = schemaThreeDescriptor();
+  value.provenance.seed = maximumSeed;
+  auto store =
+      bte::results::ResultStore::open(root_ / "MaximumSeed", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  const auto finalized = createSchemaThreeResult(
+      *store.value(), value, bte::results::RunStatus::completed,
+      "maximum signed seed round-trip");
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+
+  const auto reopened = store.value()->openResult(finalized.value().resultId);
+
+  ASSERT_TRUE(reopened.ok()) << reopened.error().message;
+  EXPECT_EQ(reopened.value().descriptor.provenance.seed,
+            std::optional<std::int64_t>{maximumSeed});
+}
+
 TEST_F(ResultStoreFixture,
        schemaThreePersistsAndReopensStarterStrategyProvenance) {
   auto value = schemaThreeDescriptor();
@@ -3475,6 +3494,7 @@ TEST_F(ResultStoreFixture,
       [](auto &document) { document.erase("engineBuild"); },
       [](auto &document) { document["costProfile"] = nlohmann::json::array(); },
       [](auto &document) { document["commissionRatePartsPerBillion"] = "01"; },
+      [](auto &document) { document["seed"] = "9223372036854775808"; },
       [](auto &document) {
         document["provenanceAvailability"]["costs"] = false;
       },
