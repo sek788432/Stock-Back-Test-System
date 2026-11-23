@@ -528,6 +528,39 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   EXPECT_FALSE(daily.value()->stepForward());
 }
 
+TEST_F(ResultReplayTest,
+       dailyReplayRemainsAvailableAndMarksArchivedSourceDaysPartial) {
+  ASSERT_TRUE(
+      bte::data::removeReleaseSnapshot(root_ / "Data", snapshotId_).ok());
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_TRUE(daily.value()->current()->partialUtcDay);
+}
+
+TEST_F(ResultReplayTest,
+       dailyReplayFallsBackToSavedBarsWhenSnapshotIsRemovedAfterPresenceCheck) {
+  auto removed = false;
+  bte::bindings::testing::setNextDailySourceOpenHook([&] {
+    removed =
+        bte::data::removeReleaseSnapshot(root_ / "Data", snapshotId_).ok();
+  });
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+
+  bte::bindings::testing::clearResultReplayTestHooks();
+  ASSERT_TRUE(removed);
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_TRUE(daily.value()->current()->partialUtcDay);
+}
+
 TEST_F(ResultReplayTest, openUsesExactPersistedSpansAtTheExclusiveEndBoundary) {
   auto reader =
       bte::data::ReleaseSnapshotReader::open(root_ / "Data", snapshotId_);

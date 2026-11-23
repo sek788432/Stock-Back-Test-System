@@ -38,7 +38,21 @@ public:
   [[nodiscard]] core::Result<std::vector<std::string>>
   release(const std::string &resultId) const;
 
+  /// Discards a provisional pin while the caller holds the snapshot
+  /// publication lock and the corresponding snapshot has not been published.
+  [[nodiscard]] core::Result<void>
+  abandonUnpublishedSnapshot(const std::string &snapshotId) const;
+
+  /// Recovers interrupted snapshot pins and unpublished segment artifacts
+  /// while the caller holds the snapshot publication lock, so active
+  /// publishers and removals cannot be mistaken for interrupted operations.
+  [[nodiscard]] core::Result<void> recoverUnpublishedSnapshotPins() const;
+
 private:
+  [[nodiscard]] core::Result<void> recoverAbandonedSnapshotPins() const;
+  [[nodiscard]] core::Result<void> clearStagedSnapshotArtifacts() const;
+  [[nodiscard]] core::Result<void> trashUnpublishedSnapshotSegments() const;
+
   std::filesystem::path storeDirectory_;
   // All instances for this canonical store share one lock. Retention
   // transactions include segment file moves, and TSan cannot observe the OS

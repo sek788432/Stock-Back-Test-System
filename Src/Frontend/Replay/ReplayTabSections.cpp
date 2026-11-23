@@ -108,13 +108,11 @@ ReplaySetupControls makeReplaySetupControls(QWidget *owner) {
   controls.symbolCombo = std::make_unique<QComboBox>(controls.box).release();
   controls.symbolCombo->setObjectName("replaySymbolCombo");
   controls.symbolCombo->setAccessibleName("Replay symbol");
-  controls.symbolCombo->addItems({"AAPL", "MSFT", "NVDA"});
   controls.symbolCombo->setFixedWidth(240);
 
   controls.schemaCombo = std::make_unique<QComboBox>(controls.box).release();
   controls.schemaCombo->setObjectName("replaySchemaCombo");
   controls.schemaCombo->setAccessibleName("Replay timeframe schema");
-  controls.schemaCombo->addItems({"ohlcv-1d", "ohlcv-1h"});
   controls.schemaCombo->setFixedWidth(240);
 
   controls.startDate =

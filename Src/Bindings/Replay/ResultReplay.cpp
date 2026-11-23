@@ -15,6 +15,7 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -28,6 +29,7 @@
 #include <vector>
 #if defined(BTE_ENABLE_TEST_HOOKS)
 #include <atomic>
+#include <mutex>
 #endif
 
 namespace bte::bindings {
@@ -59,6 +61,27 @@ void requestPortfolioSnapshotCancellationAt(
           nextPortfolioSnapshotCancellationSource().exchange(nullptr);
       source != nullptr) {
     source->requestCancellation();
+  }
+}
+
+std::mutex &dailySourceOpenHookMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::function<void()> &nextDailySourceOpenHook() {
+  static std::function<void()> hook;
+  return hook;
+}
+
+void runNextDailySourceOpenHook() {
+  std::function<void()> hook;
+  {
+    const std::scoped_lock lock{dailySourceOpenHookMutex()};
+    hook = std::move(nextDailySourceOpenHook());
+  }
+  if (hook) {
+    hook();
   }
 }
 #endif
@@ -577,6 +600,76 @@ core::Result<void> completeReplayPortfolioSnapshots(
   return {};
 }
 
+core::Result<std::vector<data::SnapshotBar>>
+loadFullDailySourceBars(const results::OpenedResult &result,
+                        const std::filesystem::path &dataStore,
+                        const std::vector<data::SnapshotBar> &selectedBars,
+                        const core::CancellationToken &cancellation) {
+  using namespace std::chrono;
+  if (cancellation.isCancellationRequested()) {
+    return core::makeError(core::ErrorCode::cancelled,
+                           "Result Replay open was cancelled");
+  }
+  const auto firstDay = floor<days>(selectedBars.front().timestamp);
+  const auto afterLastDay =
+      floor<days>(selectedBars.back().timestamp) + days{1};
+  const auto snapshotPath =
+      dataStore / "Snapshots" / result.descriptor.dataSelection.snapshotId;
+  std::error_code filesystemError;
+  const auto activeSnapshot =
+      std::filesystem::exists(snapshotPath, filesystemError);
+  if (filesystemError) {
+    return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                           "Unable to inspect Release Snapshot: " +
+                               filesystemError.message());
+  }
+  if (!activeSnapshot) {
+    return std::vector<data::SnapshotBar>{};
+  }
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  runNextDailySourceOpenHook();
+#endif
+  auto reader = data::ReleaseSnapshotReader::open(
+      dataStore, result.descriptor.dataSelection.snapshotId, cancellation);
+  if (!reader.ok()) {
+    if (reader.error().code == core::ErrorCode::cancelled ||
+        cancellation.isCancellationRequested()) {
+      return reader.error();
+    }
+    std::error_code recheckError;
+    const auto snapshotStillActive =
+        std::filesystem::exists(snapshotPath, recheckError);
+    if (recheckError) {
+      return core::makeError(
+          core::ErrorCode::dataSnapshotUnavailable,
+          "Unable to inspect Release Snapshot after open failure: " +
+              recheckError.message());
+    }
+    if (snapshotStillActive) {
+      return reader.error();
+    }
+    // The exact saved rows remain usable when the active source was removed
+    // between the presence check and reader open. Daily frames will be marked
+    // partial because no wider source rows are available.
+    return std::vector<data::SnapshotBar>{};
+  }
+
+  auto fullSource = reader.value()->select(
+      {.symbols = {result.descriptor.universe.front()},
+       .range = {.start = core::Timestamp{firstDay},
+                 .end = core::Timestamp{afterLastDay}},
+       .timeframe = result.descriptor.dataSelection.timeframe},
+      cancellation);
+  // The exact saved rows above remain authoritative. This wider read only
+  // supplies complete UTC-day source coverage for Daily aggregation.
+  // GCOVR_EXCL_START
+  if (!fullSource.ok()) {
+    return fullSource.error();
+  }
+  // GCOVR_EXCL_STOP
+  return std::move(fullSource).value().bars;
+}
+
 } // namespace
 
 #if defined(BTE_ENABLE_TEST_HOOKS)
@@ -589,10 +682,17 @@ void cancelNextResultReplayPortfolioCompletion(
   nextPortfolioSnapshotCancellationPoint().store(point);
 }
 
+void setNextDailySourceOpenHook(std::function<void()> hook) {
+  const std::scoped_lock lock{dailySourceOpenHookMutex()};
+  nextDailySourceOpenHook() = std::move(hook);
+}
+
 void clearResultReplayTestHooks() noexcept {
   nextPortfolioSnapshotCancellationSource().store(nullptr);
   nextPortfolioSnapshotCancellationPoint().store(
       PortfolioCompletionCancellationPoint::trackerCreation);
+  const std::scoped_lock lock{dailySourceOpenHookMutex()};
+  nextDailySourceOpenHook() = {};
 }
 
 } // namespace testing
@@ -636,28 +736,12 @@ ResultReplay::open(const std::filesystem::path &resultStore,
   auto bars = std::move(resultAndData.selection.bars);
   std::vector<data::SnapshotBar> fullDailySourceBars;
   if (timeframe == ResultReplayTimeframe::dailyUtc && !bars.empty()) {
-    using namespace std::chrono;
-    const auto firstDay = floor<days>(bars.front().timestamp);
-    const auto afterLastDay = floor<days>(bars.back().timestamp) + days{1};
-    auto reader = data::ReleaseSnapshotReader::open(
-        dataStore, result.descriptor.dataSelection.snapshotId, cancellation);
-    if (!reader.ok()) {
-      return reader.error();
-    }
-    auto fullSource = reader.value()->select(
-        {.symbols = {result.descriptor.universe.front()},
-         .range = {.start = core::Timestamp{firstDay},
-                   .end = core::Timestamp{afterLastDay}},
-         .timeframe = result.descriptor.dataSelection.timeframe},
-        cancellation);
-    // The exact saved rows above remain authoritative. This wider read only
-    // supplies complete UTC-day source coverage for Daily aggregation.
-    // GCOVR_EXCL_START
+    auto fullSource =
+        loadFullDailySourceBars(result, dataStore, bars, cancellation);
     if (!fullSource.ok()) {
       return fullSource.error();
     }
-    // GCOVR_EXCL_STOP
-    fullDailySourceBars = std::move(fullSource).value().bars;
+    fullDailySourceBars = std::move(fullSource).value();
   }
   if (result.status != results::RunStatus::completed) {
     const auto checkpoint = std::ranges::find_if(

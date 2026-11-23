@@ -17,9 +17,13 @@
 #include <string> // IWYU pragma: keep
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace bte::bindings {
 namespace {
+
+constexpr auto hourlyTimeframe = "ohlcv-1h";
+constexpr auto dailyTimeframe = "ohlcv-1d";
 
 std::optional<std::filesystem::path>
 findCsvDataDirFrom(std::filesystem::path cursor) {
@@ -119,8 +123,10 @@ aggregateDailyBars(const std::vector<bte::core::Bar> &bars) {
 }
 
 std::vector<bte::core::Bar> barsForSchema(std::vector<bte::core::Bar> &&bars,
-                                          const QString &schemaName) {
-  if (schemaName == "ohlcv-1d") {
+                                          const std::string &requestedTimeframe,
+                                          const std::string &sourceTimeframe) {
+  if (requestedTimeframe == dailyTimeframe &&
+      sourceTimeframe == hourlyTimeframe) {
     return aggregateDailyBars(bars);
   }
   return std::move(bars);
@@ -128,12 +134,43 @@ std::vector<bte::core::Bar> barsForSchema(std::vector<bte::core::Bar> &&bars,
 
 } // namespace
 
+std::filesystem::path replayCsvDataDirectory() { return findCsvDataDir(); }
+
+core::Result<std::vector<ReplayDataSource>>
+availableReplaySources(const std::filesystem::path &csvDirectory) {
+  auto sources = data::CsvBarStream::availableSources(csvDirectory);
+  if (!sources.ok()) {
+    return sources.error();
+  }
+  std::vector<ReplayDataSource> replaySources;
+  replaySources.reserve(sources.value().size());
+  for (const auto &source : sources.value()) {
+    replaySources.push_back(
+        {.symbol = source.symbol, .timeframe = source.source.timeframe});
+  }
+  return replaySources;
+}
+
 core::Result<std::vector<core::Bar>>
 // Symbol and schema remain separate because they map directly to StreamRequest.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters): distinct request fields
 loadBacktestBars(const QString &symbol, const QString &schemaName,
                  const QDate start, const QDate end,
                  const core::CancellationToken &cancellation) {
+  try {
+    return loadBacktestBarsFrom(symbol, schemaName, start, end,
+                                replayCsvDataDirectory(), cancellation);
+  } catch (...) {
+    return core::makeError(core::ErrorCode::internal,
+                           "backtest data loading failed");
+  }
+}
+
+core::Result<std::vector<core::Bar>>
+loadBacktestBarsFrom(const QString &symbol, const QString &schemaName,
+                     const QDate start, const QDate end,
+                     const std::filesystem::path &csvDirectory,
+                     const core::CancellationToken &cancellation) {
   try {
     const auto exclusiveEnd = end.addDays(1);
     if (!start.isValid() || !end.isValid() || start > end ||
@@ -145,15 +182,39 @@ loadBacktestBars(const QString &symbol, const QString &schemaName,
       return core::makeError(core::ErrorCode::cancelled,
                              "backtest data loading was cancelled");
     }
+    const auto requestedTimeframe = schemaName.toStdString();
+    if (requestedTimeframe != hourlyTimeframe &&
+        requestedTimeframe != dailyTimeframe) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay timeframe is unsupported: " +
+                                 requestedTimeframe);
+    }
+    auto source =
+        data::CsvBarStream::inspectSource(csvDirectory, symbol.toStdString());
+    if (!source.ok()) {
+      return source.error();
+    }
+    const auto &sourceTimeframe = source.value().timeframe;
+    if (sourceTimeframe != hourlyTimeframe &&
+        sourceTimeframe != dailyTimeframe) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Replay source timeframe is unsupported: " +
+                                 sourceTimeframe);
+    }
+    if (sourceTimeframe == dailyTimeframe &&
+        requestedTimeframe == hourlyTimeframe) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Daily Replay sources cannot provide hourly bars");
+    }
     const bte::data::StreamRequest request{
         .symbol = symbol.toStdString(),
-        .schemaName = "ohlcv-1h",
+        .schemaName = sourceTimeframe,
         .range =
             bte::core::DateRange{
                 .start = timestampFromDate(start),
                 .end = timestampFromDate(exclusiveEnd),
             },
-        .csvDir = findCsvDataDir(),
+        .csvDir = csvDirectory,
     };
 
     auto stream = bte::data::CsvBarStream::open(request, cancellation);
@@ -169,7 +230,7 @@ loadBacktestBars(const QString &symbol, const QString &schemaName,
       }
       bars.push_back(*bar);
     }
-    return barsForSchema(std::move(bars), schemaName);
+    return barsForSchema(std::move(bars), requestedTimeframe, sourceTimeframe);
   } catch (...) {
     return core::makeError(core::ErrorCode::internal,
                            "backtest data loading failed");

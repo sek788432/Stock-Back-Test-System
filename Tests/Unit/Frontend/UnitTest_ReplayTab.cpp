@@ -1,5 +1,7 @@
 #include "Bte/Frontend/ReplayTab.h"
 
+#include "Bte/Bindings/ReplayDataLoader.h"
+#include "Bte/Core/Digest.h"
 #include "Bte/Frontend/QtChartsCandlestickView.h"
 
 #include "WaitUntil.h"
@@ -31,9 +33,33 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
+
+class ScopedCurrentDirectory final {
+public:
+  explicit ScopedCurrentDirectory(const std::filesystem::path &path)
+      : previous_{std::filesystem::current_path()} {
+    std::filesystem::current_path(path);
+  }
+
+  ~ScopedCurrentDirectory() {
+    std::error_code ignored;
+    std::filesystem::current_path(previous_, ignored);
+  }
+
+  ScopedCurrentDirectory(const ScopedCurrentDirectory &) = delete;
+  ScopedCurrentDirectory &operator=(const ScopedCurrentDirectory &) = delete;
+  ScopedCurrentDirectory(ScopedCurrentDirectory &&) = delete;
+  ScopedCurrentDirectory &operator=(ScopedCurrentDirectory &&) = delete;
+
+private:
+  std::filesystem::path previous_;
+};
 
 class ReplayTabTest final : public QObject {
   Q_OBJECT
@@ -61,15 +87,72 @@ private slots:
 };
 
 void ReplayTabTest::exposesReplaySetupControls() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto sourceDirectory =
+      std::filesystem::path{temporary.path().toStdString()} / "StockData" /
+      "Extracted";
+  std::filesystem::create_directories(sourceDirectory);
+  const std::string hourlyCsv =
+      "symbol,ts,open,high,low,close,volume\n"
+      "AAPL,2024-01-01T10:00:00Z,100,102,99,101,100\n";
+  const std::string dailyCsv =
+      "symbol,ts,open,high,low,close,volume\n"
+      "MSFT,2024-01-01T00:00:00Z,200,203,199,202,500\n";
+  const std::string unsupportedCsv =
+      "symbol,ts,open,high,low,close,volume\n"
+      "SPY,2024-01-01T10:00:00Z,300,303,299,302,1000\n";
+  {
+    std::ofstream output{sourceDirectory / "AAPL.csv", std::ios::binary};
+    output << hourlyCsv;
+  }
+  {
+    std::ofstream output{sourceDirectory / "MSFT.csv", std::ios::binary};
+    output << dailyCsv;
+  }
+  {
+    std::ofstream output{sourceDirectory / "SPY.csv", std::ios::binary};
+    output << unsupportedCsv;
+  }
+  {
+    std::ofstream symbols{sourceDirectory.parent_path() / "Symbols.txt",
+                          std::ios::binary};
+    symbols << "AAPL\nMSFT\nSPY\n";
+  }
+  {
+    std::ofstream manifest{sourceDirectory / "SourceManifest.btesource",
+                           std::ios::binary};
+    manifest << "BTE-SOURCE-MANIFEST-V1\n"
+             << "file=AAPL.csv|ohlcv-1h|" << bte::core::sha256(hourlyCsv)
+             << '\n'
+             << "file=MSFT.csv|ohlcv-1d|" << bte::core::sha256(dailyCsv) << '\n'
+             << "file=SPY.csv|ohlcv-1m|" << bte::core::sha256(unsupportedCsv)
+             << '\n';
+  }
+  const ScopedCurrentDirectory currentDirectory{temporary.path().toStdString()};
   const bte::frontend::ReplayTab tab;
 
   QVERIFY(tab.findChild<QComboBox *>("replaySymbolCombo") != nullptr);
+  auto *symbolCombo = tab.findChild<QComboBox *>("replaySymbolCombo");
+  QVERIFY(symbolCombo != nullptr);
+  QCOMPARE(symbolCombo->count(), 2);
+  QCOMPARE(symbolCombo->itemText(0), QString{"AAPL"});
+  QCOMPARE(symbolCombo->itemText(1), QString{"MSFT"});
   const auto *schemaCombo = tab.findChild<QComboBox *>("replaySchemaCombo");
   QVERIFY(schemaCombo != nullptr);
+  QCOMPARE(symbolCombo->currentData(Qt::UserRole).toString(),
+           QString{"ohlcv-1h"});
   QCOMPARE(schemaCombo->count(), 2);
   QCOMPARE(schemaCombo->itemText(0), QString{"ohlcv-1d"});
   QCOMPARE(schemaCombo->itemText(1), QString{"ohlcv-1h"});
-  QCOMPARE(schemaCombo->findText("ohlcv-1m"), -1);
+  symbolCombo->setCurrentIndex(1);
+  QCOMPARE(symbolCombo->currentData(Qt::UserRole).toString(),
+           QString{"ohlcv-1d"});
+  QCOMPARE(schemaCombo->count(), 1);
+  QCOMPARE(schemaCombo->itemText(0), QString{"ohlcv-1d"});
+  symbolCombo->setCurrentIndex(0);
+  QCOMPARE(schemaCombo->count(), 2);
+  QCOMPARE(schemaCombo->itemText(1), QString{"ohlcv-1h"});
   QVERIFY(tab.findChild<QDateEdit *>("replayStartDateEdit") != nullptr);
   QVERIFY(tab.findChild<QDateEdit *>("replayEndDateEdit") != nullptr);
   QVERIFY(tab.findChild<QDoubleSpinBox *>("replayInitialCapitalSpinBox") !=

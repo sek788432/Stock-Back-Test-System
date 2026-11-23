@@ -7,6 +7,8 @@ add_library(
     Private/CsvBarStream.cpp
     Private/ReleaseSnapshot.cpp
     Private/ReleaseSnapshotTestHooks.h
+    Private/SourceCsvManifest.cpp
+    Private/SourceCsvManifest.h
     Private/SegmentRetention.cpp
     Private/SegmentRetentionTestHooks.h)
 

@@ -1,6 +1,7 @@
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Data/SegmentRetention.h"
 
+#include "../Support/ScopedTemporaryDirectory.h"
 #include "ReleaseSnapshotTestHooks.h"
 #include "SegmentRetentionTestHooks.h"
 
@@ -11,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -18,25 +20,27 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <system_error>
 #include <utility>
 #include <vector>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/resource.h>
+#endif
+
 namespace {
 
 class ScopedSnapshotFixture final {
 public:
   explicit ScopedSnapshotFixture(std::string name)
-      : root_(std::filesystem::temp_directory_path() /
-              ("bte-release-snapshot-" + std::move(name))),
-        source_(root_ / "Source"), store_(root_ / "Store") {
-    std::filesystem::remove_all(root_);
+      : temporaryDirectory_("bte-release-snapshot-" + name),
+        root_(temporaryDirectory_.path()), source_(root_ / "Source"),
+        store_(root_ / "Store") {
     std::filesystem::create_directories(source_);
   }
-
-  ~ScopedSnapshotFixture() { std::filesystem::remove_all(root_); }
 
   ScopedSnapshotFixture(const ScopedSnapshotFixture &) = delete;
   ScopedSnapshotFixture &operator=(const ScopedSnapshotFixture &) = delete;
@@ -61,12 +65,13 @@ public:
   }
 
   [[nodiscard]] bte::data::SnapshotBuildRequest
-  buildRequest(std::vector<std::string> symbols = {"SYN"}) const {
+  buildRequest(std::vector<std::string> symbols = {"SYN"},
+               const std::size_t rowsPerSegment = 2) const {
     return bte::data::SnapshotBuildRequest{
         .sourceDirectory = source_,
         .storeDirectory = store_,
         .symbols = std::move(symbols),
-        .rowsPerSegment = 2,
+        .rowsPerSegment = rowsPerSegment,
         .calendarHash = std::string(64, 'a'),
         .splitManifestHash = std::string(64, 'b'),
     };
@@ -81,6 +86,7 @@ public:
   }
 
 private:
+  bte::test_support::ScopedTemporaryDirectory temporaryDirectory_;
   std::filesystem::path root_;
   std::filesystem::path source_;
   std::filesystem::path store_;
@@ -104,6 +110,22 @@ std::string readFile(const std::filesystem::path &path) {
   std::ifstream input{path, std::ios::binary};
   return {std::istreambuf_iterator<char>{input},
           std::istreambuf_iterator<char>{}};
+}
+
+std::optional<std::uint64_t> peakResidentSetBytes() {
+#if defined(__APPLE__) || defined(__linux__)
+  rusage usage{};
+  if (getrusage(RUSAGE_SELF, &usage) != 0) {
+    return std::nullopt;
+  }
+#if defined(__APPLE__)
+  return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+  return static_cast<std::uint64_t>(usage.ru_maxrss) * 1'024U;
+#endif
+#else
+  return std::nullopt;
+#endif
 }
 
 void writeFile(const std::filesystem::path &path, const std::string &content) {
@@ -144,6 +166,34 @@ std::string publishManifest(const std::filesystem::path &store,
   return snapshotId;
 }
 
+struct RetainedSegmentFixture final {
+  std::filesystem::path store;
+  std::string segmentId;
+  std::unique_ptr<bte::data::SegmentRetentionStore> retention;
+};
+
+RetainedSegmentFixture
+makeRetainedSegmentFixture(const std::filesystem::path &root,
+                           const std::string &name) {
+  const auto store = root / name;
+  constexpr std::string_view bytes = "retention-catalog-segment";
+  const auto segmentId = bte::core::sha256(bytes);
+  std::filesystem::create_directories(store / "Segments");
+  writeFile(store / "Segments" / (segmentId + ".btedata"), std::string{bytes});
+  auto opened = bte::data::SegmentRetentionStore::open(store);
+  if (!opened.ok()) {
+    throw std::runtime_error{opened.error().message};
+  }
+  auto retention = std::move(opened).value();
+  const auto acquired = retention->acquire("result-catalog", {segmentId});
+  if (!acquired.ok()) {
+    throw std::runtime_error{acquired.error().message};
+  }
+  return RetainedSegmentFixture{.store = store,
+                                .segmentId = segmentId,
+                                .retention = std::move(retention)};
+}
+
 std::string publishSegmentMutation(const ScopedSnapshotFixture &fixture,
                                    const bte::data::SnapshotBuildResult &built,
                                    std::string bytes) {
@@ -157,6 +207,821 @@ std::string publishSegmentMutation(const ScopedSnapshotFixture &fixture,
 }
 
 } // namespace
+
+TEST(ReleaseSnapshotTest, exactReadIgnoresUnreferencedMissingSegments) {
+  ScopedSnapshotFixture fixture{"exact-unrelated-missing"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok());
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok());
+  const auto selected = reader.value()->select(
+      {.symbols = {"SYN"},
+       .range = {.start = timestamp("2024-01-02 01:00:00+00:00"),
+                 .end = timestamp("2024-01-02 02:00:00+00:00")},
+       .timeframe = "ohlcv-1h"});
+  ASSERT_TRUE(selected.ok());
+  ASSERT_EQ(selected.value().identity.spans.size(), 1U);
+  ASSERT_TRUE(
+      std::filesystem::remove(fixture.store() / "Segments" /
+                              (built.value().segments.front() + ".btedata")));
+  EXPECT_FALSE(bte::data::ReleaseSnapshotReader::open(fixture.store(),
+                                                      built.value().snapshotId)
+                   .ok());
+  const auto exact = bte::data::ReleaseSnapshotReader::openExact(
+      fixture.store(), selected.value().identity);
+  ASSERT_TRUE(exact.ok()) << exact.error().message;
+  const auto exactSummary = exact.value()->summary();
+  EXPECT_EQ(exactSummary.symbols, (std::vector<std::string>{"SYN"}));
+  EXPECT_EQ(exactSummary.barCount, 3U);
+  const auto reopened = exact.value()->readExact(selected.value().identity);
+  ASSERT_TRUE(reopened.ok());
+  EXPECT_EQ(reopened.value().bars, selected.value().bars);
+  EXPECT_FALSE(
+      exact.value()
+          ->select({.symbols = {"SYN"},
+                    .range = {.start = timestamp("2024-01-01 00:00:00+00:00"),
+                              .end = timestamp("2024-01-03 00:00:00+00:00")},
+                    .timeframe = "ohlcv-1h"})
+          .ok());
+  writeFile(fixture.store() / "Segments" /
+                (built.value().segments.back() + ".btedata"),
+            "corrupt");
+  EXPECT_FALSE(bte::data::ReleaseSnapshotReader::openExact(
+                   fixture.store(), selected.value().identity)
+                   .ok());
+}
+
+TEST(ReleaseSnapshotTest, removingSnapshotKeepsSegmentsPinnedByResult) {
+  ScopedSnapshotFixture fixture{"remove-snapshot"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok());
+  const auto fullReader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(fullReader.ok());
+  const auto selection = fullReader.value()->select(
+      {.symbols = {"SYN"},
+       .range = {.start = timestamp("2024-01-01 00:00:00+00:00"),
+                 .end = timestamp("2024-01-03 00:00:00+00:00")},
+       .timeframe = "ohlcv-1h"});
+  ASSERT_TRUE(selection.ok());
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok());
+  ASSERT_TRUE(
+      retention.value()->acquire("result-a", built.value().segments).ok());
+  EXPECT_FALSE(
+      bte::data::removeReleaseSnapshot(fixture.store(), "invalid").ok());
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               built.value().snapshotId)
+                  .ok());
+  const auto archived = bte::data::ReleaseSnapshotReader::openExact(
+      fixture.store(), selection.value().identity);
+  ASSERT_TRUE(archived.ok()) << archived.error().message;
+  EXPECT_EQ(
+      archived.value()->readExact(selection.value().identity).value().bars,
+      selection.value().bars);
+  EXPECT_FALSE(bte::data::ReleaseSnapshotReader::open(fixture.store(),
+                                                      built.value().snapshotId)
+                   .ok());
+  for (const auto &id : built.value().segments) {
+    EXPECT_TRUE(std::filesystem::exists(fixture.store() / "Segments" /
+                                        (id + ".btedata")));
+  }
+  EXPECT_FALSE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                                built.value().snapshotId)
+                   .ok());
+  const auto rebuilt = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(rebuilt.ok()) << rebuilt.error().message;
+  EXPECT_EQ(rebuilt.value().snapshotId, built.value().snapshotId);
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               built.value().snapshotId)
+                  .ok());
+  EXPECT_TRUE(bte::data::ReleaseSnapshotReader::openExact(
+                  fixture.store(), selection.value().identity)
+                  .ok());
+  const auto released = retention.value()->release("result-a");
+  ASSERT_TRUE(released.ok());
+  EXPECT_EQ(released.value().size(), built.value().segments.size());
+}
+
+TEST(ReleaseSnapshotTest, failedPublicationReleasesItsProvisionalSnapshotPins) {
+  ScopedSnapshotFixture reference{"snapshot-publication-reference"};
+  reference.writeSymbol("SYN", threeHourlyRows);
+  const auto expected =
+      bte::data::buildReleaseSnapshot(reference.buildRequest());
+  ASSERT_TRUE(expected.ok());
+  ScopedSnapshotFixture failed{"snapshot-publication-failed"};
+  failed.writeSymbol("SYN", threeHourlyRows);
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::manifestWrite);
+  const auto result = bte::data::buildReleaseSnapshot(failed.buildRequest());
+  bte::data::testing::clearSnapshotFailure();
+  ASSERT_FALSE(result.ok());
+  auto retention = bte::data::SegmentRetentionStore::open(failed.store());
+  ASSERT_TRUE(retention.ok());
+  const auto pins =
+      retention.value()->references("snapshot-" + expected.value().snapshotId);
+  ASSERT_TRUE(pins.ok());
+  EXPECT_TRUE(pins.value().empty());
+  EXPECT_FALSE(std::filesystem::exists(failed.store() / "Snapshots" /
+                                       expected.value().snapshotId));
+  for (const auto &segmentId : expected.value().segments) {
+    EXPECT_FALSE(std::filesystem::exists(failed.store() / "Segments" /
+                                         (segmentId + ".btedata")));
+    EXPECT_TRUE(std::filesystem::exists(failed.store() / "Trash" / "Segments" /
+                                        (segmentId + ".btedata")));
+  }
+  const auto retry = bte::data::buildReleaseSnapshot(failed.buildRequest());
+  ASSERT_TRUE(retry.ok()) << retry.error().message;
+  EXPECT_EQ(retry.value().snapshotId, expected.value().snapshotId);
+  EXPECT_TRUE(
+      bte::data::removeReleaseSnapshot(failed.store(), retry.value().snapshotId)
+          .ok());
+}
+
+TEST(ReleaseSnapshotTest,
+     existingSnapshotDirectoryMustContainTheExpectedManifest) {
+  ScopedSnapshotFixture reference{"existing-snapshot-reference"};
+  reference.writeSymbol("SYN", threeHourlyRows);
+  const auto expected =
+      bte::data::buildReleaseSnapshot(reference.buildRequest());
+  ASSERT_TRUE(expected.ok()) << expected.error().message;
+
+  ScopedSnapshotFixture collision{"existing-snapshot-collision"};
+  collision.writeSymbol("SYN", threeHourlyRows);
+  const auto snapshotDirectory =
+      collision.store() / "Snapshots" / expected.value().snapshotId;
+  std::filesystem::create_directories(snapshotDirectory);
+
+  const auto result = bte::data::buildReleaseSnapshot(collision.buildRequest());
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_FALSE(
+      std::filesystem::exists(snapshotDirectory / "Manifest.btesnapshot"));
+  EXPECT_FALSE(
+      std::filesystem::exists(collision.store() / "References.sqlite3"));
+}
+
+TEST(ReleaseSnapshotTest,
+     nextPublicationReclaimsPinsLeftByAnInterruptedSnapshotBuild) {
+  ScopedSnapshotFixture fixture{"interrupted-snapshot-recovery"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto original = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(original.ok()) << original.error().message;
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               original.value().snapshotId)
+                  .ok());
+
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+  const auto interruptedSnapshotId = std::string(64, 'f');
+  ASSERT_TRUE(retention.value()
+                  ->acquire("snapshot-" + interruptedSnapshotId,
+                            original.value().segments)
+                  .ok());
+  for (const auto &segmentId : original.value().segments) {
+    EXPECT_TRUE(std::filesystem::exists(fixture.store() / "Segments" /
+                                        (segmentId + ".btedata")));
+  }
+
+  fixture.writeSymbol(
+      "SYN",
+      "SYN,2024-01-01 23:00:00+00:00,110,112,109,111,1200,ohlcv-1h\n"
+      "SYN,2024-01-02 00:00:00+00:00,111,113.5,110,112.75,2300,ohlcv-1h\n"
+      "SYN,2024-01-02 01:00:00+00:00,112.75,114,111.5,113.125,3400,ohlcv-1h\n");
+  const auto next = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_TRUE(next.ok()) << next.error().message;
+  const auto stalePins =
+      retention.value()->references("snapshot-" + interruptedSnapshotId);
+  ASSERT_TRUE(stalePins.ok());
+  EXPECT_TRUE(stalePins.value().empty());
+  for (const auto &segmentId : original.value().segments) {
+    EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Segments" /
+                                         (segmentId + ".btedata")));
+    EXPECT_TRUE(std::filesystem::exists(fixture.store() / "Trash" / "Segments" /
+                                        (segmentId + ".btedata")));
+  }
+}
+
+TEST(ReleaseSnapshotTest,
+     nextPublicationTrashesUnpinnedSegmentsLeftByAnInterruptedSnapshotBuild) {
+  ScopedSnapshotFixture fixture{"interrupted-unpinned-segment-recovery"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto original = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(original.ok()) << original.error().message;
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               original.value().snapshotId)
+                  .ok());
+
+  std::filesystem::create_directories(fixture.store() / "Segments");
+  for (const auto &segmentId : original.value().segments) {
+    const auto trashed =
+        fixture.store() / "Trash" / "Segments" / (segmentId + ".btedata");
+    const auto active = fixture.store() / "Segments" / (segmentId + ".btedata");
+    ASSERT_TRUE(std::filesystem::exists(trashed));
+    std::filesystem::copy_file(trashed, active);
+  }
+  fixture.writeSymbol(
+      "SYN",
+      "SYN,2024-01-01 23:00:00+00:00,110,112,109,111,1200,ohlcv-1h\n"
+      "SYN,2024-01-02 00:00:00+00:00,111,113.5,110,112.75,2300,ohlcv-1h\n"
+      "SYN,2024-01-02 01:00:00+00:00,112.75,114,111.5,113.125,3400,ohlcv-1h\n");
+
+  const auto next = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_TRUE(next.ok()) << next.error().message;
+  EXPECT_NE(next.value().snapshotId, original.value().snapshotId);
+  for (const auto &segmentId : original.value().segments) {
+    EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Segments" /
+                                         (segmentId + ".btedata")));
+    EXPECT_TRUE(std::filesystem::exists(fixture.store() / "Trash" / "Segments" /
+                                        (segmentId + ".btedata")));
+  }
+}
+
+TEST(SegmentRetentionTest,
+     abandonUnpublishedSnapshotValidatesAndRollsBackStorageFailures) {
+  using bte::data::testing::RetentionFailurePoint;
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "abandon-unpublished-snapshot-failures"};
+  const auto storeDirectory = temporary.path() / "Store";
+  auto retention = bte::data::SegmentRetentionStore::open(storeDirectory);
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+
+  const auto invalidIdentity =
+      retention.value()->abandonUnpublishedSnapshot("../invalid");
+  ASSERT_FALSE(invalidIdentity.ok());
+  EXPECT_EQ(invalidIdentity.error().code,
+            bte::core::ErrorCode::invalidArgument);
+
+  bte::data::testing::failRetentionAfter(RetentionFailurePoint::databaseOpen);
+  const auto openFailure =
+      retention.value()->abandonUnpublishedSnapshot(std::string(64, 'f'));
+  bte::data::testing::clearRetentionFailure();
+  ASSERT_FALSE(openFailure.ok());
+
+  bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution);
+  const auto beginFailure =
+      retention.value()->abandonUnpublishedSnapshot(std::string(64, 'e'));
+  bte::data::testing::clearRetentionFailure();
+  ASSERT_FALSE(beginFailure.ok());
+
+  const auto absent =
+      retention.value()->abandonUnpublishedSnapshot(std::string(64, 'a'));
+  ASSERT_TRUE(absent.ok()) << absent.error().message;
+
+  const auto publishedId = std::string(64, 'b');
+  std::filesystem::create_directories(storeDirectory / "Snapshots" /
+                                      publishedId);
+  const auto published =
+      retention.value()->abandonUnpublishedSnapshot(publishedId);
+  ASSERT_FALSE(published.ok());
+  EXPECT_EQ(published.error().code, bte::core::ErrorCode::invalidArgument);
+
+  bte::data::testing::failRetentionAfter(RetentionFailurePoint::boundExecution);
+  const auto deleteFailure =
+      retention.value()->abandonUnpublishedSnapshot(std::string(64, 'c'));
+  bte::data::testing::clearRetentionFailure();
+  ASSERT_FALSE(deleteFailure.ok());
+
+  bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution,
+                                         1);
+  const auto commitFailure =
+      retention.value()->abandonUnpublishedSnapshot(std::string(64, 'd'));
+  bte::data::testing::clearRetentionFailure();
+  ASSERT_FALSE(commitFailure.ok());
+}
+
+constexpr std::uint32_t databaseOpensBeforeSnapshotPinRelease = 5;
+
+TEST(ReleaseSnapshotTest, failedRetentionReleaseRestoresSnapshotForRetry) {
+  ScopedSnapshotFixture fixture{"remove-snapshot-release-failure"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+
+  // Skip three recovery opens, the retention open, and pin acquisition to fail
+  // the release operation itself.
+  bte::data::testing::failRetentionAfter(
+      bte::data::testing::RetentionFailurePoint::databaseOpen,
+      databaseOpensBeforeSnapshotPinRelease);
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+  bte::data::testing::clearRetentionFailure();
+
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_TRUE(std::filesystem::is_directory(fixture.store() / "Snapshots" /
+                                            built.value().snapshotId));
+  EXPECT_FALSE(std::filesystem::exists(fixture.store() / "ArchivedSnapshots" /
+                                       built.value().snapshotId));
+  EXPECT_TRUE(bte::data::ReleaseSnapshotReader::open(fixture.store(),
+                                                     built.value().snapshotId)
+                  .ok());
+
+  const auto retried = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(retried.ok()) << retried.error().message;
+  EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots" /
+                                       built.value().snapshotId));
+  EXPECT_TRUE(std::filesystem::is_directory(
+      fixture.store() / "ArchivedSnapshots" / built.value().snapshotId));
+}
+
+TEST(ReleaseSnapshotTest,
+     failedSnapshotRollbackLeavesTheArchivedSnapshotRecoverable) {
+  ScopedSnapshotFixture fixture{"remove-snapshot-rollback-failure"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+
+  // Skip three recovery opens, the retention open, and pin acquisition to fail
+  // the release operation itself.
+  bte::data::testing::failRetentionAfter(
+      bte::data::testing::RetentionFailurePoint::databaseOpen,
+      databaseOpensBeforeSnapshotPinRelease);
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::snapshotRemovalRollback);
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+  bte::data::testing::clearRetentionFailure();
+  bte::data::testing::clearSnapshotFailure();
+
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_NE(removed.error().message.find("Unable to restore snapshot"),
+            std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots" /
+                                       built.value().snapshotId));
+  EXPECT_TRUE(std::filesystem::is_directory(
+      fixture.store() / "ArchivedSnapshots" / built.value().snapshotId));
+}
+
+TEST(ReleaseSnapshotTest, removesSnapshotWithMatchingExistingArchive) {
+  ScopedSnapshotFixture fixture{"matching-existing-snapshot-archive"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  const auto manifest =
+      readFile(fixture.store() / "Snapshots" / built.value().snapshotId /
+               "Manifest.btesnapshot");
+  const auto archivedDirectory =
+      fixture.store() / "ArchivedSnapshots" / built.value().snapshotId;
+  std::filesystem::create_directories(archivedDirectory);
+  writeFile(archivedDirectory / "Manifest.btesnapshot", manifest);
+
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+
+  ASSERT_TRUE(removed.ok()) << removed.error().message;
+  EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots" /
+                                       built.value().snapshotId));
+  EXPECT_TRUE(std::filesystem::is_directory(archivedDirectory));
+  EXPECT_EQ(readFile(archivedDirectory / "Manifest.btesnapshot"), manifest);
+}
+
+TEST(ReleaseSnapshotTest, removeReportsAnArchiveRootThatIsAFile) {
+  ScopedSnapshotFixture fixture{"remove-archive-root-is-a-file"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  writeFile(fixture.store() / "ArchivedSnapshots", "not a directory");
+
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code, bte::core::ErrorCode::permissionDenied);
+  EXPECT_TRUE(std::filesystem::is_directory(fixture.store() / "Snapshots" /
+                                            built.value().snapshotId));
+}
+
+TEST(ReleaseSnapshotTest, removeReportsAnExistingStagingDirectory) {
+  ScopedSnapshotFixture fixture{"remove-existing-staging-directory"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  const auto manifest =
+      readFile(fixture.store() / "Snapshots" / built.value().snapshotId /
+               "Manifest.btesnapshot");
+  const auto archivedDirectory =
+      fixture.store() / "ArchivedSnapshots" / built.value().snapshotId;
+  std::filesystem::create_directories(archivedDirectory);
+  writeFile(archivedDirectory / "Manifest.btesnapshot", manifest);
+  std::filesystem::create_directories(
+      fixture.store() / "Snapshots" /
+      ("." + built.value().snapshotId + ".removing"));
+
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code, bte::core::ErrorCode::resourceBusy);
+  EXPECT_TRUE(std::filesystem::is_directory(fixture.store() / "Snapshots" /
+                                            built.value().snapshotId));
+}
+
+TEST(ReleaseSnapshotTest,
+     removesSnapshotAfterRecoveringItsStaleRemovalStagingDirectory) {
+  ScopedSnapshotFixture fixture{"remove-stale-removal-staging-directory"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  const auto manifest =
+      readFile(fixture.store() / "Snapshots" / built.value().snapshotId /
+               "Manifest.btesnapshot");
+  const auto archivedDirectory =
+      fixture.store() / "ArchivedSnapshots" / built.value().snapshotId;
+  std::filesystem::create_directories(archivedDirectory);
+  writeFile(archivedDirectory / "Manifest.btesnapshot", manifest);
+  const auto staleStagingDirectory =
+      fixture.store() / "Snapshots" /
+      ("." + built.value().snapshotId + ".removing");
+  std::filesystem::create_directories(staleStagingDirectory);
+  writeFile(staleStagingDirectory / "Manifest.btesnapshot", manifest);
+
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+
+  ASSERT_TRUE(removed.ok()) << removed.error().message;
+  EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots" /
+                                       built.value().snapshotId));
+  EXPECT_FALSE(std::filesystem::exists(staleStagingDirectory));
+  EXPECT_EQ(readFile(archivedDirectory / "Manifest.btesnapshot"), manifest);
+}
+
+TEST(ReleaseSnapshotTest, removeReportsAnUnavailablePublicationLock) {
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "remove-publication-lock-unavailable"};
+  const auto store = temporary.path() / "Store";
+  const auto manifest =
+      std::string{"BTE-SNAPSHOT-MANIFEST-V1\n"} +
+      "profile=vendorExtendedHours\ntimeframe=ohlcv-1h\ncalendarHash=" +
+      std::string(64, 'a') + "\nsplitManifestHash=" + std::string(64, 'b') +
+      "\n";
+  const auto snapshotId = publishManifest(store, manifest);
+  std::filesystem::create_directories(store / "SnapshotOperations.sqlite3");
+
+  const auto removed = bte::data::removeReleaseSnapshot(store, snapshotId);
+
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_TRUE(std::filesystem::is_directory(store / "Snapshots" / snapshotId));
+}
+
+TEST(ReleaseSnapshotTest, removeReportsRetentionStoreOpenFailure) {
+  ScopedSnapshotFixture fixture{"remove-retention-open-failure"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  bte::data::testing::failRetentionAfter(
+      bte::data::testing::RetentionFailurePoint::databaseOpen);
+
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+  bte::data::testing::clearRetentionFailure();
+
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_TRUE(std::filesystem::is_directory(fixture.store() / "Snapshots" /
+                                            built.value().snapshotId));
+}
+
+TEST(ReleaseSnapshotTest, removeReportsAContendedPublicationLock) {
+  ScopedSnapshotFixture fixture{"remove-publication-lock-busy"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  sqlite3 *lockDatabase = nullptr;
+  const auto lockPath =
+      (fixture.store() / "SnapshotOperations.sqlite3").string();
+  ASSERT_EQ(sqlite3_open_v2(lockPath.c_str(), &lockDatabase,
+                            SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+                            nullptr),
+            SQLITE_OK);
+  ASSERT_EQ(
+      sqlite3_exec(lockDatabase, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr),
+      SQLITE_OK);
+
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+
+  EXPECT_EQ(sqlite3_exec(lockDatabase, "ROLLBACK", nullptr, nullptr, nullptr),
+            SQLITE_OK);
+  EXPECT_EQ(sqlite3_close(lockDatabase), SQLITE_OK);
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code, bte::core::ErrorCode::resourceBusy);
+}
+
+TEST(ReleaseSnapshotTest, removeReportsRetentionPinFailure) {
+  ScopedSnapshotFixture fixture{"remove-retention-pin-failure"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  bte::data::testing::failRetentionAfter(
+      bte::data::testing::RetentionFailurePoint::boundExecution);
+
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+  bte::data::testing::clearRetentionFailure();
+
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_TRUE(std::filesystem::is_directory(fixture.store() / "Snapshots" /
+                                            built.value().snapshotId));
+}
+
+TEST(ReleaseSnapshotTest, exactReadCanOpenSnapshotAfterItHasBeenArchived) {
+  ScopedSnapshotFixture fixture{"exact-read-archived-snapshot"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  const auto selected = reader.value()->select(
+      {.symbols = {"SYN"},
+       .range = {.start = timestamp("2024-01-01 00:00:00+00:00"),
+                 .end = timestamp("2024-01-03 00:00:00+00:00")},
+       .timeframe = "ohlcv-1h"});
+  ASSERT_TRUE(selected.ok()) << selected.error().message;
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+  const auto retained = retention.value()->acquire(
+      "exact-read-archive-reference", built.value().segments);
+  ASSERT_TRUE(retained.ok()) << retained.error().message;
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(removed.ok()) << removed.error().message;
+
+  auto exact = bte::data::ReleaseSnapshotReader::openExact(
+      fixture.store(), selected.value().identity);
+
+  ASSERT_TRUE(exact.ok()) << exact.error().message;
+  const auto exactSelection =
+      exact.value()->readExact(selected.value().identity);
+  ASSERT_TRUE(exactSelection.ok()) << exactSelection.error().message;
+  EXPECT_EQ(exactSelection.value().bars, selected.value().bars);
+}
+
+TEST(ReleaseSnapshotTest, removeAcceptsAnEmptyPublishedSnapshot) {
+  ScopedSnapshotFixture fixture{"remove-empty-snapshot"};
+  fixture.writeSymbol("SYN", "");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  EXPECT_EQ(built.value().segmentCount, 0);
+
+  const auto removed = bte::data::removeReleaseSnapshot(
+      fixture.store(), built.value().snapshotId);
+
+  ASSERT_TRUE(removed.ok()) << removed.error().message;
+  EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots" /
+                                       built.value().snapshotId));
+}
+
+TEST(ReleaseSnapshotTest, snapshotPublicationReportsRetentionPinFailures) {
+  using bte::data::testing::RetentionFailurePoint;
+
+  ScopedSnapshotFixture reference{"publication-retention-reference"};
+  reference.writeSymbol("SYN", threeHourlyRows);
+  const auto expected =
+      bte::data::buildReleaseSnapshot(reference.buildRequest());
+  ASSERT_TRUE(expected.ok()) << expected.error().message;
+
+  const auto expectAbandonedSegmentsInTrash =
+      [&expected](const ScopedSnapshotFixture &fixture) {
+        auto retention =
+            bte::data::SegmentRetentionStore::open(fixture.store());
+        ASSERT_TRUE(retention.ok()) << retention.error().message;
+        const auto pins = retention.value()->references(
+            "snapshot-" + expected.value().snapshotId);
+        ASSERT_TRUE(pins.ok()) << pins.error().message;
+        EXPECT_TRUE(pins.value().empty());
+        EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots" /
+                                             expected.value().snapshotId));
+        for (const auto &segmentId : expected.value().segments) {
+          EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Segments" /
+                                               (segmentId + ".btedata")));
+          EXPECT_TRUE(
+              std::filesystem::exists(fixture.store() / "Trash" / "Segments" /
+                                      (segmentId + ".btedata")));
+        }
+      };
+
+  ScopedSnapshotFixture openFailure{"publication-retention-open-failure"};
+  openFailure.writeSymbol("SYN", threeHourlyRows);
+  bte::data::testing::failRetentionAfter(RetentionFailurePoint::databaseOpen);
+  const auto failedOpen =
+      bte::data::buildReleaseSnapshot(openFailure.buildRequest());
+  bte::data::testing::clearRetentionFailure();
+  ASSERT_FALSE(failedOpen.ok());
+  EXPECT_EQ(failedOpen.error().code, bte::core::ErrorCode::internal);
+  expectAbandonedSegmentsInTrash(openFailure);
+
+  ScopedSnapshotFixture acquireFailure{"publication-retention-pin-failure"};
+  acquireFailure.writeSymbol("SYN", threeHourlyRows);
+  bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution,
+                                         4);
+  const auto failedPin =
+      bte::data::buildReleaseSnapshot(acquireFailure.buildRequest());
+  bte::data::testing::clearRetentionFailure();
+  ASSERT_FALSE(failedPin.ok());
+  EXPECT_EQ(failedPin.error().code, bte::core::ErrorCode::internal);
+  expectAbandonedSegmentsInTrash(acquireFailure);
+}
+
+TEST(ReleaseSnapshotTest,
+     failedSegmentWriteLeavesNoPartialArtifactAndCanBeRetried) {
+  ScopedSnapshotFixture reference{"partial-segment-write-reference"};
+  reference.writeSymbol("SYN", threeHourlyRows);
+  const auto expected =
+      bte::data::buildReleaseSnapshot(reference.buildRequest());
+  ASSERT_TRUE(expected.ok()) << expected.error().message;
+
+  ScopedSnapshotFixture fixture{"partial-segment-write-retry"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::artifactWrite);
+  const auto failed = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  bte::data::testing::clearSnapshotFailure();
+
+  ASSERT_FALSE(failed.ok());
+  EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots" /
+                                       expected.value().snapshotId));
+  for (const auto &segmentId : expected.value().segments) {
+    EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Segments" /
+                                         (segmentId + ".btedata")));
+    EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Segments" /
+                                         (segmentId + ".btedata.staging")));
+  }
+
+  const auto retried = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_TRUE(retried.ok()) << retried.error().message;
+  EXPECT_EQ(retried.value().snapshotId, expected.value().snapshotId);
+}
+
+TEST(ReleaseSnapshotTest,
+     failedEmptySnapshotPublicationDoesNotRequireRetentionStore) {
+  ScopedSnapshotFixture fixture{"empty-snapshot-publication-failure"};
+  fixture.writeSymbol("SYN", "");
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::manifestWrite);
+
+  const auto failed = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  bte::data::testing::clearSnapshotFailure();
+  ASSERT_FALSE(failed.ok());
+  EXPECT_EQ(failed.error().code, bte::core::ErrorCode::permissionDenied);
+}
+
+TEST(ReleaseSnapshotTest,
+     failedUnpublishedSnapshotCleanupReportsRetentionFailure) {
+  ScopedSnapshotFixture fixture{"publication-cleanup-retention-failure"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  bte::data::testing::failRetentionAfter(
+      bte::data::testing::RetentionFailurePoint::databaseOpen, 2);
+  bte::data::testing::failSnapshotAt(
+      bte::data::testing::SnapshotFailurePoint::manifestWrite);
+
+  const auto failed = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  bte::data::testing::clearRetentionFailure();
+  bte::data::testing::clearSnapshotFailure();
+  ASSERT_FALSE(failed.ok());
+  EXPECT_EQ(failed.error().code, bte::core::ErrorCode::internal);
+  EXPECT_NE(
+      failed.error().message.find("Unable to open segment retention database"),
+      std::string::npos);
+  const auto snapshotsDirectory = fixture.store() / "Snapshots";
+  EXPECT_TRUE(!std::filesystem::exists(snapshotsDirectory) ||
+              std::filesystem::is_empty(snapshotsDirectory));
+}
+
+TEST(ReleaseSnapshotTest,
+     publishedSnapshotSegmentCatalogRejectsMalformedEntries) {
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "published-snapshot-catalog-errors"};
+  const auto missing =
+      makeRetainedSegmentFixture(temporary.path(), "MissingSnapshots");
+  const auto releasedMissing = missing.retention->release("result-catalog");
+  ASSERT_TRUE(releasedMissing.ok()) << releasedMissing.error().message;
+  EXPECT_EQ(releasedMissing.value().size(), 1U);
+
+  const auto invalidName =
+      makeRetainedSegmentFixture(temporary.path(), "InvalidName");
+  std::filesystem::create_directories(invalidName.store / "Snapshots" /
+                                      "not-a-hash");
+  const auto releasedInvalidName =
+      invalidName.retention->release("result-catalog");
+  ASSERT_TRUE(releasedInvalidName.ok()) << releasedInvalidName.error().message;
+
+  const auto notDirectory =
+      makeRetainedSegmentFixture(temporary.path(), "SnapshotsIsAFile");
+  writeFile(notDirectory.store / "Snapshots", "not a directory");
+  const auto iteratorError = notDirectory.retention->release("result-catalog");
+  ASSERT_FALSE(iteratorError.ok());
+
+  const auto hashNamedFile =
+      makeRetainedSegmentFixture(temporary.path(), "HashNamedFile");
+  const auto hashFile =
+      hashNamedFile.store / "Snapshots" / std::string(64, 'a');
+  std::filesystem::create_directories(hashFile.parent_path());
+  writeFile(hashFile, "not a snapshot directory");
+  const auto notDirectoryError =
+      hashNamedFile.retention->release("result-catalog");
+  ASSERT_FALSE(notDirectoryError.ok());
+
+  const auto missingManifest =
+      makeRetainedSegmentFixture(temporary.path(), "MissingManifest");
+  std::filesystem::create_directories(missingManifest.store / "Snapshots" /
+                                      std::string(64, 'b'));
+  const auto manifestError =
+      missingManifest.retention->release("result-catalog");
+  ASSERT_FALSE(manifestError.ok());
+
+  const auto mismatched =
+      makeRetainedSegmentFixture(temporary.path(), "MismatchedManifest");
+  const auto mismatchedDirectory =
+      mismatched.store / "Snapshots" / std::string(64, 'c');
+  std::filesystem::create_directories(mismatchedDirectory);
+  writeFile(mismatchedDirectory / "Manifest.btesnapshot", "mismatched");
+  const auto mismatchedError = mismatched.retention->release("result-catalog");
+  ASSERT_FALSE(mismatchedError.ok());
+
+  const auto malformed =
+      makeRetainedSegmentFixture(temporary.path(), "MalformedManifest");
+  publishManifest(malformed.store, "not-a-manifest\n");
+  const auto parseError = malformed.retention->release("result-catalog");
+  ASSERT_FALSE(parseError.ok());
+
+  const auto invalidSegment =
+      makeRetainedSegmentFixture(temporary.path(), "InvalidSegmentIdentity");
+  const auto invalidManifest = std::string{"BTE-SNAPSHOT-MANIFEST-V1\n"} +
+                               "profile=vendorExtendedHours\n"
+                               "timeframe=ohlcv-1h\n"
+                               "calendarHash=" +
+                               std::string(64, 'a') +
+                               "\n"
+                               "splitManifestHash=" +
+                               std::string(64, 'b') +
+                               "\n"
+                               "segment=0|SYN|" +
+                               std::string(64, 'z') +
+                               "|1|1704150000000|1704150000000\n";
+  publishManifest(invalidSegment.store, invalidManifest);
+  const auto segmentIdentityError =
+      invalidSegment.retention->release("result-catalog");
+  ASSERT_FALSE(segmentIdentityError.ok());
+  EXPECT_NE(
+      segmentIdentityError.error().message.find("segment identity is invalid"),
+      std::string::npos);
+}
+
+TEST(ReleaseSnapshotTest, removalRejectsManifestThatCannotBeParsed) {
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "remove-unparseable-manifest"};
+  const auto store = temporary.path() / "Store";
+  const auto snapshotId = publishManifest(store, "not-a-manifest\n");
+
+  const auto removed = bte::data::removeReleaseSnapshot(store, snapshotId);
+
+  ASSERT_FALSE(removed.ok());
+  EXPECT_EQ(removed.error().code,
+            bte::core::ErrorCode::dataSnapshotUnavailable);
+}
+
+TEST(ReleaseSnapshotTest, exactReaderRejectsRangeAndHistoryOperations) {
+  ScopedSnapshotFixture fixture{"exact-reader-operation-contract"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto reader = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), built.value().snapshotId);
+  ASSERT_TRUE(reader.ok()) << reader.error().message;
+  const auto selected = reader.value()->select(
+      {.symbols = {"SYN"},
+       .range = {.start = timestamp("2024-01-01 00:00:00+00:00"),
+                 .end = timestamp("2024-01-03 00:00:00+00:00")},
+       .timeframe = "ohlcv-1h"});
+  ASSERT_TRUE(selected.ok()) << selected.error().message;
+  auto exact = bte::data::ReleaseSnapshotReader::openExact(
+      fixture.store(), selected.value().identity);
+  ASSERT_TRUE(exact.ok()) << exact.error().message;
+
+  const auto lastClose = exact.value()->lastCloseBeforeUtcDate(
+      "SYN", timestamp("2024-01-02 00:00:00+00:00"));
+  const auto lastDays = exact.value()->lastDataDaysBeforeUtcDate(
+      "SYN", timestamp("2024-01-02 00:00:00+00:00"), 1);
+
+  ASSERT_FALSE(lastClose.ok());
+  EXPECT_EQ(lastClose.error().code, bte::core::ErrorCode::invalidArgument);
+  ASSERT_FALSE(lastDays.ok());
+  EXPECT_EQ(lastDays.error().code, bte::core::ErrorCode::invalidArgument);
+}
 
 TEST(ReleaseSnapshotTest,
      buildAndSelect_preservesFixedPointBarsAndExactHalfOpenRowSpans) {
@@ -172,6 +1037,12 @@ TEST(ReleaseSnapshotTest,
   auto reader = bte::data::ReleaseSnapshotReader::open(
       fixture.store(), built.value().snapshotId);
   ASSERT_TRUE(reader.ok()) << reader.error().message;
+  const auto summary = reader.value()->summary();
+  EXPECT_EQ(summary.snapshotId, built.value().snapshotId);
+  EXPECT_EQ(summary.profile, "vendorExtendedHours");
+  EXPECT_EQ(summary.timeframe, "ohlcv-1h");
+  EXPECT_EQ(summary.symbols, (std::vector<std::string>{"SYN"}));
+  EXPECT_EQ(summary.barCount, 3U);
 
   const auto selected = reader.value()->select(bte::data::SnapshotSelectRequest{
       .symbols = {"SYN"},
@@ -199,6 +1070,159 @@ TEST(ReleaseSnapshotTest,
   EXPECT_EQ(selected.value().identity.spans[1].firstRow, 0);
   EXPECT_EQ(selected.value().identity.spans[1].rowCount, 1);
   EXPECT_EQ(selected.value().identity.snapshotId, built.value().snapshotId);
+}
+
+TEST(ReleaseSnapshotTest,
+     releaseSnapshotSelectionReportsOpenSelectHistoryAndSpanMetrics) {
+#if !defined(NDEBUG)
+  GTEST_SKIP() << "P04 performance sampling runs in the Release profile";
+#endif
+  ScopedSnapshotFixture fixture{"selection-stage-measurement"};
+  constexpr auto barsPerSymbol = 10'000;
+  const auto firstTimestamp = timestamp("2020-01-01 00:00:00+00:00");
+  for (const auto &symbol : {std::string{"BTE000"}, std::string{"BTE001"}}) {
+    std::ofstream output{fixture.source() / (symbol + ".csv")};
+    output << "symbol,ts,open,high,low,close,volume,schemaName\n";
+    for (auto index = 0; index < barsPerSymbol; ++index) {
+      const auto barTimestamp =
+          firstTimestamp + std::chrono::hours{static_cast<std::int64_t>(index)};
+      output << symbol << ',' << bte::core::time::toIso8601(barTimestamp)
+             << ",100,102,99,101,1000,ohlcv-1h\n";
+    }
+    ASSERT_TRUE(output.good()) << symbol;
+  }
+  const auto built = bte::data::buildReleaseSnapshot(
+      fixture.buildRequest({"BTE000", "BTE001"}, 1'000));
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  ASSERT_EQ(built.value().barCount, barsPerSymbol * 2U);
+  ASSERT_EQ(built.value().segmentCount, 20U);
+
+  const auto rangeStart = firstTimestamp + std::chrono::hours{8'904};
+  const auto rangeEnd = rangeStart + std::chrono::hours{200};
+  const auto historyStart = rangeStart - std::chrono::hours{24 * 10};
+  const bte::data::SnapshotSelectRequest request{
+      .symbols = {"BTE000"},
+      .range = {.start = rangeStart, .end = rangeEnd},
+      .timeframe = "ohlcv-1h",
+  };
+  constexpr auto warmupCount = 2;
+  constexpr auto measuredCount = 20;
+  std::vector<std::int64_t> openMicroseconds;
+  std::vector<std::int64_t> selectMicroseconds;
+  std::vector<std::int64_t> lastCloseMicroseconds;
+  std::vector<std::int64_t> historyDaysMicroseconds;
+  openMicroseconds.reserve(measuredCount);
+  selectMicroseconds.reserve(measuredCount);
+  lastCloseMicroseconds.reserve(measuredCount);
+  historyDaysMicroseconds.reserve(measuredCount);
+  const auto peakRssBefore = peakResidentSetBytes();
+  bte::data::testing::resetSnapshotSegmentReadCount();
+  std::vector<std::size_t> lastSpanWidths;
+
+  for (auto sample = 0; sample < warmupCount + measuredCount; ++sample) {
+    auto started = std::chrono::steady_clock::now();
+    auto reader = bte::data::ReleaseSnapshotReader::open(
+        fixture.store(), built.value().snapshotId);
+    const auto openedAt = std::chrono::steady_clock::now();
+    ASSERT_TRUE(reader.ok()) << reader.error().message;
+
+    const auto selected = reader.value()->select(request);
+    const auto selectedAt = std::chrono::steady_clock::now();
+    ASSERT_TRUE(selected.ok()) << selected.error().message;
+    ASSERT_EQ(selected.value().bars.size(), 200U)
+        << bte::core::time::toIso8601(rangeStart) << ".."
+        << bte::core::time::toIso8601(rangeEnd)
+        << " spans=" << selected.value().identity.spans.size();
+    ASSERT_EQ(selected.value().identity.spans.size(), 2U);
+    ASSERT_EQ(selected.value().identity.spans[0].rowCount, 96U);
+    ASSERT_EQ(selected.value().identity.spans[1].rowCount, 104U);
+
+    const auto priorClose =
+        reader.value()->lastCloseBeforeUtcDate("BTE000", rangeStart);
+    const auto priorCloseAt = std::chrono::steady_clock::now();
+    ASSERT_TRUE(priorClose.ok()) << priorClose.error().message;
+    ASSERT_TRUE(priorClose.value().has_value());
+    EXPECT_EQ(priorClose.value()->timestamp,
+              firstTimestamp + std::chrono::hours{8'903});
+
+    const auto history =
+        reader.value()->lastDataDaysBeforeUtcDate("BTE000", rangeStart, 10);
+    const auto historyAt = std::chrono::steady_clock::now();
+    ASSERT_TRUE(history.ok()) << history.error().message;
+    ASSERT_EQ(history.value().size(), 10U);
+    EXPECT_EQ(history.value().front().utcDateStart,
+              std::chrono::floor<std::chrono::days>(historyStart));
+
+    if (sample == warmupCount + measuredCount - 1) {
+      lastSpanWidths = {selected.value().identity.spans[0].rowCount,
+                        selected.value().identity.spans[1].rowCount};
+    }
+    if (sample >= warmupCount) {
+      openMicroseconds.push_back(
+          std::chrono::duration_cast<std::chrono::microseconds>(openedAt -
+                                                                started)
+              .count());
+      selectMicroseconds.push_back(
+          std::chrono::duration_cast<std::chrono::microseconds>(selectedAt -
+                                                                openedAt)
+              .count());
+      lastCloseMicroseconds.push_back(
+          std::chrono::duration_cast<std::chrono::microseconds>(priorCloseAt -
+                                                                selectedAt)
+              .count());
+      historyDaysMicroseconds.push_back(
+          std::chrono::duration_cast<std::chrono::microseconds>(historyAt -
+                                                                priorCloseAt)
+              .count());
+    }
+  }
+
+  const auto nearestRank = [](std::vector<std::int64_t> samples,
+                              const std::size_t rank) {
+    std::ranges::sort(samples);
+    return samples.at(rank - 1U);
+  };
+  const auto rawSamples = [](const std::vector<std::int64_t> &samples) {
+    auto raw = std::string{};
+    for (const auto sample : samples) {
+      if (!raw.empty()) {
+        raw.append(",");
+      }
+      raw.append(std::to_string(sample));
+    }
+    return raw;
+  };
+  const auto recordStage =
+      [&nearestRank, &rawSamples](const std::string &stage,
+                                  const std::vector<std::int64_t> &samples) {
+        RecordProperty(stage + "P50Microseconds", nearestRank(samples, 10U));
+        RecordProperty(stage + "P95Microseconds", nearestRank(samples, 19U));
+        RecordProperty(stage + "RawMicroseconds", rawSamples(samples));
+      };
+  RecordProperty("fixtureBars", barsPerSymbol * 2U);
+  RecordProperty("fixtureSymbols", 2);
+  RecordProperty("fixtureSegments", built.value().segmentCount);
+  RecordProperty("warmupCount", warmupCount);
+  RecordProperty("measuredSampleCount", measuredCount);
+  RecordProperty("selectionBars", 200);
+  RecordProperty("selectionSpanCount", lastSpanWidths.size());
+  RecordProperty("selectionSpanWidths",
+                 rawSamples({static_cast<std::int64_t>(lastSpanWidths[0]),
+                             static_cast<std::int64_t>(lastSpanWidths[1])}));
+  RecordProperty("requiredPriorDataDays", 10);
+  RecordProperty("requiredPriorHourlyRows", 240);
+  recordStage("snapshotOpen", openMicroseconds);
+  recordStage("rangeSelect", selectMicroseconds);
+  recordStage("lastClose", lastCloseMicroseconds);
+  recordStage("historyDays", historyDaysMicroseconds);
+  EXPECT_EQ(bte::data::testing::snapshotSegmentReadCount(), 440U);
+  RecordProperty("segmentReadsAcrossAllSamples",
+                 bte::data::testing::snapshotSegmentReadCount());
+  const auto peakRssAfter = peakResidentSetBytes();
+  if (peakRssBefore.has_value() && peakRssAfter.has_value()) {
+    RecordProperty("peakRssBeforeSamplingBytes", *peakRssBefore);
+    RecordProperty("peakRssAfterSamplingBytes", *peakRssAfter);
+  }
 }
 
 TEST(ReleaseSnapshotTest, lastCloseBeforeUtcDateExcludesRowsFromBoundaryDate) {
@@ -921,11 +1945,16 @@ TEST(ReleaseSnapshotTest,
   ASSERT_TRUE(exact.ok()) << exact.error().message;
   EXPECT_EQ(exact.value().bars, selected.value().bars);
   EXPECT_EQ(exact.value().identity, selected.value().identity);
+  EXPECT_TRUE(reader.value()->validateExact(selected.value().identity).ok());
 
   const auto expectRejected = [&](bte::data::DataSelectionIdentity identity) {
     const auto rejected = reader.value()->readExact(identity);
     ASSERT_FALSE(rejected.ok());
     EXPECT_EQ(rejected.error().code,
+              bte::core::ErrorCode::dataSnapshotUnavailable);
+    const auto validation = reader.value()->validateExact(identity);
+    ASSERT_FALSE(validation.ok());
+    EXPECT_EQ(validation.error().code,
               bte::core::ErrorCode::dataSnapshotUnavailable);
   };
   auto mutate = selected.value().identity;
@@ -996,6 +2025,11 @@ TEST(ReleaseSnapshotTest,
   ASSERT_FALSE(emptySpan.ok());
   EXPECT_EQ(emptySpan.error().code,
             bte::core::ErrorCode::dataSnapshotUnavailable);
+  const auto invalidEmptySpan =
+      reader.value()->validateExact(emptySpanIdentity);
+  ASSERT_FALSE(invalidEmptySpan.ok());
+  EXPECT_EQ(invalidEmptySpan.error().code,
+            bte::core::ErrorCode::dataSnapshotUnavailable);
 
   bte::core::CancellationSource cancellation;
   cancellation.requestCancellation();
@@ -1003,6 +2037,10 @@ TEST(ReleaseSnapshotTest,
                                                    cancellation.token());
   ASSERT_FALSE(cancelled.ok());
   EXPECT_EQ(cancelled.error().code, bte::core::ErrorCode::cancelled);
+  const auto cancelledValidation = reader.value()->validateExact(
+      selected.value().identity, cancellation.token());
+  ASSERT_FALSE(cancelledValidation.ok());
+  EXPECT_EQ(cancelledValidation.error().code, bte::core::ErrorCode::cancelled);
 }
 
 TEST(ReleaseSnapshotTest,
@@ -1226,8 +2264,33 @@ TEST(ReleaseSnapshotTest,
 
   ScopedSnapshotFixture trimmed{"trimmed-row"};
   trimmed.writeSymbol(
-      "SYN", "SYN,2024-01-01 00:00:00+00:00,100.,102,99,101,1,ohlcv-1h   \n");
+      "SYN", "SYN,2024-01-01 00:00:00+00:00,100.0,102,99,101,1,ohlcv-1h   \n");
   EXPECT_TRUE(bte::data::buildReleaseSnapshot(trimmed.buildRequest()).ok());
+}
+
+TEST(ReleaseSnapshotTest, rejectsMalformedDecimalsWithoutPublishingSnapshot) {
+  const std::vector<std::string> values{"100.-1", "100.+1", "100.1-1",
+                                        "100.",   ".5",     "100..1"};
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    ScopedSnapshotFixture fixture{"fraction-sign-" + std::to_string(index)};
+    fixture.writeSymbol("SYN", "SYN,2024-01-01 00:00:00+00:00," +
+                                   values[index] + ",102,99,101,1,ohlcv-1h\n");
+    const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+    ASSERT_FALSE(built.ok()) << values[index];
+    EXPECT_EQ(built.error().code, bte::core::ErrorCode::invalidArgument);
+    EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots"));
+  }
+}
+
+TEST(ReleaseSnapshotTest,
+     rejectsUnsupportedTimestampWithoutPublishingSnapshot) {
+  ScopedSnapshotFixture fixture{"invalid-timestamp-no-publication"};
+  fixture.writeSymbol("SYN",
+                      "SYN,2024-01-01T00:00:00+08:00,1,2,1,1,1,ohlcv-1h\n");
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_FALSE(built.ok());
+  EXPECT_EQ(built.error().code, bte::core::ErrorCode::invalidArgument);
+  EXPECT_FALSE(std::filesystem::exists(fixture.store() / "Snapshots"));
 }
 
 TEST(ReleaseSnapshotTest,
@@ -1338,6 +2401,12 @@ TEST(ReleaseSnapshotTest,
   duplicateTimestamp.replace(headerBytes + 48, 8,
                              duplicateTimestamp.substr(headerBytes, 8));
   corruptions.push_back(duplicateTimestamp);
+  auto negativeOpen = originalBytes;
+  negativeOpen[headerBytes + 8] = static_cast<char>(0xff);
+  corruptions.push_back(negativeOpen);
+  auto negativeVolume = originalBytes;
+  negativeVolume[headerBytes + 40] = static_cast<char>(0xff);
+  corruptions.push_back(negativeVolume);
 
   for (std::size_t index = 0; index < corruptions.size(); ++index) {
     const auto snapshotId =
@@ -1349,6 +2418,23 @@ TEST(ReleaseSnapshotTest,
               bte::core::ErrorCode::dataSnapshotUnavailable)
         << index;
   }
+
+  auto oversizedCount = originalBytes;
+  constexpr std::size_t countOffset = 8 + 8 + 8 + 3;
+  oversizedCount.replace(countOffset, 8, "\x7f\xff\xff\xff\xff\xff\xff\xff", 8);
+  const auto oversizedId = bte::core::sha256(oversizedCount);
+  writeFile(fixture.store() / "Segments" / (oversizedId + ".btedata"),
+            oversizedCount);
+  auto oversizedManifest = manifest;
+  replaceFirst(oversizedManifest, built.value().segments.front(), oversizedId);
+  replaceFirst(oversizedManifest, "|2|", "|9223372036854775807|");
+  const auto oversizedSnapshot =
+      publishManifest(fixture.store(), oversizedManifest);
+  const auto oversizedOpen = bte::data::ReleaseSnapshotReader::open(
+      fixture.store(), oversizedSnapshot);
+  ASSERT_FALSE(oversizedOpen.ok());
+  EXPECT_EQ(oversizedOpen.error().code,
+            bte::core::ErrorCode::dataSnapshotUnavailable);
 
   const auto firstStart = manifest.find("segment=");
   const auto firstEnd = manifest.find('\n', firstStart);
@@ -1438,6 +2524,9 @@ TEST(SegmentRetentionTest,
       retention.value()->acquire("result-b", {built.value().segments[0]});
   ASSERT_TRUE(secondAcquire.ok()) << secondAcquire.error().message;
   EXPECT_EQ(secondAcquire.value(), 1);
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               built.value().snapshotId)
+                  .ok());
 
   const auto firstRelease = retention.value()->release("result-a");
   ASSERT_TRUE(firstRelease.ok()) << firstRelease.error().message;
@@ -1475,6 +2564,19 @@ TEST(SegmentRetentionTest,
 }
 
 TEST(SegmentRetentionTest,
+     recoverySucceedsBeforeTheFirstSnapshotCreatesAnActiveSegmentDirectory) {
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "retention-empty-recovery"};
+  auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+
+  const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+  ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / "Segments"));
+}
+
+TEST(SegmentRetentionTest,
      releaseReportsBlockedSegmentPurgeAndRetainsTheReferenceForRetry) {
   ScopedSnapshotFixture fixture{"retention-blocked-purge"};
   fixture.writeSymbol("SYN", threeHourlyRows);
@@ -1491,6 +2593,9 @@ TEST(SegmentRetentionTest,
   auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
   ASSERT_TRUE(retention.ok()) << retention.error().message;
   ASSERT_TRUE(retention.value()->acquire("result-a", {segmentId}).ok());
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               built.value().snapshotId)
+                  .ok());
 
   ASSERT_TRUE(std::filesystem::remove(segmentPath));
   std::filesystem::create_directories(segmentPath);
@@ -1529,6 +2634,9 @@ TEST(SegmentRetentionTest,
       firstRetention.value()->acquire("result-a", built.value().segments).ok());
   ASSERT_TRUE(
       firstRetention.value()->acquire("result-b", built.value().segments).ok());
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               built.value().snapshotId)
+                  .ok());
 
   auto releaseFirst = std::async(std::launch::async, [&] {
     return firstRetention.value()->release("result-a");
@@ -1612,9 +2720,9 @@ TEST(SegmentRetentionTest,
 TEST(SegmentRetentionTest,
      injectedStorageFaultsReachOpenAcquireReleaseAndCommitBoundaries) {
   using bte::data::testing::RetentionFailurePoint;
-  const auto openFaultRoot = std::filesystem::temp_directory_path() /
-                             "bte-retention-injected-open-faults";
-  std::filesystem::remove_all(openFaultRoot);
+  bte::test_support::ScopedTemporaryDirectory openFaultDirectory{
+      "bte-retention-injected-open-faults"};
+  const auto openFaultRoot = openFaultDirectory.path();
   for (std::uint32_t occurrence = 0; occurrence < 4; ++occurrence) {
     bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution,
                                            occurrence);
@@ -1627,8 +2735,6 @@ TEST(SegmentRetentionTest,
   EXPECT_FALSE(
       bte::data::SegmentRetentionStore::open(openFaultRoot / "database").ok());
   bte::data::testing::clearRetentionFailure();
-  std::filesystem::remove_all(openFaultRoot);
-
   ScopedSnapshotFixture fixture{"retention-injected-faults"};
   fixture.writeSymbol("SYN", threeHourlyRows);
   const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
@@ -1679,6 +2785,17 @@ TEST(SegmentRetentionTest,
     const auto released = retention.value()->release(resultId);
     EXPECT_FALSE(released.ok()) << static_cast<int>(point);
     bte::data::testing::clearRetentionFailure();
+    auto references = retention.value()->references(resultId);
+    ASSERT_TRUE(references.ok()) << references.error().message;
+    auto expectedReferences = built.value().segments;
+    std::ranges::sort(expectedReferences);
+    EXPECT_EQ(references.value(), expectedReferences)
+        << static_cast<int>(point);
+    const auto retriedRelease = retention.value()->release(resultId);
+    ASSERT_TRUE(retriedRelease.ok()) << retriedRelease.error().message;
+    const auto releasedReferences = retention.value()->references(resultId);
+    ASSERT_TRUE(releasedReferences.ok()) << releasedReferences.error().message;
+    EXPECT_TRUE(releasedReferences.value().empty()) << static_cast<int>(point);
   }
   ScopedSnapshotFixture commitFixture{"retention-commit-rollback"};
   commitFixture.writeSymbol("SYN", threeHourlyRows);
@@ -1691,6 +2808,9 @@ TEST(SegmentRetentionTest,
   const auto commitId = std::string{"release-commit"};
   ASSERT_TRUE(commitRetention.value()
                   ->acquire(commitId, commitBuilt.value().segments)
+                  .ok());
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(commitFixture.store(),
+                                               commitBuilt.value().snapshotId)
                   .ok());
   bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution,
                                          1);
