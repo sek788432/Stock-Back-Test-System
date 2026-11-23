@@ -3,6 +3,8 @@
 #include "Bte/Data/ReleaseSnapshot.h"
 #include "Bte/Results/ResultStore.h"
 
+#include <QTemporaryDir>
+
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -15,12 +17,8 @@ namespace {
 class ReplayFixture : public testing::Test {
 protected:
   void SetUp() override {
-    root_ =
-        std::filesystem::temp_directory_path() /
-        ("bte-issue10-" +
-         std::string{
-             testing::UnitTest::GetInstance()->current_test_info()->name()});
-    std::filesystem::remove_all(root_);
+    ASSERT_TRUE(temporaryDirectory_.isValid());
+    root_ = temporaryDirectory_.path().toStdString();
     const auto built = bte::data::buildReleaseSnapshot({
         .sourceDirectory = std::filesystem::path{BTE_TEST_SOURCE_DIR} /
                            "Tests/Fixtures/Replay",
@@ -66,8 +64,6 @@ protected:
     ASSERT_TRUE(finalized.ok()) << finalized.error().message;
     resultId_ = finalized.value().resultId;
   }
-
-  void TearDown() override { std::filesystem::remove_all(root_); }
 
   static bte::core::Timestamp timestamp(const std::string &text) {
     return bte::core::time::parseIso8601(text).value();
@@ -305,6 +301,7 @@ protected:
   }
 
   std::filesystem::path root_;
+  QTemporaryDir temporaryDirectory_;
   std::string snapshotId_;
   std::string resultId_;
 };

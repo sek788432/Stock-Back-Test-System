@@ -506,7 +506,8 @@ if(BTE_BUILD_QT_APP)
       GTest::gtest_main
       bte::result_replay_bindings
       bte::data
-      bte::results)
+      bte::results
+      Qt6::Core)
 
   get_target_property(
     replay_fixture_dependencies

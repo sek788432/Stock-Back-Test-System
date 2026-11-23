@@ -30,6 +30,7 @@
 #include <QSignalSpy>
 #include <QSlider>
 #include <QTableWidget>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QTime>
 #include <QTimeZone>
@@ -82,7 +83,6 @@ class ResultReplayTabTest final : public QObject {
 
 private slots:
   void initTestCase();
-  void cleanupTestCase();
   void rapidSwitchRejectsStaleCompletionAndPresentsExactFirstFrame();
   void resultControlsAndPersistedFillDetailsAreAccessible();
   void portfolioDisplaysRealizedAndUnrealizedPnlDuringReplay();
@@ -111,6 +111,7 @@ private slots:
   void selectorOpenDefersVisibilityRefresh();
 
 private:
+  QTemporaryDir temporaryDirectory_;
   std::filesystem::path root_;
   std::string snapshotId_;
   std::string firstResultId_;
@@ -360,8 +361,8 @@ void ResultReplayTabTest::
 }
 
 void ResultReplayTabTest::initTestCase() {
-  root_ = std::filesystem::temp_directory_path() / "bte-result-replay-tab";
-  std::filesystem::remove_all(root_);
+  QVERIFY(temporaryDirectory_.isValid());
+  root_ = temporaryDirectory_.path().toStdString();
   std::filesystem::create_directories(root_ / "Source");
   std::ofstream source{root_ / "Source" / "SYN.csv"};
   source << "symbol,ts,open,high,low,close,volume,schemaName\n"
@@ -514,10 +515,6 @@ void ResultReplayTabTest::initTestCase() {
   std::ofstream unavailable{root_ / "Store" / "Results" /
                             (unavailableResultId_ + ".bteresult")};
   unavailable << "corrupt";
-}
-
-void ResultReplayTabTest::cleanupTestCase() {
-  std::filesystem::remove_all(root_);
 }
 
 void ResultReplayTabTest::externalOpenDefersCatalogRefreshUntilOpenCompletes() {
