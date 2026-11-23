@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <functional> // IWYU pragma: keep
 #include <map>
+#include <nlohmann/detail/input/json_sax.hpp>      // IWYU pragma: keep
+#include <nlohmann/detail/iterators/iter_impl.hpp> // IWYU pragma: keep
 #include <nlohmann/detail/json_ref.hpp>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
