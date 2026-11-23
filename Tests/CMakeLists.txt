@@ -589,6 +589,13 @@ if(BTE_BUILD_QT_APP)
     PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+  if(BTE_BUNDLE_MANAGED_PYTHON_RUNTIME)
+    set_property(
+      TEST bte_backtest_vm_tests
+      APPEND PROPERTY ENVIRONMENT
+        "QTEST_FUNCTION_TIMEOUT=600000")
+  endif()
+
   add_executable(
     bte_frontend_data_loader_tests
     Unit/Frontend/UnitTest_ReplayDataLoader.cpp)

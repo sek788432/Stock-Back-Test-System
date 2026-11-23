@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import ctypes
 import os
 import re
+import shutil
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -91,6 +96,70 @@ def _distinctSchemasForSymbol(connection: duckdb.DuckDBPyConnection, symbol: str
         [symbol],
     ).fetchall()
     return [row[0] for row in rows]
+
+
+def validateExportFilenames(symbols: list[str], outputDirectory: Path) -> None:
+    requested: dict[str, str] = {}
+    for symbol in symbols:
+        filename = f"{symbol.replace('.', '_')}.csv".casefold()
+        if filename in requested and requested[filename] != symbol:
+            raise ValueError(f"Symbols {requested[filename]!r} and {symbol!r} map to the same CSV filename")
+        requested[filename] = symbol
+
+    if not outputDirectory.exists():
+        return
+    for path in outputDirectory.iterdir():
+        symbol = requested.get(path.name.casefold())
+        if symbol is None:
+            continue
+        if path.name != f"{symbol.replace('.', '_')}.csv":
+            raise ValueError(f"Existing CSV filename differs only by case: {path}")
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"Existing CSV path is not a regular file: {path}")
+        with path.open(encoding="utf-8", newline="") as source:
+            rows = csv.DictReader(source)
+            if rows.fieldnames is None or "symbol" not in rows.fieldnames:
+                raise ValueError(f"Existing CSV lacks symbol identity: {path}")
+            identities = {row["symbol"] for row in rows}
+        if identities != {symbol}:
+            raise ValueError(f"Existing CSV identity conflicts with {symbol!r}: {path}")
+
+
+@contextmanager
+def _exportLock(parent: Path):
+    if os.name != "posix":
+        raise RuntimeError("Atomic extract publication requires a supported POSIX host")
+    import fcntl
+
+    descriptor = os.open(parent, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _publishGeneration(staged: Path, destination: Path) -> None:
+    if not destination.exists():
+        os.replace(staged, destination)
+        return
+    library = ctypes.CDLL(None, use_errno=True)
+    sourceBytes = os.fsencode(staged)
+    destinationBytes = os.fsencode(destination)
+    if sys.platform == "darwin" and hasattr(library, "renamex_np"):
+        operation = library.renamex_np
+        operation.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        result = operation(sourceBytes, destinationBytes, 2)
+    elif sys.platform.startswith("linux") and hasattr(library, "renameat2"):
+        operation = library.renameat2
+        operation.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        result = operation(-100, sourceBytes, -100, destinationBytes, 2)
+    else:
+        raise RuntimeError("Atomic directory exchange is unavailable on this host")
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(destination))
 
 
 def exportDuckdbToCsv(
@@ -230,25 +299,38 @@ def main() -> None:
     if not Path(args.db_path).is_file():
         raise FileNotFoundError(f"DuckDB not found: {args.db_path}")
 
-    os.makedirs(args.out_dir, exist_ok=True)
-    print(f"Extracting {len(symbols)} symbol(s) to {args.out_dir}")
+    outputDirectory = Path(args.out_dir).absolute()
+    outputDirectory.parent.mkdir(parents=True, exist_ok=True)
+    with _exportLock(outputDirectory.parent):
+        if outputDirectory.is_symlink() or (outputDirectory.exists() and not outputDirectory.is_dir()):
+            raise ValueError(f"Extract destination is not a regular directory: {outputDirectory}")
+        validateExportFilenames(symbols, outputDirectory)
+        staged = Path(tempfile.mkdtemp(prefix=f".{outputDirectory.name}.generation-", dir=outputDirectory.parent))
+        try:
+            if outputDirectory.exists():
+                shutil.copytree(outputDirectory, staged, dirs_exist_ok=True, symlinks=True)
+            _writeGeneration(args, symbols, staged)
+            _publishGeneration(staged, outputDirectory)
+        finally:
+            shutil.rmtree(staged, ignore_errors=True)
+    print(f"Published source generation: {outputDirectory}")
+    print(f"DuckDB source: {args.db_path}")
 
+
+def _writeGeneration(args: argparse.Namespace, symbols: list[str], outputDirectory: Path) -> None:
+    print(f"Extracting {len(symbols)} symbol(s) to a staged generation")
     emptySymbols: list[str] = []
-    outputDirectory = Path(args.out_dir)
-    existingManifest = loadSourceManifest(
-        outputDirectory / SOURCE_MANIFEST_NAME
-    )
+    existingManifest = loadSourceManifest(outputDirectory / SOURCE_MANIFEST_NAME)
     previousDeclarations = {
-        declaration.filename: declaration
-        for declaration in existingManifest or ()
+        declaration.filename: declaration for declaration in existingManifest or ()
     }
     exportedDeclarations: dict[str, SourceFileDeclaration] = {}
     for symbol in symbols:
         safeName = symbol.replace(".", "_")
-        outPath = os.path.join(args.out_dir, f"{safeName}.csv")
+        outPath = outputDirectory / f"{safeName}.csv"
         rowCount, timeframe = exportDuckdbToCsv(
             dbPath=args.db_path,
-            outputCsvPath=outPath,
+            outputCsvPath=str(outPath),
             symbol=symbol,
             schemaName=args.schema_name,
             includeProvenance=args.include_provenance,
@@ -256,8 +338,13 @@ def main() -> None:
         if rowCount == 0:
             emptySymbols.append(symbol)
             continue
-        declaration = sourceFileDeclaration(Path(outPath), timeframe)
+        declaration = sourceFileDeclaration(outPath, timeframe)
         exportedDeclarations[declaration.filename] = declaration
+
+    if emptySymbols:
+        print("WARNING: no rows for requested symbol(s); previous generation retained: " +
+              ", ".join(emptySymbols), file=sys.stderr)
+        raise SystemExit(2)
 
     declarations: list[SourceFileDeclaration] = []
     for csvPath in sorted(outputDirectory.glob("*.csv")):
@@ -271,9 +358,7 @@ def main() -> None:
                 "Cannot write a complete source manifest because an existing "
                 f"CSV was not exported and has no prior timeframe declaration: {csvPath}"
             )
-        currentDeclaration = sourceFileDeclaration(
-            csvPath, previousDeclaration.timeframe
-        )
+        currentDeclaration = sourceFileDeclaration(csvPath, previousDeclaration.timeframe)
         if currentDeclaration.sha256 != previousDeclaration.sha256:
             raise ValueError(
                 "Cannot retain a stale source declaration because its CSV "
@@ -281,18 +366,7 @@ def main() -> None:
             )
         declarations.append(previousDeclaration)
     writeSourceManifest(outputDirectory, declarations)
-    print(f"Wrote source manifest: {outputDirectory / SOURCE_MANIFEST_NAME}")
 
-    print(f"DuckDB source: {args.db_path}")
-
-    if emptySymbols:
-        print(
-            "WARNING: the following symbol(s) had no rows in DuckDB (no CSV written; "
-            "any previous files for those names were removed): "
-            + ", ".join(emptySymbols),
-            file=sys.stderr,
-        )
-        sys.exit(2)
 
 
 if __name__ == "__main__":

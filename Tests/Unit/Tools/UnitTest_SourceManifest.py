@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import multiprocessing
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -77,6 +79,13 @@ class SourceManifestTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 writeSourceManifest(directory, duplicate)
 
+            case_collision = [
+                SourceFileDeclaration("A.csv", "ohlcv-1h", digest),
+                SourceFileDeclaration("a.csv", "ohlcv-1h", digest),
+            ]
+            with self.assertRaises(ValueError):
+                writeSourceManifest(directory, case_collision)
+
             (directory / SOURCE_MANIFEST_NAME).write_text(
                 "BTE-SOURCE-MANIFEST-V1\n"
                 f"file=../SYN.csv|ohlcv-1h|{digest}\n",
@@ -126,6 +135,105 @@ class SourceManifestTest(unittest.TestCase):
                 loadSourceManifest(outputDirectory / SOURCE_MANIFEST_NAME),
                 (sourceFileDeclaration(csvPath, "ohlcv-1h"),),
             )
+
+    def test_export_rejects_symbol_filename_collisions_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="bte-export-collision-") as temporary:
+            root = Path(temporary)
+            database = root / "MarketData.duckdb"
+            database.touch()
+            output = root / "Extracted"
+            arguments = argparse.Namespace(symbol_file="unused", db_path=str(database),
+                                           out_dir=str(output), schema_name=None,
+                                           include_provenance=False)
+            for symbols in (["BRK.B", "BRK_B"], ["BRK_B", "BRK.B"], ["AAA", "aaa"]):
+                with (patch.object(GetFromDb, "parseArgs", return_value=arguments),
+                      patch.object(GetFromDb, "loadSymbols", return_value=symbols),
+                      patch.object(GetFromDb, "exportDuckdbToCsv") as export):
+                    with self.assertRaises(ValueError):
+                        GetFromDb.main()
+                    export.assert_not_called()
+
+            output.mkdir(exist_ok=True)
+            existing = output / "BRK_B.csv"
+            existing.write_text("symbol,ts\nBRK.B,2024-01-01\n", encoding="utf-8")
+            with (patch.object(GetFromDb, "parseArgs", return_value=arguments),
+                  patch.object(GetFromDb, "loadSymbols", return_value=["BRK_B"]),
+                  patch.object(GetFromDb, "exportDuckdbToCsv") as export):
+                with self.assertRaises(ValueError):
+                    GetFromDb.main()
+                export.assert_not_called()
+            self.assertEqual(existing.read_text(encoding="utf-8"),
+                             "symbol,ts\nBRK.B,2024-01-01\n")
+
+    def test_late_failure_or_empty_symbol_preserves_previous_generation(self) -> None:
+        for outcome in ("error", "empty"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory(prefix="bte-export-atomic-") as temporary:
+                root = Path(temporary)
+                output = root / "Extracted"
+                output.mkdir()
+                old = output / "AAA.csv"
+                old.write_text("symbol,ts\nAAA,old\n", encoding="utf-8")
+                writeSourceManifest(output, [sourceFileDeclaration(old, "ohlcv-1h")])
+                original = old.read_bytes()
+                manifest = (output / SOURCE_MANIFEST_NAME).read_bytes()
+                database = root / "market.duckdb"
+                database.touch()
+                arguments = argparse.Namespace(symbol_file="unused", db_path=str(database),
+                                               out_dir=str(output), schema_name="ohlcv-1h",
+                                               include_provenance=False)
+                def exportCsv(**arguments: object) -> tuple[int, str]:
+                    symbol = str(arguments["symbol"])
+                    if symbol == "BBB":
+                        if outcome == "error":
+                            raise ValueError("late failure")
+                        return 0, "ohlcv-1h"
+                    Path(str(arguments["outputCsvPath"])).write_text("symbol,ts\nAAA,new\n", encoding="utf-8")
+                    return 1, "ohlcv-1h"
+                with (patch.object(GetFromDb, "parseArgs", return_value=arguments),
+                      patch.object(GetFromDb, "loadSymbols", return_value=["AAA", "BBB"]),
+                      patch.object(GetFromDb, "exportDuckdbToCsv", side_effect=exportCsv)):
+                    with self.assertRaises((ValueError, SystemExit)):
+                        GetFromDb.main()
+                self.assertEqual(old.read_bytes(), original)
+                self.assertEqual((output / SOURCE_MANIFEST_NAME).read_bytes(), manifest)
+
+    @unittest.skipUnless(os.name == "posix", "Atomic directory exchange requires POSIX")
+    def test_generation_is_consistent_across_interrupted_exchange(self) -> None:
+        for interruption in ("before", "after"):
+            with self.subTest(interruption=interruption), tempfile.TemporaryDirectory(prefix="bte-export-interrupt-") as temporary:
+                root = Path(temporary)
+                output = root / "Extracted"
+                output.mkdir()
+                csvPath = output / "AAA.csv"
+                csvPath.write_text("symbol,ts\nAAA,old\n", encoding="utf-8")
+                writeSourceManifest(output, [sourceFileDeclaration(csvPath, "ohlcv-1h")])
+                database = root / "market.duckdb"
+                database.touch()
+                arguments = argparse.Namespace(symbol_file="unused", db_path=str(database),
+                                               out_dir=str(output), schema_name="ohlcv-1h",
+                                               include_provenance=False)
+                def exportCsv(**arguments: object) -> tuple[int, str]:
+                    Path(str(arguments["outputCsvPath"])).write_text("symbol,ts\nAAA,new\n", encoding="utf-8")
+                    return 1, "ohlcv-1h"
+                publish = GetFromDb._publishGeneration
+                def interrupt(staged: Path, destination: Path) -> None:
+                    if interruption == "after":
+                        publish(staged, destination)
+                    os._exit(73)
+                def child() -> None:
+                    with (patch.object(GetFromDb, "parseArgs", return_value=arguments),
+                          patch.object(GetFromDb, "loadSymbols", return_value=["AAA"]),
+                          patch.object(GetFromDb, "exportDuckdbToCsv", side_effect=exportCsv),
+                          patch.object(GetFromDb, "_publishGeneration", side_effect=interrupt)):
+                        GetFromDb.main()
+                process = multiprocessing.get_context("fork").Process(target=child)
+                process.start()
+                process.join(10)
+                self.assertEqual(process.exitcode, 73)
+                expected = "new" if interruption == "after" else "old"
+                self.assertEqual(csvPath.read_text(encoding="utf-8"), f"symbol,ts\nAAA,{expected}\n")
+                self.assertEqual(loadSourceManifest(output / SOURCE_MANIFEST_NAME),
+                                 (sourceFileDeclaration(csvPath, "ohlcv-1h"),))
 
 
 if __name__ == "__main__":

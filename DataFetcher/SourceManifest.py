@@ -67,9 +67,9 @@ def loadSourceManifest(manifestPath: Path) -> tuple[SourceFileDeclaration, ...] 
             raise ValueError("Invalid source manifest metadata")
         declaration = SourceFileDeclaration(*fields)
         _validateDeclaration(declaration)
-        if declaration.filename in names:
+        if declaration.filename.casefold() in names:
             raise ValueError("Source manifest contains a duplicate filename")
-        names.add(declaration.filename)
+        names.add(declaration.filename.casefold())
         declarations.append(declaration)
     return tuple(declarations)
 
@@ -81,9 +81,9 @@ def writeSourceManifest(
     names: set[str] = set()
     for declaration in entries:
         _validateDeclaration(declaration)
-        if declaration.filename in names:
+        if declaration.filename.casefold() in names:
             raise ValueError("Source manifest contains a duplicate filename")
-        names.add(declaration.filename)
+        names.add(declaration.filename.casefold())
 
     manifestText = "\n".join(
         [

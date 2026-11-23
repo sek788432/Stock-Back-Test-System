@@ -3,7 +3,7 @@ import os
 import re
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -36,6 +36,7 @@ _SAFE_SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 # Worker threads' notes/warnings can interleave; serialize their stderr/stdout writes.
 _PRINT_LOCK = threading.Lock()
+_FETCH_INTERVALS = threading.local()
 
 
 def _logLine(message: str, *, file=sys.stdout) -> None:
@@ -111,51 +112,39 @@ def _utcTimestamp(value: object) -> pd.Timestamp:
 
 
 def loadCoverageForRange(
-    dbPath: str,
-    schemaName: str,
-    symbols: list[str],
-    windowStartIso: str,
-    windowEndIso: str,
-) -> Dict[str, Tuple[pd.Timestamp, pd.Timestamp, int]]:
-    """Min/max ts and row count per symbol for stored Databento rows inside [start, end] (inclusive)."""
+    dbPath: str, schemaName: str, symbols: list[str],
+    windowStartIso: str, windowEndIso: str,
+) -> Dict[str, list[Tuple[pd.Timestamp, pd.Timestamp]]]:
+    """Read committed provider-request intervals; legacy databases refetch."""
     if not symbols or not Path(dbPath).is_file():
         return {}
-    connection = duckdb.connect(dbPath)
-    placeholders = ",".join(["?" for _ in symbols])
-    params: list = [schemaName, windowStartIso, windowEndIso, *symbols]
+    connection = duckdb.connect(dbPath, read_only=True)
     try:
-        frame = connection.execute(
-            f"""
-            SELECT
-                symbol::VARCHAR AS symbol,
-                MIN(ts) AS min_ts,
-                MAX(ts) AS max_ts,
-                COUNT(*)::BIGINT AS cnt
-            FROM hourlyBars
-            WHERE source = 'databento'
-              AND schemaName = ?
-              AND ts >= CAST(? AS TIMESTAMPTZ)
-              AND ts <= CAST(? AS TIMESTAMPTZ)
-              AND symbol IN ({placeholders})
-            GROUP BY symbol
-            """,
-            params,
-        ).df()
-    except duckdb.Error:
-        frame = pd.DataFrame()
+        tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
+        if "hourlyBars" in tables:
+            expectedTypes = {"symbol": "VARCHAR", "ts": "TIMESTAMP WITH TIME ZONE",
+                             "open": "DOUBLE", "high": "DOUBLE", "low": "DOUBLE",
+                             "close": "DOUBLE", "volume": "DOUBLE", "source": "VARCHAR",
+                             "schemaName": "VARCHAR", "ingestedAt": "TIMESTAMP WITH TIME ZONE"}
+            columns = {row[0]: row for row in connection.execute("DESCRIBE hourlyBars").fetchall()}
+            if any(name not in columns or columns[name][1] != kind or columns[name][2] != "NO"
+                   for name, kind in expectedTypes.items()) or any(
+                       columns[name][3] != "PRI" for name in ("symbol", "ts", "source", "schemaName")
+                       if name in columns):
+                raise ValueError("Existing hourlyBars schema is incompatible")
+        if "completedFetchIntervals" not in tables:
+            return {}
+        placeholders = ",".join(["?" for _ in symbols])
+        rows = connection.execute(
+            f"SELECT symbol, start_ts, end_ts FROM completedFetchIntervals WHERE schema_name = ? AND symbol IN ({placeholders}) ORDER BY symbol, start_ts",
+            [schemaName, *symbols],
+        ).fetchall()
+        result: Dict[str, list[Tuple[pd.Timestamp, pd.Timestamp]]] = {}
+        for symbol, start, end in rows:
+            result.setdefault(str(symbol), []).append((_utcTimestamp(start), _utcTimestamp(end)))
+        return result
     finally:
         connection.close()
-
-    if frame.empty:
-        return {}
-    out: Dict[str, Tuple[pd.Timestamp, pd.Timestamp, int]] = {}
-    for _, row in frame.iterrows():
-        out[str(row["symbol"])] = (
-            _utcTimestamp(row["min_ts"]),
-            _utcTimestamp(row["max_ts"]),
-            int(row["cnt"]),
-        )
-    return out
 
 
 def coverageSlackFor(schemaName: str) -> Tuple[pd.Timedelta, pd.Timedelta]:
@@ -173,19 +162,22 @@ def coverageSlackFor(schemaName: str) -> Tuple[pd.Timedelta, pd.Timedelta]:
 
 
 def symbolAlreadySpansWindow(
-    stats: Optional[Tuple[pd.Timestamp, pd.Timestamp, int]],
-    windowStart: pd.Timestamp,
-    windowEnd: pd.Timestamp,
-    startSlack: pd.Timedelta,
-    endSlack: pd.Timedelta,
+    stats: Optional[list[Tuple[pd.Timestamp, pd.Timestamp]]],
+    windowStart: pd.Timestamp, windowEnd: pd.Timestamp,
+    startSlack: pd.Timedelta, endSlack: pd.Timedelta,
 ) -> bool:
-    """True if DuckDB already has bars covering both ends of the requested window."""
-    if stats is None:
-        return False
-    min_ts, max_ts, cnt = stats
-    if cnt <= 0:
-        return False
-    return min_ts <= windowStart + startSlack and max_ts >= windowEnd - endSlack
+    """Only contiguous committed request intervals establish coverage."""
+    del startSlack, endSlack
+    covered = windowStart
+    for start, end in stats or ():
+        if end <= covered:
+            continue
+        if start > covered:
+            return False
+        covered = end
+        if covered >= windowEnd:
+            return True
+    return False
 
 
 def parseWindowBounds(startTs: str, endTs: str) -> Tuple[pd.Timestamp, pd.Timestamp]:
@@ -250,11 +242,11 @@ def normalizeFrame(rawFrame: pd.DataFrame) -> pd.DataFrame:
     frame["ts"] = pd.to_datetime(frame["ts_event"], utc=True)
     for column in ("open", "high", "low", "close", "volume"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame = frame.dropna(subset=["ts", "symbol", "open", "high", "low", "close", "volume"])
+    if frame[["ts", "symbol", "open", "high", "low", "close", "volume"]].isna().any().any():
+        raise ValueError("Source batch contains missing or invalid timestamp, symbol, or numeric values")
+    validateOhlc(frame)
     frame = frame.sort_values(["symbol", "ts"])
     frame = frame.drop_duplicates(subset=["symbol", "ts"], keep="last")
-
-    validateOhlc(frame)
     return frame
 
 
@@ -263,10 +255,14 @@ def validateOhlc(frame: pd.DataFrame) -> None:
 
     The roundtrip check only verifies that what we sent equals what came back;
     it does not detect bad source data. This guard runs before we ingest.
-    Assumes ``frame`` has already been numeric-coerced and NaN-dropped.
+    Assumes ``frame`` has already been numeric-coerced.
     """
     if frame.empty:
         return
+
+    values = frame[["open", "high", "low", "close", "volume"]]
+    if values.isna().any().any() or (values.abs() == float("inf")).any().any():
+        raise ValueError("Non-finite OHLCV values detected in source batch")
 
     nonPositivePrice = frame[(frame[["open", "high", "low", "close"]] <= 0).any(axis=1)]
     if not nonPositivePrice.empty:
@@ -289,86 +285,123 @@ def validateOhlc(frame: pd.DataFrame) -> None:
         )
 
 
-def saveToDuckdb(frame: pd.DataFrame, dbPath: str, schemaName: str) -> dict:
+def _saveCompletedIntervals(connection: duckdb.DuckDBPyConnection, schemaName: str,
+                            intervals: list[Tuple[str, str, str]]) -> None:
+    connection.execute("""CREATE TABLE IF NOT EXISTS completedFetchIntervals (
+        symbol TEXT NOT NULL, schema_name TEXT NOT NULL,
+        start_ts TIMESTAMPTZ NOT NULL, end_ts TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY(symbol, schema_name, start_ts, end_ts))""")
+    for symbol, start, end in intervals:
+        startUtc, endUtc = _exclusiveEndRangeBounds(start, end)
+        connection.execute(
+            "INSERT INTO completedFetchIntervals VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            [symbol, schemaName, startUtc.to_pydatetime(), endUtc.to_pydatetime()],
+        )
+
+
+def saveToDuckdb(frame: pd.DataFrame, dbPath: str, schemaName: str,
+                 completedIntervals: Optional[list[Tuple[str, str, str]]] = None) -> dict:
+    validateOhlc(frame)
     os.makedirs(os.path.dirname(dbPath) or ".", exist_ok=True)
     connection = duckdb.connect(dbPath)
-    # Table name is legacy; bar interval is defined by the schemaName column.
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS hourlyBars (
-            symbol TEXT NOT NULL,
-            ts TIMESTAMPTZ NOT NULL,
-            open DOUBLE NOT NULL,
-            high DOUBLE NOT NULL,
-            low DOUBLE NOT NULL,
-            close DOUBLE NOT NULL,
-            volume DOUBLE NOT NULL,
-            source TEXT NOT NULL,
-            schemaName TEXT NOT NULL,
-            ingestedAt TIMESTAMPTZ NOT NULL,
-            PRIMARY KEY(symbol, ts, source, schemaName)
-        )
-        """
-    )
-
-    loadFrame = frame.copy()
-    loadFrame["source"] = "databento"
-    loadFrame["schemaName"] = schemaName
-    loadFrame["ingestedAt"] = pd.Timestamp.now(tz="UTC")
-    connection.register("incomingBars", loadFrame)
-
-    rowsBefore = connection.execute("SELECT COUNT(*) FROM hourlyBars").fetchone()[0]
-    incomingRows = connection.execute("SELECT COUNT(*) FROM incomingBars").fetchone()[0]
-    newKeyCount = connection.execute(
-        """
-        SELECT COUNT(*) FROM incomingBars i
-        WHERE NOT EXISTS (
-            SELECT 1 FROM hourlyBars h
-            WHERE h.symbol = i.symbol
-              AND h.ts = i.ts
-              AND h.source = i.source
-              AND h.schemaName = i.schemaName
-        )
-        """
-    ).fetchone()[0]
-
-    connection.execute(
-        """
-        INSERT INTO hourlyBars (symbol, ts, open, high, low, close, volume, source, schemaName, ingestedAt)
-        SELECT symbol, ts, open, high, low, close, volume, source, schemaName, ingestedAt
-        FROM incomingBars
-        ON CONFLICT(symbol, ts, source, schemaName) DO UPDATE SET
-            open = excluded.open,
-            high = excluded.high,
-            low = excluded.low,
-            close = excluded.close,
-            volume = excluded.volume,
-            ingestedAt = excluded.ingestedAt
-        """
-    )
-    rowsAfter = connection.execute("SELECT COUNT(*) FROM hourlyBars").fetchone()[0]
-    connection.close()
-
-    expectedAfter = rowsBefore + newKeyCount
-    if rowsAfter != expectedAfter:
-        raise RuntimeError(
-            "DuckDB invariant violated after upsert: "
-            f"rowsBefore={rowsBefore}, newKeys={newKeyCount}, expectedAfter={expectedAfter}, actualAfter={rowsAfter}."
+    transactionOpen = False
+    try:
+        connection.execute("BEGIN TRANSACTION")
+        transactionOpen = True
+        # Table name is legacy; bar interval is defined by the schemaName column.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hourlyBars (
+                symbol TEXT NOT NULL,
+                ts TIMESTAMPTZ NOT NULL,
+                open DOUBLE NOT NULL,
+                high DOUBLE NOT NULL,
+                low DOUBLE NOT NULL,
+                close DOUBLE NOT NULL,
+                volume DOUBLE NOT NULL,
+                source TEXT NOT NULL,
+                schemaName TEXT NOT NULL,
+                ingestedAt TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY(symbol, ts, source, schemaName)
+            )
+            """
         )
 
-    print(
-        f"DuckDB safeguard: rows before={rowsBefore}, incoming={incomingRows}, "
-        f"new keys={newKeyCount}, updated keys={incomingRows - newKeyCount}, rows after={rowsAfter}"
-    )
-    return {
-        "rowsBefore": rowsBefore,
-        "incomingRows": incomingRows,
-        "newKeyCount": newKeyCount,
-        "rowsAfter": rowsAfter,
-    }
+        if frame.empty:
+            rowCount = connection.execute("SELECT COUNT(*) FROM hourlyBars").fetchone()[0]
+            _saveCompletedIntervals(connection, schemaName, completedIntervals or [])
+            connection.execute("COMMIT")
+            transactionOpen = False
+            return {"rowsBefore": rowCount, "incomingRows": 0, "newKeyCount": 0, "rowsAfter": rowCount}
+
+        loadFrame = frame.copy()
+        loadFrame["source"] = "databento"
+        loadFrame["schemaName"] = schemaName
+        loadFrame["ingestedAt"] = pd.Timestamp.now(tz="UTC")
+        connection.register("incomingBars", loadFrame)
+
+        rowsBefore = connection.execute("SELECT COUNT(*) FROM hourlyBars").fetchone()[0]
+        incomingRows = connection.execute("SELECT COUNT(*) FROM incomingBars").fetchone()[0]
+        newKeyCount = connection.execute(
+            """
+            SELECT COUNT(*) FROM incomingBars i
+            WHERE NOT EXISTS (
+                SELECT 1 FROM hourlyBars h
+                WHERE h.symbol = i.symbol
+                  AND h.ts = i.ts
+                  AND h.source = i.source
+                  AND h.schemaName = i.schemaName
+            )
+            """
+        ).fetchone()[0]
+
+        connection.execute(
+            """
+            INSERT INTO hourlyBars (symbol, ts, open, high, low, close, volume, source, schemaName, ingestedAt)
+            SELECT symbol, ts, open, high, low, close, volume, source, schemaName, ingestedAt
+            FROM incomingBars
+            ON CONFLICT(symbol, ts, source, schemaName) DO UPDATE SET
+                open = excluded.open,
+                high = excluded.high,
+                low = excluded.low,
+                close = excluded.close,
+                volume = excluded.volume,
+                ingestedAt = excluded.ingestedAt
+            """
+        )
+        rowsAfter = connection.execute("SELECT COUNT(*) FROM hourlyBars").fetchone()[0]
+        expectedAfter = rowsBefore + newKeyCount
+        if rowsAfter != expectedAfter:
+            raise RuntimeError(
+                "DuckDB invariant violated after upsert: "
+                f"rowsBefore={rowsBefore}, newKeys={newKeyCount}, expectedAfter={expectedAfter}, actualAfter={rowsAfter}."
+            )
+
+        roundtripCheck(frame, dbPath, schemaName, connection)
+        _saveCompletedIntervals(connection, schemaName, completedIntervals or [])
+        connection.execute("COMMIT")
+        transactionOpen = False
+
+        print(
+            f"DuckDB safeguard: rows before={rowsBefore}, incoming={incomingRows}, "
+            f"new keys={newKeyCount}, updated keys={incomingRows - newKeyCount}, rows after={rowsAfter}"
+        )
+        return {
+            "rowsBefore": rowsBefore,
+            "incomingRows": incomingRows,
+            "newKeyCount": newKeyCount,
+            "rowsAfter": rowsAfter,
+        }
+    except Exception:
+        if transactionOpen:
+            connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.close()
 
 
-def roundtripCheck(frame: pd.DataFrame, dbPath: str, schemaName: str) -> None:
+def roundtripCheck(frame: pd.DataFrame, dbPath: str, schemaName: str,
+                   connection: Optional[duckdb.DuckDBPyConnection] = None) -> None:
     if frame.empty:
         raise RuntimeError("Roundtrip check failed: input frame is empty.")
 
@@ -377,7 +410,9 @@ def roundtripCheck(frame: pd.DataFrame, dbPath: str, schemaName: str) -> None:
     symbols = sorted(frame["symbol"].astype(str).unique().tolist())
     placeholders = ",".join(["?" for _ in symbols])
 
-    connection = duckdb.connect(dbPath)
+    ownsConnection = connection is None
+    if ownsConnection:
+        connection = duckdb.connect(dbPath)
     params: list = [schemaName, *symbols, minTs, maxTs]
     dbFrame = connection.execute(
         f"""
@@ -392,9 +427,12 @@ def roundtripCheck(frame: pd.DataFrame, dbPath: str, schemaName: str) -> None:
         """,
         params,
     ).df()
-    connection.close()
+    if ownsConnection:
+        connection.close()
 
     inputFrame = frame[["symbol", "ts", "open", "high", "low", "close", "volume"]].copy()
+    validateOhlc(inputFrame)
+    validateOhlc(dbFrame)
     inputFrame = inputFrame.sort_values(["symbol", "ts"]).reset_index(drop=True)
     dbFrame = dbFrame.sort_values(["symbol", "ts"]).reset_index(drop=True)
 
@@ -560,7 +598,11 @@ def _fetchPartitioningBadSymbols(
         return pd.DataFrame()
 
     try:
-        return _getRangeDataFrame(client, symbols, schemaName, startTs, endTs)
+        frame = _getRangeDataFrame(client, symbols, schemaName, startTs, endTs)
+        intervals = getattr(_FETCH_INTERVALS, "current", None)
+        if intervals is not None:
+            intervals.extend((symbol, startTs, endTs) for symbol in symbols)
+        return frame
     except BentoClientError as exc:
         if exc.http_status == 402:
             if len(symbols) == 1:
@@ -791,14 +833,19 @@ def _fetchBatchToFrame(
     Returns ``None`` if the batch yields no usable rows (all symbols skipped, empty
     response, or fully invalid data). Network and CPU only — no DB writes.
     """
-    rawFrame = loadFrameFromInput(
-        batch, schemaName, startTs, endTs, strictSymbols=strictSymbols,
-    )
-    if rawFrame.empty:
+    intervals: list[Tuple[str, str, str]] = []
+    _FETCH_INTERVALS.current = intervals
+    try:
+        rawFrame = loadFrameFromInput(
+            batch, schemaName, startTs, endTs, strictSymbols=strictSymbols,
+        )
+    finally:
+        del _FETCH_INTERVALS.current
+    if rawFrame.empty and not intervals:
         return None
-    frame = normalizeFrame(rawFrame)
-    if frame.empty:
-        return None
+    frame = (pd.DataFrame(columns=["symbol", "ts", "open", "high", "low", "close", "volume"])
+             if rawFrame.empty else normalizeFrame(rawFrame))
+    frame.attrs["completedFetchIntervals"] = intervals
     return frame
 
 
@@ -816,13 +863,12 @@ def _resolvePendingBatches(
     Coverage is loaded once for the entire universe (single DuckDB query) instead of per-batch
     so the parallel workers don't re-read the DB and so log lines stay coherent.
     """
-    if args.force_full:
-        _logLine("--force-full: not skipping symbols that already span the requested window.")
-        return [list(batch) for batch in batches]
-
     coverage = loadCoverageForRange(
         args.db_path, args.schema_name, allSymbols, args.start_ts, args.end_ts
     )
+    if args.force_full:
+        _logLine("--force-full: not skipping symbols that already span the requested window.")
+        return [list(batch) for batch in batches]
     pending: list[list[str]] = []
     skippedTotal = 0
     for batch in batches:
@@ -838,8 +884,7 @@ def _resolvePendingBatches(
             pending.append(to_fetch)
     if skippedTotal:
         _logLine(
-            f"Resume: skipping {skippedTotal} symbol(s) already stored for this schema "
-            f"(start slack {startSlack}, end slack {endSlack})."
+            f"Resume: skipping {skippedTotal} symbol(s) covered by completed requests for this schema."
         )
     return pending
 
@@ -850,7 +895,7 @@ def _runBatchesParallel(
     """Drive concurrent fetches and serialized DuckDB writes.
 
     Worker threads run ``_fetchBatchToFrame`` (network + CPU). The main thread iterates
-    ``as_completed`` and performs ``saveToDuckdb`` + ``roundtripCheck`` one frame at a
+    completed futures and performs transactional ``saveToDuckdb`` one frame at a
     time, so DuckDB never sees concurrent writers. Any unexpected exception cancels
     not-yet-started futures and propagates to ``main`` (matches serial fail-fast semantics).
     """
@@ -875,10 +920,11 @@ def _runBatchesParallel(
                     f"Batch {idx}/{totalBatches}: no rows (all symbols skipped or no data)."
                 )
                 continue
-            saveToDuckdb(frame, args.db_path, args.schema_name)
-            roundtripCheck(frame, args.db_path, args.schema_name)
+            saveToDuckdb(frame, args.db_path, args.schema_name,
+                         frame.attrs.get("completedFetchIntervals", []))
             totalRows += len(frame)
-            lastNonEmptyFrame = frame
+            if not frame.empty:
+                lastNonEmptyFrame = frame
             _logLine(
                 f"Batch {idx}/{totalBatches}: ingested {len(frame):,} rows for "
                 f"{frame['symbol'].nunique()} symbol(s)."
@@ -890,58 +936,55 @@ def _runBatchesParallel(
         "DuckDB writes remain single-threaded as each future completes."
     )
     with ThreadPoolExecutor(max_workers=parallelism, thread_name_prefix="fetch") as executor:
-        futureToContext = {
-            executor.submit(
-                _fetchBatchToFrame,
-                batch,
-                args.schema_name,
-                args.start_ts,
-                args.end_ts,
-                strictSymbols=args.strict_symbols,
-            ): (idx, batch)
-            for idx, batch in enumerate(pending, start=1)
-        }
+        remaining = iter(enumerate(pending, start=1))
+        futureToContext = {}
+
+        def submitNext() -> bool:
+            try:
+                idx, batch = next(remaining)
+            except StopIteration:
+                return False
+            future = executor.submit(
+                _fetchBatchToFrame, batch, args.schema_name, args.start_ts,
+                args.end_ts, strictSymbols=args.strict_symbols,
+            )
+            futureToContext[future] = (idx, batch)
+            return True
+
+        for _ in range(min(parallelism, totalBatches)):
+            submitNext()
         completedCount = 0
         try:
-            for fut in as_completed(futureToContext):
-                idx, batch = futureToContext[fut]
-                completedCount += 1
-                try:
-                    frame = fut.result()
-                except Exception as exc:
-                    _logLine(
-                        f"Batch {idx}/{totalBatches} ({len(batch)} symbol(s)) "
-                        f"failed: {exc!r}",
-                        file=sys.stderr,
-                    )
-                    # Stop scheduling new fetches; let in-flight ones drain via the with-block.
-                    for stillPending in futureToContext:
-                        if not stillPending.done():
-                            stillPending.cancel()
-                    raise
-                if frame is None:
-                    _logLine(
-                        f"[{completedCount}/{totalBatches}] Batch #{idx} "
-                        f"({len(batch)} symbol(s)): no rows."
-                    )
-                    continue
-                saveToDuckdb(frame, args.db_path, args.schema_name)
-                roundtripCheck(frame, args.db_path, args.schema_name)
-                totalRows += len(frame)
-                lastNonEmptyFrame = frame
-                _logLine(
-                    f"[{completedCount}/{totalBatches}] Batch #{idx} "
-                    f"({len(batch)} symbol(s)): ingested {len(frame):,} rows for "
-                    f"{frame['symbol'].nunique()} symbol(s)."
-                )
-        except KeyboardInterrupt:
-            _logLine(
-                "Interrupted by user; cancelling pending fetches and waiting for in-flight ones to finish.",
-                file=sys.stderr,
-            )
-            for stillPending in futureToContext:
-                if not stillPending.done():
-                    stillPending.cancel()
+            while futureToContext:
+                done, _ = wait(futureToContext, return_when=FIRST_COMPLETED)
+                completedThisRound = len(done)
+                while done:
+                    future = done.pop()
+                    idx, batch = futureToContext.pop(future)
+                    completedCount += 1
+                    frame = future.result()
+                    del future
+                    if frame is None:
+                        _logLine(
+                            f"[{completedCount}/{totalBatches}] Batch #{idx} "
+                            f"({len(batch)} symbol(s)): no rows."
+                        )
+                    else:
+                        saveToDuckdb(frame, args.db_path, args.schema_name,
+                                     frame.attrs.get("completedFetchIntervals", []))
+                        totalRows += len(frame)
+                        if not frame.empty:
+                            lastNonEmptyFrame = frame
+                        _logLine(
+                            f"[{completedCount}/{totalBatches}] Batch #{idx} "
+                            f"({len(batch)} symbol(s)): ingested {len(frame):,} rows for "
+                            f"{frame['symbol'].nunique()} symbol(s)."
+                        )
+                for _ in range(completedThisRound):
+                    submitNext()
+        except BaseException:
+            for future in futureToContext:
+                future.cancel()
             raise
     return totalRows, lastNonEmptyFrame
 
