@@ -3882,7 +3882,8 @@ prepareSchemaThreeMigration(const OpenedResult &source) {
            {"timeframe", ProvenanceAvailabilityState::recorded}},
   };
   migrated.summary.diagnosticsComplete = false;
-  auto provenance = detail::serializeStoredProvenance(migrated.descriptor.provenance);
+  auto provenance =
+      detail::serializeStoredProvenance(migrated.descriptor.provenance);
   if (!provenance.ok()) {
     return provenance.error();
   }
