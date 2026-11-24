@@ -700,6 +700,7 @@ TEST(ManagedWorkerProcessTest,
   const auto startCountBefore =
       bte::bindings::python::testing::managedWorkerProcessStartCount();
   for (const auto &failure : failures) {
+    SCOPED_TRACE(failure.message);
     const auto descriptorsBefore = openDescriptorSnapshot();
     ManagedWorkerSystemCallFailure inject{failure.systemCall,
                                           failure.skippedCalls, EIO};
