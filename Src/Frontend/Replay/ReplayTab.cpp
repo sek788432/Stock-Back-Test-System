@@ -32,7 +32,6 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
-#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStandardItemModel>
 #include <QStandardPaths>
@@ -45,6 +44,7 @@
 #include <QtCore/qabstractitemmodel.h>
 #include <QtCore/qtenvironmentvariables.h>
 #include <QtCore/qtimezone.h>
+#include <QtGlobal>
 #include <QtGui/qkeysequence.h>
 #include <QtWidgets/qslider.h>
 
