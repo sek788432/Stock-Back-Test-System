@@ -4,6 +4,8 @@
 #include <array>
 #include <cctype>
 #include <fstream>
+#include <functional>
+#include <ranges>
 #include <string_view>
 #include <system_error>
 #include <utility>
