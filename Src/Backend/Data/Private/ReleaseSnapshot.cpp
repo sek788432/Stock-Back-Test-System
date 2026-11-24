@@ -1051,7 +1051,7 @@ resolveUnpublishedSnapshotFailure(SegmentRetentionStore *retention,
   if (!released.ok()) {
     return released.error();
   }
-  return failure;
+  return core::Result<void>{std::move(failure)};
 }
 
 core::Result<void>
