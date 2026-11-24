@@ -3327,19 +3327,28 @@ TEST(SegmentRetentionTest,
            RetentionFailurePoint::boundBinding,
            RetentionFailurePoint::boundExecution,
        }) {
+    const auto resultId =
+        "acquire-fault-" + std::to_string(static_cast<int>(point));
     bte::data::testing::failRetentionAfter(point);
-    const auto acquired = retention.value()->acquire(
-        "acquire-fault-" + std::to_string(static_cast<int>(point)),
-        built.value().segments);
+    const auto acquired =
+        retention.value()->acquire(resultId, built.value().segments);
     EXPECT_FALSE(acquired.ok()) << static_cast<int>(point);
     bte::data::testing::clearRetentionFailure();
+    const auto references = retention.value()->references(resultId);
+    ASSERT_TRUE(references.ok()) << references.error().message;
+    EXPECT_TRUE(references.value().empty()) << static_cast<int>(point);
   }
+  const auto commitAcquireId = std::string{"acquire-commit"};
   bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution,
                                          1);
-  EXPECT_FALSE(retention.value()
-                   ->acquire("acquire-commit", built.value().segments)
-                   .ok());
+  const auto failedAcquire = retention.value()->acquire(
+      commitAcquireId, built.value().segments);
+  ASSERT_FALSE(failedAcquire.ok());
   bte::data::testing::clearRetentionFailure();
+  const auto commitReferences =
+      retention.value()->references(commitAcquireId);
+  ASSERT_TRUE(commitReferences.ok()) << commitReferences.error().message;
+  EXPECT_TRUE(commitReferences.value().empty());
 
   const std::vector<RetentionFailurePoint> releaseFaults{
       RetentionFailurePoint::databaseOpen,
