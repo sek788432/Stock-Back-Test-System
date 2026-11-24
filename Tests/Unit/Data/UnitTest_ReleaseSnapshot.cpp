@@ -408,6 +408,46 @@ TEST(ReleaseSnapshotTest,
 }
 
 TEST(ReleaseSnapshotTest,
+     publicationRejectsCorruptTrashDuplicateAndRetriesAfterRepair) {
+  ScopedSnapshotFixture fixture{"publication-corrupt-trash-duplicate"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto original = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(original.ok()) << original.error().message;
+  auto secondRequest = fixture.buildRequest();
+  secondRequest.calendarHash = std::string(64, 'c');
+  const auto second = bte::data::buildReleaseSnapshot(secondRequest);
+  ASSERT_TRUE(second.ok()) << second.error().message;
+  ASSERT_NE(second.value().snapshotId, original.value().snapshotId);
+  ASSERT_FALSE(original.value().segments.empty());
+
+  const auto segmentId = original.value().segments.front();
+  const auto active = fixture.store() / "Segments" / (segmentId + ".btedata");
+  const auto trashed =
+      fixture.store() / "Trash" / "Segments" / (segmentId + ".btedata");
+  ASSERT_TRUE(std::filesystem::exists(active));
+  std::filesystem::create_directories(trashed.parent_path());
+  writeFile(trashed, "corrupted duplicate segment");
+  auto thirdRequest = fixture.buildRequest();
+  thirdRequest.splitManifestHash = std::string(64, 'd');
+
+  const auto failed = bte::data::buildReleaseSnapshot(thirdRequest);
+
+  ASSERT_FALSE(failed.ok());
+  EXPECT_EQ(failed.error().code, bte::core::ErrorCode::dataSnapshotUnavailable);
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_EQ(readFile(trashed), "corrupted duplicate segment");
+
+  writeFile(trashed, readFile(active));
+  const auto retried = bte::data::buildReleaseSnapshot(thirdRequest);
+
+  ASSERT_TRUE(retried.ok()) << retried.error().message;
+  EXPECT_NE(retried.value().snapshotId, original.value().snapshotId);
+  EXPECT_NE(retried.value().snapshotId, second.value().snapshotId);
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_FALSE(std::filesystem::exists(trashed));
+}
+
+TEST(ReleaseSnapshotTest,
      publicationConvertsTrashedSegmentLookupExceptionsToStructuredErrors) {
   ScopedSnapshotFixture fixture{"publication-trashed-segment-lookup-error"};
   fixture.writeSymbol("SYN", threeHourlyRows);
@@ -2822,6 +2862,37 @@ TEST(SegmentRetentionTest,
             bte::core::ErrorCode::dataSnapshotUnavailable);
   EXPECT_TRUE(std::filesystem::exists(active));
   EXPECT_TRUE(std::filesystem::exists(trashed));
+
+  writeFile(trashed, segmentBytes);
+  const auto retried = retention.value()->recoverUnpublishedSnapshotPins();
+
+  ASSERT_TRUE(retried.ok()) << retried.error().message;
+  EXPECT_FALSE(std::filesystem::exists(active));
+  EXPECT_TRUE(std::filesystem::exists(trashed));
+}
+
+TEST(SegmentRetentionTest,
+     recoveryPreservesActiveSegmentWhenTrashDuplicateIsNotRegularFile) {
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "retention-recovery-non-regular-trash-duplicate"};
+  auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+  const auto segmentBytes = std::string{"valid active segment bytes"};
+  const auto segmentId = bte::core::sha256(segmentBytes);
+  const auto active = temporary.path() / "Segments" / (segmentId + ".btedata");
+  const auto trashed =
+      temporary.path() / "Trash" / "Segments" / (segmentId + ".btedata");
+  std::filesystem::create_directories(active.parent_path());
+  std::filesystem::create_directories(trashed);
+  writeFile(active, segmentBytes);
+
+  const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+  ASSERT_FALSE(recovered.ok());
+  EXPECT_EQ(recovered.error().code,
+            bte::core::ErrorCode::dataSnapshotUnavailable);
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_TRUE(std::filesystem::is_directory(trashed));
 }
 
 TEST(SegmentRetentionTest, recoveryRestoresAnOrphanSegmentWhenCommitFails) {
