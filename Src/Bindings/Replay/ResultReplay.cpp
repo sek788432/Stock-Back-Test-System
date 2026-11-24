@@ -75,11 +75,27 @@ std::function<void()> &nextDailySourceOpenHook() {
   return hook;
 }
 
+std::function<void()> &nextDailySourceCancellationHook() {
+  static std::function<void()> hook;
+  return hook;
+}
+
 void runNextDailySourceOpenHook() {
   std::function<void()> hook;
   {
     const std::scoped_lock lock{dailySourceOpenHookMutex()};
     hook = std::move(nextDailySourceOpenHook());
+  }
+  if (hook) {
+    hook();
+  }
+}
+
+void runNextDailySourceCancellationHook() {
+  std::function<void()> hook;
+  {
+    const std::scoped_lock lock{dailySourceOpenHookMutex()};
+    hook = std::move(nextDailySourceCancellationHook());
   }
   if (hook) {
     hook();
@@ -606,6 +622,9 @@ loadFullDailySourceBars(const results::OpenedResult &result,
                         const std::filesystem::path &dataStore,
                         const std::vector<data::SnapshotBar> &selectedBars,
                         const core::CancellationToken &cancellation) {
+#if defined(BTE_ENABLE_TEST_HOOKS)
+  runNextDailySourceCancellationHook();
+#endif
   using namespace std::chrono;
   if (cancellation.isCancellationRequested()) {
     return core::makeError(core::ErrorCode::cancelled,
@@ -688,12 +707,18 @@ void setNextDailySourceOpenHook(std::function<void()> hook) {
   nextDailySourceOpenHook() = std::move(hook);
 }
 
+void setNextDailySourceCancellationHook(std::function<void()> hook) {
+  const std::scoped_lock lock{dailySourceOpenHookMutex()};
+  nextDailySourceCancellationHook() = std::move(hook);
+}
+
 void clearResultReplayTestHooks() noexcept {
   nextPortfolioSnapshotCancellationSource().store(nullptr);
   nextPortfolioSnapshotCancellationPoint().store(
       PortfolioCompletionCancellationPoint::trackerCreation);
   const std::scoped_lock lock{dailySourceOpenHookMutex()};
   nextDailySourceOpenHook() = {};
+  nextDailySourceCancellationHook() = {};
 }
 
 } // namespace testing

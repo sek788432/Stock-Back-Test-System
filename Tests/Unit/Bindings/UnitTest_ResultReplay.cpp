@@ -616,6 +616,21 @@ TEST_F(ResultReplayTest,
 }
 
 TEST_F(ResultReplayTest,
+       dailyReplayStopsWhenCancellationArrivesBeforeWiderSourceRead) {
+  bte::core::CancellationSource cancellation;
+  bte::bindings::testing::setNextDailySourceCancellationHook(
+      [&] { cancellation.requestCancellation(); });
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc, cancellation.token());
+  bte::bindings::testing::clearResultReplayTestHooks();
+
+  ASSERT_FALSE(daily.ok());
+  EXPECT_EQ(daily.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST_F(ResultReplayTest,
        dailyReplayRejectsSnapshotCorruptionBeforeWiderSourceRead) {
   bte::bindings::testing::setNextDailySourceOpenHook([&] {
     std::ofstream manifest{root_ / "Data" / "Snapshots" / snapshotId_ /

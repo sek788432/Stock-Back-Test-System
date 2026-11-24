@@ -1801,7 +1801,9 @@ core::Result<SnapshotSelection> ReleaseSnapshotReader::readExact(
   }
   selection.bars.reserve(selectedRowCount);
   for (const auto &span : identity.spans) {
-    if (cancellation.isCancellationRequested()) {
+    if (cancellationRequested(
+            cancellation,
+            testing::SnapshotFailurePoint::exactReadCancellation)) {
       return core::makeError(core::ErrorCode::cancelled,
                              "Exact snapshot read was cancelled");
     }

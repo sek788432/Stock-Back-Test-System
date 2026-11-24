@@ -14,6 +14,7 @@ enum class SnapshotFailurePoint : std::uint8_t {
   manifestWrite,
   snapshotRemovalRollback,
   openCancellation,
+  exactReadCancellation,
   historyLookupCancellation,
   historyDataDayScanCancellation,
 };

@@ -18,6 +18,7 @@ void cancelNextResultReplayPortfolioCompletion(
     core::CancellationSource *source,
     PortfolioCompletionCancellationPoint point) noexcept;
 void setNextDailySourceOpenHook(std::function<void()> hook);
+void setNextDailySourceCancellationHook(std::function<void()> hook);
 void clearResultReplayTestHooks() noexcept;
 
 } // namespace bte::bindings::testing
