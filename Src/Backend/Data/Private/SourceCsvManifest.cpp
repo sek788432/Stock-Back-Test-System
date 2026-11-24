@@ -2,10 +2,10 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
+#include <cctype> // IWYU pragma: keep
 #include <fstream>
-#include <functional>
-#include <ranges>
+#include <functional> // IWYU pragma: keep
+#include <ranges>     // IWYU pragma: keep
 #include <string_view>
 #include <system_error>
 #include <utility>

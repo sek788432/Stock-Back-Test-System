@@ -4,7 +4,7 @@
 #include <charconv>
 #include <chrono>
 #include <ctime>
-#include <functional>
+#include <functional> // IWYU pragma: keep
 #include <iomanip>
 #include <ratio> // IWYU pragma: keep
 #include <sstream>
