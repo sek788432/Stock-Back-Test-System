@@ -628,6 +628,25 @@ TEST(CsvBarStreamTest, availableSourcesSkipsSymbolsUndeclaredByManifest) {
   EXPECT_EQ(sources.value().front().symbol, "AAPL");
 }
 
+TEST(CsvBarStreamTest, availableSourcesReportsSymbolCatalogSymlinkLoop) {
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "csv-symbol-catalog-symlink-loop"};
+  const auto csvDirectory = temporary.path() / "Extracted";
+  std::filesystem::create_directories(csvDirectory);
+  const auto cyclicSource = csvDirectory / "BROKEN.csv";
+  std::filesystem::create_symlink(cyclicSource.filename(), cyclicSource);
+  std::ofstream symbols{temporary.path() / "Symbols.txt"};
+  symbols << "BROKEN\n";
+  symbols.close();
+
+  const auto sources = bte::data::CsvBarStream::availableSources(csvDirectory);
+
+  ASSERT_FALSE(sources.ok());
+  EXPECT_EQ(sources.error().code, bte::core::ErrorCode::schemaMismatch);
+  EXPECT_NE(sources.error().message.find("Unable to inspect CSV source"),
+            std::string::npos);
+}
+
 TEST(CsvBarStreamTest, availableSourcesPropagatesSymbolCatalogErrors) {
   bte::test_support::ScopedTemporaryDirectory temporary{"csv-symbol-errors"};
   const auto csvDirectory = temporary.path() / "Extracted";

@@ -475,6 +475,34 @@ TEST(ReleaseSnapshotTest,
 }
 
 TEST(ReleaseSnapshotTest,
+     publicationRejectsCorruptTrashedSegmentWhenActiveCopyIsMissing) {
+  ScopedSnapshotFixture fixture{"publication-corrupt-trashed-segment"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto original = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(original.ok()) << original.error().message;
+  ASSERT_FALSE(original.value().segments.empty());
+
+  const auto segmentId = original.value().segments.front();
+  const auto active = fixture.store() / "Segments" / (segmentId + ".btedata");
+  const auto trashed =
+      fixture.store() / "Trash" / "Segments" / (segmentId + ".btedata");
+  std::filesystem::create_directories(trashed.parent_path());
+  std::filesystem::rename(active, trashed);
+  const auto corruptBytes = std::string{"corrupted trashed segment bytes"};
+  writeFile(trashed, corruptBytes);
+  auto request = fixture.buildRequest();
+  request.calendarHash = std::string(64, 'c');
+
+  const auto rebuilt = bte::data::buildReleaseSnapshot(request);
+
+  ASSERT_FALSE(rebuilt.ok());
+  EXPECT_EQ(rebuilt.error().code,
+            bte::core::ErrorCode::dataSnapshotUnavailable);
+  EXPECT_FALSE(std::filesystem::exists(active));
+  EXPECT_EQ(readFile(trashed), corruptBytes);
+}
+
+TEST(ReleaseSnapshotTest,
      publicationConvertsTrashedSegmentLookupExceptionsToStructuredErrors) {
   ScopedSnapshotFixture fixture{"publication-trashed-segment-lookup-error"};
   fixture.writeSymbol("SYN", threeHourlyRows);
