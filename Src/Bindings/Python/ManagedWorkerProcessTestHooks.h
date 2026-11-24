@@ -17,6 +17,8 @@ enum class ManagedWorkerSystemCall : std::uint8_t {
   spawnAttributesInitialize,
   spawnActionsAddDup2,
   spawnActionsAddClose,
+  spawnActionsAddCloseInheritedSource,
+  spawnActionsAddCloseInheritedHistory,
   spawnAttributesSetProcessGroup,
   spawnAttributesSetFlags,
   processSpawn,

@@ -679,12 +679,12 @@ TEST(ManagedWorkerProcessTest,
       ExpectedFailure{ManagedWorkerSystemCall::spawnActionsAddClose, 6,
                       "Could not close inherited parent pipe descriptors.",
                       false},
-      ExpectedFailure{ManagedWorkerSystemCall::spawnActionsAddClose, 14,
-                      "Could not close the inherited source descriptor.",
-                      false},
-      ExpectedFailure{ManagedWorkerSystemCall::spawnActionsAddClose, 15,
-                      "Could not close the inherited history descriptor.",
-                      false},
+      ExpectedFailure{
+          ManagedWorkerSystemCall::spawnActionsAddCloseInheritedSource, 0,
+          "Could not close the inherited source descriptor.", false},
+      ExpectedFailure{
+          ManagedWorkerSystemCall::spawnActionsAddCloseInheritedHistory, 0,
+          "Could not close the inherited history descriptor.", false},
       ExpectedFailure{
           ManagedWorkerSystemCall::spawnAttributesSetProcessGroup, 0,
           "Could not configure managed worker process ownership.", false},

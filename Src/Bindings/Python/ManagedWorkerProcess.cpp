@@ -215,6 +215,12 @@ initializeSpawnAttributes(posix_spawnattr_t *const attributes) noexcept {
   return ::posix_spawnattr_init(attributes);
 }
 
+enum class SpawnActionClosePoint : std::uint8_t {
+  general,
+  inheritedSource,
+  inheritedHistory,
+};
+
 class SpawnActions final {
 public:
   SpawnActions() : status_(initializeSpawnActions(&actions_)) {}
@@ -241,16 +247,32 @@ public:
 #endif
     return ::posix_spawn_file_actions_adddup2(&actions_, source, target);
   }
-  [[nodiscard]] int addClose(const int descriptor) {
+  [[nodiscard]] int addClose(
+      const int descriptor,
+      const SpawnActionClosePoint closePoint = SpawnActionClosePoint::general) {
     if (status_ != 0) {
       return status_;
     }
 #if defined(BTE_ENABLE_TEST_HOOKS)
-    if (const auto injectedError = injectedSystemCallError(
-            testing::ManagedWorkerSystemCall::spawnActionsAddClose);
+    auto systemCall = testing::ManagedWorkerSystemCall::spawnActionsAddClose;
+    switch (closePoint) {
+    case SpawnActionClosePoint::general:
+      break;
+    case SpawnActionClosePoint::inheritedSource:
+      systemCall =
+          testing::ManagedWorkerSystemCall::spawnActionsAddCloseInheritedSource;
+      break;
+    case SpawnActionClosePoint::inheritedHistory:
+      systemCall = testing::ManagedWorkerSystemCall::
+          spawnActionsAddCloseInheritedHistory;
+      break;
+    }
+    if (const auto injectedError = injectedSystemCallError(systemCall);
         injectedError != 0) {
       return injectedError;
     }
+#else
+    static_cast<void>(closePoint);
 #endif
     return ::posix_spawn_file_actions_addclose(&actions_, descriptor);
   }
@@ -1422,11 +1444,13 @@ duplicateWorkerDescriptors(const WorkerProcessLaunch &launch,
   if (launch.readOnlyDataDescriptor > 4 &&
       (duplicates.sharedHistory.get() < 0 ||
        launch.readOnlyDataDescriptor != 5) &&
-      actions.addClose(launch.readOnlyDataDescriptor) != 0) {
+      actions.addClose(launch.readOnlyDataDescriptor,
+                       SpawnActionClosePoint::inheritedSource) != 0) {
     return workerStartError("Could not close the inherited source descriptor.");
   }
   if (launch.readOnlyHistoryDescriptor > 5 &&
-      actions.addClose(launch.readOnlyHistoryDescriptor) != 0) {
+      actions.addClose(launch.readOnlyHistoryDescriptor,
+                       SpawnActionClosePoint::inheritedHistory) != 0) {
     return workerStartError(
         "Could not close the inherited history descriptor.");
   }
