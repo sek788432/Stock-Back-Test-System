@@ -213,9 +213,12 @@ TEST(ReleaseSnapshotTest, exactReadIgnoresUnreferencedMissingSegments) {
   fixture.writeSymbol("SYN", threeHourlyRows);
   const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
   ASSERT_TRUE(built.ok());
+  bte::data::testing::resetSnapshotSegmentReadCount();
   auto reader = bte::data::ReleaseSnapshotReader::open(
       fixture.store(), built.value().snapshotId);
   ASSERT_TRUE(reader.ok());
+  EXPECT_EQ(bte::data::testing::snapshotSegmentReadCount(),
+            built.value().segmentCount);
   const auto selected = reader.value()->select(
       {.symbols = {"SYN"},
        .range = {.start = timestamp("2024-01-02 01:00:00+00:00"),
@@ -362,6 +365,58 @@ TEST(ReleaseSnapshotTest,
       std::filesystem::exists(snapshotDirectory / "Manifest.btesnapshot"));
   EXPECT_FALSE(
       std::filesystem::exists(collision.store() / "References.sqlite3"));
+}
+
+TEST(ReleaseSnapshotTest,
+     rebuildingSnapshotRemovesMatchingTrashedSegmentDuplicates) {
+  ScopedSnapshotFixture fixture{"rebuild-removes-duplicate-trash"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto original = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(original.ok()) << original.error().message;
+  ASSERT_FALSE(original.value().segments.empty());
+
+  const auto segmentId = original.value().segments.front();
+  const auto active = fixture.store() / "Segments" / (segmentId + ".btedata");
+  const auto trashed =
+      fixture.store() / "Trash" / "Segments" / (segmentId + ".btedata");
+  std::filesystem::create_directories(trashed.parent_path());
+  std::filesystem::copy_file(active, trashed);
+
+  const auto rebuilt = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_TRUE(rebuilt.ok()) << rebuilt.error().message;
+  EXPECT_EQ(rebuilt.value().snapshotId, original.value().snapshotId);
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_FALSE(std::filesystem::exists(trashed));
+}
+
+TEST(ReleaseSnapshotTest,
+     publicationConvertsTrashedSegmentLookupExceptionsToStructuredErrors) {
+  ScopedSnapshotFixture fixture{"publication-trashed-segment-lookup-error"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto original = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(original.ok()) << original.error().message;
+  ASSERT_FALSE(original.value().segments.empty());
+  const auto active = fixture.store() / "Segments" /
+                      (original.value().segments.front() + ".btedata");
+  const auto trashed = fixture.store() / "Trash" / "Segments" /
+                       (original.value().segments.front() + ".btedata");
+
+  std::filesystem::create_directories(trashed.parent_path());
+  std::filesystem::create_symlink(trashed, trashed);
+
+  const auto rebuilt = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_FALSE(rebuilt.ok());
+  EXPECT_EQ(rebuilt.error().code, bte::core::ErrorCode::permissionDenied);
+  EXPECT_NE(rebuilt.error().message.find("Unable to publish Release Snapshot"),
+            std::string::npos)
+      << rebuilt.error().message;
+  EXPECT_TRUE(std::filesystem::exists(fixture.store() / "Snapshots" /
+                                      original.value().snapshotId));
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_TRUE(
+      std::filesystem::is_symlink(std::filesystem::symlink_status(trashed)));
 }
 
 TEST(ReleaseSnapshotTest,
@@ -2574,6 +2629,60 @@ TEST(SegmentRetentionTest,
 
   ASSERT_TRUE(recovered.ok()) << recovered.error().message;
   EXPECT_FALSE(std::filesystem::exists(temporary.path() / "Segments"));
+}
+
+TEST(SegmentRetentionTest,
+     recoveryRemovesStagedFilesAndLinksButPreservesStagingDirectories) {
+  ScopedSnapshotFixture fixture{"retention-staged-artifact-recovery"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+
+  const auto segmentDirectory = fixture.store() / "Segments";
+  const auto stagedFile = segmentDirectory / "abandoned.btedata.staging";
+  const auto stagedDirectory = segmentDirectory / "directory.btedata.staging";
+  const auto stagedTarget = segmentDirectory / "staged-target";
+  const auto stagedLink = segmentDirectory / "linked.btedata.staging";
+  writeFile(stagedFile, "incomplete segment bytes");
+  std::filesystem::create_directories(stagedDirectory);
+  writeFile(stagedTarget, "target remains outside the staging namespace");
+  std::filesystem::create_symlink(stagedTarget, stagedLink);
+
+  const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+  ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+  EXPECT_FALSE(std::filesystem::exists(stagedFile));
+  EXPECT_TRUE(std::filesystem::is_directory(stagedDirectory));
+  EXPECT_FALSE(std::filesystem::exists(stagedLink));
+  EXPECT_TRUE(std::filesystem::exists(stagedTarget));
+  EXPECT_TRUE(bte::data::ReleaseSnapshotReader::open(fixture.store(),
+                                                     built.value().snapshotId)
+                  .ok());
+}
+
+TEST(SegmentRetentionTest,
+     publishedSnapshotManifestProtectsSegmentsWhenItsPinIsReleased) {
+  ScopedSnapshotFixture fixture{"retention-published-catalog-protection"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+
+  const auto released =
+      retention.value()->release("snapshot-" + built.value().snapshotId);
+
+  ASSERT_TRUE(released.ok()) << released.error().message;
+  EXPECT_TRUE(released.value().empty());
+  for (const auto &segmentId : built.value().segments) {
+    EXPECT_TRUE(std::filesystem::exists(fixture.store() / "Segments" /
+                                        (segmentId + ".btedata")));
+  }
+  EXPECT_TRUE(bte::data::ReleaseSnapshotReader::open(fixture.store(),
+                                                     built.value().snapshotId)
+                  .ok());
 }
 
 TEST(SegmentRetentionTest,
