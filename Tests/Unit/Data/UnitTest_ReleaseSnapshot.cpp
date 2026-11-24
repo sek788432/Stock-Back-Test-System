@@ -3341,12 +3341,11 @@ TEST(SegmentRetentionTest,
   const auto commitAcquireId = std::string{"acquire-commit"};
   bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution,
                                          1);
-  const auto failedAcquire = retention.value()->acquire(
-      commitAcquireId, built.value().segments);
+  const auto failedAcquire =
+      retention.value()->acquire(commitAcquireId, built.value().segments);
   ASSERT_FALSE(failedAcquire.ok());
   bte::data::testing::clearRetentionFailure();
-  const auto commitReferences =
-      retention.value()->references(commitAcquireId);
+  const auto commitReferences = retention.value()->references(commitAcquireId);
   ASSERT_TRUE(commitReferences.ok()) << commitReferences.error().message;
   EXPECT_TRUE(commitReferences.value().empty());
 
