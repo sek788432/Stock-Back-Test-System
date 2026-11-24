@@ -324,9 +324,13 @@ TEST(CsvBarStreamTest,
   const auto stream = bte::data::CsvBarStream::open(fixture.request());
 
   ASSERT_TRUE(stream.ok()) << stream.error().message;
-  EXPECT_EQ(stream.value()->totalBars(), 2);
-  EXPECT_EQ(stream.value()->next()->open, 100.0);
-  EXPECT_EQ(stream.value()->next()->open, 104.0);
+  ASSERT_EQ(stream.value()->totalBars(), 2U);
+  const auto first = stream.value()->next();
+  ASSERT_TRUE(first.has_value());
+  EXPECT_EQ(first->open, 100.0);
+  const auto second = stream.value()->next();
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(second->open, 104.0);
 }
 
 TEST(CsvBarStreamTest, CsvBarStream_emptySelectionHasNoNextBar) {
@@ -356,8 +360,10 @@ TEST(CsvBarStreamTest,
   const auto stream = bte::data::CsvBarStream::open(request);
 
   ASSERT_TRUE(stream.ok()) << stream.error().message;
-  ASSERT_EQ(stream.value()->totalBars(), 1);
-  EXPECT_DOUBLE_EQ(stream.value()->next()->close, 104.0);
+  ASSERT_EQ(stream.value()->totalBars(), 1U);
+  const auto next = stream.value()->next();
+  ASSERT_TRUE(next.has_value());
+  EXPECT_DOUBLE_EQ(next->close, 104.0);
 }
 
 TEST(CsvBarStreamTest,
@@ -418,7 +424,9 @@ TEST(CsvBarStreamTest, CsvBarStream_acceptsSourceWithoutTrailingNewline) {
 
   ASSERT_TRUE(stream.ok()) << stream.error().message;
   ASSERT_EQ(stream.value()->totalBars(), 1U);
-  EXPECT_EQ(stream.value()->next()->close, 104.0);
+  const auto next = stream.value()->next();
+  ASSERT_TRUE(next.has_value());
+  EXPECT_EQ(next->close, 104.0);
 }
 
 TEST(CsvBarStreamTest, inspectSourceRejectsDottedSymbolUndeclaredByManifest) {
@@ -515,6 +523,37 @@ TEST(CsvBarStreamTest, inspectSourceSupportsLegacyHeaderWithoutSchemaName) {
 
   ASSERT_TRUE(source.ok()) << source.error().message;
   EXPECT_TRUE(source.value().timeframe.empty());
+}
+
+TEST(CsvBarStreamTest,
+     inspectSourceReturnsUnknownTimeframeForSchemaHeaderWithoutRows) {
+  constexpr std::string_view contents =
+      "symbol,ts,open,high,low,close,volume,schemaName\n";
+  const ScopedCsvFixture fixture{"AAPL", contents};
+
+  const auto source =
+      bte::data::CsvBarStream::inspectSource(fixture.request().csvDir, "AAPL");
+
+  ASSERT_TRUE(source.ok()) << source.error().message;
+  EXPECT_TRUE(source.value().timeframe.empty());
+}
+
+TEST(CsvBarStreamTest, CsvBarStream_opensAValidManifestBoundSource) {
+  constexpr std::string_view contents =
+      "symbol,ts,open,high,low,close,volume,schemaName\n"
+      "AAPL,2024-01-01 00:00:00+00:00,100,105,99,104,1000,ohlcv-1h\n";
+  const ScopedCsvFixture fixture{"AAPL", contents};
+  fixture.writeManifest("ohlcv-1h");
+  auto request = fixture.request();
+  request.schemaName = "ohlcv-1h";
+
+  const auto stream = bte::data::CsvBarStream::open(request);
+
+  ASSERT_TRUE(stream.ok()) << stream.error().message;
+  ASSERT_EQ(stream.value()->totalBars(), 1U);
+  const auto next = stream.value()->next();
+  ASSERT_TRUE(next.has_value());
+  EXPECT_EQ(next->close, 104.0);
 }
 
 TEST(CsvBarStreamTest,
@@ -657,6 +696,22 @@ TEST(CsvBarStreamTest, availableSourcesReportsAFileThatCannotBeInspected) {
 
   ASSERT_FALSE(sources.ok());
   EXPECT_EQ(sources.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+TEST(CsvBarStreamTest,
+     availableSourcesSkipsSymbolCatalogEntriesThatAreNotFiles) {
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "csv-symbol-catalog-non-file"};
+  const auto csvDirectory = temporary.path() / "Extracted";
+  std::filesystem::create_directories(csvDirectory / "AAPL.csv");
+  std::ofstream symbols{temporary.path() / "Symbols.txt"};
+  symbols << "AAPL\n";
+  symbols.close();
+
+  const auto sources = bte::data::CsvBarStream::availableSources(csvDirectory);
+
+  ASSERT_TRUE(sources.ok()) << sources.error().message;
+  EXPECT_TRUE(sources.value().empty());
 }
 
 TEST(CsvBarStreamTest, availableSourcesReportsMalformedCsvAndMissingDirectory) {

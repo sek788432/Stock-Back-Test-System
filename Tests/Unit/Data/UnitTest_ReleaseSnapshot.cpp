@@ -379,8 +379,25 @@ TEST(ReleaseSnapshotTest,
   const auto active = fixture.store() / "Segments" / (segmentId + ".btedata");
   const auto trashed =
       fixture.store() / "Trash" / "Segments" / (segmentId + ".btedata");
-  std::filesystem::create_directories(trashed.parent_path());
-  std::filesystem::copy_file(active, trashed);
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               original.value().snapshotId)
+                  .ok());
+  ASSERT_FALSE(std::filesystem::exists(active));
+  ASSERT_TRUE(std::filesystem::exists(trashed));
+
+  const auto restored = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_TRUE(restored.ok()) << restored.error().message;
+  EXPECT_EQ(restored.value().snapshotId, original.value().snapshotId);
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_FALSE(std::filesystem::exists(trashed));
+
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               restored.value().snapshotId)
+                  .ok());
+  ASSERT_FALSE(std::filesystem::exists(active));
+  ASSERT_TRUE(std::filesystem::exists(trashed));
+  std::filesystem::copy_file(trashed, active);
 
   const auto rebuilt = bte::data::buildReleaseSnapshot(fixture.buildRequest());
 
@@ -917,6 +934,36 @@ TEST(ReleaseSnapshotTest,
 
   ASSERT_TRUE(retried.ok()) << retried.error().message;
   EXPECT_EQ(retried.value().snapshotId, expected.value().snapshotId);
+}
+
+TEST(ReleaseSnapshotTest, snapshotBuildReportsNonEmptySegmentStagingPath) {
+  ScopedSnapshotFixture fixture{"non-empty-segment-staging-path"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  ASSERT_FALSE(built.value().segments.empty());
+  const auto segmentId = built.value().segments.front();
+  const auto active = fixture.store() / "Segments" / (segmentId + ".btedata");
+  const auto trashed =
+      fixture.store() / "Trash" / "Segments" / (segmentId + ".btedata");
+  ASSERT_TRUE(bte::data::removeReleaseSnapshot(fixture.store(),
+                                               built.value().snapshotId)
+                  .ok());
+  ASSERT_TRUE(std::filesystem::exists(trashed));
+  std::filesystem::remove(trashed);
+  auto staging = active;
+  staging += ".staging";
+  std::filesystem::create_directories(staging);
+  writeFile(staging / "preserve.txt", "staging cleanup must not erase this");
+
+  const auto rebuilt = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+
+  ASSERT_FALSE(rebuilt.ok());
+  EXPECT_EQ(rebuilt.error().code, bte::core::ErrorCode::permissionDenied);
+  EXPECT_NE(rebuilt.error().message.find("clear snapshot artifact staging"),
+            std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(active));
+  EXPECT_TRUE(std::filesystem::exists(staging / "preserve.txt"));
 }
 
 TEST(ReleaseSnapshotTest,
@@ -2629,6 +2676,270 @@ TEST(SegmentRetentionTest,
 
   ASSERT_TRUE(recovered.ok()) << recovered.error().message;
   EXPECT_FALSE(std::filesystem::exists(temporary.path() / "Segments"));
+}
+
+TEST(SegmentRetentionTest,
+     recoverySkipsInvalidPinsAndPreservesPinsForPublishedSnapshots) {
+  ScopedSnapshotFixture fixture{"retention-invalid-and-published-pins"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+  ASSERT_TRUE(retention.value()
+                  ->acquire("snapshot-invalid", built.value().segments)
+                  .ok());
+  ASSERT_TRUE(retention.value()
+                  ->acquire("snapshot-" + built.value().snapshotId,
+                            built.value().segments)
+                  .ok());
+  executeSql(fixture.store() / "References.sqlite3",
+             "INSERT INTO segment_references(result_id, segment_id) VALUES('" +
+                 std::string{"Snapshot-"} + built.value().snapshotId + "','" +
+                 built.value().segments.front() + "')");
+
+  const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+  ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+  const auto invalidReferences =
+      retention.value()->references("snapshot-invalid");
+  ASSERT_TRUE(invalidReferences.ok()) << invalidReferences.error().message;
+  EXPECT_EQ(invalidReferences.value(), built.value().segments);
+  const auto publishedReferences =
+      retention.value()->references("snapshot-" + built.value().snapshotId);
+  ASSERT_TRUE(publishedReferences.ok()) << publishedReferences.error().message;
+  EXPECT_EQ(publishedReferences.value(), built.value().segments);
+  sqlite3 *rawDatabase = nullptr;
+  ASSERT_EQ(
+      sqlite3_open((fixture.store() / "References.sqlite3").string().c_str(),
+                   &rawDatabase),
+      SQLITE_OK);
+  const auto database = std::unique_ptr<sqlite3, decltype(&sqlite3_close)>{
+      rawDatabase, &sqlite3_close};
+  sqlite3_stmt *rawStatement = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(
+                database.get(),
+                "SELECT COUNT(*) FROM segment_references WHERE result_id = "
+                "'Snapshot-' || ?1",
+                -1, &rawStatement, nullptr),
+            SQLITE_OK);
+  const auto statement =
+      std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>{
+          rawStatement, &sqlite3_finalize};
+  ASSERT_EQ(sqlite3_bind_text(rawStatement, 1, built.value().snapshotId.c_str(),
+                              -1, SQLITE_TRANSIENT),
+            SQLITE_OK);
+  ASSERT_EQ(sqlite3_step(rawStatement), SQLITE_ROW);
+  EXPECT_EQ(sqlite3_column_int64(rawStatement, 0), 1);
+  for (const auto &segmentId : built.value().segments) {
+    EXPECT_TRUE(std::filesystem::exists(fixture.store() / "Segments" /
+                                        (segmentId + ".btedata")));
+  }
+}
+
+TEST(SegmentRetentionTest, recoveryPropagatesPinDatabaseAndQueryFailures) {
+  using bte::data::testing::RetentionFailurePoint;
+  for (const auto point : {RetentionFailurePoint::databaseOpen,
+                           RetentionFailurePoint::queryPreparation,
+                           RetentionFailurePoint::queryBinding}) {
+    SCOPED_TRACE(static_cast<int>(point));
+    bte::test_support::ScopedTemporaryDirectory temporary{
+        "retention-pin-recovery-error"};
+    auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+    ASSERT_TRUE(retention.ok()) << retention.error().message;
+    bte::data::testing::failRetentionAfter(point);
+
+    const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+    bte::data::testing::clearRetentionFailure();
+
+    ASSERT_FALSE(recovered.ok());
+    EXPECT_EQ(recovered.error().code, bte::core::ErrorCode::internal);
+  }
+}
+
+TEST(SegmentRetentionTest,
+     recoveryReportsInvalidSegmentDirectoryAndSnapshotCatalog) {
+  {
+    bte::test_support::ScopedTemporaryDirectory temporary{
+        "retention-segment-directory-not-a-directory"};
+    auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+    ASSERT_TRUE(retention.ok()) << retention.error().message;
+    writeFile(temporary.path() / "Segments", "not a directory");
+
+    const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+    ASSERT_FALSE(recovered.ok());
+    EXPECT_EQ(recovered.error().code, bte::core::ErrorCode::permissionDenied);
+  }
+  {
+    bte::test_support::ScopedTemporaryDirectory temporary{
+        "retention-malformed-published-snapshot"};
+    auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+    ASSERT_TRUE(retention.ok()) << retention.error().message;
+    std::filesystem::create_directories(temporary.path() / "Segments");
+    const auto orphanBytes = std::string{"orphan segment before catalog error"};
+    const auto orphanId = bte::core::sha256(orphanBytes);
+    const auto active = temporary.path() / "Segments" / (orphanId + ".btedata");
+    const auto trashed =
+        temporary.path() / "Trash" / "Segments" / (orphanId + ".btedata");
+    writeFile(active, orphanBytes);
+    const auto snapshotId = std::string(64, 'c');
+    const auto snapshotDirectory = temporary.path() / "Snapshots" / snapshotId;
+    std::filesystem::create_directories(snapshotDirectory);
+    writeFile(snapshotDirectory / "Manifest.btesnapshot",
+              "invalid snapshot manifest");
+
+    const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+    ASSERT_FALSE(recovered.ok());
+    EXPECT_EQ(recovered.error().code,
+              bte::core::ErrorCode::dataSnapshotUnavailable);
+    EXPECT_TRUE(std::filesystem::exists(active));
+    EXPECT_FALSE(std::filesystem::exists(trashed));
+  }
+}
+
+TEST(SegmentRetentionTest,
+     recoveryPreservesActiveSegmentWhenTrashDuplicateIsCorrupt) {
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "retention-recovery-corrupt-trash-duplicate"};
+  auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+  const auto segmentBytes = std::string{"valid active segment bytes"};
+  const auto segmentId = bte::core::sha256(segmentBytes);
+  const auto active = temporary.path() / "Segments" / (segmentId + ".btedata");
+  const auto trashed =
+      temporary.path() / "Trash" / "Segments" / (segmentId + ".btedata");
+  std::filesystem::create_directories(active.parent_path());
+  std::filesystem::create_directories(trashed.parent_path());
+  writeFile(active, segmentBytes);
+  writeFile(trashed, "corrupted trash segment bytes");
+
+  const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+  ASSERT_FALSE(recovered.ok());
+  EXPECT_EQ(recovered.error().code,
+            bte::core::ErrorCode::dataSnapshotUnavailable);
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_TRUE(std::filesystem::exists(trashed));
+}
+
+TEST(SegmentRetentionTest, recoveryRestoresAnOrphanSegmentWhenCommitFails) {
+  using bte::data::testing::RetentionFailurePoint;
+  bte::test_support::ScopedTemporaryDirectory temporary{
+      "retention-recovery-commit-failure"};
+  auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+  const auto segmentBytes = std::string{"abandoned segment bytes"};
+  const auto segmentId = bte::core::sha256(segmentBytes);
+  const auto active = temporary.path() / "Segments" / (segmentId + ".btedata");
+  const auto trashed =
+      temporary.path() / "Trash" / "Segments" / (segmentId + ".btedata");
+  std::filesystem::create_directories(active.parent_path());
+  writeFile(active, segmentBytes);
+  bte::data::testing::failRetentionAfter(RetentionFailurePoint::sqlExecution,
+                                         1);
+
+  const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+  bte::data::testing::clearRetentionFailure();
+
+  ASSERT_FALSE(recovered.ok());
+  EXPECT_EQ(recovered.error().code, bte::core::ErrorCode::internal);
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_FALSE(std::filesystem::exists(trashed));
+}
+
+TEST(SegmentRetentionTest,
+     recoveryReportsTransactionOpenQueryAndArtifactErrors) {
+  using bte::data::testing::RetentionFailurePoint;
+  for (const auto &[point, skips] :
+       {std::pair{RetentionFailurePoint::databaseOpen, 1U},
+        std::pair{RetentionFailurePoint::sqlExecution, 0U},
+        std::pair{RetentionFailurePoint::queryPreparation, 1U}}) {
+    SCOPED_TRACE(static_cast<int>(point));
+    bte::test_support::ScopedTemporaryDirectory temporary{
+        "retention-recovery-transaction-error"};
+    auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+    ASSERT_TRUE(retention.ok()) << retention.error().message;
+    std::filesystem::create_directories(temporary.path() / "Segments");
+    bte::data::testing::failRetentionAfter(point, skips);
+
+    const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+    bte::data::testing::clearRetentionFailure();
+
+    ASSERT_FALSE(recovered.ok());
+    EXPECT_EQ(recovered.error().code, bte::core::ErrorCode::internal);
+  }
+}
+
+TEST(SegmentRetentionTest,
+     recoveryRejectsTrashLookupErrorsAndIgnoresNonRegularSegments) {
+  {
+    bte::test_support::ScopedTemporaryDirectory temporary{
+        "retention-recovery-non-regular-segment"};
+    auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+    ASSERT_TRUE(retention.ok()) << retention.error().message;
+    const auto segmentId = std::string(64, 'd');
+    const auto segmentDirectory = temporary.path() / "Segments";
+    const auto nonRegular = segmentDirectory / (segmentId + ".btedata");
+    std::filesystem::create_directories(nonRegular);
+
+    const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+    ASSERT_TRUE(recovered.ok()) << recovered.error().message;
+    EXPECT_TRUE(std::filesystem::is_directory(nonRegular));
+  }
+  {
+    bte::test_support::ScopedTemporaryDirectory temporary{
+        "retention-recovery-trash-lookup-error"};
+    auto retention = bte::data::SegmentRetentionStore::open(temporary.path());
+    ASSERT_TRUE(retention.ok()) << retention.error().message;
+    const auto segmentBytes = std::string{"segment with blocked trash lookup"};
+    const auto segmentId = bte::core::sha256(segmentBytes);
+    const auto active =
+        temporary.path() / "Segments" / (segmentId + ".btedata");
+    const auto trashed =
+        temporary.path() / "Trash" / "Segments" / (segmentId + ".btedata");
+    std::filesystem::create_directories(active.parent_path());
+    writeFile(active, segmentBytes);
+    std::filesystem::create_symlink(trashed, trashed);
+
+    const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+
+    ASSERT_FALSE(recovered.ok());
+    EXPECT_EQ(recovered.error().code, bte::core::ErrorCode::permissionDenied);
+    EXPECT_TRUE(std::filesystem::exists(active));
+    EXPECT_TRUE(
+        std::filesystem::is_symlink(std::filesystem::symlink_status(trashed)));
+  }
+}
+
+TEST(SegmentRetentionTest,
+     recoveryReturnsAnErrorWhenAbandoningAnUnpublishedPinFails) {
+  using bte::data::testing::RetentionFailurePoint;
+  ScopedSnapshotFixture fixture{"retention-abandoned-pin-release-failure"};
+  fixture.writeSymbol("SYN", threeHourlyRows);
+  const auto built = bte::data::buildReleaseSnapshot(fixture.buildRequest());
+  ASSERT_TRUE(built.ok()) << built.error().message;
+  auto retention = bte::data::SegmentRetentionStore::open(fixture.store());
+  ASSERT_TRUE(retention.ok()) << retention.error().message;
+  const auto abandonedSnapshotId = std::string(64, 'f');
+  ASSERT_TRUE(
+      retention.value()
+          ->acquire("snapshot-" + abandonedSnapshotId, built.value().segments)
+          .ok());
+  bte::data::testing::failRetentionAfter(RetentionFailurePoint::databaseOpen,
+                                         1);
+
+  const auto recovered = retention.value()->recoverUnpublishedSnapshotPins();
+  bte::data::testing::clearRetentionFailure();
+
+  ASSERT_FALSE(recovered.ok());
+  EXPECT_EQ(recovered.error().code, bte::core::ErrorCode::internal);
+  const auto references =
+      retention.value()->references("snapshot-" + abandonedSnapshotId);
+  ASSERT_TRUE(references.ok()) << references.error().message;
+  EXPECT_EQ(references.value(), built.value().segments);
 }
 
 TEST(SegmentRetentionTest,

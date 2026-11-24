@@ -48,6 +48,7 @@ private slots:
   void loadBacktestBarsFrom_obeysTheDeclaredSourceTimeframe();
   void loadBacktestBarsFrom_rejectsUnsupportedTimeframes();
   void availableReplaySourcesUsesTheManifestBoundSymbolCatalog();
+  void availableReplaySourcesPropagatesCatalogFailures();
 };
 
 void ReplayDataLoaderTest::
@@ -196,14 +197,34 @@ void ReplayDataLoaderTest::
   QCOMPARE(secondDailyBar.close, 103.0);
   QCOMPARE(secondDailyBar.volume, 300.0);
 
-  writeDeclaredCsv(temporary.path().toStdString(), "ohlcv-1d", csvBytes);
+  const auto dailyCsvBytes = "symbol,ts,open,high,low,close,volume\n"
+                             "SYN,2024-01-01T00:00:00Z,200,210,195,207,1000\n"
+                             "SYN,2024-01-02T00:00:00Z,207,215,204,212,1250\n"
+                             "SYN,2024-01-03T00:00:00Z,212,219,210,218,1400\n";
+  writeDeclaredCsv(temporary.path().toStdString(), "ohlcv-1d", dailyCsvBytes);
   const auto dailySource = bte::bindings::loadBacktestBarsFrom(
       "SYN", "ohlcv-1d", QDate{2024, 1, 1}, QDate{2024, 1, 2}, csvDirectory);
   const auto hourlyFromDaily = bte::bindings::loadBacktestBarsFrom(
       "SYN", "ohlcv-1h", QDate{2024, 1, 1}, QDate{2024, 1, 2}, csvDirectory);
 
   QVERIFY2(dailySource.ok(), dailySource.error().message.c_str());
-  QCOMPARE(dailySource.value().size(), 3U);
+  QCOMPARE(dailySource.value().size(), 2U);
+  const auto &firstSourceDailyBar = dailySource.value().front();
+  QVERIFY(firstSourceDailyBar.ts == bte::core::Timestamp{std::chrono::sys_days{
+                                        std::chrono::year{2024} / 1 / 1}});
+  QCOMPARE(firstSourceDailyBar.open, 200.0);
+  QCOMPARE(firstSourceDailyBar.high, 210.0);
+  QCOMPARE(firstSourceDailyBar.low, 195.0);
+  QCOMPARE(firstSourceDailyBar.close, 207.0);
+  QCOMPARE(firstSourceDailyBar.volume, 1000.0);
+  const auto &secondSourceDailyBar = dailySource.value().back();
+  QVERIFY(secondSourceDailyBar.ts == bte::core::Timestamp{std::chrono::sys_days{
+                                         std::chrono::year{2024} / 1 / 2}});
+  QCOMPARE(secondSourceDailyBar.open, 207.0);
+  QCOMPARE(secondSourceDailyBar.high, 215.0);
+  QCOMPARE(secondSourceDailyBar.low, 204.0);
+  QCOMPARE(secondSourceDailyBar.close, 212.0);
+  QCOMPARE(secondSourceDailyBar.volume, 1250.0);
   QVERIFY(!hourlyFromDaily.ok());
   QCOMPARE(hourlyFromDaily.error().code, bte::core::ErrorCode::schemaMismatch);
 }
@@ -248,6 +269,23 @@ void ReplayDataLoaderTest::
   QCOMPARE(sources.value().size(), 1U);
   QCOMPARE(sources.value().front().symbol, std::string{"SYN"});
   QCOMPARE(sources.value().front().timeframe, std::string{"ohlcv-1d"});
+}
+
+void ReplayDataLoaderTest::availableReplaySourcesPropagatesCatalogFailures() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto csvDirectory =
+      std::filesystem::path{temporary.path().toStdString()} / "Extracted";
+  std::filesystem::create_directories(csvDirectory);
+  {
+    std::ofstream csv{csvDirectory / "BROKEN.csv", std::ios::binary};
+    csv << "invalid,csv,header\n";
+  }
+
+  const auto sources = bte::bindings::availableReplaySources(csvDirectory);
+
+  QVERIFY(!sources.ok());
+  QCOMPARE(sources.error().code, bte::core::ErrorCode::schemaMismatch);
 }
 
 } // namespace

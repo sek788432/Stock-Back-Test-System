@@ -337,6 +337,30 @@ recoveryActionForSegment(const std::filesystem::directory_entry &entry,
                            "Unable to inspect trashed snapshot segments: " +
                                error.message());
   }
+  if (alreadyTrashed) {
+    const auto trashedStatus =
+        std::filesystem::symlink_status(trashedPath, error);
+    if (error) {
+      return core::makeError(core::ErrorCode::permissionDenied,
+                             "Unable to inspect trashed snapshot segment: " +
+                                 error.message());
+    }
+    if (!std::filesystem::is_regular_file(trashedStatus)) {
+      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                             "Trashed Data Segment is unavailable");
+    }
+    std::ifstream input{trashedPath, std::ios::binary};
+    if (!input) {
+      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                             "Trashed Data Segment is unavailable");
+    }
+    const std::string bytes{std::istreambuf_iterator<char>{input},
+                            std::istreambuf_iterator<char>{}};
+    if (input.bad() || core::sha256(bytes) != segmentId) {
+      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                             "Trashed Data Segment hash is invalid");
+    }
+  }
   return std::optional<SegmentRecoveryAction>{SegmentRecoveryAction{
       .activePath = entry.path(),
       .trashedPath = trashedPath,

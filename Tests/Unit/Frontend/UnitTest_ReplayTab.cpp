@@ -66,6 +66,8 @@ class ReplayTabTest final : public QObject {
 
 private slots:
   void exposesReplaySetupControls();
+  void unsupportedSourcesDisableReplaySetup();
+  void unavailableSourceCatalogDisablesReplaySetup();
   void exactResultIdStartsOwnedAsynchronousOpen();
   void exposesPlaybackControls();
   void zoomAwayFromNewestEnablesFollowLatestButton();
@@ -166,6 +168,69 @@ void ReplayTabTest::exposesReplaySetupControls() {
       tab.findChild<QLabel *>("replayBarOnlyPreviewLabel");
   QVERIFY(previewLabel != nullptr);
   QVERIFY(previewLabel->text().contains("no fills or portfolio accounting"));
+}
+
+void ReplayTabTest::unsupportedSourcesDisableReplaySetup() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto sourceDirectory =
+      std::filesystem::path{temporary.path().toStdString()} / "StockData" /
+      "Extracted";
+  std::filesystem::create_directories(sourceDirectory);
+  {
+    std::ofstream csv{sourceDirectory / "SPY.csv", std::ios::binary};
+    csv << "symbol,ts,open,high,low,close,volume,schemaName\n"
+           "SPY,2024-01-01T10:00:00Z,300,303,299,302,1000,ohlcv-1m\n";
+  }
+  {
+    std::ofstream symbols{sourceDirectory.parent_path() / "Symbols.txt",
+                          std::ios::binary};
+    symbols << "SPY\n";
+  }
+  const ScopedCurrentDirectory currentDirectory{temporary.path().toStdString()};
+  const bte::frontend::ReplayTab tab;
+  const auto *symbolCombo = tab.findChild<QComboBox *>("replaySymbolCombo");
+  const auto *schemaCombo = tab.findChild<QComboBox *>("replaySchemaCombo");
+  const auto *loadButton = tab.findChild<QPushButton *>("replayLoadButton");
+
+  QVERIFY(symbolCombo != nullptr);
+  QVERIFY(schemaCombo != nullptr);
+  QVERIFY(loadButton != nullptr);
+  QCOMPARE(symbolCombo->currentText(), QString{"No supported CSV sources"});
+  QVERIFY(!symbolCombo->isEnabled());
+  QVERIFY(!schemaCombo->isEnabled());
+  QVERIFY(!loadButton->isEnabled());
+}
+
+void ReplayTabTest::unavailableSourceCatalogDisablesReplaySetup() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto sourceDirectory =
+      std::filesystem::path{temporary.path().toStdString()} / "StockData" /
+      "Extracted";
+  std::filesystem::create_directories(sourceDirectory);
+  {
+    std::ofstream csv{sourceDirectory / "BROKEN.csv", std::ios::binary};
+    csv << "invalid,csv,header\n";
+  }
+  {
+    std::ofstream symbols{sourceDirectory.parent_path() / "Symbols.txt",
+                          std::ios::binary};
+    symbols << "BROKEN\n";
+  }
+  const ScopedCurrentDirectory currentDirectory{temporary.path().toStdString()};
+  const bte::frontend::ReplayTab tab;
+  const auto *symbolCombo = tab.findChild<QComboBox *>("replaySymbolCombo");
+  const auto *schemaCombo = tab.findChild<QComboBox *>("replaySchemaCombo");
+  const auto *loadButton = tab.findChild<QPushButton *>("replayLoadButton");
+
+  QVERIFY(symbolCombo != nullptr);
+  QVERIFY(schemaCombo != nullptr);
+  QVERIFY(loadButton != nullptr);
+  QCOMPARE(symbolCombo->currentText(), QString{"Source catalog unavailable"});
+  QVERIFY(!symbolCombo->isEnabled());
+  QVERIFY(!schemaCombo->isEnabled());
+  QVERIFY(!loadButton->isEnabled());
 }
 
 void ReplayTabTest::exactResultIdStartsOwnedAsynchronousOpen() {

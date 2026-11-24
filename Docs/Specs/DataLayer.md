@@ -303,8 +303,9 @@ A `.bteresult` stores snapshot/segment IDs and hashes, not duplicate OHLCV.
   atomically renames completed files into place. Publication recovery clears
   abandoned temporary files, releases pins for unpublished snapshots, and
   moves unreferenced unpublished segments to Data Trash before another build.
-  A duplicate active file is removed when its unreferenced segment already
-  exists in Data Trash.
+  A duplicate active file is removed only when the matching Data Trash copy is
+  a regular file whose bytes validate against the segment ID. If that copy is
+  unavailable or corrupt, recovery fails and preserves the active file.
 - The Issue 10 safety implementation acquires a per-Result SQLite lease and
   pins distinct immutable segments before Staging or an imported artifact can
   become visible. Pins remain through Drafts, Results, and Trash. Recovery takes
