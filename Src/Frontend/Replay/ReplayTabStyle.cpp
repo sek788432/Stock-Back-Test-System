@@ -20,7 +20,8 @@ QString replayTabStyleSheet() {
     #replayTab QGroupBox,
     #replayChartPanel,
     #replayPlaybackBar,
-    #replayTradeLogPanel {
+    #replayTradeLogPanel,
+    #replayContextPanel {
       background: #0b1724;
       border: 1px solid #233a52;
       border-radius: 6px;
@@ -46,6 +47,21 @@ QString replayTabStyleSheet() {
       color: #f6fbff;
       font-size: 20px;
       font-weight: 800;
+    }
+    #replayModeSourceLabel {
+      color: #f4f8fb;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    #replayResultStatusLabel {
+      color: #89a6bd;
+      font-size: 12px;
+    }
+    #replayResultLabel,
+    #replayResultTimeframeLabel,
+    #replayBarOnlyPreviewLabel {
+      color: #9fc9ed;
+      font-weight: 700;
     }
     #replaySubtitleLabel {
       color: #89a6bd;
