@@ -3738,6 +3738,30 @@ TEST_F(ResultStoreFixture,
 }
 
 TEST_F(ResultStoreFixture,
+       savedResultRemainsReadableAfterItsSnapshotIsArchived) {
+  auto store =
+      bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
+  ASSERT_TRUE(store.ok()) << store.error().message;
+  auto writer = store.value()->begin(descriptor());
+  ASSERT_TRUE(writer.ok()) << writer.error().message;
+  ASSERT_TRUE(writer.value()->append(records()).ok());
+  const auto finalized = writer.value()->finalizeAndPromote(
+      bte::results::RunStatus::completed,
+      {.finalEquityMicrodollars = 100'009'900'000, .pnlMicrodollars = 9'900});
+  ASSERT_TRUE(finalized.ok()) << finalized.error().message;
+  ASSERT_TRUE(
+      bte::data::removeReleaseSnapshot(root_ / "Data", selection_.snapshotId)
+          .ok());
+
+  const auto opened =
+      store.value()->openResultWithData(finalized.value().resultId);
+
+  ASSERT_TRUE(opened.ok()) << opened.error().message;
+  EXPECT_EQ(opened.value().selection.identity, selection_);
+  EXPECT_EQ(opened.value().selection.bars.size(), 2U);
+}
+
+TEST_F(ResultStoreFixture,
        openResultWithDataRejectsMissingSegmentWithoutMutatingTheResult) {
   auto store =
       bte::results::ResultStore::open(root_ / "ResultsStore", root_ / "Data");
@@ -4361,11 +4385,19 @@ TEST_F(ResultStoreFixture,
   EXPECT_EQ(published.error().code, bte::core::ErrorCode::notFound);
 
   for (const auto &span : selection_.spans) {
+    const auto segmentPredicate = "segment_id = '" + span.segmentId + "'";
+    EXPECT_EQ(
+        queryInteger(
+            root_ / "Data" / "References.sqlite3",
+            "SELECT COUNT(*) FROM segment_references WHERE result_id = '" +
+                resultId + "' AND " + segmentPredicate),
+        0);
     EXPECT_EQ(queryInteger(root_ / "Data" / "References.sqlite3",
                            "SELECT COUNT(*) FROM segment_references WHERE "
-                           "segment_id = '" +
-                               span.segmentId + "'"),
-              0);
+                           "result_id = 'snapshot-" +
+                               selection_.snapshotId + "' AND " +
+                               segmentPredicate),
+              1);
   }
 }
 
@@ -4692,8 +4724,24 @@ TEST_F(ResultStoreFixture,
       std::filesystem::exists(root_ / "ResultsStore" / "Trash" /
                               (finalized.value().resultId + ".bteresult")));
   for (const auto &span : selection_.spans) {
+    EXPECT_TRUE(std::filesystem::exists(root_ / "Data" / "Segments" /
+                                        (span.segmentId + ".btedata")));
+    EXPECT_EQ(
+        queryInteger(
+            root_ / "Data" / "References.sqlite3",
+            "SELECT COUNT(*) FROM segment_references WHERE result_id = '" +
+                finalized.value().resultId + "' AND segment_id = '" +
+                span.segmentId + "'"),
+        0);
+  }
+  ASSERT_TRUE(
+      bte::data::removeReleaseSnapshot(root_ / "Data", selection_.snapshotId)
+          .ok());
+  for (const auto &span : selection_.spans) {
     EXPECT_FALSE(std::filesystem::exists(root_ / "Data" / "Segments" /
                                          (span.segmentId + ".btedata")));
+    EXPECT_TRUE(std::filesystem::exists(root_ / "Data" / "Trash" / "Segments" /
+                                        (span.segmentId + ".btedata")));
   }
 }
 

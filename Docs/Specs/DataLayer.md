@@ -5,17 +5,24 @@ This spec owns market-data provenance, release snapshots, chronology-safe access
 ## 1. Status
 
 - **Implemented:** `DataFetcher/` writes DuckDB and extracts per-symbol CSV;
-  C++ `CsvBarStream` reads tracked files under `StockData/Extracted` into
-  memory. The direct reader currently supports symbols whose CSV filename stem
-  exactly equals the canonical symbol; dotted-symbol exports are a known gap.
+  C++ `CsvBarStream` reads files under `StockData/Extracted` into memory. When
+  `SourceManifest.btesource` is present, the direct reader resolves a symbol
+  through its declared exact or period-to-underscore filename, enforces the
+  declared timeframe, and verifies the exact-byte SHA-256 before returning
+  bars. Replay's symbol picker intersects `Symbols.txt` with declared files.
+  Without a sidecar, the legacy CSV form must carry a `schemaName` column for
+  the Replay loader to identify its timeframe.
   Limited immutable snapshot construction accepts seven-column extracts only
   when a hash-bound source manifest declares their timeframe, and also accepts
   the explicit `schemaName` form among trailing metadata columns, including
   `GetFromDb.py --include-provenance` output. Other trailing columns are ignored. The
-  builder verifies each selected CSV's exact-byte SHA-256 and requires the
-  declared timeframe to match its supported hourly schema. The direct
-  development `CsvBarStream` remains a row reader and does not validate source
-  timeframe.
+  builder verifies exact-byte SHA-256 against each selected CSV's source
+  manifest declaration. Legacy CSVs without a sidecar must carry an explicit
+  `schemaName` column; their bytes are not hash-bound. Snapshot construction
+  requires the declared timeframe to match its supported hourly schema. The
+  direct Replay loader accepts declared hourly and daily sources. Hourly sources can be
+  aggregated to daily output; daily sources remain daily and cannot be read as
+  hourly data. Other declared source timeframes return a typed schema error.
   Segment reading, selection identity, and result reference retention also
   exist for the single-symbol Backtest path.
 - **Planned:** complete release snapshot pipeline,
@@ -68,11 +75,13 @@ The boundary has these consequences:
    `StockData/Extracted/`. Its current filename mapping replaces `.` with `_`,
    so `BRK.B` is written to `BRK_B.csv`; the row retains canonical symbol
    `BRK.B`.
-3. The current C++ implementation reads CSV through `CsvBarStream`, which opens
-   `<requested-symbol>.csv` and requires every row's symbol to equal that
-   request. It does not open DuckDB or contact Databento. Because it does not
-   yet reverse or otherwise resolve the export filename mapping, dotted symbols
-   such as `BF.B` and `BRK.B` are not loadable through this direct reader.
+3. The C++ implementation reads CSV through `CsvBarStream`. With a sidecar, it
+   resolves the declared filename, checks the declared source timeframe,
+   requires every row's symbol to equal the requested canonical symbol, and
+   verifies the file hash. This supports dotted symbols such as `BF.B` and
+   `BRK.B` exported as `BF_B.csv` and `BRK_B.csv`. The Replay picker uses the
+   symbol list intersected with these declarations; unsupported declarations
+   remain unavailable for preview.
 4. The accepted release V1 also starts from the reviewed extracted CSV files,
    but release CI converts them into the immutable, content-addressed Release
    Snapshot described below. The packaged application reads that snapshot, not
@@ -110,6 +119,12 @@ the exact CSV bytes on disk. The extractor resolves one `schemaName` per CSV;
 it rejects mixed-schema exports rather than assigning one timeframe to mixed
 rows. Existing unrequested CSVs are retained in the new manifest only when an
 earlier declaration exists and its hash still matches.
+
+The extractor stages the complete generation and atomically exchanges it with
+the published directory on supported macOS and Linux filesystems. It rejects
+case-insensitive filename collisions and preserves the previous generation
+when any requested symbol has no rows or staging fails. A host without the
+required atomic exchange fails without replacing an existing generation.
 
 The snapshot builder requires a valid declaration for each selected
 seven-column CSV and rejects a missing declaration, an unsupported timeframe,
@@ -154,6 +169,14 @@ release gates below.
 ## 4. Release reader contract
 
 The planned reader accepts a snapshot ID, universe, timeframe, half-open date range, and history budget. It returns `Result<T>` for discovery and access.
+
+`ReleaseSnapshotReader::openExact` validates a persisted historical selection
+against its immutable manifest and loads only the segments referenced by its
+spans. It decodes those segments to validate their contents, but does not build
+the merged `SnapshotSelection::bars` vector. `ResultStore` uses this path when
+validating a saved selection; callers that need selected values use
+`readExact`, which materializes that vector. Result catalog and open operations
+continue to validate the canonical Result artifact.
 
 - Bars are emitted in stable timestamp then symbol order.
 - One `MarketSlice` contains the actual bars available at one timestamp.
@@ -271,6 +294,18 @@ this digest is `calendarHash`; it is external to the hashed stream.
 A `.bteresult` stores snapshot/segment IDs and hashes, not duplicate OHLCV.
 
 - Referenced Data Segments are retained while any non-purged result needs them.
+- Published snapshots independently retain all their segments until explicit
+  snapshot removal. Removal archives the immutable manifest so Results can
+  still resolve their pinned spans, and releases the snapshot's segment pins.
+  Daily Replay marks a day partial when complete source-day coverage is no
+  longer available after snapshot removal.
+- Snapshot publication writes segment bytes to temporary sibling files and
+  atomically renames completed files into place. Publication recovery clears
+  abandoned temporary files, releases pins for unpublished snapshots, and
+  moves unreferenced unpublished segments to Data Trash before another build.
+  A duplicate active file is removed only when the matching Data Trash copy is
+  a regular file whose bytes validate against the segment ID. If that copy is
+  unavailable or corrupt, recovery fails and preserves the active file.
 - The Issue 10 safety implementation acquires a per-Result SQLite lease and
   pins distinct immutable segments before Staging or an imported artifact can
   become visible. Pins remain through Drafts, Results, and Trash. Recovery takes

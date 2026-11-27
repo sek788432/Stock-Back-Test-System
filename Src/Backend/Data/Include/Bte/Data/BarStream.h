@@ -21,6 +21,18 @@ struct StreamRequest {
       std::filesystem::path{"StockData"} / "Extracted";
 };
 
+struct CsvSourceInfo final {
+  std::filesystem::path path;
+  std::string timeframe;
+  std::string sha256;
+  bool manifestBound = false;
+};
+
+struct CsvSourceCatalogEntry final {
+  std::string symbol;
+  CsvSourceInfo source;
+};
+
 class BarStream {
 public:
   virtual ~BarStream() = default;
@@ -46,6 +58,16 @@ public:
   [[nodiscard]] static core::Result<std::unique_ptr<CsvBarStream>>
   open(const StreamRequest &request,
        const core::CancellationToken &cancellation = {});
+
+  [[nodiscard]] static core::Result<CsvSourceInfo>
+  inspectSource(const std::filesystem::path &csvDirectory,
+                const std::string &symbol);
+
+  [[nodiscard]] static core::Result<std::vector<std::string>>
+  availableSymbols(const std::filesystem::path &csvDirectory);
+
+  [[nodiscard]] static core::Result<std::vector<CsvSourceCatalogEntry>>
+  availableSources(const std::filesystem::path &csvDirectory);
 
   CsvBarStream(ConstructionKey, std::vector<core::Bar> bars);
 

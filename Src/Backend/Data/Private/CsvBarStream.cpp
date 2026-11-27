@@ -2,10 +2,14 @@
 
 #include "Bte/Core/Bar.h"
 #include "Bte/Core/Cancellation.h"
+#include "Bte/Core/Digest.h"
 #include "Bte/Core/Result.h"
 #include "Bte/Core/Time.h"
 
+#include "SourceCsvManifest.h"
+
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <compare>
@@ -15,11 +19,14 @@
 #include <fstream>
 #include <functional>
 #include <locale>
+#include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -175,6 +182,15 @@ parseDouble(const std::vector<std::string> &fields, const int column,
   return true;
 }
 
+void hashLine(core::Sha256Accumulator &hash, const std::string &line,
+              const bool hasTrailingNewline) {
+  hash.update(std::as_bytes(std::span{line.data(), line.size()}));
+  if (hasTrailingNewline) {
+    constexpr std::array newline{std::byte{'\n'}};
+    hash.update(newline);
+  }
+}
+
 [[nodiscard]] core::Result<core::Bar>
 parseBar(const std::vector<std::string> &fields, const CsvColumns &columns,
          const std::string &expectedSymbol,
@@ -252,6 +268,163 @@ parseBar(const std::vector<std::string> &fields, const CsvColumns &columns,
   return bar;
 }
 
+[[nodiscard]] core::Result<std::string>
+readLooseCsvTimeframe(const std::filesystem::path &path) {
+  std::ifstream input{path, std::ios::binary};
+  std::string line;
+  if (!input || !std::getline(input, line)) {
+    std::error_code fileError;
+    if (std::filesystem::is_regular_file(path, fileError)) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "CSV file is empty: " + path.string());
+    }
+    return core::makeError(core::ErrorCode::notFound,
+                           "CSV file not found: " + path.string());
+  }
+  auto columns = resolveColumns(splitCsvLine(line));
+  if (!columns.ok()) {
+    return columns.error();
+  }
+
+  std::string timeframe;
+  if (columns.value().schemaName >= 0) {
+    while (std::getline(input, line)) {
+      if (trim(line).empty()) {
+        continue;
+      }
+      const auto fields = splitCsvLine(line);
+      if (hasColumn(fields, columns.value().schemaName)) {
+        timeframe =
+            trim(fields[static_cast<std::size_t>(columns.value().schemaName)]);
+      }
+      break;
+    }
+  }
+  if (input.bad()) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Unable to read CSV source: " + path.string());
+  }
+  return timeframe;
+}
+
+[[nodiscard]] core::Result<CsvSourceInfo>
+inspectCsvSource(const std::filesystem::path &path, const std::string &symbol,
+                 const detail::SourceManifest &manifest) {
+  const auto declaration = manifest.files.find(path.filename().string());
+  if (manifest.present && declaration == manifest.files.end()) {
+    return core::makeError(core::ErrorCode::notFound,
+                           "CSV source is not declared for symbol '" + symbol +
+                               "'");
+  }
+
+  auto timeframe = std::string{};
+  auto sha256 = std::string{};
+  const auto manifestBound = declaration != manifest.files.end();
+  if (manifestBound) {
+    timeframe = declaration->second.timeframe;
+    sha256 = declaration->second.sha256;
+  } else {
+    auto detectedTimeframe = readLooseCsvTimeframe(path);
+    if (!detectedTimeframe.ok()) {
+      return detectedTimeframe.error();
+    }
+    timeframe = std::move(detectedTimeframe).value();
+  }
+  return CsvSourceInfo{.path = path,
+                       .timeframe = std::move(timeframe),
+                       .sha256 = std::move(sha256),
+                       .manifestBound = manifestBound};
+}
+
+[[nodiscard]] core::Result<void>
+appendSourceCatalogEntry(const std::string &symbol,
+                         const std::filesystem::path &path,
+                         const detail::SourceManifest &manifest,
+                         std::vector<CsvSourceCatalogEntry> &sources) {
+  auto source = inspectCsvSource(path, symbol, manifest);
+  if (!source.ok()) {
+    return source.error();
+  }
+  sources.push_back(CsvSourceCatalogEntry{.symbol = symbol,
+                                          .source = std::move(source).value()});
+  return {};
+}
+
+[[nodiscard]] core::Result<void>
+appendSymbolCatalog(std::istream &input,
+                    const std::filesystem::path &symbolsPath,
+                    const detail::SourceManifest &manifest,
+                    const std::filesystem::path &csvDirectory,
+                    std::vector<CsvSourceCatalogEntry> &sources) {
+  std::string symbol;
+  while (std::getline(input, symbol)) {
+    symbol = trim(symbol);
+    if (symbol.empty()) {
+      continue;
+    }
+    const auto source =
+        detail::sourceCsvPathForSymbol(csvDirectory, symbol, manifest);
+    if (!source.ok()) {
+      if (source.error().code == core::ErrorCode::notFound) {
+        continue;
+      }
+      return source.error();
+    }
+    auto filesystemError = std::error_code{};
+    if (std::filesystem::is_regular_file(source.value(), filesystemError)) {
+      const auto appended =
+          appendSourceCatalogEntry(symbol, source.value(), manifest, sources);
+      if (!appended.ok()) {
+        return appended.error();
+      }
+    } else if (filesystemError) {
+      return core::makeError(core::ErrorCode::schemaMismatch,
+                             "Unable to inspect CSV source: " +
+                                 source.value().string());
+    }
+  }
+  if (input.bad()) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Unable to read symbol catalog: " +
+                               symbolsPath.string());
+  }
+  return {};
+}
+
+[[nodiscard]] core::Result<void>
+appendDirectoryCatalog(const std::filesystem::path &csvDirectory,
+                       const detail::SourceManifest &manifest,
+                       std::vector<CsvSourceCatalogEntry> &sources) {
+  std::error_code error;
+  for (std::filesystem::directory_iterator entry{csvDirectory, error}, end;
+       entry != end; entry.increment(error)) {
+    if (!entry->is_regular_file(error)) {
+      if (error) {
+        return core::makeError(core::ErrorCode::schemaMismatch,
+                               "Unable to inspect CSV source: " +
+                                   error.message());
+      }
+      continue;
+    }
+    const auto filename = entry->path().filename().string();
+    if (!filename.ends_with(".csv")) {
+      continue;
+    }
+    const auto symbol = entry->path().stem().string();
+    const auto appended =
+        appendSourceCatalogEntry(symbol, entry->path(), manifest, sources);
+    if (!appended.ok()) {
+      return appended.error();
+    }
+  }
+  if (error) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Unable to enumerate CSV sources: " +
+                               error.message());
+  }
+  return {};
+}
+
 } // namespace
 
 CsvBarStream::CsvBarStream(ConstructionKey, std::vector<core::Bar> bars)
@@ -273,18 +446,33 @@ CsvBarStream::open(const StreamRequest &request,
                            "StreamRequest.schemaName is required");
   }
 
-  const auto csvPath = request.csvDir / (request.symbol + ".csv");
-  std::ifstream input{csvPath};
-  if (!input) {
-    return core::makeError(core::ErrorCode::notFound,
-                           "CSV file not found: " + csvPath.string());
+  const auto source = inspectSource(request.csvDir, request.symbol);
+  if (!source.ok()) {
+    return source.error();
+  }
+  if (source.value().manifestBound &&
+      source.value().timeframe != request.schemaName) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "CSV source timeframe '" + source.value().timeframe +
+                               "' does not match requested source schema '" +
+                               request.schemaName + "'");
   }
 
+  std::ifstream input{source.value().path, std::ios::binary};
+  if (!input) {
+    return core::makeError(core::ErrorCode::notFound,
+                           "CSV file not found: " +
+                               source.value().path.string());
+  }
+
+  core::Sha256Accumulator sourceHash;
   std::string line;
   if (!std::getline(input, line)) {
     return core::makeError(core::ErrorCode::schemaMismatch,
-                           "CSV file is empty: " + csvPath.string());
+                           "CSV file is empty: " +
+                               source.value().path.string());
   }
+  hashLine(sourceHash, line, !input.eof());
 
   auto columns = resolveColumns(splitCsvLine(line));
   if (!columns.ok()) {
@@ -294,6 +482,7 @@ CsvBarStream::open(const StreamRequest &request,
   std::vector<core::Bar> bars;
   int lineNumber = 1;
   while (std::getline(input, line)) {
+    hashLine(sourceHash, line, !input.eof());
     if (cancellation.isCancellationRequested()) {
       return core::makeError(core::ErrorCode::cancelled,
                              "CSV loading was cancelled");
@@ -313,9 +502,89 @@ CsvBarStream::open(const StreamRequest &request,
     }
   }
 
+  if (input.bad()) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Unable to read CSV file: " +
+                               source.value().path.string());
+  }
+  if (source.value().manifestBound &&
+      source.value().sha256 != sourceHash.finalize()) {
+    return core::makeError(
+        core::ErrorCode::dataSnapshotUnavailable,
+        "CSV source SHA-256 does not match source manifest: " +
+            source.value().path.filename().string());
+  }
+
   std::ranges::sort(bars, {}, &core::Bar::ts);
 
   return std::make_unique<CsvBarStream>(ConstructionKey{}, std::move(bars));
+}
+
+core::Result<CsvSourceInfo>
+CsvBarStream::inspectSource(const std::filesystem::path &csvDirectory,
+                            const std::string &symbol) {
+  if (symbol.empty()) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "CSV source symbol is required");
+  }
+  auto manifest = detail::readSourceManifest(csvDirectory);
+  if (!manifest.ok()) {
+    return manifest.error();
+  }
+  auto path =
+      detail::sourceCsvPathForSymbol(csvDirectory, symbol, manifest.value());
+  if (!path.ok()) {
+    return path.error();
+  }
+  return inspectCsvSource(path.value(), symbol, manifest.value());
+}
+
+core::Result<std::vector<std::string>>
+CsvBarStream::availableSymbols(const std::filesystem::path &csvDirectory) {
+  const auto sources = availableSources(csvDirectory);
+  if (!sources.ok()) {
+    return sources.error();
+  }
+  std::vector<std::string> symbols;
+  symbols.reserve(sources.value().size());
+  for (const auto &source : sources.value()) {
+    symbols.push_back(source.symbol);
+  }
+  return symbols;
+}
+
+core::Result<std::vector<CsvSourceCatalogEntry>>
+CsvBarStream::availableSources(const std::filesystem::path &csvDirectory) {
+  auto manifest = detail::readSourceManifest(csvDirectory);
+  if (!manifest.ok()) {
+    return manifest.error();
+  }
+
+  std::vector<CsvSourceCatalogEntry> sources;
+  const auto symbolsPath = csvDirectory.parent_path() / "Symbols.txt";
+  std::ifstream input{symbolsPath};
+  core::Result<void> catalogResult;
+  if (input) {
+    catalogResult = appendSymbolCatalog(input, symbolsPath, manifest.value(),
+                                        csvDirectory, sources);
+  } else if (manifest.value().present) {
+    return core::makeError(core::ErrorCode::schemaMismatch,
+                           "Source symbol catalog is missing: " +
+                               symbolsPath.string());
+  } else {
+    catalogResult =
+        appendDirectoryCatalog(csvDirectory, manifest.value(), sources);
+  }
+  if (!catalogResult.ok()) {
+    return catalogResult.error();
+  }
+  std::ranges::sort(sources, {}, &CsvSourceCatalogEntry::symbol);
+  sources.erase(std::unique(sources.begin(), sources.end(),
+                            [](const auto &left, const auto &right) {
+                              return left.symbol == right.symbol;
+                            }),
+                sources.end());
+  return sources;
 }
 
 std::optional<core::Bar> CsvBarStream::next() {

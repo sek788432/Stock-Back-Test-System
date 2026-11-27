@@ -3,6 +3,7 @@
 #include "Bte/Core/Digest.h"
 #include "Bte/Core/Result.h"
 
+#include "PublishedSnapshotSegments.h"
 #include "SegmentRetentionTestHooks.h"
 
 #include <sqlite3.h>
@@ -20,9 +21,12 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <ranges> // IWYU pragma: keep
 #include <string>
+#include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -256,6 +260,22 @@ struct SegmentMove final {
   std::filesystem::path destination;
 };
 
+struct SegmentRecoveryAction final {
+  std::filesystem::path activePath;
+  std::filesystem::path trashedPath;
+  bool alreadyTrashed = false;
+};
+
+struct SegmentRecoveryPlan final {
+  std::vector<std::filesystem::path> duplicateActiveFiles;
+  std::vector<SegmentMove> activeFilesToTrash;
+};
+
+struct SegmentRecoveryDirectories final {
+  std::filesystem::path active;
+  std::filesystem::path store;
+};
+
 void restoreMoves(std::vector<SegmentMove> &moves) noexcept {
   for (const auto &move : moves | std::views::reverse) {
     std::error_code ignored;
@@ -281,6 +301,141 @@ core::Result<void> moveSegment(const std::filesystem::path &source,
   }
   // GCOVR_EXCL_STOP
   return {};
+}
+
+core::Result<std::optional<SegmentRecoveryAction>>
+recoveryActionForSegment(const std::filesystem::directory_entry &entry,
+                         const std::filesystem::path &storeDirectory,
+                         const std::unordered_set<std::string> &referenced,
+                         const std::unordered_set<std::string> &published) {
+  constexpr std::string_view segmentSuffix{".btedata"};
+  const auto fileName = entry.path().filename().string();
+  if (!fileName.ends_with(segmentSuffix)) {
+    return std::optional<SegmentRecoveryAction>{};
+  }
+  const auto segmentId =
+      fileName.substr(0, fileName.size() - segmentSuffix.size());
+  if (!validSegmentId(segmentId) || referenced.contains(segmentId) ||
+      published.contains(segmentId)) {
+    return std::optional<SegmentRecoveryAction>{};
+  }
+
+  std::error_code error;
+  const auto status = entry.symlink_status(error);
+  if (error) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Unable to inspect snapshot segments: " +
+                               error.message());
+  }
+  if (!std::filesystem::is_regular_file(status)) {
+    return std::optional<SegmentRecoveryAction>{};
+  }
+  const auto trashedPath = storeDirectory / "Trash" / "Segments" / fileName;
+  const auto alreadyTrashed = std::filesystem::exists(trashedPath, error);
+  if (error) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Unable to inspect trashed snapshot segments: " +
+                               error.message());
+  }
+  if (alreadyTrashed) {
+    const auto trashedStatus =
+        std::filesystem::symlink_status(trashedPath, error);
+    if (error) {
+      return core::makeError(core::ErrorCode::permissionDenied,
+                             "Unable to inspect trashed snapshot segment: " +
+                                 error.message());
+    }
+    if (!std::filesystem::is_regular_file(trashedStatus)) {
+      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                             "Trashed Data Segment is unavailable");
+    }
+    std::ifstream input{trashedPath, std::ios::binary};
+    if (!input) {
+      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                             "Trashed Data Segment is unavailable");
+    }
+    const std::string bytes{std::istreambuf_iterator<char>{input},
+                            std::istreambuf_iterator<char>{}};
+    if (input.bad() || core::sha256(bytes) != segmentId) {
+      return core::makeError(core::ErrorCode::dataSnapshotUnavailable,
+                             "Trashed Data Segment hash is invalid");
+    }
+  }
+  return std::optional<SegmentRecoveryAction>{SegmentRecoveryAction{
+      .activePath = entry.path(),
+      .trashedPath = trashedPath,
+      .alreadyTrashed = alreadyTrashed,
+  }};
+}
+
+core::Result<SegmentRecoveryPlan> collectUnpublishedSegmentRecoveryPlan(
+    const SegmentRecoveryDirectories &directories,
+    const std::unordered_set<std::string> &referenced,
+    const std::unordered_set<std::string> &published) {
+  std::error_code error;
+  auto entries = std::filesystem::directory_iterator{directories.active, error};
+  if (error) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Unable to inspect snapshot segments: " +
+                               error.message());
+  }
+  SegmentRecoveryPlan plan;
+  for (; entries != std::filesystem::directory_iterator{};
+       entries.increment(error)) {
+    if (error) {
+      return core::makeError(core::ErrorCode::permissionDenied,
+                             "Unable to inspect snapshot segments: " +
+                                 error.message());
+    }
+    auto action = recoveryActionForSegment(*entries, directories.store,
+                                           referenced, published);
+    if (!action.ok()) {
+      return action.error();
+    }
+    auto recoveredAction = std::move(action).value();
+    if (!recoveredAction.has_value()) {
+      continue;
+    }
+    const auto &actionValue = recoveredAction.value();
+    if (actionValue.alreadyTrashed) {
+      plan.duplicateActiveFiles.push_back(actionValue.activePath);
+      continue;
+    }
+    plan.activeFilesToTrash.push_back({.source = actionValue.activePath,
+                                       .destination = actionValue.trashedPath});
+  }
+  if (error) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Unable to inspect snapshot segments: " +
+                               error.message());
+  }
+  return plan;
+}
+
+core::Result<std::vector<SegmentMove>>
+applyUnpublishedSegmentRecoveryPlan(const SegmentRecoveryPlan &plan) {
+  std::vector<SegmentMove> movedToTrash;
+  for (const auto &duplicate : plan.duplicateActiveFiles) {
+    std::error_code error;
+    std::filesystem::remove(duplicate, error);
+    if (error) {
+      restoreMoves(movedToTrash);
+      return core::makeError(
+          core::ErrorCode::permissionDenied,
+          "Unable to clear duplicate abandoned Data Segment: " +
+              error.message());
+    }
+  }
+  for (const auto &move : plan.activeFilesToTrash) {
+    auto moved = moveSegment(move.source, move.destination,
+                             "Unable to trash abandoned Data Segment");
+    if (!moved.ok()) {
+      restoreMoves(movedToTrash);
+      return moved.error();
+    }
+    movedToTrash.push_back(move);
+  }
+  return movedToTrash;
 }
 
 } // namespace
@@ -449,6 +604,202 @@ SegmentRetentionStore::references(const std::string &resultId) const {
                                    resultId);
 }
 
+core::Result<void> SegmentRetentionStore::abandonUnpublishedSnapshot(
+    const std::string &snapshotId) const {
+  if (!validSegmentId(snapshotId)) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Snapshot identity is invalid");
+  }
+  std::error_code error;
+  const auto exists = std::filesystem::exists(
+      storeDirectory_ / "Snapshots" / snapshotId, error);
+  if (error || exists) {
+    return core::makeError(core::ErrorCode::invalidArgument,
+                           "Snapshot is published or cannot be inspected");
+  }
+  auto released = release("snapshot-" + snapshotId);
+  if (!released.ok()) {
+    return released.error();
+  }
+  return {};
+}
+
+core::Result<void>
+SegmentRetentionStore::recoverUnpublishedSnapshotPins() const {
+  auto abandonedPinsRecovered = recoverAbandonedSnapshotPins();
+  if (!abandonedPinsRecovered.ok()) {
+    return abandonedPinsRecovered.error();
+  }
+  auto stagingCleared = clearStagedSnapshotArtifacts();
+  if (!stagingCleared.ok()) {
+    return stagingCleared.error();
+  }
+  return trashUnpublishedSnapshotSegments();
+}
+
+core::Result<void> SegmentRetentionStore::recoverAbandonedSnapshotPins() const {
+  std::vector<std::string> resultIds;
+  {
+    const std::scoped_lock lock{*storeMutex_};
+    auto database = openDatabase(storeDirectory_);
+    if (!database.ok()) {
+      return database.error();
+    }
+    auto queried = database.value()->strings(
+        "SELECT DISTINCT result_id FROM segment_references "
+        "WHERE result_id LIKE ?1 ORDER BY result_id",
+        "snapshot-%");
+    if (!queried.ok()) {
+      return queried.error();
+    }
+    resultIds = std::move(queried).value();
+  } // Release the lock before filesystem-based snapshot recovery.
+  constexpr std::string_view pinPrefix{"snapshot-"};
+  for (const auto &resultId : resultIds) {
+    if (!resultId.starts_with(pinPrefix)) {
+      continue;
+    }
+    const auto snapshotId = resultId.substr(pinPrefix.size());
+    if (!validSegmentId(snapshotId)) {
+      continue;
+    }
+    std::error_code error;
+    const auto published = std::filesystem::exists(
+        storeDirectory_ / "Snapshots" / snapshotId, error);
+    if (error) {
+      return core::makeError(core::ErrorCode::permissionDenied,
+                             "Unable to inspect snapshot recovery state: " +
+                                 error.message());
+    }
+    if (published) {
+      continue;
+    }
+    auto abandoned = abandonUnpublishedSnapshot(snapshotId);
+    if (!abandoned.ok()) {
+      return abandoned.error();
+    }
+  }
+  return {};
+}
+
+core::Result<void> SegmentRetentionStore::clearStagedSnapshotArtifacts() const {
+  const auto segmentDirectory = storeDirectory_ / "Segments";
+  std::error_code error;
+  const auto segmentDirectoryExists =
+      std::filesystem::exists(segmentDirectory, error);
+  if (error) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Unable to inspect snapshot segments: " +
+                               error.message());
+  }
+  if (!segmentDirectoryExists) {
+    return {};
+  }
+
+  auto stagedEntries =
+      std::filesystem::directory_iterator{segmentDirectory, error};
+  if (error) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Unable to inspect snapshot artifact staging: " +
+                               error.message());
+  }
+  for (; stagedEntries != std::filesystem::directory_iterator{};
+       stagedEntries.increment(error)) {
+    if (error) {
+      return core::makeError(core::ErrorCode::permissionDenied,
+                             "Unable to inspect snapshot artifact staging: " +
+                                 error.message());
+    }
+    if (!stagedEntries->path().filename().string().ends_with(
+            ".btedata.staging")) {
+      continue;
+    }
+    const auto status = stagedEntries->symlink_status(error);
+    if (error) {
+      return core::makeError(core::ErrorCode::permissionDenied,
+                             "Unable to inspect snapshot artifact staging: " +
+                                 error.message());
+    } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+    if (!std::filesystem::is_regular_file(status) &&
+        !std::filesystem::is_symlink(status)) {
+      continue;
+    } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+    std::filesystem::remove(stagedEntries->path(), error);
+    if (error) {
+      return core::makeError(core::ErrorCode::permissionDenied,
+                             "Unable to clear snapshot artifact staging: " +
+                                 error.message());
+    } // GCOVR_EXCL_LINE: the compiler emits no executable instruction here.
+  }
+  if (error) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Unable to inspect snapshot artifact staging: " +
+                               error.message());
+  }
+  return {};
+}
+
+core::Result<void>
+SegmentRetentionStore::trashUnpublishedSnapshotSegments() const {
+  const auto segmentDirectory = storeDirectory_ / "Segments";
+  std::error_code filesystemError;
+  const auto segmentDirectoryExists =
+      std::filesystem::exists(segmentDirectory, filesystemError);
+  if (filesystemError) {
+    return core::makeError(core::ErrorCode::permissionDenied,
+                           "Unable to inspect snapshot segments: " +
+                               filesystemError.message());
+  }
+  if (!segmentDirectoryExists) {
+    return {};
+  }
+  const std::scoped_lock lock{*storeMutex_};
+  auto database = openDatabase(storeDirectory_);
+  if (!database.ok()) {
+    return database.error();
+  }
+  auto begun = database.value()->execute("BEGIN IMMEDIATE");
+  if (!begun.ok()) {
+    return begun.error();
+  }
+  const auto rollback = [&] { (void)database.value()->execute("ROLLBACK"); };
+  auto referencedResult = database.value()->strings(
+      "SELECT DISTINCT segment_id FROM segment_references "
+      "WHERE segment_id LIKE ?1 ORDER BY segment_id",
+      "%");
+  if (!referencedResult.ok()) {
+    rollback();
+    return referencedResult.error();
+  }
+  const std::unordered_set<std::string> referenced{
+      referencedResult.value().begin(), referencedResult.value().end()};
+  auto published = publishedSnapshotSegments(storeDirectory_);
+  if (!published.ok()) {
+    rollback();
+    return published.error();
+  }
+  auto plan = collectUnpublishedSegmentRecoveryPlan(
+      {.active = segmentDirectory, .store = storeDirectory_}, referenced,
+      published.value());
+  if (!plan.ok()) {
+    rollback();
+    return plan.error();
+  }
+  auto movedToTrash = applyUnpublishedSegmentRecoveryPlan(plan.value());
+  if (!movedToTrash.ok()) {
+    rollback();
+    return movedToTrash.error();
+  }
+  auto movesToRestore = std::move(movedToTrash).value();
+  auto committed = database.value()->execute("COMMIT");
+  if (!committed.ok()) {
+    rollback();
+    restoreMoves(movesToRestore);
+    return committed.error();
+  }
+  return {};
+}
+
 core::Result<std::vector<std::string>>
 SegmentRetentionStore::release(const std::string &resultId) const {
   if (!validIdentity(resultId)) {
@@ -472,6 +823,11 @@ SegmentRetentionStore::release(const std::string &resultId) const {
     (void)database.value()->execute("ROLLBACK");
     return segmentIds.error();
   }
+  auto published = publishedSnapshotSegments(storeDirectory_);
+  if (!published.ok()) {
+    (void)database.value()->execute("ROLLBACK");
+    return published.error();
+  }
   auto removed = database.value()->executeBound(
       "DELETE FROM segment_references WHERE result_id = ?1", resultId);
   if (!removed.ok()) {
@@ -491,7 +847,7 @@ SegmentRetentionStore::release(const std::string &resultId) const {
       rollback();
       return count.error();
     }
-    if (count.value() == 0) {
+    if (count.value() == 0 && !published.value().contains(segmentId)) {
       const auto active =
           storeDirectory_ / "Segments" / (segmentId + ".btedata");
       const auto trashed =

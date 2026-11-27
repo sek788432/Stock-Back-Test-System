@@ -3,6 +3,7 @@
 #include "Bte/Core/Cancellation.h"
 
 #include <cstdint>
+#include <functional>
 
 namespace bte::bindings::testing {
 
@@ -16,6 +17,8 @@ enum class PortfolioCompletionCancellationPoint : std::uint8_t {
 void cancelNextResultReplayPortfolioCompletion(
     core::CancellationSource *source,
     PortfolioCompletionCancellationPoint point) noexcept;
+void setNextDailySourceOpenHook(std::function<void()> hook);
+void setNextDailySourceCancellationHook(std::function<void()> hook);
 void clearResultReplayTestHooks() noexcept;
 
 } // namespace bte::bindings::testing

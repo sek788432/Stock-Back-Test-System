@@ -528,6 +528,126 @@ TEST_F(ResultReplayTest, openUsesExactPersistedSpansInsteadOfDescriptorRange) {
   EXPECT_FALSE(daily.value()->stepForward());
 }
 
+TEST_F(ResultReplayTest,
+       dailyReplayRemainsAvailableAndMarksArchivedSourceDaysPartial) {
+  ASSERT_TRUE(
+      bte::data::removeReleaseSnapshot(root_ / "Data", snapshotId_).ok());
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_TRUE(daily.value()->current()->partialUtcDay);
+}
+
+TEST_F(ResultReplayTest,
+       dailyReplayFallsBackToSavedBarsWhenSnapshotIsRemovedAfterPresenceCheck) {
+  auto removed = false;
+  bte::bindings::testing::setNextDailySourceOpenHook([&] {
+    removed =
+        bte::data::removeReleaseSnapshot(root_ / "Data", snapshotId_).ok();
+  });
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+
+  bte::bindings::testing::clearResultReplayTestHooks();
+  ASSERT_TRUE(removed);
+  ASSERT_TRUE(daily.ok()) << daily.error().message;
+  ASSERT_NE(daily.value()->current(), nullptr);
+  EXPECT_TRUE(daily.value()->current()->partialUtcDay);
+}
+
+TEST_F(ResultReplayTest,
+       dailyReplayFailsClosedWhenTheActiveSnapshotPathCannotBeInspected) {
+  ASSERT_TRUE(
+      bte::data::removeReleaseSnapshot(root_ / "Data", snapshotId_).ok());
+  const auto activeSnapshot = root_ / "Data" / "Snapshots" / snapshotId_;
+  std::error_code linkError;
+  std::filesystem::create_symlink(activeSnapshot, activeSnapshot, linkError);
+  ASSERT_FALSE(linkError) << linkError.message();
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+
+  ASSERT_FALSE(daily.ok());
+  EXPECT_EQ(daily.error().code, bte::core::ErrorCode::dataSnapshotUnavailable);
+}
+
+TEST_F(ResultReplayTest,
+       dailyReplayFailsClosedWhenSnapshotBecomesUninspectableDuringOpen) {
+  const auto activeSnapshot = root_ / "Data" / "Snapshots" / snapshotId_;
+  auto changedPath = false;
+  bte::bindings::testing::setNextDailySourceOpenHook([&] {
+    std::error_code removeError;
+    std::filesystem::remove_all(activeSnapshot, removeError);
+    std::error_code linkError;
+    std::filesystem::create_symlink(activeSnapshot, activeSnapshot, linkError);
+    changedPath = !removeError && !linkError;
+  });
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  bte::bindings::testing::clearResultReplayTestHooks();
+
+  ASSERT_TRUE(changedPath);
+  ASSERT_FALSE(daily.ok());
+  EXPECT_EQ(daily.error().code, bte::core::ErrorCode::dataSnapshotUnavailable);
+}
+
+TEST_F(ResultReplayTest,
+       dailyReplayPropagatesCancellationBeforeWiderSourceRead) {
+  bte::core::CancellationSource cancellation;
+  bte::bindings::testing::setNextDailySourceOpenHook(
+      [&] { cancellation.requestCancellation(); });
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc, cancellation.token());
+  bte::bindings::testing::clearResultReplayTestHooks();
+
+  ASSERT_FALSE(daily.ok());
+  EXPECT_EQ(daily.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST_F(ResultReplayTest,
+       dailyReplayStopsWhenCancellationArrivesBeforeWiderSourceRead) {
+  bte::core::CancellationSource cancellation;
+  bte::bindings::testing::setNextDailySourceCancellationHook(
+      [&] { cancellation.requestCancellation(); });
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc, cancellation.token());
+  bte::bindings::testing::clearResultReplayTestHooks();
+
+  ASSERT_FALSE(daily.ok());
+  EXPECT_EQ(daily.error().code, bte::core::ErrorCode::cancelled);
+}
+
+TEST_F(ResultReplayTest,
+       dailyReplayRejectsSnapshotCorruptionBeforeWiderSourceRead) {
+  bte::bindings::testing::setNextDailySourceOpenHook([&] {
+    std::ofstream manifest{root_ / "Data" / "Snapshots" / snapshotId_ /
+                               "Manifest.btesnapshot",
+                           std::ios::binary | std::ios::trunc};
+    manifest << "corrupted after the exact snapshot read";
+  });
+
+  const auto daily = bte::bindings::ResultReplay::open(
+      root_ / "Store", root_ / "Data", resultId_,
+      bte::bindings::ResultReplayTimeframe::dailyUtc);
+  bte::bindings::testing::clearResultReplayTestHooks();
+
+  ASSERT_FALSE(daily.ok());
+  EXPECT_EQ(daily.error().code, bte::core::ErrorCode::dataSnapshotUnavailable);
+}
+
 TEST_F(ResultReplayTest, openUsesExactPersistedSpansAtTheExclusiveEndBoundary) {
   auto reader =
       bte::data::ReleaseSnapshotReader::open(root_ / "Data", snapshotId_);

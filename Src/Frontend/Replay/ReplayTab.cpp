@@ -44,6 +44,7 @@
 #include <QtCore/qabstractitemmodel.h>
 #include <QtCore/qtenvironmentvariables.h>
 #include <QtCore/qtimezone.h>
+#include <QtGlobal>
 #include <QtGui/qkeysequence.h>
 #include <QtWidgets/qslider.h>
 
@@ -56,6 +57,7 @@
 #include <optional>
 #include <span>
 #include <string> // IWYU pragma: keep
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -73,6 +75,60 @@ using bte::bindings::ReplaySessionVm;
 namespace {
 
 constexpr std::size_t maximumPlaybackBatchSize = 32;
+constexpr std::string_view hourlySourceTimeframe{"ohlcv-1h"};
+constexpr std::string_view dailySourceTimeframe{"ohlcv-1d"};
+
+void updatePreviewTimeframes(const ReplaySetupControls &setup) {
+  const auto sourceTimeframe =
+      setup.symbolCombo->currentData(Qt::UserRole).toString();
+  const auto previousTimeframe = setup.schemaCombo->currentText();
+  const QSignalBlocker blockedSignals{setup.schemaCombo};
+  setup.schemaCombo->clear();
+  if (sourceTimeframe ==
+      QString::fromLatin1(
+          hourlySourceTimeframe.data(),
+          static_cast<qsizetype>(hourlySourceTimeframe.size()))) {
+    setup.schemaCombo->addItems({"ohlcv-1d", "ohlcv-1h"});
+  } else if (sourceTimeframe ==
+             QString::fromLatin1(
+                 dailySourceTimeframe.data(),
+                 static_cast<qsizetype>(dailySourceTimeframe.size()))) {
+    setup.schemaCombo->addItem("ohlcv-1d");
+  }
+  const auto previousIndex = setup.schemaCombo->findText(previousTimeframe);
+  setup.schemaCombo->setCurrentIndex(previousIndex >= 0 ? previousIndex : 0);
+}
+
+void populatePreviewSources(const ReplaySetupControls &setup) {
+  const auto catalog =
+      bindings::availableReplaySources(bindings::replayCsvDataDirectory());
+  if (!catalog.ok()) {
+    setup.symbolCombo->addItem(ReplayTab::tr("Source catalog unavailable"));
+    setup.symbolCombo->setToolTip(
+        QString::fromStdString(catalog.error().message));
+    setup.symbolCombo->setEnabled(false);
+    setup.schemaCombo->setEnabled(false);
+    setup.loadButton->setEnabled(false);
+    return;
+  }
+
+  for (const auto &source : catalog.value()) {
+    if (source.timeframe != hourlySourceTimeframe &&
+        source.timeframe != dailySourceTimeframe) {
+      continue;
+    }
+    setup.symbolCombo->addItem(QString::fromStdString(source.symbol),
+                               QString::fromStdString(source.timeframe));
+  }
+  if (setup.symbolCombo->count() == 0) {
+    setup.symbolCombo->addItem(ReplayTab::tr("No supported CSV sources"));
+    setup.symbolCombo->setEnabled(false);
+    setup.schemaCombo->setEnabled(false);
+    setup.loadButton->setEnabled(false);
+    return;
+  }
+  updatePreviewTimeframes(setup);
+}
 
 void setLabelText(QLabel *label, const QString &text) {
   label->setText(text);
@@ -207,6 +263,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   root->addWidget(recoveryNotices);
 
   const auto setup = makeReplaySetupControls(this);
+  populatePreviewSources(setup);
   auto *setupToggle = std::make_unique<QToolButton>(this).release();
   setupToggle->setObjectName("replaySetupToggleButton");
   setupToggle->setAccessibleName("Show or hide replay setup");
@@ -608,6 +665,9 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
                      replayTimer->setInterval(timerIntervalForSpeed(speed));
                    });
   QObject::connect(setup.loadButton, &QPushButton::clicked, this, reloadBars);
+  QObject::connect(setup.symbolCombo,
+                   qOverload<int>(&QComboBox::currentIndexChanged), this,
+                   [setup](const int) { updatePreviewTimeframes(setup); });
   QObject::connect(setup.symbolCombo, &QComboBox::currentTextChanged, this,
                    reloadBars);
   QObject::connect(setup.schemaCombo, &QComboBox::currentTextChanged, this,

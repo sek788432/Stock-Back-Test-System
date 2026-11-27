@@ -1,12 +1,36 @@
 #include "Bte/Bindings/ReplayDataLoader.h"
 
+#include "Bte/Core/Digest.h"
+
 #include <QDate>
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <string>
 
 namespace {
+
+std::filesystem::path writeDeclaredCsv(const std::filesystem::path &root,
+                                       const std::string &timeframe,
+                                       const std::string &csvBytes) {
+  const auto directory = root / "StockData" / "Extracted";
+  std::filesystem::create_directories(directory);
+  const auto csvPath = directory / "SYN.csv";
+  {
+    std::ofstream csv{csvPath, std::ios::binary};
+    csv << csvBytes;
+  }
+  {
+    std::ofstream manifest{directory / "SourceManifest.btesource",
+                           std::ios::binary};
+    manifest << "BTE-SOURCE-MANIFEST-V1\nfile=SYN.csv|" << timeframe << '|'
+             << bte::core::sha256(csvBytes) << '\n';
+  }
+  return directory;
+}
 
 class ReplayDataLoaderTest final : public QObject {
   Q_OBJECT
@@ -21,6 +45,10 @@ private slots:
   void loadBacktestBars_findsManagedDataFromAnUnrelatedWorkingDirectory();
   void loadBacktestBars_doesNotThrowWhenCurrentDirectoryDisappears();
   void loadBacktestBars_honorsRequestedCancellation();
+  void loadBacktestBarsFrom_obeysTheDeclaredSourceTimeframe();
+  void loadBacktestBarsFrom_rejectsUnsupportedTimeframes();
+  void availableReplaySourcesUsesTheManifestBoundSymbolCatalog();
+  void availableReplaySourcesPropagatesCatalogFailures();
 };
 
 void ReplayDataLoaderTest::
@@ -131,6 +159,133 @@ void ReplayDataLoaderTest::loadBacktestBars_honorsRequestedCancellation() {
 
   QVERIFY(!result.ok());
   QCOMPARE(result.error().code, bte::core::ErrorCode::cancelled);
+}
+
+void ReplayDataLoaderTest::
+    loadBacktestBarsFrom_obeysTheDeclaredSourceTimeframe() {
+  const auto csvBytes = "symbol,ts,open,high,low,close,volume\n"
+                        "SYN,2024-01-01T10:00:00Z,100,102,99,101,100\n"
+                        "SYN,2024-01-01T11:00:00Z,101,103,100,102,200\n"
+                        "SYN,2024-01-02T10:00:00Z,102,104,101,103,300\n";
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto csvDirectory =
+      writeDeclaredCsv(temporary.path().toStdString(), "ohlcv-1h", csvBytes);
+
+  const auto hourly = bte::bindings::loadBacktestBarsFrom(
+      "SYN", "ohlcv-1h", QDate{2024, 1, 1}, QDate{2024, 1, 2}, csvDirectory);
+  const auto dailyFromHourly = bte::bindings::loadBacktestBarsFrom(
+      "SYN", "ohlcv-1d", QDate{2024, 1, 1}, QDate{2024, 1, 2}, csvDirectory);
+  QVERIFY2(hourly.ok(), hourly.error().message.c_str());
+  QVERIFY2(dailyFromHourly.ok(), dailyFromHourly.error().message.c_str());
+  QCOMPARE(hourly.value().size(), 3U);
+  QCOMPARE(dailyFromHourly.value().size(), 2U);
+  const auto &firstDailyBar = dailyFromHourly.value().front();
+  QVERIFY(firstDailyBar.ts == bte::core::Timestamp{std::chrono::sys_days{
+                                  std::chrono::year{2024} / 1 / 1}});
+  QCOMPARE(firstDailyBar.open, 100.0);
+  QCOMPARE(firstDailyBar.high, 103.0);
+  QCOMPARE(firstDailyBar.low, 99.0);
+  QCOMPARE(firstDailyBar.close, 102.0);
+  QCOMPARE(firstDailyBar.volume, 300.0);
+  const auto &secondDailyBar = dailyFromHourly.value().back();
+  QVERIFY(secondDailyBar.ts == bte::core::Timestamp{std::chrono::sys_days{
+                                   std::chrono::year{2024} / 1 / 2}});
+  QCOMPARE(secondDailyBar.open, 102.0);
+  QCOMPARE(secondDailyBar.high, 104.0);
+  QCOMPARE(secondDailyBar.low, 101.0);
+  QCOMPARE(secondDailyBar.close, 103.0);
+  QCOMPARE(secondDailyBar.volume, 300.0);
+
+  const auto dailyCsvBytes = "symbol,ts,open,high,low,close,volume\n"
+                             "SYN,2024-01-01T00:00:00Z,200,210,195,207,1000\n"
+                             "SYN,2024-01-02T00:00:00Z,207,215,204,212,1250\n"
+                             "SYN,2024-01-03T00:00:00Z,212,219,210,218,1400\n";
+  writeDeclaredCsv(temporary.path().toStdString(), "ohlcv-1d", dailyCsvBytes);
+  const auto dailySource = bte::bindings::loadBacktestBarsFrom(
+      "SYN", "ohlcv-1d", QDate{2024, 1, 1}, QDate{2024, 1, 2}, csvDirectory);
+  const auto hourlyFromDaily = bte::bindings::loadBacktestBarsFrom(
+      "SYN", "ohlcv-1h", QDate{2024, 1, 1}, QDate{2024, 1, 2}, csvDirectory);
+
+  QVERIFY2(dailySource.ok(), dailySource.error().message.c_str());
+  QCOMPARE(dailySource.value().size(), 2U);
+  const auto &firstSourceDailyBar = dailySource.value().front();
+  QVERIFY(firstSourceDailyBar.ts == bte::core::Timestamp{std::chrono::sys_days{
+                                        std::chrono::year{2024} / 1 / 1}});
+  QCOMPARE(firstSourceDailyBar.open, 200.0);
+  QCOMPARE(firstSourceDailyBar.high, 210.0);
+  QCOMPARE(firstSourceDailyBar.low, 195.0);
+  QCOMPARE(firstSourceDailyBar.close, 207.0);
+  QCOMPARE(firstSourceDailyBar.volume, 1000.0);
+  const auto &secondSourceDailyBar = dailySource.value().back();
+  QVERIFY(secondSourceDailyBar.ts == bte::core::Timestamp{std::chrono::sys_days{
+                                         std::chrono::year{2024} / 1 / 2}});
+  QCOMPARE(secondSourceDailyBar.open, 207.0);
+  QCOMPARE(secondSourceDailyBar.high, 215.0);
+  QCOMPARE(secondSourceDailyBar.low, 204.0);
+  QCOMPARE(secondSourceDailyBar.close, 212.0);
+  QCOMPARE(secondSourceDailyBar.volume, 1250.0);
+  QVERIFY(!hourlyFromDaily.ok());
+  QCOMPARE(hourlyFromDaily.error().code, bte::core::ErrorCode::schemaMismatch);
+}
+
+void ReplayDataLoaderTest::loadBacktestBarsFrom_rejectsUnsupportedTimeframes() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto csvDirectory =
+      writeDeclaredCsv(temporary.path().toStdString(), "ohlcv-1m",
+                       "symbol,ts,open,high,low,close,volume\n"
+                       "SYN,2024-01-01T10:00:00Z,100,102,99,101,100\n");
+
+  const auto unsupportedSource = bte::bindings::loadBacktestBarsFrom(
+      "SYN", "ohlcv-1d", QDate{2024, 1, 1}, QDate{2024, 1, 1}, csvDirectory);
+  const auto unsupportedRequest = bte::bindings::loadBacktestBarsFrom(
+      "SYN", "ohlcv-5m", QDate{2024, 1, 1}, QDate{2024, 1, 1}, csvDirectory);
+
+  QVERIFY(!unsupportedSource.ok());
+  QVERIFY(!unsupportedRequest.ok());
+  QCOMPARE(unsupportedSource.error().code,
+           bte::core::ErrorCode::schemaMismatch);
+  QCOMPARE(unsupportedRequest.error().code,
+           bte::core::ErrorCode::schemaMismatch);
+}
+
+void ReplayDataLoaderTest::
+    availableReplaySourcesUsesTheManifestBoundSymbolCatalog() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto csvDirectory =
+      writeDeclaredCsv(temporary.path().toStdString(), "ohlcv-1d",
+                       "symbol,ts,open,high,low,close,volume\n"
+                       "SYN,2024-01-01T00:00:00Z,100,102,99,101,100\n");
+  {
+    std::ofstream symbols{csvDirectory.parent_path() / "Symbols.txt"};
+    symbols << "SYN\nMISSING\n";
+  }
+
+  const auto sources = bte::bindings::availableReplaySources(csvDirectory);
+
+  QVERIFY2(sources.ok(), sources.error().message.c_str());
+  QCOMPARE(sources.value().size(), 1U);
+  QCOMPARE(sources.value().front().symbol, std::string{"SYN"});
+  QCOMPARE(sources.value().front().timeframe, std::string{"ohlcv-1d"});
+}
+
+void ReplayDataLoaderTest::availableReplaySourcesPropagatesCatalogFailures() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto csvDirectory =
+      std::filesystem::path{temporary.path().toStdString()} / "Extracted";
+  std::filesystem::create_directories(csvDirectory);
+  {
+    std::ofstream csv{csvDirectory / "BROKEN.csv", std::ios::binary};
+    csv << "invalid,csv,header\n";
+  }
+
+  const auto sources = bte::bindings::availableReplaySources(csvDirectory);
+
+  QVERIFY(!sources.ok());
+  QCOMPARE(sources.error().code, bte::core::ErrorCode::schemaMismatch);
 }
 
 } // namespace

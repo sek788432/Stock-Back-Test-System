@@ -16,10 +16,8 @@ Core defines the small, dependency-light vocabulary shared by backend modules. T
   persistence is implemented for the current limited single-symbol path; the
   complete canonical record model remains planned.
 
-The implemented timestamp parser still mishandles offsets/fractions/trailing
-input, and the current `Result<T>` permits invalid states described in the
-repository audit. The contracts below are target behavior until those gaps and
-their regression tests land.
+The current `Result<T>` permits invalid states described in the repository
+audit. The complete valid-state contract below remains target behavior.
 
 ## 2. C++ conventions
 
@@ -41,6 +39,13 @@ struct DateRange {
 ```
 
 Core timestamps are UTC. Exchange-session identity uses the versioned US-equities calendar owned by the Release Snapshot. UI localization occurs only at the presentation edge. Parsing must reject invalid calendar dates, unsupported offsets, and trailing input rather than silently truncating them.
+
+The implemented parser accepts `YYYY-MM-DD` or a complete date and time with
+`T` or a space between them. A time may have one to three fractional digits
+and an optional `Z` or `+00:00` suffix; absent suffixes are interpreted as UTC.
+Nonzero offsets, leap seconds, extra precision, incomplete fields, and trailing
+bytes are rejected. Formatting emits UTC with three fractional digits when the
+millisecond component is nonzero.
 
 ## 4. Authoritative numeric types
 

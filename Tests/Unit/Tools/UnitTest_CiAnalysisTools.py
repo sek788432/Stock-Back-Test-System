@@ -365,7 +365,7 @@ class ChangedBranchCoverageTest(unittest.TestCase):
         )[0]
 
         self.assertIn("runs-on: macos-latest", coverage_job)
-        self.assertIn("timeout-minutes: 45", coverage_job)
+        self.assertIn("timeout-minutes: 60", coverage_job)
         self.assertIn(
             "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
             coverage_job,

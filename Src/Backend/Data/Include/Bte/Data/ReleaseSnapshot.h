@@ -96,6 +96,14 @@ struct SnapshotBuildResult {
   std::size_t barCount = 0;
 };
 
+struct ReleaseSnapshotSummary {
+  std::string snapshotId;
+  std::string profile;
+  std::string timeframe;
+  std::vector<std::string> symbols;
+  std::size_t barCount = 0;
+};
+
 struct SnapshotSelectRequest {
   std::vector<std::string> symbols;
   core::DateRange range;
@@ -105,6 +113,12 @@ struct SnapshotSelectRequest {
 [[nodiscard]] core::Result<SnapshotBuildResult>
 buildReleaseSnapshot(const SnapshotBuildRequest &request,
                      const core::CancellationToken &cancellation = {});
+
+/// Removes one published snapshot while preserving segments pinned by Results
+/// or other published snapshots.
+[[nodiscard]] core::Result<void>
+removeReleaseSnapshot(const std::filesystem::path &storeDirectory,
+                      const std::string &snapshotId);
 
 class ReleaseSnapshotReader final {
 private:
@@ -123,6 +137,13 @@ public:
   open(const std::filesystem::path &storeDirectory,
        const std::string &snapshotId,
        const core::CancellationToken &cancellation = {});
+
+  /// Opens only the segments named by a persisted selection. General range and
+  /// history queries require a complete snapshot reader.
+  [[nodiscard]] static core::Result<std::unique_ptr<ReleaseSnapshotReader>>
+  openExact(const std::filesystem::path &storeDirectory,
+            const DataSelectionIdentity &identity,
+            const core::CancellationToken &cancellation = {});
 
   [[nodiscard]] core::Result<SnapshotSelection>
   select(const SnapshotSelectRequest &request,
@@ -151,7 +172,19 @@ public:
   readExact(const DataSelectionIdentity &identity,
             const core::CancellationToken &cancellation = {}) const;
 
+  /// Validates the exact immutable rows named by an identity without
+  /// materializing a combined SnapshotSelection bar vector.
+  [[nodiscard]] core::Result<void>
+  validateExact(const DataSelectionIdentity &identity,
+                const core::CancellationToken &cancellation = {}) const;
+
+  [[nodiscard]] ReleaseSnapshotSummary summary() const;
+
 private:
+  [[nodiscard]] static core::Result<std::unique_ptr<ReleaseSnapshotReader>>
+  openImpl(const std::filesystem::path &storeDirectory,
+           const std::string &snapshotId, const DataSelectionIdentity *identity,
+           const core::CancellationToken &cancellation);
   std::unique_ptr<Impl> impl_;
 };
 

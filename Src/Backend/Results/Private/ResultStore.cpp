@@ -953,14 +953,10 @@ core::Result<void>
 validateDataSelection(const std::filesystem::path &dataRoot,
                       const data::DataSelectionIdentity &identity,
                       const core::CancellationToken &cancellation = {}) {
-  auto reader = data::ReleaseSnapshotReader::open(dataRoot, identity.snapshotId,
-                                                  cancellation);
+  auto reader =
+      data::ReleaseSnapshotReader::openExact(dataRoot, identity, cancellation);
   if (!reader.ok()) {
     return reader.error();
-  }
-  auto exact = reader.value()->readExact(identity, cancellation);
-  if (!exact.ok()) {
-    return exact.error();
   }
   return {};
 }
@@ -3369,9 +3365,8 @@ core::Result<OpenedResultWithData> ResultStore::openResultWithData(
   if (!result.ok()) {
     return result.error();
   }
-  auto reader = data::ReleaseSnapshotReader::open(
-      dataStore_, result.value().descriptor.dataSelection.snapshotId,
-      cancellation);
+  auto reader = data::ReleaseSnapshotReader::openExact(
+      dataStore_, result.value().descriptor.dataSelection, cancellation);
   if (!reader.ok()) {
     return reader.error();
   }
