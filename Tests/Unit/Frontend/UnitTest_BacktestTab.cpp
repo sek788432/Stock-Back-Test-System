@@ -2743,12 +2743,14 @@ def create_strategy(params):
       });
 
   QTest::mouseClick(run, Qt::LeftButton);
+  // Managed runtime startup has four separately enforced phases; leave time
+  // for a bundled worker to reach a terminal UI state before timing it out.
   QVERIFY2(bte::test::waitUntil(
                [saveAndReplay, status] {
                  return saveAndReplay->isEnabled() ||
                         !status->text().contains("Running");
                },
-               std::chrono::milliseconds{30'000}),
+               std::chrono::milliseconds{75'000}),
            qPrintable(status->text()));
   QVERIFY2(saveAndReplay->isEnabled(), qPrintable(status->text()));
   QVERIFY2(bte::test::waitUntil([trades] { return trades->rowCount() == 1; },
