@@ -199,12 +199,42 @@ struct ReplayTab::State final {
   std::function<void(const QString &, std::optional<core::Timestamp>, bool)>
       requestOpen;
   std::function<void()> reloadCatalog;
+  ReplaySetupControls setupControls;
+  QLabel *modeSourceLabel = nullptr;
   QString requestedResultId;
   bool resultMode = false;
   bool resultRequestMade = false;
   bool openingResult = false;
   bool refreshCatalogAfterOpen = false;
 };
+
+void ReplayTab::updateModeSource() {
+  const auto &setup = state_->setupControls;
+  auto summary =
+      state_->resultMode ? tr("Result replay") : tr("Bar-only preview");
+  if (state_->resultMode) {
+    auto source = state_->requestedResultId;
+    if (source.isEmpty()) {
+      source = setup.resultCombo->currentText().trimmed();
+    }
+    if (!source.isEmpty()) {
+      summary += tr(" · %1").arg(source);
+    }
+    const auto timeframe = setup.resultTimeframeCombo->currentText();
+    summary += tr(" · %1").arg(timeframe);
+  } else {
+    const auto symbol = setup.symbolCombo->currentText();
+    const auto timeframe = setup.schemaCombo->currentText();
+    summary += tr(" · %1").arg(symbol);
+    if (!timeframe.isEmpty()) {
+      summary += tr(" · %1").arg(timeframe);
+    }
+  }
+  setLabelText(state_->modeSourceLabel, summary);
+  const auto hasCatalogError = setup.resultStatusLabel->text().startsWith(
+      tr("Cannot load saved results"));
+  setup.resultStatusLabel->setVisible(state_->resultMode || hasCatalogError);
+}
 
 ReplayTab::ReplayTab(QWidget *parent)
     : ReplayTab(defaultApplicationStore("BTE_RESULT_STORE", "Results"),
@@ -264,8 +294,10 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   root->addWidget(recoveryNotices);
 
   const auto setup = makeReplaySetupControls(this);
+  state_->setupControls = setup;
   populatePreviewSources(setup);
   auto *modeSourceLabel = std::make_unique<QLabel>(this).release();
+  state_->modeSourceLabel = modeSourceLabel;
   modeSourceLabel->setObjectName("replayModeSourceLabel");
   modeSourceLabel->setAccessibleName("Replay mode and source");
   modeSourceLabel->setWordWrap(true);
@@ -296,36 +328,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   contextLayout->addLayout(statusRow);
   root->addWidget(contextPanel);
 
-  const auto updateReplayModeSource = [this, setup, modeSourceLabel] {
-    auto summary =
-        state_->resultMode ? tr("Result replay") : tr("Bar-only preview");
-    if (state_->resultMode) {
-      auto source = state_->requestedResultId;
-      if (source.isEmpty()) {
-        source = setup.resultCombo->currentText().trimmed();
-      }
-      if (!source.isEmpty()) {
-        summary += tr(" · %1").arg(source);
-      }
-      const auto timeframe = setup.resultTimeframeCombo->currentText();
-      if (!timeframe.isEmpty()) {
-        summary += tr(" · %1").arg(timeframe);
-      }
-    } else {
-      const auto symbol = setup.symbolCombo->currentText();
-      const auto timeframe = setup.schemaCombo->currentText();
-      if (!symbol.isEmpty()) {
-        summary += tr(" · %1").arg(symbol);
-      }
-      if (!timeframe.isEmpty()) {
-        summary += tr(" · %1").arg(timeframe);
-      }
-    }
-    setLabelText(modeSourceLabel, summary);
-    const auto hasCatalogError = setup.resultStatusLabel->text().startsWith(
-        tr("Cannot load saved results"));
-    setup.resultStatusLabel->setVisible(state_->resultMode || hasCatalogError);
-  };
+  const auto updateReplayModeSource = [this] { updateModeSource(); };
   updateReplayModeSource();
 
   const auto playback = makeReplayPlaybackControls(this);

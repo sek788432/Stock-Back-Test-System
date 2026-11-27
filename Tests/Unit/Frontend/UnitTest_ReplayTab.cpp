@@ -907,6 +907,35 @@ void ReplayTabTest::collapsedSetupKeepsModeSourceAndResultStatusVisible() {
   }));
   QVERIFY(neutralContext->isVisible());
   QVERIFY(!neutralStatus->isVisible());
+
+  neutral.openResult(QString{});
+  QVERIFY(bte::test::waitUntil([neutralStatus] {
+    return neutralStatus->text() == "Select a saved result";
+  }));
+  QVERIFY(neutralStatus->isVisible());
+  QCOMPARE(neutralContext->text(), QString{"Result replay · Hourly"});
+
+  QTemporaryDir noSourceTemporary;
+  QVERIFY(noSourceTemporary.isValid());
+  const auto noSourceRoot =
+      std::filesystem::path{noSourceTemporary.path().toStdString()};
+  std::filesystem::create_directories(noSourceRoot / "StockData" / "Extracted");
+  {
+    const ScopedCurrentDirectory emptyDirectory{noSourceRoot};
+    bte::frontend::ReplayTab noSource{noSourceRoot / "Results",
+                                      noSourceRoot / "Data"};
+    noSource.resize(1024, 768);
+    noSource.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&noSource));
+    auto *noSourceContext =
+        noSource.findChild<QLabel *>("replayModeSourceLabel");
+    auto *noSourceSchema = noSource.findChild<QComboBox *>("replaySchemaCombo");
+    QVERIFY(noSourceContext != nullptr);
+    QVERIFY(noSourceSchema != nullptr);
+    QCOMPARE(noSourceContext->text(),
+             QString{"Bar-only preview · No supported CSV sources"});
+    QVERIFY(noSourceSchema->currentText().isEmpty());
+  }
 }
 
 void ReplayTabTest::chartAndDetailsCanBeResizedByDraggingSplitterHandle() {

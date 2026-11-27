@@ -30,6 +30,8 @@ protected:
 
 private:
   struct State;
+  void updateModeSource();
+
   std::unique_ptr<State> state_;
 };
 
