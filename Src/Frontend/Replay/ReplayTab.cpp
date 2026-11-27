@@ -39,7 +39,6 @@
 #include <QTableWidget>
 #include <QTimer>
 #include <QToolButton>
-#include <QVBoxLayout>
 #include <QVariant>
 #include <QtCore/Qt>
 #include <QtCore/qabstractitemmodel.h>

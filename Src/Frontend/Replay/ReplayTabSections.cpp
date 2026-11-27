@@ -12,7 +12,6 @@
 #include <QSizePolicy>
 #include <QString>
 #include <QStyle>
-#include <QVBoxLayout>
 #include <QtCore/Qt>
 #include <QtCore/qsize.h>
 // IWYU pragma: no_include <QtWidgets/qslider.h>
