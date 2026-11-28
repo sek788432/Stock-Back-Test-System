@@ -231,11 +231,13 @@ void ReplayTab::updateModeSource() {
     }
   }
   setLabelText(state_->modeSourceLabel, summary);
-  if (!state_->resultMode && state_->resultCatalogError.has_value()) {
-    setLabelText(setup.resultStatusLabel, *state_->resultCatalogError);
+  const auto catalogError =
+      state_->resultCatalogError.value_or(QString{});
+  if (!state_->resultMode && !catalogError.isEmpty()) {
+    setLabelText(setup.resultStatusLabel, catalogError);
   }
   setup.resultStatusLabel->setVisible(state_->resultMode ||
-                                      state_->resultCatalogError.has_value());
+                                      !catalogError.isEmpty());
 }
 
 ReplayTab::ReplayTab(QWidget *parent)
