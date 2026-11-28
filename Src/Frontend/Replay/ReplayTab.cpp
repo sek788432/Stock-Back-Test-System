@@ -231,8 +231,7 @@ void ReplayTab::updateModeSource() {
     }
   }
   setLabelText(state_->modeSourceLabel, summary);
-  const auto catalogError =
-      state_->resultCatalogError.value_or(QString{});
+  const auto catalogError = state_->resultCatalogError.value_or(QString{});
   if (!state_->resultMode && !catalogError.isEmpty()) {
     setLabelText(setup.resultStatusLabel, catalogError);
   }
