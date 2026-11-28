@@ -865,10 +865,14 @@ void ReplayTabTest::collapsedSetupKeepsModeSourceAndResultStatusVisible() {
   QVERIFY(QTest::qWaitForWindowExposed(&tab));
 
   auto *setup = tab.findChild<QGroupBox *>("replaySetupBox");
+  auto *setupToggle = tab.findChild<QToolButton *>("replaySetupToggleButton");
+  auto *loadButton = tab.findChild<QPushButton *>("replayLoadButton");
   auto *context = tab.findChild<QLabel *>("replayModeSourceLabel");
   auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
   auto *timeframe = tab.findChild<QComboBox *>("replaySchemaCombo");
   QVERIFY(setup != nullptr);
+  QVERIFY(setupToggle != nullptr);
+  QVERIFY(loadButton != nullptr);
   QVERIFY(context != nullptr);
   QVERIFY(status != nullptr);
   QVERIFY(timeframe != nullptr);
@@ -884,6 +888,24 @@ void ReplayTabTest::collapsedSetupKeepsModeSourceAndResultStatusVisible() {
   QVERIFY(hourlyIndex >= 0);
   timeframe->setCurrentIndex(hourlyIndex);
   QVERIFY(context->text().contains("ohlcv-1h"));
+  QVERIFY(status->isVisible());
+  const auto catalogError = status->text();
+  setupToggle->click();
+  QVERIFY(setup->isVisible());
+  loadButton->click();
+  QCOMPARE(status->text(), catalogError);
+  QVERIFY(status->isVisible());
+  setupToggle->click();
+  QVERIFY(setup->isHidden());
+  QVERIFY(status->isVisible());
+
+  std::filesystem::remove(blockedCatalog);
+  std::filesystem::create_directories(blockedCatalog);
+  tab.hide();
+  tab.show();
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text() == "No saved Backtest results"; }));
+  QVERIFY(!status->isVisible());
 
   tab.openResult("missing-result");
   QVERIFY(bte::test::waitUntil(

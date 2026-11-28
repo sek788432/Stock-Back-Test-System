@@ -200,6 +200,7 @@ struct ReplayTab::State final {
   std::function<void()> reloadCatalog;
   ReplaySetupControls setupControls;
   QLabel *modeSourceLabel = nullptr;
+  std::optional<QString> resultCatalogError;
   QString requestedResultId;
   bool resultMode = false;
   bool resultRequestMade = false;
@@ -230,9 +231,11 @@ void ReplayTab::updateModeSource() {
     }
   }
   setLabelText(state_->modeSourceLabel, summary);
-  const auto hasCatalogError = setup.resultStatusLabel->text().startsWith(
-      tr("Cannot load saved results"));
-  setup.resultStatusLabel->setVisible(state_->resultMode || hasCatalogError);
+  if (!state_->resultMode && state_->resultCatalogError.has_value()) {
+    setLabelText(setup.resultStatusLabel, *state_->resultCatalogError);
+  }
+  setup.resultStatusLabel->setVisible(state_->resultMode ||
+                                      state_->resultCatalogError.has_value());
 }
 
 ReplayTab::ReplayTab(QWidget *parent)
@@ -919,15 +922,17 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
         [this, setup, recoveryNotices, updateReplayModeSource](
             const bindings::ResultReplayRequests::CatalogResult &catalog) {
           if (!catalog.ok()) {
+            state_->resultCatalogError =
+                tr("Cannot load saved results — %1")
+                    .arg(QString::fromStdString(catalog.error().message));
             if (!state_->resultRequestMade) {
-              setLabelText(
-                  setup.resultStatusLabel,
-                  tr("Cannot load saved results — %1")
-                      .arg(QString::fromStdString(catalog.error().message)));
+              setLabelText(setup.resultStatusLabel,
+                           *state_->resultCatalogError);
               updateReplayModeSource();
             }
             return;
           }
+          state_->resultCatalogError.reset();
           recoveryNotices->present(catalog.value().notices);
           const auto activeResultId =
               state_->requestedResultId.isEmpty()

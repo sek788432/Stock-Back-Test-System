@@ -192,8 +192,10 @@ and bar-only preview controls without horizontal overflow; every control is
 reachable by vertical scrolling and keyboard navigation. The collapsed setup
 keeps a context panel above playback that identifies the active mode and
 source. Result Replay shows its current status there, as do actionable catalog
-errors during bar-only preview; the neutral prompt to select a
-saved result is hidden while preview is active. It does not invoke Strategy,
+errors during bar-only preview. A catalog error stays visible until a later
+catalog refresh succeeds, including while users reload or adjust preview
+data. The neutral prompt to select a saved result is hidden while preview is
+active. It does not invoke Strategy,
 Python, indicator scheduling, order evaluation, or Engine execution. Complete
 warning/log/metric presentation and marker detail interaction remain planned. A
 limited Results-management page is implemented.
