@@ -30,6 +30,7 @@
 #include <QToolButton>
 #include <QtGlobal>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -61,6 +62,23 @@ private:
   std::filesystem::path previous_;
 };
 
+[[nodiscard]] bool writeHourlyReplaySource(const std::filesystem::path &root) {
+  const auto sourceDirectory = root / "StockData" / "Extracted";
+  std::filesystem::create_directories(sourceDirectory);
+  const std::string csv = "symbol,ts,open,high,low,close,volume\n"
+                          "AAPL,2024-01-01T10:00:00Z,100,102,99,101,100\n";
+  std::ofstream source{sourceDirectory / "AAPL.csv", std::ios::binary};
+  source << csv;
+  std::ofstream symbols{sourceDirectory.parent_path() / "Symbols.txt",
+                        std::ios::binary};
+  symbols << "AAPL\n";
+  std::ofstream manifest{sourceDirectory / "SourceManifest.btesource",
+                         std::ios::binary};
+  manifest << "BTE-SOURCE-MANIFEST-V1\n"
+           << "file=AAPL.csv|ohlcv-1h|" << bte::core::sha256(csv) << '\n';
+  return source.good() && symbols.good() && manifest.good();
+}
+
 class ReplayTabTest final : public QObject {
   Q_OBJECT
 
@@ -83,6 +101,8 @@ private slots:
   void keyboardControlsStepAndTogglePlayback();
   void emptyAndCompletedPlaybackBoundariesRemainStable();
   void chartFirstLayoutIsCollapsibleAdjustableAndUsesMostOfTheViewport();
+  void expandedSetupFitsAndCanBeReachedAtSupportedWindowSizes();
+  void collapsedSetupKeepsModeSourceAndResultStatusVisible();
   void chartAndDetailsCanBeResizedByDraggingSplitterHandle();
   void rendersNonBlankReplaySnapshot();
   void compactViewportCanScrollToTradeLog();
@@ -746,6 +766,198 @@ void ReplayTabTest::
   QCoreApplication::processEvents();
   QCOMPARE(scrollArea->horizontalScrollBar()->maximum(), 0);
   verifyChartShare();
+}
+
+void ReplayTabTest::expandedSetupFitsAndCanBeReachedAtSupportedWindowSizes() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto root = std::filesystem::path{temporary.path().toStdString()};
+  QVERIFY(writeHourlyReplaySource(root));
+  const ScopedCurrentDirectory currentDirectory{root};
+  bte::frontend::ReplayTab tab{root / "Results", root / "Data"};
+  auto *setup = tab.findChild<QGroupBox *>("replaySetupBox");
+  auto *setupToggle = tab.findChild<QToolButton *>("replaySetupToggleButton");
+  auto *scrollArea = tab.findChild<QScrollArea *>("replayScrollArea");
+  QVERIFY(setup != nullptr);
+  QVERIFY(setupToggle != nullptr);
+  QVERIFY(scrollArea != nullptr);
+
+  tab.resize(1024, 768);
+  tab.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&tab));
+  QTest::mouseClick(setupToggle, Qt::LeftButton);
+  QVERIFY(setup->isVisible());
+
+  const std::array<QWidget *, 9> controls{
+      tab.findChild<QComboBox *>("replayResultCombo"),
+      tab.findChild<QComboBox *>("replayResultTimeframeCombo"),
+      tab.findChild<QPushButton *>("replayOpenResultButton"),
+      tab.findChild<QComboBox *>("replaySymbolCombo"),
+      tab.findChild<QComboBox *>("replaySchemaCombo"),
+      tab.findChild<QDateEdit *>("replayStartDateEdit"),
+      tab.findChild<QDateEdit *>("replayEndDateEdit"),
+      tab.findChild<QDoubleSpinBox *>("replayInitialCapitalSpinBox"),
+      tab.findChild<QPushButton *>("replayLoadButton")};
+  for (auto *control : controls) {
+    QVERIFY(control != nullptr);
+    QVERIFY(control->isEnabled());
+  }
+
+  const std::array<QSize, 3> windowSizes{QSize{1024, 768}, QSize{1200, 800},
+                                         QSize{1440, 900}};
+  for (const auto &windowSize : windowSizes) {
+    tab.resize(windowSize);
+    QCoreApplication::processEvents();
+    QCOMPARE(scrollArea->horizontalScrollBar()->maximum(), 0);
+
+    for (auto *control : controls) {
+      scrollArea->ensureWidgetVisible(control, 0, 8);
+      QCoreApplication::processEvents();
+      const auto topLeft = control->mapTo(scrollArea->viewport(), QPoint{0, 0});
+      QVERIFY2(topLeft.x() >= 0 && topLeft.x() + control->width() <=
+                                       scrollArea->viewport()->width(),
+               qPrintable(QString{"%1 exceeds the %2px viewport"}
+                              .arg(control->objectName())
+                              .arg(windowSize.width())));
+      QVERIFY(control->focusPolicy() != Qt::NoFocus);
+      QVERIFY(scrollArea->viewport()->rect().intersects(
+          QRect{topLeft, control->size()}));
+    }
+  }
+
+  const std::array<QWidget *, 8> keyboardOrder{
+      controls[1], controls[2], controls[3], controls[4],
+      controls[5], controls[6], controls[7], controls[8]};
+  controls[0]->setFocus();
+  QCOMPARE(QApplication::focusWidget(), controls[0]);
+  QTest::keyClick(controls[0], Qt::Key_Tab);
+  QCOMPARE(QApplication::focusWidget(), keyboardOrder.front());
+  for (std::size_t index = 1; index < keyboardOrder.size(); ++index) {
+    for (auto attempt = 0;
+         attempt < 4 && QApplication::focusWidget() != keyboardOrder[index];
+         ++attempt) {
+      auto *focusedWidget = QApplication::focusWidget();
+      QVERIFY(focusedWidget != nullptr);
+      QTest::keyClick(focusedWidget, Qt::Key_Tab);
+    }
+    QCOMPARE(QApplication::focusWidget(), keyboardOrder[index]);
+    const auto topLeft =
+        keyboardOrder[index]->mapTo(scrollArea->viewport(), QPoint{0, 0});
+    QVERIFY(scrollArea->viewport()->rect().intersects(
+        QRect{topLeft, keyboardOrder[index]->size()}));
+  }
+}
+
+void ReplayTabTest::collapsedSetupKeepsModeSourceAndResultStatusVisible() {
+  QTemporaryDir temporary;
+  QVERIFY(temporary.isValid());
+  const auto root = std::filesystem::path{temporary.path().toStdString()};
+  QVERIFY(writeHourlyReplaySource(root));
+  const ScopedCurrentDirectory currentDirectory{root};
+  const auto blockedCatalog = root / "BlockedCatalog";
+  {
+    std::ofstream file{blockedCatalog};
+    file << "not a directory";
+  }
+  bte::frontend::ReplayTab tab{blockedCatalog, root / "Data"};
+  tab.resize(1024, 768);
+  tab.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&tab));
+
+  auto *setup = tab.findChild<QGroupBox *>("replaySetupBox");
+  auto *setupToggle = tab.findChild<QToolButton *>("replaySetupToggleButton");
+  auto *loadButton = tab.findChild<QPushButton *>("replayLoadButton");
+  auto *context = tab.findChild<QLabel *>("replayModeSourceLabel");
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  auto *timeframe = tab.findChild<QComboBox *>("replaySchemaCombo");
+  QVERIFY(setup != nullptr);
+  QVERIFY(setupToggle != nullptr);
+  QVERIFY(loadButton != nullptr);
+  QVERIFY(context != nullptr);
+  QVERIFY(status != nullptr);
+  QVERIFY(timeframe != nullptr);
+  QVERIFY(setup->isHidden());
+  QVERIFY(context->isVisible());
+  QVERIFY(context->text().contains("Bar-only preview"));
+  QVERIFY(context->text().contains("AAPL"));
+  QVERIFY(bte::test::waitUntil([status] {
+    return status->text().startsWith("Cannot load saved results");
+  }));
+  QVERIFY(status->isVisible());
+  const auto hourlyIndex = timeframe->findText("ohlcv-1h");
+  QVERIFY(hourlyIndex >= 0);
+  timeframe->setCurrentIndex(hourlyIndex);
+  QVERIFY(context->text().contains("ohlcv-1h"));
+  QVERIFY(status->isVisible());
+  const auto catalogError = status->text();
+  setupToggle->click();
+  QVERIFY(setup->isVisible());
+  loadButton->click();
+  QCOMPARE(status->text(), catalogError);
+  QVERIFY(status->isVisible());
+  setupToggle->click();
+  QVERIFY(setup->isHidden());
+  QVERIFY(status->isVisible());
+
+  std::filesystem::remove(blockedCatalog);
+  std::filesystem::create_directories(blockedCatalog);
+  tab.hide();
+  tab.show();
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text() == "No saved Backtest results"; }));
+  QVERIFY(!status->isVisible());
+
+  tab.openResult("missing-result");
+  QVERIFY(bte::test::waitUntil(
+      [status] { return status->text().contains("Cannot open result"); }));
+  QVERIFY(setup->isHidden());
+  QVERIFY(context->isVisible());
+  QVERIFY(status->isVisible());
+  QVERIFY(context->text().contains("Result replay"));
+  QVERIFY(context->text().contains("missing-result"));
+
+  bte::frontend::ReplayTab neutral{root / "EmptyCatalog", root / "Data"};
+  neutral.resize(1024, 768);
+  neutral.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&neutral));
+  auto *neutralContext = neutral.findChild<QLabel *>("replayModeSourceLabel");
+  auto *neutralStatus = neutral.findChild<QLabel *>("replayResultStatusLabel");
+  QVERIFY(neutralContext != nullptr);
+  QVERIFY(neutralStatus != nullptr);
+  QVERIFY(bte::test::waitUntil([neutralStatus] {
+    return neutralStatus->text() == "No saved Backtest results";
+  }));
+  QVERIFY(neutralContext->isVisible());
+  QVERIFY(!neutralStatus->isVisible());
+
+  neutral.openResult(QString{});
+  QVERIFY(bte::test::waitUntil([neutralStatus] {
+    return neutralStatus->text() == "Select a saved result";
+  }));
+  QVERIFY(neutralStatus->isVisible());
+  QCOMPARE(neutralContext->text(), QString{"Result replay · Hourly"});
+
+  QTemporaryDir noSourceTemporary;
+  QVERIFY(noSourceTemporary.isValid());
+  const auto noSourceRoot =
+      std::filesystem::path{noSourceTemporary.path().toStdString()};
+  std::filesystem::create_directories(noSourceRoot / "StockData" / "Extracted");
+  {
+    const ScopedCurrentDirectory emptyDirectory{noSourceRoot};
+    bte::frontend::ReplayTab noSource{noSourceRoot / "Results",
+                                      noSourceRoot / "Data"};
+    noSource.resize(1024, 768);
+    noSource.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&noSource));
+    auto *noSourceContext =
+        noSource.findChild<QLabel *>("replayModeSourceLabel");
+    auto *noSourceSchema = noSource.findChild<QComboBox *>("replaySchemaCombo");
+    QVERIFY(noSourceContext != nullptr);
+    QVERIFY(noSourceSchema != nullptr);
+    QCOMPARE(noSourceContext->text(),
+             QString{"Bar-only preview · No supported CSV sources"});
+    QVERIFY(noSourceSchema->currentText().isEmpty());
+  }
 }
 
 void ReplayTabTest::chartAndDetailsCanBeResizedByDraggingSplitterHandle() {

@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -54,6 +55,13 @@ using bte::bindings::python::testing::ManagedWorkerSystemCall;
     }
   }
   return descriptors;
+}
+
+[[nodiscard]] bool noNewOpenDescriptors(const std::vector<int> &before) {
+  const auto after = openDescriptorSnapshot();
+  // Inherited descriptors are outside this operation's ownership; only
+  // descriptors left newly open indicate a leak.
+  return std::ranges::includes(before, after);
 }
 
 class ScopedReservedDescriptors final {
@@ -524,7 +532,8 @@ TEST(ManagedWorkerProcessTest,
     ASSERT_FALSE(memory.ok());
     EXPECT_EQ(memory.error().code, bte::core::ErrorCode::workerStartFailed);
     EXPECT_NE(memory.error().message.find(failure.message), std::string::npos);
-    EXPECT_EQ(openDescriptorSnapshot(), descriptorsBefore);
+    EXPECT_TRUE(noNewOpenDescriptors(descriptorsBefore))
+        << "Shared-memory failure left a descriptor open.";
   }
 #else
   GTEST_SKIP() << "POSIX shared memory is unavailable on this platform.";
@@ -561,7 +570,8 @@ TEST(ManagedWorkerProcessTest,
     ASSERT_FALSE(started.ok());
     EXPECT_EQ(started.error().code, bte::core::ErrorCode::workerStartFailed);
     EXPECT_EQ(started.error().message, std::string{failure.message});
-    EXPECT_EQ(openDescriptorSnapshot(), descriptorsBefore);
+    EXPECT_TRUE(noNewOpenDescriptors(descriptorsBefore))
+        << "Worker startup failure left a descriptor open.";
     EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
               startCountBefore);
   }
@@ -718,7 +728,12 @@ TEST(ManagedWorkerProcessTest,
     ASSERT_FALSE(started.ok());
     EXPECT_EQ(started.error().code, bte::core::ErrorCode::workerStartFailed);
     EXPECT_EQ(started.error().message, failure.message);
-    EXPECT_EQ(openDescriptorSnapshot(), descriptorsBefore);
+    EXPECT_TRUE(noNewOpenDescriptors(descriptorsBefore))
+        << "Worker startup failure left a descriptor open.";
+    EXPECT_NE(::fcntl(source.descriptor(), F_GETFD), -1)
+        << "Worker startup failure closed the caller-owned source descriptor.";
+    EXPECT_NE(::fcntl(history.descriptor(), F_GETFD), -1)
+        << "Worker startup failure closed the caller-owned history descriptor.";
     EXPECT_EQ(bte::bindings::python::testing::managedWorkerProcessStartCount(),
               startCountBefore + static_cast<std::uint64_t>(failure.spawned));
   }

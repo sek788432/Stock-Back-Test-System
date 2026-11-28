@@ -85,6 +85,7 @@ private slots:
   void initTestCase();
   void rapidSwitchRejectsStaleCompletionAndPresentsExactFirstFrame();
   void resultControlsAndPersistedFillDetailsAreAccessible();
+  void successfulResultStatusRemainsVisibleWhenSetupIsCollapsed();
   void portfolioDisplaysRealizedAndUnrealizedPnlDuringReplay();
   void dailyMarkersAnchorToTheirCandleAndKeepActualFillTime();
   void externalOpenDefersCatalogRefreshUntilOpenCompletes();
@@ -805,6 +806,31 @@ void ResultReplayTabTest::resultControlsAndPersistedFillDetailsAreAccessible() {
   QVERIFY(bte::test::waitUntil(
       [&] { return status->text().startsWith("Cannot open result"); }));
   verifyAccessibleLabels();
+}
+
+void ResultReplayTabTest::
+    successfulResultStatusRemainsVisibleWhenSetupIsCollapsed() {
+  bte::frontend::ReplayTab tab{root_ / "Store", root_ / "Data"};
+  tab.resize(1024, 768);
+  auto *setup = tab.findChild<QWidget *>("replaySetupBox");
+  auto *context = tab.findChild<QLabel *>("replayModeSourceLabel");
+  auto *status = tab.findChild<QLabel *>("replayResultStatusLabel");
+  QVERIFY(setup != nullptr);
+  QVERIFY(context != nullptr);
+  QVERIFY(status != nullptr);
+  tab.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&tab));
+  QVERIFY(setup->isHidden());
+
+  const auto resultId = QString::fromStdString(firstResultId_);
+  tab.openResult(resultId);
+  QVERIFY(bte::test::waitUntil(
+      [&] { return status->text().startsWith("Result "); }));
+  QVERIFY(setup->isHidden());
+  QVERIFY(context->isVisible());
+  QVERIFY(status->isVisible());
+  QVERIFY(context->text().contains("Result replay"));
+  QVERIFY(context->text().contains(resultId));
 }
 
 void ResultReplayTabTest::

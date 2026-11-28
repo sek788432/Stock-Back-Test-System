@@ -198,12 +198,46 @@ struct ReplayTab::State final {
   std::function<void(const QString &, std::optional<core::Timestamp>, bool)>
       requestOpen;
   std::function<void()> reloadCatalog;
+  ReplaySetupControls setupControls;
+  QLabel *modeSourceLabel = nullptr;
+  std::optional<QString> resultCatalogError;
   QString requestedResultId;
   bool resultMode = false;
   bool resultRequestMade = false;
   bool openingResult = false;
   bool refreshCatalogAfterOpen = false;
 };
+
+void ReplayTab::updateModeSource() {
+  const auto &setup = state_->setupControls;
+  auto summary =
+      state_->resultMode ? tr("Result replay") : tr("Bar-only preview");
+  if (state_->resultMode) {
+    auto source = state_->requestedResultId;
+    if (source.isEmpty()) {
+      source = setup.resultCombo->currentText().trimmed();
+    }
+    if (!source.isEmpty()) {
+      summary += tr(" · %1").arg(source);
+    }
+    const auto timeframe = setup.resultTimeframeCombo->currentText();
+    summary += tr(" · %1").arg(timeframe);
+  } else {
+    const auto symbol = setup.symbolCombo->currentText();
+    const auto timeframe = setup.schemaCombo->currentText();
+    summary += tr(" · %1").arg(symbol);
+    if (!timeframe.isEmpty()) {
+      summary += tr(" · %1").arg(timeframe);
+    }
+  }
+  setLabelText(state_->modeSourceLabel, summary);
+  const auto catalogError = state_->resultCatalogError.value_or(QString{});
+  if (!state_->resultMode && !catalogError.isEmpty()) {
+    setLabelText(setup.resultStatusLabel, catalogError);
+  }
+  setup.resultStatusLabel->setVisible(state_->resultMode ||
+                                      !catalogError.isEmpty());
+}
 
 ReplayTab::ReplayTab(QWidget *parent)
     : ReplayTab(defaultApplicationStore("BTE_RESULT_STORE", "Results"),
@@ -263,7 +297,13 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   root->addWidget(recoveryNotices);
 
   const auto setup = makeReplaySetupControls(this);
+  state_->setupControls = setup;
   populatePreviewSources(setup);
+  auto *modeSourceLabel = std::make_unique<QLabel>(this).release();
+  state_->modeSourceLabel = modeSourceLabel;
+  modeSourceLabel->setObjectName("replayModeSourceLabel");
+  modeSourceLabel->setAccessibleName("Replay mode and source");
+  modeSourceLabel->setWordWrap(true);
   auto *setupToggle = std::make_unique<QToolButton>(this).release();
   setupToggle->setObjectName("replaySetupToggleButton");
   setupToggle->setAccessibleName("Show or hide replay setup");
@@ -275,6 +315,24 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   setup.box->setVisible(false);
   root->addWidget(setupToggle, 0, Qt::AlignLeft);
   root->addWidget(setup.box);
+
+  auto *contextPanel = std::make_unique<QFrame>(content).release();
+  contextPanel->setObjectName("replayContextPanel");
+  contextPanel->setAccessibleName("Current replay mode, source, and status");
+  auto *contextLayout = std::make_unique<QVBoxLayout>(contextPanel).release();
+  contextLayout->setContentsMargins(12, 8, 12, 8);
+  contextLayout->setSpacing(3);
+  contextLayout->addWidget(modeSourceLabel);
+  auto *statusRow = std::make_unique<QHBoxLayout>().release();
+  statusRow->setSpacing(10);
+  statusRow->addWidget(setup.resultStatusLabel, 1);
+  statusRow->addWidget(setup.partialLabel, 0,
+                       Qt::AlignRight | Qt::AlignVCenter);
+  contextLayout->addLayout(statusRow);
+  root->addWidget(contextPanel);
+
+  const auto updateReplayModeSource = [this] { updateModeSource(); };
+  updateReplayModeSource();
 
   const auto playback = makeReplayPlaybackControls(this);
   root->addWidget(playback.bar);
@@ -537,7 +595,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   };
 
   const auto reloadBars = [this, stopPlayback, setup, tradeLog, replaySession,
-                           resetVisibleReplay]() {
+                           resetVisibleReplay, updateReplayModeSource]() {
     stopPlayback();
     state_->openRequests->cancel();
     state_->resultMode = false;
@@ -547,6 +605,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     state_->resultReplay.reset();
     setup.partialLabel->setVisible(false);
     setLabelText(setup.resultStatusLabel, tr("Bar-only preview"));
+    updateReplayModeSource();
     tradeLog.table->setRowCount(0);
     replaySession->setInitialCapital(setup.initialCapital->value());
     replaySession->reset(loadReplayBars(
@@ -668,6 +727,12 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   QObject::connect(setup.symbolCombo,
                    qOverload<int>(&QComboBox::currentIndexChanged), this,
                    [setup](const int) { updatePreviewTimeframes(setup); });
+  QObject::connect(
+      setup.symbolCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+      [updateReplayModeSource](const int) { updateReplayModeSource(); });
+  QObject::connect(
+      setup.schemaCombo, &QComboBox::currentTextChanged, this,
+      [updateReplayModeSource](const QString &) { updateReplayModeSource(); });
   QObject::connect(setup.symbolCombo, &QComboBox::currentTextChanged, this,
                    reloadBars);
   QObject::connect(setup.schemaCombo, &QComboBox::currentTextChanged, this,
@@ -708,7 +773,8 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
   playback.followLatestButton->setEnabled(false);
   playback.fitReachedBarsButton->setEnabled(false);
 
-  state_->requestOpen = [this, setup, stopPlayback, renderResult](
+  state_->requestOpen = [this, setup, stopPlayback, renderResult,
+                         updateReplayModeSource](
                             const QString &requestedId,
                             const std::optional<core::Timestamp> cursorAnchor,
                             const bool reloadCatalogAfterOpen) {
@@ -721,6 +787,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
     state_->resultReplay.reset();
     state_->requestedResultId = resultId;
     renderResult();
+    updateReplayModeSource();
     if (resultId.isEmpty()) {
       setLabelText(setup.resultStatusLabel, tr("Select a saved result"));
       return;
@@ -850,19 +917,23 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
 
   reloadBars();
 
-  state_->reloadCatalog = [this, setup, recoveryNotices] {
+  state_->reloadCatalog = [this, setup, recoveryNotices,
+                           updateReplayModeSource] {
     state_->catalogRequests->requestCatalog(
-        [this, setup, recoveryNotices](
+        [this, setup, recoveryNotices, updateReplayModeSource](
             const bindings::ResultReplayRequests::CatalogResult &catalog) {
           if (!catalog.ok()) {
+            state_->resultCatalogError =
+                tr("Cannot load saved results — %1")
+                    .arg(QString::fromStdString(catalog.error().message));
             if (!state_->resultRequestMade) {
-              setLabelText(
-                  setup.resultStatusLabel,
-                  tr("Cannot load saved results — %1")
-                      .arg(QString::fromStdString(catalog.error().message)));
+              setLabelText(setup.resultStatusLabel,
+                           *state_->resultCatalogError);
+              updateReplayModeSource();
             }
             return;
           }
+          state_->resultCatalogError.reset();
           recoveryNotices->present(catalog.value().notices);
           const auto activeResultId =
               state_->requestedResultId.isEmpty()
@@ -895,6 +966,7 @@ ReplayTab::ReplayTab(std::filesystem::path resultStore,
                          catalog.value().entries.empty()
                              ? tr("No saved Backtest results")
                              : tr("Select a saved Backtest result"));
+            updateReplayModeSource();
           } else {
             const auto index =
                 setup.resultCombo->findData(activeResultId, Qt::UserRole);
